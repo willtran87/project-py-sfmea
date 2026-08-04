@@ -12,9 +12,11 @@ from .guidance import (
     APPLICABILITY_TYPES,
     MAPPING_STRENGTHS,
     RELATIONSHIP_TYPES,
+    analysis_guidance_profiles,
     guidance_bundle,
 )
 from .model import calculate_rpn, utc_now
+from .sfta import build_sfta
 
 
 LEVELS = {"error", "warning", "information"}
@@ -54,7 +56,17 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
         )
 
     project_context = analysis.get("context", {}).get("project", {})
-    expected_guidance = guidance_bundle()
+    try:
+        active_guidance_profiles = analysis_guidance_profiles(analysis)
+    except ValueError as exc:
+        active_guidance_profiles = ["core_sfmea"]
+        add(
+            "guidance.invalid_profile_selection",
+            "error",
+            str(exc),
+            field="guidance.active_profiles",
+        )
+    expected_guidance = guidance_bundle(active_guidance_profiles)
     supplied_guidance = analysis.get("guidance", {})
     if not isinstance(supplied_guidance, dict):
         add(
@@ -207,6 +219,149 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
             "error",
             "The analysis contains no candidate or manually added failure modes.",
             field="items",
+        )
+    items_by_id = {
+        str(item.get("id", "")): item
+        for item in analysis.get("items", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    assurance = analysis.get("assurance", {})
+    obligations = assurance.get("obligations", []) if isinstance(assurance, dict) else []
+    executions_by_id = {
+        str(value.get("id", "")): value
+        for value in assurance.get("executions", [])
+        if isinstance(value, dict) and value.get("id")
+    }
+    obligations_by_finding: dict[str, list[dict[str, Any]]] = {}
+    for obligation in obligations:
+        if not isinstance(obligation, dict):
+            continue
+        finding_id = str(obligation.get("finding_id", ""))
+        item = items_by_id.get(finding_id)
+        obligations_by_finding.setdefault(finding_id, []).append(obligation)
+        if item is None:
+            add(
+                "assurance.unknown_finding",
+                "error",
+                f"Verification obligation {obligation.get('id', '')} references an unknown finding: {finding_id}.",
+                field="assurance.obligations.finding_id",
+            )
+            continue
+        if not obligation.get("acceptance_criteria") or not obligation.get("oracles"):
+            add(
+                "assurance.incomplete_contract",
+                "error",
+                f"Verification obligation {obligation.get('id', '')} lacks acceptance criteria or observable oracles.",
+                item=item,
+                field="assurance.obligations",
+            )
+        if obligation.get("baseline_id") != analysis.get("project", {}).get("baseline", {}).get("id", ""):
+            add(
+                "assurance.stale_baseline",
+                "warning",
+                f"Verification obligation {obligation.get('id', '')} is tied to a different analysis baseline.",
+                item=item,
+                field="assurance.obligations.baseline_id",
+            )
+        status = obligation.get("assurance_status")
+        if status in {"verified", "closed"}:
+            executions = [
+                executions_by_id.get(execution_id, {})
+                for execution_id in obligation.get("executions", [])
+            ]
+            review = obligation.get("review", {})
+            sufficient_execution = any(
+                execution.get("status") == "passed"
+                and any(
+                    evidence_review.get("decision") == "sufficient"
+                    for evidence_review in execution.get("reviews", [])
+                    if isinstance(evidence_review, dict)
+                )
+                for execution in executions
+            )
+            if (
+                obligation.get("evidence_status") != "sufficient"
+                or not sufficient_execution
+                or not review.get("reviewer")
+                or not review.get("rationale")
+            ):
+                add(
+                    "assurance.unsupported_verification",
+                    "error",
+                    f"Verification obligation {obligation.get('id', '')} is {status} without sufficient executions and an evidence-sufficiency review.",
+                    item=item,
+                    field="assurance.obligations.assurance_status",
+                )
+    for execution in executions_by_id.values():
+        obligation = next(
+            (
+                value
+                for value in obligations
+                if value.get("id") == execution.get("obligation_id")
+            ),
+            None,
+        )
+        item = items_by_id.get(str(execution.get("finding_id", "")))
+        if obligation is None or item is None:
+            add(
+                "assurance.execution_trace_broken",
+                "error",
+                f"Execution {execution.get('id', '')} does not trace to a known obligation and finding.",
+                field="assurance.executions",
+            )
+            continue
+        if execution.get("baseline_id") != analysis.get("project", {}).get(
+            "baseline", {}
+        ).get("id", ""):
+            add(
+                "assurance.execution_stale",
+                "warning",
+                f"Execution {execution.get('id', '')} belongs to an older baseline.",
+                item=item,
+                field="assurance.executions.baseline_id",
+            )
+        if not execution.get("reviews"):
+            add(
+                "assurance.execution_unreviewed",
+                "information",
+                f"Execution {execution.get('id', '')} awaits independent evidence review.",
+                item=item,
+                field="assurance.executions.reviews",
+            )
+        if status == "closed" and not obligation.get("review", {}).get(
+            "acceptance_approved_by"
+        ):
+            add(
+                "assurance.unapproved_closure",
+                "error",
+                f"Verification obligation {obligation.get('id', '')} is closed without named approval.",
+                item=item,
+                field="assurance.obligations.review.acceptance_approved_by",
+            )
+    for finding_id, item in items_by_id.items():
+        if item.get("source_status", "active") != "active":
+            continue
+        count = len(obligations_by_finding.get(finding_id, []))
+        if count != 1:
+            add(
+                "assurance.obligation_cardinality",
+                "error",
+                f"Active finding requires exactly one verification obligation; found {count}.",
+                item=item,
+                field="assurance.obligations",
+            )
+    gap_count = sum(
+        bool(obligation.get("planning_gaps"))
+        for obligation in obligations
+        if isinstance(obligation, dict)
+        and obligation.get("source_status", "active") == "active"
+    )
+    if gap_count:
+        add(
+            "assurance.planning_gaps",
+            "information",
+            f"{gap_count} active verification obligation(s) require effect or control definition before approval.",
+            field="assurance.obligations.planning_gaps",
         )
     for suggestion in analysis.get("suggestions", []):
         for citation_id in suggestion.get("proposed_citation_ids", []):
@@ -897,6 +1052,41 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
             "warning",
             f"Configured system interface {interface_id} is not mapped to a scanned component.",
             field="system_interfaces",
+        )
+
+    sfta = build_sfta(analysis)
+    for tree in sfta.get("trees", []):
+        if tree.get("source") == "generated_placeholder":
+            add(
+                "sfta.missing_top_down_decomposition",
+                "warning",
+                f"Hazard {tree.get('hazard_id')} has no explicit Software Fault Tree decomposition.",
+                field="fault_trees",
+            )
+    reconciliation = sfta.get("reconciliation", {})
+    for gap in reconciliation.get("top_down_uncovered_events", []):
+        add(
+            "sfta.uncovered_top_down_event",
+            "warning",
+            f"Fault-tree event {gap.get('event_id')} has no correlated bottom-up finding.",
+            field="sfta.reconciliation.top_down_uncovered_events",
+        )
+    item_by_id = {value.get("id"): value for value in analysis.get("items", [])}
+    for gap in reconciliation.get("bottom_up_unmapped_findings", []):
+        add(
+            "sfta.unmapped_bottom_up_finding",
+            "warning",
+            "Hazard-linked finding is not correlated to an event in the hazard's fault tree.",
+            item=item_by_id.get(gap.get("finding_id")),
+            field="sfta.reconciliation.bottom_up_unmapped_findings",
+        )
+    for gap in reconciliation.get("hazard_link_mismatches", []):
+        add(
+            "sfta.hazard_link_mismatch",
+            "error",
+            f"Fault-tree event {gap.get('event_id')} correlates a finding that is not linked to hazard {gap.get('hazard_id')}.",
+            item=item_by_id.get(gap.get("finding_id")),
+            field="linked_hazards",
         )
 
     counts = Counter(finding["level"] for finding in findings)

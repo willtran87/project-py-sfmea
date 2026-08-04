@@ -38,6 +38,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         ],
         "excluded_failure_classes": [],
         "fault_tolerance_assumptions": [],
+        "guidance_profiles": ["core_sfmea"],
     },
     "scan": {
         "include_private": True,
@@ -80,6 +81,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "scan_warning_level": "error",
     },
     "hazards": [],
+    "fault_trees": [],
     "requirements": [],
     "component_mappings": [],
     "system_interfaces": [],
@@ -138,6 +140,7 @@ ground_rules = [
 included_failure_classes = ["functional", "data", "interface", "timing", "logic", "calculation", "environment", "resource", "detection", "hardware", "custom", "common_cause"]
 excluded_failure_classes = []
 fault_tolerance_assumptions = ["No single software control is credited as independent redundancy."]
+guidance_profiles = ["core_sfmea"] # Optional: nasa_assurance, faa_commercial_space, faa_airworthiness, security, legacy_reference
 
 [scan]
 include_private = true
@@ -186,6 +189,24 @@ id = "HZ-001"
 description = "Example unacceptable system condition"
 end_effect = "Describe the consequence to the user, mission, safety, data, or service."
 severity = 10
+
+# Optional formal top-down Software Fault Tree. Gates and events are explicit
+# engineering inputs; PySFMEA does not infer logical sufficiency from code links.
+[[fault_trees]]
+id = "SFTA-HZ-001"
+hazard = "HZ-001"
+top_event_id = "TOP-HZ-001"
+top_event = "Example unacceptable system condition occurs"
+description = "Preliminary software contribution tree"
+assumptions = ["External hardware contributions are analyzed separately"]
+gates = [
+  { id = "G-LOSS-OR-CORRUPT", type = "OR", description = "Required service is lost or produces unsafe output", inputs = ["EV-OMISSION", "EV-CORRUPTION"] }
+]
+events = [
+  { id = "TOP-HZ-001", type = "top", description = "Example unacceptable system condition occurs", inputs = ["G-LOSS-OR-CORRUPT"] },
+  { id = "EV-OMISSION", type = "basic", description = "Critical software function is omitted", component_patterns = ["src/example/payment.py:*"], failure_mode_patterns = ["*omitted*"] },
+  { id = "EV-CORRUPTION", type = "undeveloped", description = "Output is corrupted before use", component_patterns = ["src/example/payment.py:*"] }
+]
 
 [[requirements]]
 id = "REQ-001"
@@ -274,6 +295,7 @@ def normalize_config(supplied: dict[str, Any] | None = None) -> dict[str, Any]:
         config[section].update(value)
     for section in (
         "hazards",
+        "fault_trees",
         "requirements",
         "component_mappings",
         "system_interfaces",
@@ -308,6 +330,7 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "included_failure_classes",
             "excluded_failure_classes",
             "fault_tolerance_assumptions",
+            "guidance_profiles",
         },
         "scan": {
             "include_private",
@@ -329,6 +352,16 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
     }
     array_fields = {
         "hazards": {"id", "description", "end_effect", "severity", "severity_category"},
+        "fault_trees": {
+            "id",
+            "hazard",
+            "top_event_id",
+            "top_event",
+            "description",
+            "assumptions",
+            "gates",
+            "events",
+        },
         "requirements": {"id", "text", "source", "hazards"},
         "component_mappings": {
             "pattern",
@@ -427,11 +460,15 @@ def _validate_config(config: dict[str, Any]) -> None:
         "included_failure_classes",
         "excluded_failure_classes",
         "fault_tolerance_assumptions",
+        "guidance_profiles",
     ):
         if not isinstance(analysis.get(field), list) or not all(
             isinstance(entry, str) for entry in analysis[field]
         ):
             raise ValueError(f"analysis.{field} must be an array of strings")
+    from .guidance import normalize_profile_ids
+
+    normalize_profile_ids(analysis["guidance_profiles"])
     overlap = set(analysis["included_failure_classes"]) & set(
         analysis["excluded_failure_classes"]
     )
@@ -534,6 +571,140 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 f"hazard {hazard_id} severity_category is not in risk.severity_categories"
             )
+    tree_ids: set[str] = set()
+    for tree in config["fault_trees"]:
+        tree_id = tree.get("id")
+        if not isinstance(tree_id, str) or not tree_id:
+            raise ValueError("each fault_trees entry requires a non-empty id")
+        if tree_id in tree_ids:
+            raise ValueError(f"duplicate fault tree id: {tree_id}")
+        tree_ids.add(tree_id)
+        hazard_id = tree.get("hazard")
+        if hazard_id not in hazard_ids:
+            raise ValueError(f"fault tree {tree_id} references unknown hazard: {hazard_id}")
+        for field in ("top_event_id", "top_event"):
+            if not isinstance(tree.get(field), str) or not tree[field]:
+                raise ValueError(f"fault tree {tree_id} requires {field}")
+        if not isinstance(tree.get("description", ""), str):
+            raise ValueError(f"fault tree {tree_id} description must be a string")
+        assumptions = tree.get("assumptions", [])
+        if not isinstance(assumptions, list) or not all(
+            isinstance(value, str) for value in assumptions
+        ):
+            raise ValueError(f"fault tree {tree_id} assumptions must be an array of strings")
+        gates = tree.get("gates", [])
+        events = tree.get("events", [])
+        if not isinstance(gates, list) or not all(isinstance(value, dict) for value in gates):
+            raise ValueError(f"fault tree {tree_id} gates must be an array of tables")
+        if not isinstance(events, list) or not all(isinstance(value, dict) for value in events):
+            raise ValueError(f"fault tree {tree_id} events must be an array of tables")
+        nodes: dict[str, list[str]] = {}
+        for gate in gates:
+            unknown = set(gate) - {"id", "type", "description", "inputs", "k"}
+            if unknown:
+                raise ValueError(
+                    f"fault tree {tree_id} gate has unknown fields: "
+                    + ", ".join(sorted(unknown))
+                )
+            gate_id = gate.get("id")
+            gate_type = gate.get("type")
+            if not isinstance(gate_id, str) or not gate_id:
+                raise ValueError(f"fault tree {tree_id} gate requires an id")
+            if gate_type not in {"AND", "OR", "VOTE", "INHIBIT"}:
+                raise ValueError(f"fault tree {tree_id} gate {gate_id} has invalid type")
+            inputs = gate.get("inputs", [])
+            if not isinstance(inputs, list) or len(inputs) < 2 or not all(
+                isinstance(value, str) and value for value in inputs
+            ):
+                raise ValueError(
+                    f"fault tree {tree_id} gate {gate_id} requires at least two input ids"
+                )
+            if gate_type == "VOTE" and (
+                isinstance(gate.get("k"), bool)
+                or not isinstance(gate.get("k"), int)
+                or not 1 <= gate["k"] <= len(inputs)
+            ):
+                raise ValueError(f"fault tree {tree_id} VOTE gate {gate_id} requires valid k")
+            if not isinstance(gate.get("description", ""), str):
+                raise ValueError(f"fault tree {tree_id} gate {gate_id} description must be a string")
+            if gate_id in nodes:
+                raise ValueError(f"fault tree {tree_id} has duplicate node id: {gate_id}")
+            nodes[gate_id] = inputs
+        event_types = {"top", "intermediate", "basic", "undeveloped", "external", "conditioning"}
+        for event in events:
+            unknown = set(event) - {
+                "id",
+                "type",
+                "description",
+                "inputs",
+                "component_patterns",
+                "failure_mode_patterns",
+                "finding_ids",
+                "evidence",
+                "assumptions",
+            }
+            if unknown:
+                raise ValueError(
+                    f"fault tree {tree_id} event has unknown fields: "
+                    + ", ".join(sorted(unknown))
+                )
+            event_id = event.get("id")
+            if not isinstance(event_id, str) or not event_id:
+                raise ValueError(f"fault tree {tree_id} event requires an id")
+            if event.get("type") not in event_types:
+                raise ValueError(f"fault tree {tree_id} event {event_id} has invalid type")
+            if not isinstance(event.get("description"), str) or not event["description"]:
+                raise ValueError(f"fault tree {tree_id} event {event_id} requires a description")
+            inputs = event.get("inputs", [])
+            if not isinstance(inputs, list) or not all(
+                isinstance(value, str) and value for value in inputs
+            ):
+                raise ValueError(f"fault tree {tree_id} event {event_id} inputs must be strings")
+            for field in (
+                "component_patterns",
+                "failure_mode_patterns",
+                "finding_ids",
+                "evidence",
+                "assumptions",
+            ):
+                values = event.get(field, [])
+                if not isinstance(values, list) or not all(
+                    isinstance(value, str) for value in values
+                ):
+                    raise ValueError(
+                        f"fault tree {tree_id} event {event_id} {field} must be strings"
+                    )
+            if event_id in nodes:
+                raise ValueError(f"fault tree {tree_id} has duplicate node id: {event_id}")
+            nodes[event_id] = inputs
+        top_event_id = tree["top_event_id"]
+        event_by_id = {str(value.get("id")): value for value in events}
+        if top_event_id not in event_by_id or event_by_id[top_event_id].get("type") != "top":
+            raise ValueError(
+                f"fault tree {tree_id} top_event_id must identify an event of type top"
+            )
+        for node_id, inputs in nodes.items():
+            unknown_inputs = set(inputs) - set(nodes)
+            if unknown_inputs:
+                raise ValueError(
+                    f"fault tree {tree_id} node {node_id} references unknown inputs: "
+                    + ", ".join(sorted(unknown_inputs))
+                )
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node_id: str) -> None:
+            if node_id in visiting:
+                raise ValueError(f"fault tree {tree_id} contains a cycle at {node_id}")
+            if node_id in visited:
+                return
+            visiting.add(node_id)
+            for child in nodes[node_id]:
+                visit(child)
+            visiting.remove(node_id)
+            visited.add(node_id)
+
+        visit(top_event_id)
     requirement_ids: set[str] = set()
     for requirement in config["requirements"]:
         requirement_id = requirement.get("id")

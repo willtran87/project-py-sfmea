@@ -9,9 +9,9 @@ from collections import Counter
 from typing import Any
 
 
-GUIDANCE_SCHEMA_VERSION = "1.0"
-GUIDANCE_CATALOG_VERSION = "2026.08.03"
-GUIDANCE_RETRIEVED_AT = "2026-08-03"
+GUIDANCE_SCHEMA_VERSION = "1.1"
+GUIDANCE_CATALOG_VERSION = "2026.08.04"
+GUIDANCE_RETRIEVED_AT = "2026-08-04"
 
 RELATIONSHIP_TYPES = {
     "methodology_basis",
@@ -27,8 +27,87 @@ APPLICABILITY_TYPES = {
     "general_methodological",
     "legacy_methodological",
     "nasa_program_or_contract",
+    "faa_commercial_space",
+    "faa_airworthiness",
     "security_relevant",
+    "organizational",
 }
+
+DEFAULT_GUIDANCE_PROFILES = ["core_sfmea"]
+
+GUIDELINE_PROFILES = [
+    {
+        "id": "core_sfmea",
+        "title": "Core public SFMEA methodology",
+        "status": "default",
+        "source_ids": ["NASA-SWEHB-8.05", "NASA-GB-8719.13"],
+        "applicability": "General software failure-mode analysis; project-specific tailoring is still required.",
+        "risk_semantics": "Severity follows the credible end effect. Occurrence and detection are not inferred from code metrics.",
+        "verification_semantics": "Candidate controls and tests require objective evidence and qualified human review.",
+        "tailoring": "Default profile. Record system boundary, lifecycle phase, ground rules, hazards, requirements, and the approved risk scale.",
+        "compliance_claim": False,
+    },
+    {
+        "id": "nasa_assurance",
+        "title": "NASA software assurance and safety",
+        "status": "optional",
+        "source_ids": [
+            "NASA-SWEHB-8.05",
+            "NASA-GB-8719.13",
+            "NASA-STD-8739.8B",
+            "NASA-NPR-7150.2D",
+        ],
+        "applicability": "NASA programs, projects, contracts, or organizations that explicitly adopt the cited requirements.",
+        "risk_semantics": "Use the governing NASA/project classification, hazard, and risk processes; the scanner does not assign compliance status.",
+        "verification_semantics": "Trace hazard contributions and controls to requirements and independent verification evidence when applicable.",
+        "tailoring": "Select only after the governing program documents, software classification, assurance scope, and approved tailoring are known.",
+        "compliance_claim": False,
+    },
+    {
+        "id": "faa_commercial_space",
+        "title": "FAA commercial-space computing system safety",
+        "status": "optional",
+        "source_ids": ["FAA-AC-450.141-1A"],
+        "applicability": "Commercial launch or reentry work using AC 450.141-1A as an accepted means of compliance or engineering reference.",
+        "risk_semantics": "Apply the operator's approved system-safety and computing-system criticality processes.",
+        "verification_semantics": "Verification depth and independence are proportional to criticality; trace requirements to objective evidence.",
+        "tailoring": "Confirm the applicable 14 CFR part, license basis, accepted means of compliance, and any FAA-approved alternative before use.",
+        "compliance_claim": False,
+    },
+    {
+        "id": "faa_airworthiness",
+        "title": "FAA airborne software development assurance",
+        "status": "optional",
+        "source_ids": ["FAA-AC-20-115D"],
+        "applicability": "Airborne software approval contexts that adopt AC 20-115D and the applicable RTCA/EUROCAE material.",
+        "risk_semantics": "Software level and certification objectives come from the approved aircraft/system safety process, not from SFMEA screening priority.",
+        "verification_semantics": "Lifecycle objectives, change impact analysis, life-cycle data, and tool qualification are certification-context concerns.",
+        "tailoring": "Licensed RTCA/EUROCAE standards are not bundled. Coordinate interpretation with the certification authority and approved plans.",
+        "compliance_claim": False,
+    },
+    {
+        "id": "security",
+        "title": "Secure software assurance",
+        "status": "optional",
+        "source_ids": ["NIST-SP-800-218", "MITRE-CWE"],
+        "applicability": "Findings with a defensible security consequence or secure-development objective.",
+        "risk_semantics": "Security weakness and vulnerability ratings remain distinct from SFMEA severity and risk acceptance.",
+        "verification_semantics": "Use reproducible security analysis, remediation, and root-cause evidence.",
+        "tailoring": "Select the applicable SSDF practices and CWE release; do not force a CWE mapping where evidence is insufficient.",
+        "compliance_claim": False,
+    },
+    {
+        "id": "legacy_reference",
+        "title": "Legacy FAA launch/reentry methodology reference",
+        "status": "optional_legacy",
+        "source_ids": ["FAA-RLV-SCS-2006"],
+        "applicability": "Historical methodology only; not a current regulatory basis.",
+        "risk_semantics": "Use only as a taxonomy/worksheet reference and defer to current governing risk criteria.",
+        "verification_semantics": "Historical examples do not establish current acceptance evidence.",
+        "tailoring": "Keep visibly marked legacy and never present it as current FAA guidance.",
+        "compliance_claim": False,
+    },
+]
 
 
 GUIDANCE_DOCUMENTS = [
@@ -56,6 +135,62 @@ GUIDANCE_DOCUMENTS = [
         "use": "Legacy commercial-space methodology: software-specific FMEA procedure, failure classifications, effects, controls, and worksheet examples.",
         "applicability": "legacy_methodological",
         "access": "public",
+    },
+    {
+        "id": "NASA-GB-8719.13",
+        "publisher": "NASA",
+        "title": "NASA Software Safety Guidebook",
+        "version": "Baseline",
+        "status": "legacy_method_reference",
+        "published_at": "2004-03-31",
+        "url": "https://standards.nasa.gov/sites/default/files/standards/NASA/Baseline/0/nasa-gb-871913.pdf",
+        "use": "Detailed public software-safety analysis reference, including bottom-up SFMEA, top-down SFTA, and data/event failure tables.",
+        "applicability": "legacy_methodological",
+        "access": "public",
+        "artifact": {
+            "media_type": "application/pdf",
+            "bytes": 2553832,
+            "sha256": "d4742a244ac188fc656715fdb051ea09fed4eda2cd13d850a7f018f7899402c9",
+            "digest_scope": "exact downloaded response body",
+        },
+    },
+    {
+        "id": "FAA-AC-450.141-1A",
+        "publisher": "Federal Aviation Administration",
+        "title": "Computing System Safety",
+        "version": "AC 450.141-1A",
+        "status": "active",
+        "published_at": "2021-08-16",
+        "url": "https://www.faa.gov/documentLibrary/media/Advisory_Circular/AC_450.141-1A_Computing_System_Safety_20210816_v1_%28002%29.pdf",
+        "status_url": "https://www.faa.gov/regulations_policies/advisory_circulars/index.cfm/go/document.information/documentNumber/450.141-1A",
+        "use": "Current FAA commercial-space computing-system safety guidance, including SFMEA, SFTA, criticality-proportional verification, independence, and evidence traceability.",
+        "applicability": "faa_commercial_space",
+        "access": "public",
+        "artifact": {
+            "media_type": "application/pdf",
+            "bytes": 1057433,
+            "sha256": "5592dfa7515c578729504615ee679ee745165143a46ec073c53549f20e26cb0a",
+            "digest_scope": "exact downloaded response body",
+        },
+    },
+    {
+        "id": "FAA-AC-20-115D",
+        "publisher": "Federal Aviation Administration",
+        "title": "Airborne Software Development Assurance Using EUROCAE ED-12() and RTCA DO-178()",
+        "version": "AC 20-115D",
+        "status": "active",
+        "published_at": "2017-07-21",
+        "url": "https://www.faa.gov/documentLibrary/media/Advisory_Circular/AC_20-115D.pdf",
+        "status_url": "https://www.faa.gov/airports/resources/advisory_circulars/index.cfm/go/document.information/documentNumber/20-115D",
+        "use": "Airworthiness development-assurance context for lifecycle objectives and data, change impact analysis, and tool qualification; not a generic SFMEA rule source.",
+        "applicability": "faa_airworthiness",
+        "access": "public_with_licensed_normative_references",
+        "artifact": {
+            "media_type": "application/pdf",
+            "bytes": 511369,
+            "sha256": "5597a1af49c872a1a843c05601742ddcc8e8a190642f31e3cb9ce8e0dc63d91e",
+            "digest_scope": "exact downloaded response body",
+        },
     },
     {
         "id": "NASA-STD-8739.8B",
@@ -120,6 +255,23 @@ GUIDANCE_DOCUMENTS = [
 ]
 
 
+def _attach_source_integrity(records: list[dict[str, Any]]) -> None:
+    """Bind every catalog source record to a stable canonical digest."""
+
+    for record in records:
+        record.setdefault(
+            "quotation_policy",
+            "Locator and concise paraphrase only; verify the official source before making an assurance or compliance decision.",
+        )
+        canonical = {key: value for key, value in record.items() if key != "record_sha256"}
+        record["record_sha256"] = hashlib.sha256(
+            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+
+_attach_source_integrity(GUIDANCE_DOCUMENTS)
+
+
 def _citation(
     citation_id: str,
     source_id: str,
@@ -129,6 +281,7 @@ def _citation(
     *,
     page: str = "",
     applicability: str,
+    url: str = "",
 ) -> dict[str, Any]:
     value = {
         "id": citation_id,
@@ -138,6 +291,8 @@ def _citation(
         "applicability": applicability,
         "retrieved_at": GUIDANCE_RETRIEVED_AT,
     }
+    if url:
+        value["url"] = url
     value["record_sha256"] = hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -184,6 +339,96 @@ GUIDANCE_CITATIONS = [
         "Design Changes; Impacts of Corrective Changes",
         "Calls for corrective actions and evaluation of their effects on design, function, performance, process, and other software.",
         applicability="general_methodological",
+    ),
+    _citation(
+        "NASA-GB-8719.13-6.6.8-SFMEA",
+        "NASA-GB-8719.13",
+        "6.6.8",
+        "Software Failure Modes and Effects Analysis",
+        "Describes a bottom-up SFMEA that identifies software failure modes, causes, local and higher-level effects, detection, mitigation, and hazard relationships.",
+        page="123-132",
+        applicability="legacy_methodological",
+    ),
+    _citation(
+        "NASA-GB-8719.13-6.6.7-SFTA",
+        "NASA-GB-8719.13",
+        "6.6.7",
+        "Software Fault Tree Analysis",
+        "Describes top-down fault-tree analysis of software contributions to system hazards and emphasizes tracing credible causal paths.",
+        page="120-123",
+        applicability="legacy_methodological",
+    ),
+    _citation(
+        "NASA-GB-8719.13-D.4.8-DATA-EVENTS",
+        "NASA-GB-8719.13",
+        "Appendix D.4.8",
+        "SFMEA Data and Events Tables",
+        "Provides structured prompts for data failures such as wrong, missing, out-of-range, overwritten, or out-of-sequence values and event failures such as omission, incorrect logic, timing, or order.",
+        page="333-336",
+        applicability="legacy_methodological",
+    ),
+    _citation(
+        "FAA-AC-450.141-1A-B.1.1-SFMEA",
+        "FAA-AC-450.141-1A",
+        "Appendix B.1.1",
+        "Software Failure Modes and Effects Analysis",
+        "Defines an SFMEA procedure covering the computing system boundary, software elements and interfaces, failure modes and causes, local and system effects, controls, and derived requirements.",
+        page="48-52",
+        applicability="faa_commercial_space",
+    ),
+    _citation(
+        "FAA-AC-450.141-1A-B.2-SFTA",
+        "FAA-AC-450.141-1A",
+        "Appendix B.2",
+        "Software Fault Tree Analysis",
+        "Describes top-down analysis of software contributions to hazardous top events using logical combinations and traceable contributing events.",
+        page="55-59",
+        applicability="faa_commercial_space",
+    ),
+    _citation(
+        "FAA-AC-450.141-1A-7.3.1-INDEPENDENCE",
+        "FAA-AC-450.141-1A",
+        "7.3.1",
+        "Independent Verification and Validation",
+        "Calls for safety-critical computing-system verification and validation by personnel with appropriate independence from the development organization.",
+        page="21",
+        applicability="faa_commercial_space",
+    ),
+    _citation(
+        "FAA-AC-450.141-1A-8.2.4-TRACE",
+        "FAA-AC-450.141-1A",
+        "8.2.4",
+        "Verification Evidence Traceability",
+        "Calls for computing-system requirements to be traced to validation and verification evidence.",
+        page="23",
+        applicability="faa_commercial_space",
+    ),
+    _citation(
+        "FAA-AC-20-115D-6-LIFECYCLE",
+        "FAA-AC-20-115D",
+        "6",
+        "Acceptable Means of Compliance",
+        "Recognizes the applicable ED-12C/DO-178C objectives and software life-cycle data as an acceptable airborne-software development-assurance basis.",
+        page="3-4",
+        applicability="faa_airworthiness",
+    ),
+    _citation(
+        "FAA-AC-20-115D-9.B.4-CHANGE",
+        "FAA-AC-20-115D",
+        "9.b(4)",
+        "Software Change Impact Analysis",
+        "Calls for change impact analysis, appropriate verification of affected software, and summarization of the resulting evidence in the certification context.",
+        page="9",
+        applicability="faa_airworthiness",
+    ),
+    _citation(
+        "FAA-AC-20-115D-10-TOOLS",
+        "FAA-AC-20-115D",
+        "10",
+        "Tool Qualification",
+        "Identifies tool qualification as a development-assurance concern and points to DO-330 objectives when a tool's output is relied upon without otherwise required verification.",
+        page="10-12",
+        applicability="faa_airworthiness",
     ),
     _citation(
         "FAA-RLV-SCS-2006-B.1-PROCEDURE",
@@ -301,6 +546,51 @@ GUIDANCE_CITATIONS = [
         page="18-19",
         applicability="security_relevant",
     ),
+    _citation(
+        "MITRE-CWE-20",
+        "MITRE-CWE",
+        "CWE-20",
+        "Improper Input Validation",
+        "Classifies insufficient validation of input properties needed for safe and correct processing.",
+        applicability="security_relevant",
+        url="https://cwe.mitre.org/data/definitions/20.html",
+    ),
+    _citation(
+        "MITRE-CWE-400",
+        "MITRE-CWE",
+        "CWE-400",
+        "Uncontrolled Resource Consumption",
+        "Classifies failure to control allocation or maintenance of a limited resource, enabling exhaustion or denial of service.",
+        applicability="security_relevant",
+        url="https://cwe.mitre.org/data/definitions/400.html",
+    ),
+    _citation(
+        "MITRE-CWE-703",
+        "MITRE-CWE",
+        "CWE-703",
+        "Improper Check or Handling of Exceptional Conditions",
+        "Classifies failures to detect or correctly handle exceptional conditions that alter expected behavior.",
+        applicability="security_relevant",
+        url="https://cwe.mitre.org/data/definitions/703.html",
+    ),
+    _citation(
+        "MITRE-CWE-862",
+        "MITRE-CWE",
+        "CWE-862",
+        "Missing Authorization",
+        "Classifies absence of an authorization check when an actor attempts to access a resource or perform an action.",
+        applicability="security_relevant",
+        url="https://cwe.mitre.org/data/definitions/862.html",
+    ),
+    _citation(
+        "MITRE-CWE-918",
+        "MITRE-CWE",
+        "CWE-918",
+        "Server-Side Request Forgery",
+        "Classifies server-side requests whose destination or request components can be influenced without sufficient validation and policy enforcement.",
+        applicability="security_relevant",
+        url="https://cwe.mitre.org/data/definitions/918.html",
+    ),
 ]
 
 
@@ -311,7 +601,15 @@ def _mapping(
     rationale: str,
     *,
     strength: str = "direct",
+    profile_ids: list[str] | None = None,
 ) -> dict[str, Any]:
+    if profile_ids is None:
+        citation = next(value for value in GUIDANCE_CITATIONS if value["id"] == citation_id)
+        profile_ids = [
+            profile["id"]
+            for profile in GUIDELINE_PROFILES
+            if citation["source_id"] in profile["source_ids"]
+        ]
     return {
         "id": "MAP-" + hashlib.sha256(
             f"{selector}\x1f{citation_id}\x1f{relationship}".encode("utf-8")
@@ -321,6 +619,7 @@ def _mapping(
         "relationship": relationship,
         "rationale": rationale,
         "strength": strength,
+        "profile_ids": profile_ids,
         "created_by": "curated",
         "mapping_version": GUIDANCE_CATALOG_VERSION,
     }
@@ -350,6 +649,27 @@ GUIDANCE_RULE_MAPPINGS = [
     _mapping("common_cause.*", "NASA-STD-8739.8B-A.1.1-COMMON-MODE", "hazard_traceability", "The guidance explicitly calls for consideration of software common-mode failures."),
     _mapping("*", "NASA-SWEHB-8.05-EFFECTS", "methodology_basis", "Every candidate is reviewed using local, next-higher-level, and end-effect propagation.", strength="contextual"),
     _mapping("*", "FAA-RLV-SCS-2006-B.1-WORKSHEET", "methodology_basis", "The worksheet structure relates candidates to causes, effects, hazards, and mitigations.", strength="contextual"),
+    _mapping("functional.*", "NASA-GB-8719.13-6.6.8-SFMEA", "methodology_basis", "The guidebook's bottom-up SFMEA method reviews functional failure causes and propagated effects.", strength="supporting"),
+    _mapping("data.*", "NASA-GB-8719.13-D.4.8-DATA-EVENTS", "failure_taxonomy", "The guidebook data table provides structured bad-data failure prompts.", strength="supporting"),
+    _mapping("logic.*", "NASA-GB-8719.13-D.4.8-DATA-EVENTS", "failure_taxonomy", "The guidebook events table provides logic, omission, timing, and sequence prompts.", strength="supporting"),
+    _mapping("timing.*", "NASA-GB-8719.13-D.4.8-DATA-EVENTS", "failure_taxonomy", "The guidebook events table includes wrong-time and out-of-sequence behavior.", strength="supporting"),
+    _mapping("*", "NASA-GB-8719.13-6.6.7-SFTA", "hazard_traceability", "Bottom-up candidates should be reconciled with top-down hazard causal paths.", strength="contextual"),
+    _mapping("functional.*", "FAA-AC-450.141-1A-B.1.1-SFMEA", "methodology_basis", "The current commercial-space guidance defines a software FMEA procedure for elements, interfaces, causes, effects, controls, and requirements.", strength="supporting"),
+    _mapping("interface.*", "FAA-AC-450.141-1A-B.1.1-SFMEA", "failure_taxonomy", "The procedure explicitly includes computing-system interfaces.", strength="supporting"),
+    _mapping("*", "FAA-AC-450.141-1A-B.2-SFTA", "hazard_traceability", "Candidate failure modes can support top-down reconciliation with software fault-tree events.", strength="contextual"),
+    _mapping("*", "FAA-AC-450.141-1A-7.3.1-INDEPENDENCE", "verification_expectation", "Safety-critical verification evidence may require organizational independence under the selected commercial-space profile.", strength="contextual"),
+    _mapping("*", "FAA-AC-450.141-1A-8.2.4-TRACE", "verification_expectation", "Requirements should be traceable to validation and verification evidence under the selected commercial-space profile.", strength="contextual"),
+    _mapping("*", "FAA-AC-20-115D-6-LIFECYCLE", "process_expectation", "In the selected airworthiness profile, findings are assurance inputs and do not replace applicable lifecycle objectives or life-cycle data.", strength="contextual"),
+    _mapping("*", "FAA-AC-20-115D-9.B.4-CHANGE", "verification_expectation", "Resolved findings and corrective changes require scoped impact analysis and verification in the selected airworthiness profile.", strength="contextual"),
+    _mapping("*", "FAA-AC-20-115D-10-TOOLS", "verification_expectation", "Reliance on unverified analysis-tool output may create a separate qualification concern in the selected airworthiness profile.", strength="contextual"),
+    _mapping("data.invalid_input", "MITRE-CWE-20", "security_taxonomy", "The scanner prompt overlaps the CWE input-validation weakness class when a security consequence is credible.", strength="supporting"),
+    _mapping("resource.*", "MITRE-CWE-400", "security_taxonomy", "The scanner prompt overlaps uncontrolled consumption of bounded resources.", strength="supporting"),
+    _mapping("detection.masked_failure", "MITRE-CWE-703", "security_taxonomy", "Broad or silent failure handling overlaps improper exceptional-condition handling.", strength="supporting"),
+    _mapping("process.uncontrolled_failure", "MITRE-CWE-703", "security_taxonomy", "Unchecked subprocess failure states overlap improper exceptional-condition handling.", strength="supporting"),
+    _mapping("domain.cross_scope_access", "MITRE-CWE-862", "security_taxonomy", "The project rule explicitly reviews missing or insufficient authorization across a resource scope.", strength="direct"),
+    _mapping("domain.outbound_rebinding", "MITRE-CWE-918", "security_taxonomy", "The project rule explicitly reviews attacker-influenced server-side request destinations and rebinding behavior.", strength="direct"),
+    _mapping("domain.*", "NIST-SP-800-218-PW.7", "process_expectation", "Security-relevant project rules should be reviewed or analyzed against the applicable security requirements.", strength="contextual"),
+    _mapping("domain.*", "NIST-SP-800-218-RV.3", "verification_expectation", "Accepted security-relevant findings should feed evidence-backed root-cause and recurrence-prevention review.", strength="contextual"),
 ]
 
 
@@ -365,10 +685,13 @@ def validate_guidance_catalog() -> None:
     """Raise when the built-in catalog contains an invalid or invented reference."""
 
     source_ids = [source["id"] for source in GUIDANCE_DOCUMENTS]
+    profile_ids = [profile["id"] for profile in GUIDELINE_PROFILES]
     citation_ids = [citation["id"] for citation in GUIDANCE_CITATIONS]
     mapping_ids = [mapping["id"] for mapping in GUIDANCE_RULE_MAPPINGS]
     if len(source_ids) != len(set(source_ids)):
         raise ValueError("guidance source IDs must be unique")
+    if len(profile_ids) != len(set(profile_ids)):
+        raise ValueError("guidance profile IDs must be unique")
     if len(citation_ids) != len(set(citation_ids)):
         raise ValueError("guidance citation IDs must be unique")
     if len(mapping_ids) != len(set(mapping_ids)):
@@ -387,9 +710,24 @@ def validate_guidance_catalog() -> None:
             raise ValueError(f"invalid guidance relationship: {mapping['relationship']}")
         if mapping["strength"] not in MAPPING_STRENGTHS:
             raise ValueError(f"invalid guidance mapping strength: {mapping['strength']}")
+        if unknown := sorted(set(mapping.get("profile_ids", [])) - set(profile_ids)):
+            raise ValueError("guidance mapping references unknown profiles: " + ", ".join(unknown))
+        if not mapping.get("profile_ids"):
+            raise ValueError(f"guidance mapping has no applicable profile: {mapping['id']}")
     for citation in GUIDANCE_CITATIONS:
         if citation["applicability"] not in APPLICABILITY_TYPES:
             raise ValueError(f"invalid guidance applicability: {citation['applicability']}")
+    for source in GUIDANCE_DOCUMENTS:
+        if source["applicability"] not in APPLICABILITY_TYPES:
+            raise ValueError(f"invalid source applicability: {source['applicability']}")
+        if len(str(source.get("record_sha256", ""))) != 64:
+            raise ValueError(f"guidance source lacks a canonical digest: {source['id']}")
+    for profile in GUIDELINE_PROFILES:
+        if unknown := sorted(set(profile["source_ids"]) - set(source_ids)):
+            raise ValueError(
+                f"guidance profile {profile['id']} references unknown sources: "
+                + ", ".join(unknown)
+            )
 
 
 validate_guidance_catalog()
@@ -399,12 +737,34 @@ _CITATIONS_BY_ID = {citation["id"]: citation for citation in GUIDANCE_CITATIONS}
 _SOURCES_BY_ID = {source["id"]: source for source in GUIDANCE_DOCUMENTS}
 
 
-def citations_for_rule(rule_id: str) -> list[dict[str, Any]]:
+def normalize_profile_ids(profile_ids: list[str] | None) -> list[str]:
+    """Validate, deduplicate, and deterministically order a profile selection."""
+
+    selected = DEFAULT_GUIDANCE_PROFILES if profile_ids is None else profile_ids
+    if not isinstance(selected, list) or not all(isinstance(value, str) for value in selected):
+        raise ValueError("guidance profiles must be an array of strings")
+    known = {profile["id"] for profile in GUIDELINE_PROFILES}
+    if unknown := sorted(set(selected) - known):
+        raise ValueError("unknown guidance profile(s): " + ", ".join(unknown))
+    if not selected:
+        raise ValueError("at least one guidance profile is required")
+    return list(dict.fromkeys(selected))
+
+
+def citations_for_rule(
+    rule_id: str, profile_ids: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Return curated, typed citation links inherited by one scanner rule."""
 
+    active_profiles = normalize_profile_ids(profile_ids)
     links: list[dict[str, Any]] = []
     for mapping in GUIDANCE_RULE_MAPPINGS:
         if not _selector_matches(mapping["rule_selector"], rule_id):
+            continue
+        matched_profiles = [
+            value for value in active_profiles if value in mapping["profile_ids"]
+        ]
+        if not matched_profiles:
             continue
         citation = _CITATIONS_BY_ID[mapping["citation_id"]]
         links.append(
@@ -416,20 +776,23 @@ def citations_for_rule(rule_id: str) -> list[dict[str, Any]]:
                 "applicability": citation["applicability"],
                 "via_rule_id": rule_id,
                 "mapping_id": mapping["id"],
+                "profile_ids": matched_profiles,
                 "status": "curated",
             }
         )
     return links
 
 
-def guidance_bundle() -> dict[str, Any]:
+def guidance_bundle(profile_ids: list[str] | None = None) -> dict[str, Any]:
     """Return the complete immutable-in-practice catalog as detached JSON data."""
 
+    active_profiles = normalize_profile_ids(profile_ids)
     core = {
         "schema_version": GUIDANCE_SCHEMA_VERSION,
         "catalog_version": GUIDANCE_CATALOG_VERSION,
         "retrieved_at": GUIDANCE_RETRIEVED_AT,
         "sources": GUIDANCE_DOCUMENTS,
+        "profiles": GUIDELINE_PROFILES,
         "citations": GUIDANCE_CITATIONS,
         "rule_mappings": GUIDANCE_RULE_MAPPINGS,
     }
@@ -437,7 +800,36 @@ def guidance_bundle() -> dict[str, Any]:
     bundle["catalog_sha256"] = hashlib.sha256(
         json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    bundle["active_profiles"] = active_profiles
+    bundle["selection_sha256"] = hashlib.sha256(
+        json.dumps(active_profiles, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     return bundle
+
+
+def selected_guidance_sources(profile_ids: list[str] | None = None) -> list[dict[str, Any]]:
+    """Return detached source records applicable to the selected profiles."""
+
+    active_profiles = normalize_profile_ids(profile_ids)
+    source_ids = {
+        source_id
+        for profile in GUIDELINE_PROFILES
+        if profile["id"] in active_profiles
+        for source_id in profile["source_ids"]
+    }
+    return copy.deepcopy(
+        [source for source in GUIDANCE_DOCUMENTS if source["id"] in source_ids]
+    )
+
+
+def analysis_guidance_profiles(analysis: dict[str, Any]) -> list[str]:
+    """Resolve the persisted selection without silently enabling extra authorities."""
+
+    embedded = analysis.get("guidance", {})
+    if isinstance(embedded, dict) and isinstance(embedded.get("active_profiles"), list):
+        return normalize_profile_ids(embedded["active_profiles"])
+    configured = analysis.get("context", {}).get("analysis", {}).get("guidance_profiles")
+    return normalize_profile_ids(configured)
 
 
 def ensure_guidance_traceability(
@@ -445,20 +837,23 @@ def ensure_guidance_traceability(
 ) -> dict[str, Any]:
     """Add missing guidance data or refresh scanner-owned mappings explicitly."""
 
+    active_profiles = analysis_guidance_profiles(analysis)
     if refresh or not isinstance(analysis.get("guidance"), dict):
-        analysis["guidance"] = guidance_bundle()
+        analysis["guidance"] = guidance_bundle(active_profiles)
     methodology = analysis.setdefault("methodology", {})
     if refresh:
-        methodology["basis"] = copy.deepcopy(GUIDANCE_SOURCES)
+        methodology["basis"] = selected_guidance_sources(active_profiles)
     else:
-        methodology.setdefault("basis", copy.deepcopy(GUIDANCE_SOURCES))
+        methodology.setdefault("basis", selected_guidance_sources(active_profiles))
     methodology.setdefault("notice", METHODOLOGY_NOTICE)
     methodology.setdefault("review_checklist", copy.deepcopy(REVIEW_CHECKLIST))
     for item in analysis.get("items", []):
         scanner = item.get("scanner")
         if isinstance(scanner, dict):
             if refresh:
-                inherited = citations_for_rule(str(scanner.get("rule_id", "")))
+                inherited = citations_for_rule(
+                    str(scanner.get("rule_id", "")), active_profiles
+                )
                 retained = [
                     link
                     for link in scanner.get("citations", [])
@@ -481,7 +876,8 @@ def ensure_guidance_traceability(
                 ]
             else:
                 scanner.setdefault(
-                    "citations", citations_for_rule(str(scanner.get("rule_id", "")))
+                    "citations",
+                    citations_for_rule(str(scanner.get("rule_id", "")), active_profiles),
                 )
     return analysis
 
@@ -489,7 +885,8 @@ def ensure_guidance_traceability(
 def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
     """Build source-to-rule-to-finding relationships for programmatic export."""
 
-    bundle = guidance_bundle()
+    active_profiles = analysis_guidance_profiles(analysis)
+    bundle = guidance_bundle(active_profiles)
     active = [
         item
         for item in analysis.get("items", [])
@@ -505,7 +902,7 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
         rule_id = str(scanner.get("rule_id", ""))
         links = scanner.get("citations")
         if not isinstance(links, list):
-            links = citations_for_rule(rule_id)
+            links = citations_for_rule(rule_id, active_profiles)
         normalized_links = [
             link
             for link in links

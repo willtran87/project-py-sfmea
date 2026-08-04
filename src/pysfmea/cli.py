@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from .architecture import export_architecture
+from .assurance import (
+    export_assurance_register,
+    export_pytest_scaffold,
+    review_obligation,
+)
 from .config import load_config, write_config_template
 from .discovery import (
     OpenAICompatibleProvider,
@@ -19,9 +24,25 @@ from .discovery import (
     generate_summary,
     review_suggestion,
 )
+from .execution import (
+    CRITERION_RESULTS,
+    EVIDENCE_REVIEW_DECISIONS,
+    import_execution_evidence,
+    prepare_sandbox_execution,
+    register_test_implementation,
+    review_execution_evidence,
+    run_sandbox_execution,
+)
 from .diagrams import GENERATED_DIAGRAM_KINDS, export_diagram_bundle
-from .guidance import GUIDANCE_SOURCES, METHODOLOGY_NOTICE
+from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
 from .html_report import MAX_REPORT_RECORDS, export_html_report
+from .interchange import (
+    cyclonedx_document,
+    differential_analysis,
+    export_json_document,
+    sarif_document,
+)
+from .pdf_report import export_pdf_report
 from .report import (
     export_audit,
     export_csv,
@@ -42,6 +63,7 @@ from .signing import (
     verify_review_signature,
 )
 from .store import load_analysis, merge_rescan, save_analysis
+from .sfta import export_sfta
 from .validation import review_queue, validate_analysis
 from .visuals import export_coverage, export_sequence, export_traceability
 from .version import __version__
@@ -151,6 +173,32 @@ def _parser() -> argparse.ArgumentParser:
     )
     report.set_defaults(handler=_html_report)
 
+    pdf = subparsers.add_parser(
+        "pdf", help="render the complete analysis report as a paginated PDF"
+    )
+    pdf.add_argument("analysis", help="analysis JSON path")
+    pdf.add_argument("-o", "--output", help="destination PDF path")
+    pdf.add_argument("--title", help="custom report title")
+    pdf.add_argument("--notes", help="optional UTF-8 Markdown engineering-notes file")
+    pdf.add_argument(
+        "--diagram",
+        action="append",
+        default=[],
+        help="custom canonical diagram JSON file; repeat to include multiple files",
+    )
+    pdf.add_argument(
+        "--max-records",
+        type=int,
+        default=10_000,
+        help=f"maximum rendered records (1-{MAX_REPORT_RECORDS}; default: 10000)",
+    )
+    pdf.add_argument(
+        "--browser",
+        help="explicit Edge, Chrome, or Chromium executable path",
+    )
+    pdf.add_argument("--timeout-seconds", type=int, default=180)
+    pdf.set_defaults(handler=_pdf_report)
+
     diagram = subparsers.add_parser(
         "diagram", help="export canonical, renderer-neutral SFMEA diagram models"
     )
@@ -163,6 +211,30 @@ def _parser() -> argparse.ArgumentParser:
     )
     diagram.add_argument("-o", "--output", help="destination JSON path")
     diagram.set_defaults(handler=_diagram)
+
+    sfta = subparsers.add_parser(
+        "sfta", help="export Software Fault Trees and bottom-up/top-down reconciliation gaps"
+    )
+    sfta.add_argument("analysis", help="analysis JSON path")
+    sfta.add_argument("--format", choices=("json", "csv"), default="json")
+    sfta.add_argument("-o", "--output", help="destination path")
+    sfta.set_defaults(handler=_sfta)
+
+    sarif = subparsers.add_parser("sarif", help="export SFMEA screening candidates as SARIF 2.1.0")
+    sarif.add_argument("analysis", help="analysis JSON path")
+    sarif.add_argument("-o", "--output", help="destination .sarif path")
+    sarif.set_defaults(handler=_sarif)
+
+    sbom = subparsers.add_parser("sbom", help="export declared dependency inventory as CycloneDX 1.6")
+    sbom.add_argument("analysis", help="analysis JSON path")
+    sbom.add_argument("-o", "--output", help="destination CycloneDX JSON path")
+    sbom.set_defaults(handler=_sbom)
+
+    difference = subparsers.add_parser("diff", help="compare two canonical SFMEA analysis runs")
+    difference.add_argument("previous", help="previous analysis JSON")
+    difference.add_argument("current", help="current analysis JSON")
+    difference.add_argument("-o", "--output", help="destination diff JSON path")
+    difference.set_defaults(handler=_diff)
 
     package = subparsers.add_parser(
         "package", help="create a complete checksum-manifested review package"
@@ -337,6 +409,125 @@ def _parser() -> argparse.ArgumentParser:
     citations.add_argument("--format", choices=("json", "csv"), default="json")
     citations.add_argument("-o", "--output", help="destination path")
     citations.set_defaults(handler=_citations)
+
+    assurance = subparsers.add_parser(
+        "assurance", help="export the executable verification-obligation checklist"
+    )
+    assurance.add_argument("analysis", help="analysis JSON path")
+    assurance.add_argument(
+        "--format", choices=("json", "csv", "markdown"), default="json"
+    )
+    assurance.add_argument("-o", "--output", help="destination path")
+    assurance.set_defaults(handler=_assurance)
+
+    assurance_review = subparsers.add_parser(
+        "assurance-review", help="record a governed verification-planning decision"
+    )
+    assurance_review.add_argument("analysis", help="analysis JSON path")
+    assurance_review.add_argument("obligation_id")
+    assurance_review.add_argument(
+        "--status",
+        required=True,
+        choices=(
+            "candidate",
+            "confirmed",
+            "control_missing",
+            "control_implemented",
+            "verification_planned",
+            "test_proposed",
+            "evidence_collected",
+            "partially_verified",
+            "residual_risk_review",
+            "reopened",
+            "not_applicable",
+            "retired",
+        ),
+    )
+    assurance_review.add_argument("--reviewer", required=True)
+    assurance_review.add_argument("--rationale", required=True)
+    assurance_review.add_argument("--owner", default="")
+    assurance_review.set_defaults(handler=_assurance_review)
+
+    assurance_scaffold = subparsers.add_parser(
+        "assurance-scaffold",
+        help="create intentionally failing pytest placeholders from verification obligations",
+    )
+    assurance_scaffold.add_argument("analysis", help="analysis JSON path")
+    assurance_scaffold.add_argument("-o", "--output", required=True)
+    assurance_scaffold.add_argument(
+        "--scope", default="*", help="path:component, finding-ID, or obligation-ID glob"
+    )
+    assurance_scaffold.add_argument("--limit", type=int, default=100)
+    assurance_scaffold.set_defaults(handler=_assurance_scaffold)
+
+    assurance_test = subparsers.add_parser(
+        "assurance-test-register",
+        help="bind proposed or implemented test source to a verification obligation",
+    )
+    assurance_test.add_argument("analysis", help="analysis JSON path")
+    assurance_test.add_argument("obligation_id")
+    assurance_test.add_argument("--test-path", required=True)
+    assurance_test.add_argument("--author", required=True)
+    assurance_test.add_argument(
+        "--origin", choices=("human", "llm_generated", "imported"), required=True
+    )
+    assurance_test.add_argument(
+        "--status", choices=("proposed", "implemented"), default="implemented"
+    )
+    assurance_test.set_defaults(handler=_assurance_test_register)
+
+    assurance_run = subparsers.add_parser(
+        "assurance-run",
+        help="execute one implemented assurance test in an approved Docker/Podman sandbox",
+    )
+    assurance_run.add_argument("analysis", help="analysis JSON path")
+    assurance_run.add_argument("obligation_id")
+    assurance_run.add_argument("--image", required=True, help="preloaded approved image reference")
+    assurance_run.add_argument("--initiated-by", required=True)
+    assurance_run.add_argument("--engine", choices=("auto", "docker", "podman"), default="auto")
+    assurance_run.add_argument("--evidence-root", help="host directory for immutable execution artifacts")
+    assurance_run.add_argument("--cpus", type=float, default=1.0)
+    assurance_run.add_argument("--memory-mb", type=int, default=1024)
+    assurance_run.add_argument("--pids-limit", type=int, default=128)
+    assurance_run.add_argument("--timeout-seconds", type=int, default=900)
+    assurance_run.add_argument("--allow-dirty", action="store_true")
+    execution_mode = assurance_run.add_mutually_exclusive_group(required=True)
+    execution_mode.add_argument("--dry-run", action="store_true")
+    execution_mode.add_argument("--approve-execution", action="store_true")
+    assurance_run.set_defaults(handler=_assurance_run)
+
+    evidence_import = subparsers.add_parser(
+        "assurance-evidence-import",
+        help="import bounded CI or externally produced execution evidence",
+    )
+    evidence_import.add_argument("analysis", help="analysis JSON path")
+    evidence_import.add_argument("obligation_id")
+    evidence_import.add_argument("--manifest", required=True, help="external evidence manifest JSON")
+    evidence_import.add_argument("--initiated-by", required=True)
+    evidence_import.add_argument("--evidence-root", help="managed destination for copied evidence")
+    evidence_import.set_defaults(handler=_assurance_evidence_import)
+
+    evidence_review = subparsers.add_parser(
+        "assurance-evidence-review",
+        help="independently evaluate as-run evidence against the original acceptance criteria",
+    )
+    evidence_review.add_argument("analysis", help="analysis JSON path")
+    evidence_review.add_argument("execution_id")
+    evidence_review.add_argument("--reviewer", required=True)
+    evidence_review.add_argument(
+        "--decision", choices=tuple(sorted(EVIDENCE_REVIEW_DECISIONS)), required=True
+    )
+    evidence_review.add_argument("--rationale", required=True)
+    evidence_review.add_argument(
+        "--stimulus-observed", choices=("yes", "no"), required=True
+    )
+    evidence_review.add_argument(
+        "--criterion-result",
+        action="append",
+        required=True,
+        help="repeat INDEX=pass|fail|insufficient|not_observed for every criterion",
+    )
+    evidence_review.set_defaults(handler=_assurance_evidence_review)
     return parser
 
 
@@ -489,6 +680,28 @@ def _html_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pdf_report(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(source)
+    output = (
+        Path(args.output)
+        if args.output
+        else source.with_name(source.stem + "-report.pdf")
+    )
+    result = export_pdf_report(
+        analysis,
+        output,
+        title=args.title,
+        notes=args.notes,
+        max_records=args.max_records,
+        diagrams=args.diagram,
+        browser=args.browser,
+        timeout_seconds=args.timeout_seconds,
+    )
+    print(f"Created paginated SFMEA PDF report: {result}")
+    return 0
+
+
 def _diagram(args: argparse.Namespace) -> int:
     source = Path(args.analysis).expanduser().resolve()
     analysis = load_analysis(source)
@@ -499,6 +712,53 @@ def _diagram(args: argparse.Namespace) -> int:
     )
     result = export_diagram_bundle(analysis, output, kind=args.type)
     print(f"Exported canonical SFMEA diagrams: {result}")
+    return 0
+
+
+def _sfta(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(source)
+    suffix = ".json" if args.format == "json" else ".csv"
+    output = (
+        Path(args.output)
+        if args.output
+        else source.with_name(source.stem + "-sfta" + suffix)
+    )
+    result = export_sfta(analysis, output, format=args.format)
+    print(f"Exported Software Fault Trees and reconciliation gaps: {result}")
+    return 0
+
+
+def _sarif(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(source)
+    output = Path(args.output) if args.output else source.with_suffix(".sarif")
+    result = export_json_document(sarif_document(analysis), output)
+    print(f"Exported SARIF screening results: {result}")
+    return 0
+
+
+def _sbom(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(source)
+    output = Path(args.output) if args.output else source.with_name(source.stem + "-cdx.json")
+    result = export_json_document(cyclonedx_document(analysis), output)
+    print(f"Exported CycloneDX declared-dependency inventory: {result}")
+    return 0
+
+
+def _diff(args: argparse.Namespace) -> int:
+    previous_path = Path(args.previous).expanduser().resolve()
+    current_path = Path(args.current).expanduser().resolve()
+    previous = load_analysis(previous_path)
+    current = load_analysis(current_path)
+    output = (
+        Path(args.output)
+        if args.output
+        else current_path.with_name(current_path.stem + "-diff.json")
+    )
+    result = export_json_document(differential_analysis(previous, current), output)
+    print(f"Exported differential analysis: {result}")
     return 0
 
 
@@ -880,6 +1140,12 @@ def _evaluate(args: argparse.Namespace) -> int:
 def _guidance(args: argparse.Namespace) -> int:
     print("PySFMEA methodology notice")
     print(METHODOLOGY_NOTICE)
+    print("\nApplicability profiles:")
+    for profile in GUIDELINE_PROFILES:
+        print(
+            f"- {profile['id']}: {profile['title']} ({profile['status']})\n  "
+            f"{profile['applicability']}\n  Tailoring: {profile['tailoring']}"
+        )
     print("\nPublic guidance basis:")
     for source in GUIDANCE_SOURCES:
         print(
@@ -897,6 +1163,204 @@ def _citations(args: argparse.Namespace) -> int:
     output = Path(args.output) if args.output else source.with_name(source.stem + suffix)
     result = export_guidance_traceability(analysis, output, format=args.format)
     print(f"Exported guidance traceability {args.format}: {result}")
+    return 0
+
+
+def _assurance(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    source = Path(args.analysis).expanduser().resolve()
+    suffix = {"json": ".assurance.json", "csv": ".assurance.csv", "markdown": ".assurance.md"}[
+        args.format
+    ]
+    output = Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    result = export_assurance_register(analysis, output, format=args.format)
+    print(f"Exported executable assurance checklist {args.format}: {result}")
+    return 0
+
+
+def _assurance_review(args: argparse.Namespace) -> int:
+    path = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(path)
+    try:
+        result = review_obligation(
+            analysis,
+            args.obligation_id,
+            status=args.status,
+            reviewer=args.reviewer,
+            rationale=args.rationale,
+            owner=args.owner,
+        )
+    except KeyError as exc:
+        raise ValueError(f"unknown assurance obligation: {args.obligation_id}") from exc
+    save_analysis(path, analysis)
+    print(
+        f"Assurance obligation {result['id']} updated to {result['assurance_status']}; "
+        "no verification or closure was inferred."
+    )
+    return 0
+
+
+def _assurance_scaffold(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    result = export_pytest_scaffold(
+        analysis,
+        args.output,
+        scope=args.scope,
+        limit=args.limit,
+    )
+    count = len(
+        json.loads((result / "assurance-manifest.json").read_text(encoding="utf-8"))[
+            "obligations"
+        ]
+    )
+    print(
+        f"Created {count} intentionally failing assurance test placeholder(s): {result}"
+    )
+    print("Implement and execute them only in an approved sandbox; they are not evidence yet.")
+    return 0
+
+
+def _assurance_test_register(args: argparse.Namespace) -> int:
+    path = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(path)
+    try:
+        result = register_test_implementation(
+            analysis,
+            args.obligation_id,
+            test_path=args.test_path,
+            author=args.author,
+            origin=args.origin,
+            status=args.status,
+        )
+    except KeyError as exc:
+        raise ValueError(f"unknown assurance obligation: {args.obligation_id}") from exc
+    save_analysis(path, analysis)
+    print(
+        f"Registered {result['automation']['implementation_status']} test "
+        f"{result['automation']['implemented_test_path']} for {result['id']} "
+        f"({result['automation']['test_sha256']})."
+    )
+    print("The test has not been executed and is not verification evidence.")
+    return 0
+
+
+def _assurance_run(args: argparse.Namespace) -> int:
+    path = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(path)
+    evidence_root = (
+        Path(args.evidence_root)
+        if args.evidence_root
+        else path.parent / "assurance-evidence"
+    )
+    common = {
+        "image": args.image,
+        "initiated_by": args.initiated_by,
+        "engine": args.engine,
+        "cpus": args.cpus,
+        "memory_mb": args.memory_mb,
+        "pids_limit": args.pids_limit,
+        "timeout_seconds": args.timeout_seconds,
+        "allow_dirty": args.allow_dirty,
+    }
+    try:
+        if args.dry_run:
+            result = prepare_sandbox_execution(
+                analysis,
+                args.obligation_id,
+                evidence_directory=evidence_root / "DRY-RUN",
+                **common,
+            )
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        result = run_sandbox_execution(
+            analysis,
+            args.obligation_id,
+            evidence_root=evidence_root,
+            approved=args.approve_execution,
+            **common,
+        )
+    except KeyError as exc:
+        raise ValueError(f"unknown assurance obligation: {args.obligation_id}") from exc
+    save_analysis(path, analysis)
+    print(
+        f"Sandbox execution {result['id']}: status={result['status']}, "
+        f"exit={result.get('exit_code')}, evidence={result['evidence_directory']}"
+    )
+    print("Execution evidence awaits independent acceptance-criterion review.")
+    return int(result["status"] != "passed")
+
+
+def _criterion_results(values: list[str]) -> dict[int, str]:
+    results: dict[int, str] = {}
+    for value in values:
+        index_text, separator, result = value.partition("=")
+        if not separator or not index_text.isdigit() or result not in CRITERION_RESULTS:
+            raise ValueError(
+                "criterion results must use INDEX=pass|fail|insufficient|not_observed"
+            )
+        index = int(index_text)
+        if index < 1 or index in results:
+            raise ValueError("criterion result indexes must be unique positive integers")
+        results[index] = result
+    return results
+
+
+def _assurance_evidence_import(args: argparse.Namespace) -> int:
+    path = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(path)
+    evidence_root = (
+        Path(args.evidence_root)
+        if args.evidence_root
+        else path.parent / "assurance-evidence"
+    )
+    before = {
+        value.get("id")
+        for value in analysis.get("assurance", {}).get("executions", [])
+    }
+    try:
+        result = import_execution_evidence(
+            analysis,
+            args.obligation_id,
+            manifest_path=args.manifest,
+            evidence_root=evidence_root,
+            initiated_by=args.initiated_by,
+        )
+    except KeyError as exc:
+        raise ValueError(f"unknown assurance obligation: {args.obligation_id}") from exc
+    save_analysis(path, analysis)
+    action = "Already imported" if result["id"] in before else "Imported"
+    print(
+        f"{action} execution evidence {result['id']}: status={result['status']}, "
+        f"artifacts={len(result.get('artifacts', []))}."
+    )
+    print(
+        "Imported evidence is externally supplied and unreviewed; independent "
+        "acceptance-criterion review is still required."
+    )
+    return 0
+
+
+def _assurance_evidence_review(args: argparse.Namespace) -> int:
+    path = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(path)
+    try:
+        result = review_execution_evidence(
+            analysis,
+            args.execution_id,
+            reviewer=args.reviewer,
+            decision=args.decision,
+            rationale=args.rationale,
+            stimulus_observed=args.stimulus_observed == "yes",
+            criterion_results=_criterion_results(args.criterion_result),
+        )
+    except KeyError as exc:
+        raise ValueError(f"unknown assurance execution: {args.execution_id}") from exc
+    save_analysis(path, analysis)
+    print(
+        f"Evidence review {result['id']}: decision={result['decision']}, "
+        f"artifacts_valid={result['artifact_integrity_valid']}."
+    )
+    print("Verification does not close the finding or accept residual risk.")
     return 0
 
 

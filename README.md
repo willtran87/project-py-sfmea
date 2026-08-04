@@ -8,7 +8,7 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 
 - Stable components linked to file and line locations
 - Candidate software failure modes derived from public NASA and FAA guidance
-- Versioned guidance-to-finding citations with typed applicability and relationship metadata
+- Versioned, applicability-profiled guidance-to-finding citations with typed relationship metadata and source/artifact integrity hashes
 - Separate scanner-priority and engineering-risk fields
 - Editable functions, requirements, causes, local effects, next-higher effects, and end effects
 - Optional severity, occurrence, detection, and RPN fields
@@ -25,14 +25,18 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
   interface, traceability, failure-propagation, control, sequence, state, and custom diagrams
 - SFMEA linkage and review-coverage reports
 - Self-contained interactive HTML reports with executive metrics, filters, record
-  drill-down, architecture, traceability, sequences, notes, CSV extraction, and print/PDF styling
+  drill-down, architecture, traceability, sequences, notes, CSV extraction, and print styling
+- Paginated PDF reports rendered from the same self-contained workspace through a locally installed Edge, Chrome, or Chromium browser
 - Dependency baselines, common-cause records, categorical severity, and review audit history
 - Lockfile and recursively included requirements baselines
 - FastAPI, Flask, Django, Celery, Kafka, RabbitMQ, Click, and Typer entrypoint metadata
 - OpenAPI, Swagger, JSON Schema, and protobuf contract inventory with compatibility failure prompts
 - Simple and OpenTelemetry JSON runtime-span evidence import
 - Provider-neutral, grounded machine discovery and summarization with explicit suggestion review
+- A baseline-aware Verification Obligation Register generated from every active finding
+- Automation-ready pytest scaffolds that fail until meaningful assurance tests are implemented
 - CSV and Markdown exports
+- Immutable scan manifests with source/configuration/guidance/adapter/dependency/contract digests and a typed, health-reporting adapter registry
 - A local browser reviewer with no hosted service or repository upload
 
 ## Install
@@ -92,6 +96,7 @@ Export the worksheet:
 sfmea export C:\path\to\python-repo\sfmea-analysis.json --format csv
 sfmea export C:\path\to\python-repo\sfmea-analysis.json --format markdown
 sfmea report C:\path\to\python-repo\sfmea-analysis.json
+sfmea pdf C:\path\to\python-repo\sfmea-analysis.json -o C:\path\to\python-repo\sfmea-report.pdf
 sfmea diagram C:\path\to\python-repo\sfmea-analysis.json -o diagrams.json
 sfmea inventory C:\path\to\python-repo\sfmea-analysis.json
 sfmea architecture C:\path\to\python-repo\sfmea-analysis.json
@@ -102,6 +107,9 @@ sfmea traceability C:\path\to\python-repo\sfmea-analysis.json
 sfmea coverage C:\path\to\python-repo\sfmea-analysis.json
 sfmea citations C:\path\to\python-repo\sfmea-analysis.json --format json
 sfmea citations C:\path\to\python-repo\sfmea-analysis.json --format csv
+sfmea assurance C:\path\to\python-repo\sfmea-analysis.json --format json
+sfmea assurance C:\path\to\python-repo\sfmea-analysis.json --format csv
+sfmea assurance-scaffold C:\path\to\python-repo\sfmea-analysis.json -o assurance-tests --limit 25
 sfmea package C:\path\to\python-repo\sfmea-analysis.json
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable --zip
@@ -332,6 +340,130 @@ existing record. Suggestions record provider/model identity, prompt version, sou
 baseline, evidence IDs, uncertainties, questions, response hash, and review history.
 Proposed suggestions become stale after a baseline change.
 
+## Executable assurance checklist
+
+Every active SFMEA finding receives one stable verification obligation. The obligation
+records the failure condition, preconditions, recommended verification method, stimulus,
+local and system oracles, acceptance criteria, required environment, repeatability,
+evidence requirements, and an approved-sandbox command contract. Methods are selected
+deterministically from the failure class and rule: property testing for data/calculation,
+contract or integration testing for interfaces, state-transition testing, concurrency,
+stress, fault injection, security testing, configuration inspection, or architecture
+review as appropriate.
+
+Export the complete Failure Mode Assurance Matrix:
+
+```powershell
+sfmea assurance sfmea-analysis.json --format json -o assurance-register.json
+sfmea assurance sfmea-analysis.json --format csv -o assurance-register.csv
+sfmea assurance sfmea-analysis.json --format markdown -o assurance-register.md
+```
+
+Create a bounded pytest implementation queue for a component or finding glob:
+
+```powershell
+sfmea assurance-scaffold sfmea-analysis.json `
+  --scope "src/payments/**" `
+  --limit 25 `
+  -o assurance-tests
+```
+
+The generated pytest cases fail intentionally until an engineer implements the recorded
+stimulus, oracles, and acceptance criteria. Empty, skipped, or assertion-free tests cannot
+silently satisfy the checklist. The scaffold, a named test, coverage, or a passing result is
+not evidence by itself. Verification and closure require current execution artifacts,
+proof that the failure was triggered, acceptance-criterion evaluation, independent review,
+and any required approval. `assurance-review` can govern planning states but cannot directly
+set `verified`, `accepted_risk`, or `closed`.
+
+Register a completed test, preview its exact container contract, and execute it only after
+explicit approval:
+
+```powershell
+sfmea assurance-test-register sfmea-analysis.json VO-... `
+  --test-path tests/test_failure_control.py `
+  --author "Verification Engineer" `
+  --origin human
+
+sfmea assurance-run sfmea-analysis.json VO-... `
+  --image "organization/assurance-python@sha256:..." `
+  --initiated-by "Execution Operator" `
+  --dry-run
+
+sfmea assurance-run sfmea-analysis.json VO-... `
+  --image "organization/assurance-python@sha256:..." `
+  --initiated-by "Execution Operator" `
+  --approve-execution
+```
+
+The Docker/Podman runner does not pull images. It disables networking and IPC, mounts
+source read-only, drops capabilities, sets no-new-privileges, uses an unprivileged user,
+does not forward credentials, and applies CPU, memory, process, file-descriptor, temporary
+filesystem, output, and time limits. The command, image identity, test hash, baseline,
+repository state, logs, JUnit result, and artifact hashes are recorded in a managed evidence
+directory. A dry run validates the same preconditions and prints the exact command without
+executing repository code.
+
+Existing CI evidence can be imported without re-executing it:
+
+```powershell
+sfmea assurance-evidence-import sfmea-analysis.json VO-... `
+  --manifest ci-evidence/manifest.json `
+  --initiated-by "CI Evidence Importer"
+```
+
+The versioned import manifest identifies the current `baseline_id`, repository revision,
+test path and SHA-256, shell-free `command_argv`, outcome, environment, dependency-lock
+metadata, and one or more manifest-relative artifacts with optional SHA-256 claims. Import
+is idempotent, rejects traversal and symlinks, enforces size limits, re-hashes and copies the
+artifacts, and labels them `externally_supplied_unattested`. An organization may therefore
+apply its own CI attestation policy without PySFMEA silently treating the import as trusted.
+
+Finally, a different identity evaluates every original acceptance criterion:
+
+```powershell
+sfmea assurance-evidence-review sfmea-analysis.json EXEC-... `
+  --reviewer "Independent Reviewer" `
+  --decision sufficient `
+  --stimulus-observed yes `
+  --criterion-result 1=pass `
+  --criterion-result 2=pass `
+  --criterion-result 3=pass `
+  --rationale "Failure stimulus occurred and each criterion is supported by intact evidence."
+```
+
+The review verifies the execution statement and every artifact again. `sufficient` is
+rejected unless the run passed, the intended stimulus was observed, all criteria pass, the
+baseline is current, all hashes are intact, and the reviewer is independent. Verification
+still does not close the finding or accept residual risk.
+
+## Top-down Software Fault Trees
+
+SFMEA is reconciled with user-defined top-down Software Fault Trees. Add one or more
+`[[fault_trees]]` entries to `sfmea.toml`; each tree identifies its hazard and top event,
+explicit events, and AND, OR, VOTE, or INHIBIT gates. Events can correlate to findings by
+stable finding ID, `path:qualified-name` component glob, and failure-mode text glob. The
+configuration validator rejects duplicate IDs, unknown inputs, invalid voting thresholds,
+unknown hazards, unsupported node types, and logical cycles.
+
+```powershell
+sfmea sfta sfmea-analysis.json --format json -o sfta.json
+sfmea sfta sfmea-analysis.json --format csv -o sfta-gaps.csv
+sfmea diagram sfmea-analysis.json --type sfta -o sfta-diagrams.json
+```
+
+Every configured hazard receives a tree record. When explicit logic is absent, PySFMEA
+creates an **undeveloped placeholder**, not inferred gate logic. Reconciliation reports:
+
+- top-down basic or undeveloped events with no bottom-up finding;
+- hazard-linked bottom-up findings with no corresponding tree event; and
+- correlations whose finding does not carry the tree's hazard link.
+
+The self-contained report provides a hazard/SFTA workspace and links each tree to its
+renderer-neutral inline-SVG diagram. Gate logic remains a preliminary engineering model:
+correlation does not establish causation, independence, minimal cut sets, probability, or
+hazard-analysis completeness.
+
 The browser warns before discarding edited fields, constrains numeric ratings to
 1–10, supports Ctrl/Cmd+S to save, Ctrl/Cmd+Enter or **Save & next** to advance,
 and focuses the search box with `/`. Large result sets render in bounded 200-record
@@ -352,6 +484,40 @@ Machine summaries are bounded to cited worksheet records, stored separately, and
 marked stale after a baseline change. They are not risk-acceptance conclusions.
 
 ## Evaluation hook
+
+The repository includes a checked-in synthetic validation corpus under
+`benchmarks/python_sfmea_corpus`. It enumerates every expected candidate in scope,
+requires recall and precision of `1.0`, checks repeated-scan input digest stability,
+and verifies regulatory-profile isolation. See [benchmark instructions](benchmarks/README.md).
+
+## Standards-oriented interchange and change analysis
+
+Export screening candidates to SARIF 2.1.0 and the declared dependency inventory to
+CycloneDX 1.6:
+
+```powershell
+sfmea sarif sfmea-analysis.json -o findings.sarif
+sfmea sbom sfmea-analysis.json -o components.cdx.json
+```
+
+SARIF results are explicitly labeled SFMEA **candidates**, use stable partial fingerprints
+and repository-relative locations, and remain notes unless an accepted high-priority item
+warrants warning presentation. The CycloneDX BOM includes declaration sources and hashed
+manifests, but labels unresolved declarations as `declared-not-resolved`; it does not invent
+installed versions or transitive dependencies.
+
+Compare canonical runs with:
+
+```powershell
+sfmea diff previous-analysis.json current-analysis.json -o analysis-diff.json
+```
+
+The differential output lists new, removed, and materially changed findings; changed causes,
+effects, severity, controls, hazards, requirements, citations, disposition, and source
+fingerprints; changed assumptions/configuration/dependencies; and previously sufficient
+evidence that is no longer sufficient. It is an impact-analysis input, not proof of
+behavioral equivalence. SARIF, CycloneDX, SFTA JSON/CSV, assurance, and evidence catalogs are
+also included in the checksum-manifested review package.
 
 Maintain a golden JSON corpus of expected component/rule pairs:
 
@@ -450,6 +616,17 @@ The implementation and exact starter language are documented in [Methodology](do
 
 Organizations using automotive, aerospace, medical, nuclear, or other regulated processes must apply the relevant licensed standards, rating tables, independence, tool-qualification, and approval requirements themselves.
 
+Select guidance applicability explicitly in `[analysis]`:
+
+```toml
+guidance_profiles = ["core_sfmea", "faa_commercial_space"]
+```
+
+Available built-in profiles are `core_sfmea` (default), `nasa_assurance`,
+`faa_commercial_space`, `faa_airworthiness`, `security`, and `legacy_reference`.
+Only selected profiles contribute citations to findings. Selecting a profile records
+the intended analytical context; it does not determine legal applicability or compliance.
+
 ## Public guidance basis
 
 - [NASA Software Engineering Handbook — Software FMEA](https://swehb.nasa.gov/spaces/SWEHBVD/pages/102695706/8.05+-+SW+Failure+Modes+and+Effects+Analysis): bottom-up propagation; data, event, interface, timing, state, detection, corrective action, and change-impact guidance.
@@ -457,8 +634,15 @@ Organizations using automotive, aerospace, medical, nuclear, or other regulated 
 - [NASA NPR 7150.2D](https://nodis3.gsfc.nasa.gov/displayDir.cfm?c=7150&s=2D&t=NPR): NASA software-engineering lifecycle and bidirectional-traceability requirements. Applicability is NASA- or contract-specific.
 - [FAA software and computing-system safety guide](https://www.faa.gov/sites/faa.gov/files/regulations_policies/faa_regulations/commercial_space/Guide-Software-Comp-Sys-Safety-RLV-Reentry.pdf): detailed SFMEA classifications and worksheet examples. FAA now lists this as [legacy licensing guidance](https://www.faa.gov/space/licenses/legacy-regulations), so PySFMEA labels its mappings `legacy_methodological` rather than current compliance.
 
-Every built-in locator and rule mapping is stored in the analysis under `guidance` with a
-catalog version and SHA-256 digest. Each scanner record contains typed citation links under
+Additional current and historical public sources are profile-gated:
+
+- [NASA Software Safety Guidebook, NASA-GB-8719.13](https://standards.nasa.gov/sites/default/files/standards/NASA/Baseline/0/nasa-gb-871913.pdf): detailed legacy-method reference for SFMEA, SFTA, and data/event prompts.
+- [FAA AC 450.141-1A, Computing System Safety](https://www.faa.gov/regulations_policies/advisory_circulars/index.cfm/go/document.information/documentNumber/450.141-1A): active commercial-space guidance covering SFMEA, SFTA, verification independence, and evidence traceability.
+- [FAA AC 20-115D](https://www.faa.gov/airports/resources/advisory_circulars/index.cfm/go/document.information/documentNumber/20-115D): airworthiness development-assurance context for lifecycle objectives/data, change impact, and tool qualification; licensed normative references are not bundled.
+
+Every built-in source, locator, profile, and rule mapping is stored in the analysis under
+`guidance` with catalog and selection SHA-256 digests. Public PDF records include exact
+downloaded artifact byte counts and hashes where captured. Each scanner record contains typed citation links under
 `scanner.citations`. `sfmea citations` emits the complete source → locator → rule → finding
 graph as JSON or a flat review-ready CSV. These relationships explain methodology or review
 relevance; they do not prove a defect, regulatory applicability, or compliance.
@@ -471,7 +655,7 @@ relevance; they do not prove a defect, regulatory applicability, or compliance.
 - Project context and hazards must be supplied by people. A configured hazard may seed an end effect and severity, but its applicability still requires confirmation.
 - Suggested causes and actions are prompts, not findings proven to exist.
 - Rule output can be repetitive. Scope and review disposition are expected to reduce the working set.
-- Project-defined common causes are supported, but the tool does not automatically prove independence or enumerate arbitrary combinations. It does not perform FTA, STPA, runtime fault injection, or mutation analysis.
+- Project-defined common causes and explicit SFTA are supported, but the tool does not infer or approve arbitrary fault-tree logic, prove independence, perform STPA, or automatically execute runtime fault injection or mutation analysis.
 - The local reviewer detects external file changes and refuses stale writes, but it has no identity provider, electronic-signature control, role enforcement, or enterprise approval workflow.
 - Hosted-model use is opt-in and requires an explicit endpoint. Organizations remain responsible for provider approval, retention policy, regional processing, and sensitive-data controls.
 - CSV exports neutralize formula-like reviewer text for safer spreadsheet opening, but exported files still need the recipient organization's document controls.

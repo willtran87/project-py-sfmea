@@ -10,6 +10,7 @@ from typing import Any, Iterable
 from .architecture import architecture_graph
 from .guidance import guidance_traceability
 from .model import stable_id, utc_now
+from .sfta import build_sfta
 from .visuals import sequence_model
 from .version import __version__
 
@@ -30,6 +31,8 @@ GENERATED_DIAGRAM_KINDS = (
     "interface_flow",
     "traceability",
     "guidance_traceability",
+    "assurance_traceability",
+    "sfta",
     "failure_propagation",
     "control_coverage",
     "sequence",
@@ -693,6 +696,148 @@ def guidance_traceability_diagram(
     )
 
 
+def assurance_traceability_diagram(
+    analysis: dict[str, Any], *, record_limit: int = 30
+) -> dict[str, Any]:
+    """Build a bounded finding-to-obligation-to-test-to-evidence graph."""
+
+    obligations = [
+        value
+        for value in analysis.get("assurance", {}).get("obligations", [])
+        if value.get("source_status", "active") == "active"
+    ][:record_limit]
+    items = {value.get("id", ""): value for value in analysis.get("items", [])}
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    for index, obligation in enumerate(obligations):
+        finding_id = str(obligation.get("finding_id", ""))
+        item = items.get(finding_id, {})
+        finding_node = f"assurance-finding:{finding_id}"
+        obligation_node = f"assurance-obligation:{obligation.get('id', '')}"
+        test_node = f"assurance-test:{obligation.get('id', '')}"
+        evidence_node = f"assurance-evidence:{obligation.get('id', '')}"
+        nodes.extend(
+            [
+                _node(
+                    finding_node,
+                    str(
+                        item.get("review", {}).get("failure_mode")
+                        or item.get("scanner", {}).get("failure_mode", finding_id)
+                    ),
+                    "failure_mode",
+                    source=(
+                        f"{item.get('source', {}).get('path', '')}:"
+                        f"{item.get('source', {}).get('line', '')}"
+                    ),
+                    tags=[str(obligation.get("failure_class", ""))],
+                    layer=0,
+                    order=index,
+                ),
+                _node(
+                    obligation_node,
+                    str(obligation.get("id", "")),
+                    "verification_obligation",
+                    description=str(obligation.get("objective", "")),
+                    tags=[
+                        str(obligation.get("verification_method", "")),
+                        str(obligation.get("assurance_status", "")),
+                    ],
+                    layer=1,
+                    order=index,
+                ),
+                _node(
+                    test_node,
+                    str(
+                        obligation.get("automation", {}).get(
+                            "proposed_test_path", "test not planned"
+                        )
+                    ),
+                    "test_case",
+                    description=str(
+                        obligation.get("stimulus", {}).get("description", "")
+                    ),
+                    tags=[
+                        str(
+                            obligation.get("automation", {}).get(
+                                "implementation_status", ""
+                            )
+                        )
+                    ],
+                    layer=2,
+                    order=index,
+                ),
+                _node(
+                    evidence_node,
+                    f"Evidence: {obligation.get('evidence_status', 'missing')}",
+                    "verification_evidence",
+                    description="Execution and review artifacts; missing evidence cannot support closure.",
+                    tags=[str(obligation.get("evidence_status", ""))],
+                    layer=3,
+                    order=index,
+                ),
+            ]
+        )
+        edges.extend(
+            [
+                _edge(
+                    f"assurance-requires-{index}",
+                    finding_node,
+                    obligation_node,
+                    "requires verification",
+                    "requires_verification",
+                    evidence=str(obligation.get("id", "")),
+                ),
+                _edge(
+                    f"assurance-plans-{index}",
+                    obligation_node,
+                    test_node,
+                    "planned test",
+                    "planned_implementation",
+                    evidence=str(
+                        obligation.get("automation", {}).get(
+                            "implementation_status", ""
+                        )
+                    ),
+                ),
+                _edge(
+                    f"assurance-evidence-{index}",
+                    test_node,
+                    evidence_node,
+                    "produces evidence",
+                    "produces_evidence",
+                    evidence=str(obligation.get("evidence_status", "")),
+                ),
+            ]
+        )
+    return normalize_diagram_model(
+        {
+            "id": "assurance-traceability",
+            "title": "Failure-mode assurance traceability",
+            "type": "traceability",
+            "description": "Candidate findings mapped to verification obligations, planned tests, and evidence state.",
+            "notice": (
+                f"Bounded to {record_limit} active obligations. Planned or implemented tests "
+                "are not evidence until approved execution and independent review."
+            ),
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {
+                "category": "assurance_traceability",
+                "record_limit": record_limit,
+                "total_active_obligations": len(
+                    [
+                        value
+                        for value in analysis.get("assurance", {}).get(
+                            "obligations", []
+                        )
+                        if value.get("source_status", "active") == "active"
+                    ]
+                ),
+            },
+        }
+    )
+
+
 def control_coverage_diagram(
     analysis: dict[str, Any], *, record_limit: int = 30
 ) -> dict[str, Any]:
@@ -758,6 +903,96 @@ def control_coverage_diagram(
             },
         }
     )
+
+
+def sfta_diagrams(analysis: dict[str, Any], *, tree_limit: int = 12) -> list[dict[str, Any]]:
+    """Render explicit or undeveloped Software Fault Trees with SFMEA correlations."""
+
+    model = build_sfta(analysis)
+    items = {value.get("id"): value for value in analysis.get("items", [])}
+    diagrams: list[dict[str, Any]] = []
+    trees = model.get("trees", [])
+    for tree_index, tree in enumerate(trees[:tree_limit], start=1):
+        node_ids = {
+            str(value["id"]): stable_id("SFTA-NODE", str(tree["id"]), str(value["id"])).lower()
+            for value in tree.get("nodes", [])
+        }
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        for order, value in enumerate(tree.get("nodes", [])):
+            node_id = node_ids[str(value["id"])]
+            subtype = str(value.get("gate_type") or value.get("event_type", "event"))
+            nodes.append(
+                _node(
+                    node_id,
+                    str(value.get("label", value["id"])),
+                    f"sfta_{value.get('kind', 'event')}",
+                    description=str(value.get("description", "")),
+                    source=f"{tree.get('id')}:{value.get('id')}",
+                    tags=[subtype, *value.get("assumptions", [])[:3]],
+                    metrics={"linked_findings": len(value.get("linked_finding_ids", []))},
+                    order=order,
+                )
+            )
+            for finding_id in value.get("linked_finding_ids", [])[:20]:
+                item = items.get(finding_id, {})
+                finding_node = stable_id("SFTA-FINDING", str(tree["id"]), finding_id).lower()
+                nodes.append(
+                    _node(
+                        finding_node,
+                        str(
+                            item.get("review", {}).get("failure_mode")
+                            or item.get("scanner", {}).get("failure_mode", finding_id)
+                        ),
+                        "failure_mode",
+                        source=finding_id,
+                        tags=[str(item.get("scanner", {}).get("failure_class", ""))],
+                    )
+                )
+                edges.append(
+                    _edge(
+                        stable_id("SFTA-CORR", finding_id, str(value["id"])).lower(),
+                        finding_node,
+                        node_id,
+                        "correlates to",
+                        "candidate_correlation",
+                        evidence=finding_id,
+                    )
+                )
+        for value in tree.get("edges", []):
+            edges.append(
+                _edge(
+                    stable_id("SFTA-EDGE", str(tree["id"]), str(value["id"])).lower(),
+                    node_ids[str(value["source"])],
+                    node_ids[str(value["target"])],
+                    str(value.get("label", "input")),
+                    "fault_tree_input",
+                    evidence="explicit_configuration"
+                    if tree.get("source") == "explicit_configuration"
+                    else "generated_gap",
+                )
+            )
+        diagrams.append(
+            normalize_diagram_model(
+                {
+                    "id": f"sfta-{tree_index}-{stable_id('TREE', str(tree['id'])).lower()}",
+                    "title": f"SFTA: {tree.get('hazard_id')} — {tree.get('top_event')}",
+                    "type": "cause_effect",
+                    "description": str(tree.get("description", "")),
+                    "notice": model["notice"],
+                    "nodes": nodes,
+                    "edges": edges,
+                    "metadata": {
+                        "category": "sfta",
+                        "tree_id": tree.get("id", ""),
+                        "hazard_id": tree.get("hazard_id", ""),
+                        "source": tree.get("source", ""),
+                        "logic_status": tree.get("logic_status", ""),
+                    },
+                }
+            )
+        )
+    return diagrams
 
 
 def _selected_sequence_models(
@@ -866,6 +1101,8 @@ def build_diagram_models(
         "interface_flow": lambda: [interface_flow_diagram(analysis)],
         "traceability": lambda: [traceability_diagram(analysis)],
         "guidance_traceability": lambda: [guidance_traceability_diagram(analysis)],
+        "assurance_traceability": lambda: [assurance_traceability_diagram(analysis)],
+        "sfta": lambda: sfta_diagrams(analysis),
         "failure_propagation": lambda: [failure_propagation_diagram(analysis)],
         "control_coverage": lambda: [control_coverage_diagram(analysis)],
         "sequence": lambda: sequence_diagrams(analysis),

@@ -88,6 +88,56 @@ Generated suggestions are stored separately from SFMEA worksheet items. The resp
 
 A reviewer may reject a suggestion or materialize it as a new unreviewed worksheet item. Materialization does not accept the failure mode into the governed analysis and never overwrites an existing item. Proposed suggestions and generated summaries are invalidated when the repository/configuration baseline changes.
 
+## Failure Mode Assurance Matrix
+
+The governed failure-mode register is connected to a separate Verification Obligation
+Register. Every active finding receives a stable deterministic obligation containing a
+failure stimulus, explicit local and system observations, acceptance criteria, a recommended
+verification method, sandbox requirements, repeatability expectations, an automation command
+contract, and required evidence artifacts. Existing textual test references remain candidate
+links only; neither naming similarity nor coverage is treated as proof that the failure path
+was exercised.
+
+Verification planning is deliberately separate from implementation and evidence review.
+Generated pytest scaffolds fail until meaningful tests are implemented and are labeled as
+planning artifacts, not evidence. Planning review cannot directly set `verified`,
+`accepted_risk`, or `closed`. Those states require current as-run evidence, proof that the
+intended stimulus occurred, acceptance-criterion evaluation, independent sufficiency review,
+and applicable approval. Rescans preserve planning decisions but reopen nontrivial obligations
+and mark evidence stale when their source fingerprint changes.
+
+Implemented tests may be run by the optional Docker/Podman harness only after explicit
+execution approval. The harness requires a locally available image and uses a shell-free
+command, disabled network and IPC, a read-only repository mount, an unprivileged user,
+dropped capabilities, no-new-privileges, bounded compute/process/files/output/time, and no
+credential forwarding. Execution statements bind the analyzed baseline, repository state,
+test source hash, command, image identity, outcome, JUnit summary, logs, and artifact hashes.
+The manifest itself has a canonical digest and is revalidated along with each artifact at
+evidence review time.
+
+CI or other external execution results may instead be imported through a bounded versioned
+manifest. Artifact paths must remain under the manifest directory, symlinks are rejected,
+claimed hashes are checked, and bytes are copied into the managed evidence store. Such
+records are explicitly labeled externally supplied and unattested. Either collection path
+sets only `evidence_collected`; a separate identity must record whether the intended failure
+stimulus occurred and adjudicate every pre-existing acceptance criterion. A sufficient
+decision can set `verified`, but it cannot close a finding or accept residual risk.
+
+## Top-down SFTA and reconciliation
+
+Project configuration may supply formal Software Fault Trees for configured hazards. Tree
+inputs are typed events and explicit AND, OR, VOTE, or INHIBIT gates. PySFMEA validates node
+identity, references, voting thresholds, and acyclic structure, then preserves that logic in
+the canonical analysis and renderer-neutral diagrams. Finding selectors are explicit stable
+IDs or glob patterns over component identity and failure-mode text.
+
+No causal gate is inferred from a call graph or from the presence of linked SFMEA findings.
+If a hazard has no supplied tree, the generated model contains one clearly labeled
+undeveloped event. Reconciliation independently lists top-down events without correlated
+findings, hazard-linked findings without an event, and hazard-link inconsistencies. These
+are coverage prompts for qualified review, not proof that either analysis direction is
+complete or that a linked event is a necessary or sufficient cause.
+
 ## Effects and scoring
 
 The initial local effect is a prompt. Next-higher and end effects remain blank because they require architecture and operational context. When exactly one project-defined hazard is linked to a critical function, its human-authored end effect and severity may be copied into the starter with an explicit confirmation rationale. Reviewers may edit all FMEA language.
@@ -181,10 +231,29 @@ The `sfmea doctor` preflight runs before scanning and checks only repository and
 configuration readiness. Post-scan `sfmea validate` remains the authoritative
 completeness gate for the generated analysis and reviewed worksheet.
 
+## Guidance applicability and integrity
+
+The default `core_sfmea` profile provides general public methodology. NASA assurance,
+FAA commercial-space, FAA airworthiness, security, and legacy references are opt-in
+profiles selected through `analysis.guidance_profiles`. A rule-to-citation relationship
+is emitted only when at least one of its declared profiles is selected. This prevents a
+domain reference from being silently presented as generally applicable.
+
+Each source record, citation, rule mapping, catalog, and active-profile selection has a
+canonical SHA-256 digest. For captured public PDFs, the catalog also records the exact
+downloaded byte count and response-body digest. The immutable scan manifest binds these
+guidance inputs to the source, configuration, adapter registry, dependency inventory,
+contract inventory, tool version, environment, and VCS state. These controls make the
+analysis reproducible; they do not establish regulatory applicability, compliance, or
+tool qualification.
+
 ## Public references
 
 1. [NASA Software Engineering Handbook: SW Failure Modes and Effects Analysis](https://swehb.nasa.gov/spaces/SWEHBVD/pages/102695706/8.05+-+SW+Failure+Modes+and+Effects+Analysis)
 2. [FAA Guide to Reusable Launch and Reentry Vehicle Software and Computing System Safety](https://www.faa.gov/sites/faa.gov/files/regulations_policies/faa_regulations/commercial_space/Guide-Software-Comp-Sys-Safety-RLV-Reentry.pdf)
 3. [IEC 60812:2018](https://webstore.iec.ch/en/publication/26359)
+4. [NASA Software Safety Guidebook, NASA-GB-8719.13](https://standards.nasa.gov/sites/default/files/standards/NASA/Baseline/0/nasa-gb-871913.pdf)
+5. [FAA AC 450.141-1A, Computing System Safety](https://www.faa.gov/regulations_policies/advisory_circulars/index.cfm/go/document.information/documentNumber/450.141-1A)
+6. [FAA AC 20-115D, Airborne Software Development Assurance](https://www.faa.gov/airports/resources/advisory_circulars/index.cfm/go/document.information/documentNumber/20-115D)
 
 The IEC document is referenced but not reproduced. Users are responsible for obtaining and applying any required licensed standards.

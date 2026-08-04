@@ -15,14 +15,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from .assurance import refresh_assurance_register
+from .sfta import build_sfta
+from .manifest import create_run_manifest
 from .config import normalize_config
 from .guidance import (
     DEFAULT_EXCLUDES,
-    GUIDANCE_SOURCES,
     METHODOLOGY_NOTICE,
     REVIEW_CHECKLIST,
     citations_for_rule,
     guidance_bundle,
+    selected_guidance_sources,
 )
 from .model import SCHEMA_VERSION, empty_review, stable_id, utc_now
 from .version import __version__
@@ -2364,6 +2367,7 @@ def scan_repository(
         raise ValueError(f"repository path is not a directory: {root_path}")
 
     config = normalize_config(config)
+    guidance_profiles = list(config["analysis"]["guidance_profiles"])
     scan_config = config.get("scan", {})
     if include_private is None:
         include_private = bool(scan_config.get("include_private", True))
@@ -2490,8 +2494,8 @@ def scan_repository(
 
     for item in items:
         scanner = item.setdefault("scanner", {})
-        scanner.setdefault(
-            "citations", citations_for_rule(str(scanner.get("rule_id", "")))
+        scanner["citations"] = citations_for_rule(
+            str(scanner.get("rule_id", "")), guidance_profiles
         )
 
     priority_order = {"high": 0, "medium": 1, "low": 2, "manual": 3}
@@ -2507,8 +2511,8 @@ def scan_repository(
     priority_counts = {priority: 0 for priority in ("high", "medium", "low")}
     for item in items:
         priority_counts[item["scanner"]["screening_priority"]] += 1
-    guidance = guidance_bundle()
-    return {
+    guidance = guidance_bundle(guidance_profiles)
+    analysis = {
         "schema_version": SCHEMA_VERSION,
         "generator": {
             "name": "PySFMEA",
@@ -2535,6 +2539,7 @@ def scan_repository(
             "risk": config.get("risk", {}),
             "quality": config.get("quality", {}),
             "hazards": list(config.get("hazards", [])),
+            "fault_trees": list(config.get("fault_trees", [])),
             "requirements": list(config.get("requirements", [])),
             "component_mappings": mapping_entries,
             "system_interfaces": list(config.get("system_interfaces", [])),
@@ -2547,7 +2552,7 @@ def scan_repository(
         },
         "methodology": {
             "name": "Software Failure Modes and Effects Analysis (SFMEA)",
-            "basis": GUIDANCE_SOURCES,
+            "basis": selected_guidance_sources(guidance_profiles),
             "notice": METHODOLOGY_NOTICE,
             "review_checklist": REVIEW_CHECKLIST,
         },
@@ -2566,3 +2571,7 @@ def scan_repository(
         "generated_summaries": [],
         "runtime_evidence": {"imports": [], "spans": [], "edges": []},
     }
+    refresh_assurance_register(analysis, {})
+    analysis["sfta"] = build_sfta(analysis)
+    analysis["run_manifest"] = create_run_manifest(analysis)
+    return analysis

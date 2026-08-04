@@ -13,7 +13,11 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .guidance import guidance_bundle
+from .guidance import (
+    analysis_guidance_profiles,
+    guidance_bundle,
+    selected_guidance_sources,
+)
 from .model import stable_id, utc_now
 from .store import add_manual_item, refresh_summary, update_item_review
 from .visuals import coverage_metrics
@@ -210,8 +214,12 @@ def evidence_packets(
         for value in analysis.get("context", {}).get("system_interfaces", [])
     }
     runtime_edges = analysis.get("runtime_evidence", {}).get("edges", [])
-    guidance = guidance_bundle()
+    active_profiles = analysis_guidance_profiles(analysis)
+    guidance = guidance_bundle(active_profiles)
     guidance_sources = {value["id"]: value for value in guidance["sources"]}
+    selected_source_ids = {
+        value["id"] for value in selected_guidance_sources(active_profiles)
+    }
     guidance_citations = [
         {
             "citation_id": value["id"],
@@ -223,6 +231,7 @@ def evidence_packets(
             "applicability": value["applicability"],
         }
         for value in guidance["citations"]
+        if value["source_id"] in selected_source_ids
     ]
     allowed_citation_ids = [value["citation_id"] for value in guidance_citations]
     packets = []
@@ -518,7 +527,11 @@ def review_suggestion(
                 "evidence": [f"Suggestion evidence: {value}" for value in suggestion.get("evidence_ids", [])],
             }
         )
-        guidance = guidance_bundle()
+        active_profiles = analysis_guidance_profiles(analysis)
+        guidance = guidance_bundle(active_profiles)
+        selected_source_ids = {
+            value["id"] for value in selected_guidance_sources(active_profiles)
+        }
         citations = {value["id"]: value for value in guidance["citations"]}
         item["scanner"]["citations"] = [
             {
@@ -533,6 +546,7 @@ def review_suggestion(
             }
             for citation_id in suggestion.get("proposed_citation_ids", [])
             if citation_id in citations
+            and citations[citation_id]["source_id"] in selected_source_ids
         ]
         suggestion["materialized_item_id"] = item["id"]
     analysis.setdefault("history", []).append(

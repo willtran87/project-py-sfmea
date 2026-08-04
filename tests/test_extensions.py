@@ -312,7 +312,7 @@ class ExtensionTests(unittest.TestCase):
         )
         verified = verify_review_package(destination)
         self.assertTrue(verified["valid"])
-        self.assertEqual(verified["checked_files"], 14)
+        self.assertEqual(verified["checked_files"], 23)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["verify-package", str(destination), "--json"]), 0)
 
@@ -387,17 +387,26 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_package(archive)
         self.assertTrue(verified["valid"])
         self.assertEqual(verified["container"], "zip")
-        self.assertEqual(verified["checked_files"], 14)
+        self.assertEqual(verified["checked_files"], 23)
         self.assertEqual(len(verified["archive_sha256"]), 64)
         with zipfile.ZipFile(archive) as bundle:
             self.assertEqual(
                 set(bundle.namelist()),
                 {
                     "analysis.json",
+                    "assurance-register.csv",
+                    "assurance-register.json",
+                    "assurance-register.md",
                     "architecture.md",
                     "audit.csv",
                     "coverage.md",
                     "citations.json",
+                    "evidence-catalog.json",
+                    "sfta.json",
+                    "sfta-gaps.csv",
+                    "findings.sarif",
+                    "components.cdx.json",
+                    "run-manifest.json",
                     "guidance-traceability.csv",
                     "guidance-traceability.json",
                     "inventory.md",
@@ -616,6 +625,7 @@ class ExtensionTests(unittest.TestCase):
             ).generate(payload, task="test")
 
     def test_grounded_suggestion_review_and_baseline_invalidation(self) -> None:
+        self.analysis["guidance"]["active_profiles"] = ["core_sfmea", "security"]
         created = discover_suggestions(
             self.analysis,
             StaticProvider(),

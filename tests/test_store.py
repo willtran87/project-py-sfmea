@@ -96,7 +96,7 @@ class StoreTests(unittest.TestCase):
 
             loaded = load_analysis(path)
             migrated = loaded["items"][0]
-            self.assertEqual(loaded["schema_version"], "0.4")
+            self.assertEqual(loaded["schema_version"], "0.5")
             self.assertEqual(loaded["generator"]["version"], "unknown")
             self.assertEqual(migrated["review"]["disposition"], "accepted")
             self.assertEqual(migrated["review"]["severity"], 6)

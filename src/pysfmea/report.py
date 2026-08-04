@@ -17,8 +17,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .architecture import export_architecture
+from .assurance import export_assurance_register
 from .guidance import guidance_traceability
+from .interchange import cyclonedx_document, sarif_document
+from .manifest import current_audit_manifest
 from .model import calculate_rpn, utc_now
+from .sfta import export_sfta
 from .validation import validate_analysis
 from .visuals import export_coverage, export_traceability
 from .version import __version__
@@ -106,6 +110,15 @@ REVIEW_PACKAGE_FILES = {
     "citations.json",
     "guidance-traceability.json",
     "guidance-traceability.csv",
+    "assurance-register.json",
+    "assurance-register.csv",
+    "assurance-register.md",
+    "evidence-catalog.json",
+    "sfta.json",
+    "sfta-gaps.csv",
+    "findings.sarif",
+    "components.cdx.json",
+    "run-manifest.json",
     "README.md",
 }
 REVIEW_PACKAGE_ALL_FILES = REVIEW_PACKAGE_FILES | {"manifest.json"}
@@ -409,7 +422,7 @@ def export_guidance_traceability(
                         "heading": locator.get("heading", ""),
                         "page": locator.get("page", ""),
                         "summary": citation.get("summary", ""),
-                        "url": source.get("url", ""),
+                        "url": citation.get("url") or source.get("url", ""),
                         "mapping_id": link.get("mapping_id", ""),
                         "mapping_status": link.get("status", ""),
                     },
@@ -643,6 +656,64 @@ def export_review_package(
             "guidance-traceability.csv": lambda path: export_guidance_traceability(
                 package_analysis, path, format="csv"
             ),
+            "assurance-register.json": lambda path: export_assurance_register(
+                package_analysis, path, format="json"
+            ),
+            "assurance-register.csv": lambda path: export_assurance_register(
+                package_analysis, path, format="csv"
+            ),
+            "assurance-register.md": lambda path: export_assurance_register(
+                package_analysis, path, format="markdown"
+            ),
+            "evidence-catalog.json": lambda path: path.write_text(
+                json.dumps(
+                    {
+                        "baseline_id": package_analysis.get("project", {})
+                        .get("baseline", {})
+                        .get("id", ""),
+                        "executions": package_analysis.get("assurance", {}).get(
+                            "executions", []
+                        ),
+                        "evidence_artifacts": package_analysis.get("assurance", {}).get(
+                            "evidence_artifacts", []
+                        ),
+                        "notice": (
+                            "Catalog records execution and artifact provenance. Raw external "
+                            "evidence files must be transferred and verified separately unless "
+                            "an organization-approved package profile includes them."
+                        ),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            ),
+            "sfta.json": lambda path: export_sfta(
+                package_analysis, path, format="json"
+            ),
+            "sfta-gaps.csv": lambda path: export_sfta(
+                package_analysis, path, format="csv"
+            ),
+            "findings.sarif": lambda path: path.write_text(
+                json.dumps(sarif_document(package_analysis), indent=2, ensure_ascii=False)
+                + "\n",
+                encoding="utf-8",
+            ),
+            "components.cdx.json": lambda path: path.write_text(
+                json.dumps(
+                    cyclonedx_document(package_analysis), indent=2, ensure_ascii=False
+                )
+                + "\n",
+                encoding="utf-8",
+            ),
+            "run-manifest.json": lambda path: path.write_text(
+                json.dumps(
+                    current_audit_manifest(package_analysis), indent=2, ensure_ascii=False
+                )
+                + "\n",
+                encoding="utf-8",
+            ),
         }
         for filename, writer in outputs.items():
             writer(staging / filename)
@@ -656,7 +727,7 @@ def export_review_package(
             f"- Portable paths: {'yes' if portable else 'no'}\n"
             f"- Generated: {utc_now()}\n\n"
             "This package contains the governed JSON analysis, worksheets, inventory, "
-            "architecture and traceability views, guidance citations, coverage metrics, "
+            "architecture and traceability views, executable assurance contracts, guidance citations, coverage metrics, "
             "validation findings, and audit history. Checksums are recorded in `manifest.json`.\n\n"
             "After transfer or storage, run `sfmea verify-package .` from this directory "
             "to check the complete file set, checksums, and analysis provenance.\n\n"
@@ -782,6 +853,21 @@ def _portable_analysis_snapshot(analysis: dict[str, Any]) -> dict[str, Any]:
 
     project = snapshot.setdefault("project", {})
     project["root"] = "."
+    run_repository = snapshot.get("run_manifest", {}).get("repository")
+    if isinstance(run_repository, dict):
+        scan_manifest = snapshot["run_manifest"]
+        source_manifest_sha256 = scan_manifest.pop("manifest_sha256", "")
+        run_repository["root"] = "."
+        scan_manifest["portable_redaction"] = {
+            "applied": True,
+            "source_manifest_sha256": source_manifest_sha256,
+            "fields": ["repository.root"],
+        }
+        scan_manifest["manifest_sha256"] = hashlib.sha256(
+            json.dumps(
+                scan_manifest, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
     settings = project.setdefault("settings", {})
     for field in ("config_file", "coverage_json"):
         if settings.get(field):
@@ -792,6 +878,26 @@ def _portable_analysis_snapshot(analysis: dict[str, Any]) -> dict[str, Any]:
     for event in snapshot.get("history", []):
         if event.get("event") == "runtime_trace_import" and event.get("source"):
             event["source"] = basename(event["source"])
+    for execution in snapshot.get("assurance", {}).get("executions", []):
+        execution_id = str(execution.get("id", "execution"))
+        repository = execution.setdefault("repository", {})
+        original_root = str(repository.get("root", ""))
+        original_evidence = str(execution.get("evidence_directory", ""))
+        repository["root"] = "."
+        portable_evidence = f"external-evidence/{execution_id}"
+        execution["evidence_directory"] = portable_evidence
+        sandbox = execution.setdefault("sandbox", {})
+        if sandbox.get("engine_path"):
+            sandbox["engine_path"] = basename(sandbox["engine_path"])
+        portable_argv = []
+        for value in execution.get("command_argv", []):
+            argument = str(value)
+            if original_root:
+                argument = argument.replace(original_root, ".")
+            if original_evidence:
+                argument = argument.replace(original_evidence, portable_evidence)
+            portable_argv.append(argument)
+        execution["command_argv"] = portable_argv
     return snapshot
 
 

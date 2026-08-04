@@ -12,7 +12,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.cli import main
-from pysfmea.guidance import guidance_traceability, validate_guidance_catalog
+from pysfmea.guidance import (
+    citations_for_rule,
+    guidance_bundle,
+    guidance_traceability,
+    validate_guidance_catalog,
+)
 from pysfmea.html_report import build_html_report_data, export_html_report
 from pysfmea.report import export_guidance_traceability
 from pysfmea.scanner import scan_repository
@@ -36,7 +41,7 @@ class GuidanceTraceabilityTests(unittest.TestCase):
     def test_catalog_and_findings_have_typed_versioned_relationships(self) -> None:
         validate_guidance_catalog()
         trace = guidance_traceability(self.analysis)
-        self.assertEqual(trace["schema_version"], "1.0")
+        self.assertEqual(trace["schema_version"], "1.1")
         self.assertTrue(trace["catalog_sha256"])
         self.assertEqual(trace["coverage"]["finding_coverage_percent"], 100.0)
         faa = next(source for source in trace["sources"] if source["id"] == "FAA-RLV-SCS-2006")
@@ -49,6 +54,54 @@ class GuidanceTraceabilityTests(unittest.TestCase):
         self.assertTrue(links)
         self.assertTrue(all(link["status"] == "curated" for link in links))
         self.assertNotIn("potential_nonconformance", {link["relationship"] for link in links})
+
+    def test_profiles_prevent_cross_domain_citation_leakage(self) -> None:
+        core_links = citations_for_rule("functional.omission", ["core_sfmea"])
+        commercial_links = citations_for_rule(
+            "functional.omission", ["faa_commercial_space"]
+        )
+        airworthiness_links = citations_for_rule(
+            "functional.omission", ["faa_airworthiness"]
+        )
+        self.assertTrue(core_links)
+        self.assertTrue(
+            all(link["source_id"].startswith("NASA-") for link in core_links)
+        )
+        self.assertEqual(
+            {link["source_id"] for link in commercial_links},
+            {"FAA-AC-450.141-1A"},
+        )
+        self.assertEqual(
+            {link["source_id"] for link in airworthiness_links},
+            {"FAA-AC-20-115D"},
+        )
+
+    def test_source_and_selection_integrity_are_machine_readable(self) -> None:
+        bundle = guidance_bundle(["core_sfmea", "faa_commercial_space"])
+        self.assertEqual(bundle["schema_version"], "1.1")
+        self.assertEqual(
+            bundle["active_profiles"], ["core_sfmea", "faa_commercial_space"]
+        )
+        self.assertEqual(len(bundle["selection_sha256"]), 64)
+        self.assertTrue(
+            all(len(source["record_sha256"]) == 64 for source in bundle["sources"])
+        )
+        faa = next(
+            source
+            for source in bundle["sources"]
+            if source["id"] == "FAA-AC-450.141-1A"
+        )
+        self.assertEqual(len(faa["artifact"]["sha256"]), 64)
+
+    def test_security_profile_uses_specific_weakness_mappings(self) -> None:
+        authorization = citations_for_rule(
+            "domain.cross_scope_access", ["security"]
+        )
+        outbound = citations_for_rule("domain.outbound_rebinding", ["security"])
+        resources = citations_for_rule("resource.exhaustion", ["security"])
+        self.assertIn("MITRE-CWE-862", {value["citation_id"] for value in authorization})
+        self.assertIn("MITRE-CWE-918", {value["citation_id"] for value in outbound})
+        self.assertIn("MITRE-CWE-400", {value["citation_id"] for value in resources})
 
     def test_json_csv_cli_and_persistence_outputs(self) -> None:
         json_path = export_guidance_traceability(

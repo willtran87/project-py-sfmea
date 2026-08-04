@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
@@ -10,9 +11,20 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from .assurance import (
+    ASSURANCE_STATUSES,
+    EVIDENCE_STATUSES,
+    IMPLEMENTATION_STATUSES,
+    VERIFICATION_METHODS,
+    ensure_assurance_register,
+    refresh_assurance_register,
+)
 from .config import DEFAULT_CONFIG, normalize_config
 from .guidance import ensure_guidance_traceability
+from .execution import EXECUTION_STATUSES
+from .sfta import build_sfta
 from .model import SCHEMA_VERSION, calculate_rpn, empty_review, utc_now, validate_rating
+from .manifest import create_run_manifest
 from .version import __version__
 
 
@@ -90,6 +102,8 @@ def load_analysis(path: str | Path) -> dict[str, Any]:
         analysis = _migrate_02_to_03(analysis)
     if analysis.get("schema_version") == "0.3":
         analysis = _migrate_03_to_04(analysis)
+    if analysis.get("schema_version") == "0.4":
+        analysis = _migrate_04_to_05(analysis)
     if analysis.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(
             f"unsupported schema version {analysis.get('schema_version')!r}; expected {SCHEMA_VERSION!r}"
@@ -104,6 +118,11 @@ def load_analysis(path: str | Path) -> dict[str, Any]:
         },
     )
     ensure_guidance_traceability(analysis)
+    ensure_assurance_register(analysis)
+    analysis.setdefault("context", {}).setdefault("fault_trees", [])
+    analysis["sfta"] = build_sfta(analysis)
+    if "run_manifest" not in analysis:
+        analysis["run_manifest"] = create_run_manifest(analysis)
     _validate_analysis_structure(analysis)
     return analysis
 
@@ -120,6 +139,94 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
     for field in ("suggestions", "generated_summaries"):
         if not isinstance(analysis.get(field, []), list):
             raise ValueError(f"analysis {field} must be a list")
+    assurance = analysis.get("assurance", {})
+    if not isinstance(assurance, dict) or not isinstance(
+        assurance.get("obligations", []), list
+    ):
+        raise ValueError("analysis assurance register must contain an obligations list")
+    for field in ("executions", "evidence_artifacts"):
+        if not isinstance(assurance.get(field, []), list) or not all(
+            isinstance(value, dict) for value in assurance.get(field, [])
+        ):
+            raise ValueError(f"analysis assurance.{field} must be a list of objects")
+    execution_ids: set[str] = set()
+    for index, execution in enumerate(assurance.get("executions", []), start=1):
+        execution_id = execution.get("id", "")
+        if not isinstance(execution_id, str) or not execution_id:
+            raise ValueError(f"analysis assurance execution {index} requires an ID")
+        if execution_id in execution_ids:
+            raise ValueError(f"analysis assurance execution ID is duplicated: {execution_id}")
+        execution_ids.add(execution_id)
+        if execution.get("status") not in EXECUTION_STATUSES:
+            raise ValueError(f"analysis assurance execution {index} has an invalid status")
+        for field in ("command_argv", "test_command_argv", "artifacts", "reviews"):
+            if not isinstance(execution.get(field, []), list):
+                raise ValueError(
+                    f"analysis assurance execution {index} {field} must be a list"
+                )
+    artifact_ids: set[str] = set()
+    for index, artifact in enumerate(
+        assurance.get("evidence_artifacts", []), start=1
+    ):
+        artifact_id = artifact.get("id", "")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            raise ValueError(f"analysis evidence artifact {index} requires an ID")
+        if artifact_id in artifact_ids:
+            raise ValueError(f"analysis evidence artifact ID is duplicated: {artifact_id}")
+        artifact_ids.add(artifact_id)
+    obligation_ids: set[str] = set()
+    for index, obligation in enumerate(assurance.get("obligations", []), start=1):
+        if not isinstance(obligation, dict):
+            raise ValueError(f"analysis assurance obligation {index} must be an object")
+        obligation_id = obligation.get("id", "")
+        if not isinstance(obligation_id, str) or not obligation_id:
+            raise ValueError(f"analysis assurance obligation {index} requires an ID")
+        if obligation_id in obligation_ids:
+            raise ValueError(f"analysis assurance obligation ID is duplicated: {obligation_id}")
+        obligation_ids.add(obligation_id)
+        if obligation.get("assurance_status") not in ASSURANCE_STATUSES:
+            raise ValueError(f"analysis assurance obligation {index} has an invalid status")
+        if obligation.get("evidence_status") not in EVIDENCE_STATUSES:
+            raise ValueError(f"analysis assurance obligation {index} has an invalid evidence status")
+        if obligation.get("verification_method") not in VERIFICATION_METHODS:
+            raise ValueError(f"analysis assurance obligation {index} has an invalid method")
+        automation = obligation.get("automation", {})
+        if not isinstance(automation, dict) or automation.get(
+            "implementation_status"
+        ) not in IMPLEMENTATION_STATUSES:
+            raise ValueError(
+                f"analysis assurance obligation {index} has invalid automation metadata"
+            )
+        for field in (
+            "preconditions",
+            "oracles",
+            "acceptance_criteria",
+            "required_environment",
+            "evidence_requirements",
+            "evidence_artifact_ids",
+            "executions",
+            "planning_gaps",
+            "citation_ids",
+            "history",
+        ):
+            if not isinstance(obligation.get(field, []), list):
+                raise ValueError(
+                    f"analysis assurance obligation {index} {field} must be a list"
+                )
+        if not all(
+            isinstance(value, str) and value in execution_ids
+            for value in obligation.get("executions", [])
+        ):
+            raise ValueError(
+                f"analysis assurance obligation {index} references an unknown execution"
+            )
+        if not all(
+            isinstance(value, str) and value in artifact_ids
+            for value in obligation.get("evidence_artifact_ids", [])
+        ):
+            raise ValueError(
+                f"analysis assurance obligation {index} references an unknown evidence artifact"
+            )
     generator = analysis.get("generator", {})
     if not isinstance(generator, dict) or not all(
         isinstance(generator.get(field, ""), str)
@@ -132,6 +239,17 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         for field in ("imports", "spans", "edges")
     ):
         raise ValueError("analysis runtime_evidence must contain list-valued imports, spans, and edges")
+    sfta = analysis.get("sfta", {})
+    if not isinstance(sfta, dict) or not isinstance(sfta.get("trees", []), list):
+        raise ValueError("analysis sfta must contain a trees list")
+    run_manifest = analysis.get("run_manifest", {})
+    if (
+        not isinstance(run_manifest, dict)
+        or run_manifest.get("schema_version") != "pysfmea-run-manifest-1"
+        or not isinstance(run_manifest.get("adapters", {}).get("adapters", []), list)
+        or not run_manifest.get("manifest_sha256")
+    ):
+        raise ValueError("analysis run_manifest is missing required reproducibility fields")
     for index, suggestion in enumerate(analysis.get("suggestions", []), start=1):
         if not isinstance(suggestion, dict):
             raise ValueError(f"analysis suggestion {index} must be an object")
@@ -255,6 +373,7 @@ def _migrate_02_to_03(analysis: dict[str, Any]) -> dict[str, Any]:
     for field, default in (
         ("analysis", {}),
         ("requirements", []),
+        ("fault_trees", []),
         ("component_mappings", []),
         ("system_interfaces", []),
         ("reviewers", []),
@@ -272,12 +391,25 @@ def _migrate_03_to_04(analysis: dict[str, Any]) -> dict[str, Any]:
     analysis.setdefault("suggestions", [])
     analysis.setdefault("generated_summaries", [])
     analysis.setdefault("runtime_evidence", {"imports": [], "spans": [], "edges": []})
+    analysis["sfta"] = build_sfta(analysis)
+    if "run_manifest" not in analysis:
+        analysis["run_manifest"] = create_run_manifest(analysis)
     analysis.setdefault("context", {}).setdefault("contracts", [])
     for component in analysis.get("components", []):
         component.setdefault("ordered_calls", list(component.get("calls", [])))
         component.setdefault("frameworks", [])
         component.setdefault("entrypoint_types", [])
+    analysis["schema_version"] = "0.4"
+    return analysis
+
+
+def _migrate_04_to_05(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Add the executable assurance-contract register introduced with schema 0.5."""
+
     analysis["schema_version"] = SCHEMA_VERSION
+    if isinstance(analysis.get("generator"), dict):
+        analysis["generator"]["analysis_schema_version"] = SCHEMA_VERSION
+    refresh_assurance_register(analysis, {})
     return analysis
 
 
@@ -287,6 +419,8 @@ def save_analysis(path: str | Path, analysis: dict[str, Any]) -> None:
     destination = Path(path).expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     ensure_guidance_traceability(analysis, refresh=True)
+    refresh_assurance_register(analysis, analysis.get("assurance", {}))
+    analysis["sfta"] = build_sfta(analysis)
     refresh_summary(analysis)
     _validate_analysis_structure(analysis)
     descriptor, temp_name = tempfile.mkstemp(
@@ -528,6 +662,8 @@ def merge_rescan(previous: dict[str, Any], scanned: dict[str, Any]) -> dict[str,
             "baseline_id": scanned.get("project", {}).get("baseline", {}).get("id", ""),
         }
     )
+    refresh_assurance_register(scanned, previous.get("assurance", {}))
+    scanned["sfta"] = build_sfta(scanned)
     refresh_summary(scanned)
     return scanned
 
@@ -736,6 +872,7 @@ def update_item_review(
             "changes": changed_fields,
         }
     )
+    analysis["sfta"] = build_sfta(analysis)
     refresh_summary(analysis)
     return item
 
@@ -852,3 +989,5 @@ def refresh_summary(analysis: dict[str, Any]) -> None:
     summary["runtime_unmapped_spans"] = sum(
         int(record.get("unmapped_span_count", 0)) for record in imports
     )
+    assurance = ensure_assurance_register(analysis)
+    summary["assurance"] = copy.deepcopy(assurance.get("summary", {}))

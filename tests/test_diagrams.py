@@ -151,6 +151,7 @@ class DiagramTests(unittest.TestCase):
                 "interface_flow",
                 "traceability",
                 "guidance_traceability",
+                "assurance_traceability",
                 "failure_propagation",
                 "control_coverage",
                 "sequence",
