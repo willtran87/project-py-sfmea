@@ -103,7 +103,20 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertTrue(json_payload["obligations"])
         self.assertIn("planning_percent", json_payload["progress"])
         with csv_path.open(encoding="utf-8-sig", newline="") as handle:
-            self.assertTrue(list(csv.DictReader(handle)))
+            reader = csv.DictReader(handle)
+            self.assertTrue(
+                {
+                    "control_review_questions",
+                    "direct_callers",
+                    "static_upstream_paths",
+                    "cascade_path_inventory_complete",
+                    "cascade_path_inventory_emitted",
+                    "cascade_path_inventory_limitations",
+                    "cascade_notice",
+                }
+                <= set(reader.fieldnames or [])
+            )
+            self.assertTrue(list(reader))
         self.assertIn(
             "Executable assurance checklist",
             markdown_path.read_text(encoding="utf-8"),

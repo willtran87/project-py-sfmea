@@ -52,8 +52,17 @@ class PdfReportTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, "", "")
 
         output = self.root / "published.pdf"
+        included_id = analysis["items"][-1]["id"]
         with patch("pysfmea.pdf_report.subprocess.run", side_effect=render):
-            result = export_pdf_report(analysis, output, browser=browser)
+            result = export_pdf_report(
+                analysis,
+                output,
+                browser=browser,
+                propagation_record_limit=1,
+                propagation_path_limit=0,
+                propagation_depth=0,
+                propagation_include_finding_ids=[included_id],
+            )
         self.assertEqual(result, output.resolve())
         self.assertEqual(output.read_bytes(), _minimal_pdf())
         self.assertFalse(list(self.root.glob(".*.tmp")))

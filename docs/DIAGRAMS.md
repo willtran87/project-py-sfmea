@@ -24,15 +24,92 @@ and one or more `pysfmea-diagram-1` diagrams. Supported generated categories are
 - `circuit_breaker`
 - `sequence`
 
+Generated bundles contain a `binding` record for the baseline, analysis schema, and exact
+governed analysis-state SHA-256. Their `integrity` record hashes the complete canonical
+bundle content except the integrity record itself. PySFMEA verifies a declaring bundle on
+re-import and rejects content changed after publication; older and organization-authored
+bundles without an integrity declaration remain supported. Publication uses a temporary
+sibling plus atomic replacement, preserving any prior artifact if publication fails.
+
 Generated architecture, propagation, control, and sequence views are explicitly
 bounded and record their limits or truncation state in the diagram notice and
 metadata.
+
+Failure-propagation diagrams combine the reviewed local, next-higher, and end-effect
+chain with up to three conservative upstream caller paths per component and six caller
+levels per path. Findings on the same component converge into one caller-exposure origin,
+and breaker methods in the same control scope share timing and containment nodes. Each
+finding keeps its own incoming relationship, while shared infrastructure prevents repeated
+paths from overwhelming the graph. Static-only exposure is labeled as causally unconfirmed. When the
+same caller-to-callee relation exists in imported runtime evidence, the edge is
+visually reinforced but still does not prove that the failure effect propagated.
+Detected circuit-breaker findings add timing-window and containment-boundary nodes;
+the containment node remains explicitly uncredited until assurance evidence is
+reviewed as sufficient.
+The diagram status bar reports embedded versus total records, unique cascade paths,
+runtime-observed links, and the number of repeated record paths represented by shared nodes.
+Record selection is component-first: the highest-priority finding for each component is
+selected before remaining capacity is filled from the global priority order. Metadata and
+the status bar separately report embedded/total components and findings, component coverage,
+additional findings selected after the diversity pass, and both truncation conditions.
+Cascade projection completeness is independently reported. The model records discovered paths,
+embedded paths, paths omitted with components outside the view, paths omitted by the per-component
+limit, paths and segments shortened by rendering depth, and components whose scanner path inventory
+was already bounded. The HTML notice expands these counts whenever the projection is incomplete;
+the resulting percentage is explicitly coverage of scanner-discovered paths rather than a claim of
+whole-program call-graph coverage.
+In the self-contained report, finding details can open their exact failure-mode node and
+diagram nodes sourced from a finding can return to the governed record or its assurance
+checklist. Diagram and node selections use stable `#diagrams/<diagram-id>/<node-id>` hashes.
+Opening a link restores the selection and inspector state. When the component-diverse bound
+excluded the requested failure node, the report keeps the requested trace hash, explains the
+omission, filters the diagram to the finding ID, and offers a direct return to the finding rather
+than implying that no propagation record exists.
+
+Named active findings can be pinned into the bounded view with repeatable
+`--propagation-include-finding FINDING_ID` options. Pins are deduplicated and embedded in
+request order before component-diverse and priority filling. Unknown or inactive IDs fail
+generation, as does a distinct pin count above the record limit. The request, embedded pin
+count, represented pin-component count, and pinned-first selection policy are preserved in
+diagram metadata. The standalone report recommends the exact pin command when navigation
+reaches a finding outside the current projection.
+
+Every generated propagation diagram declares one of three machine-readable projection
+states: `complete_within_discovered_static_inventory`, `bounded_projection`, or
+`source_inventory_bounded`. A companion `projection_reason_codes` array identifies the
+active bound: finding records, component projection, paths per component, rendered depth,
+or scanner source-path inventory. “Complete” is deliberately scoped to the discovered
+static inventory and is not a whole-program completeness claim. The HTML status bar and
+projection inspector expose this state, effective selection policy, limits, pinned scope,
+and conservative node-budget use without requiring inspection of embedded JSON.
+The same view displays a one-line `sfmea report` regeneration recipe and can copy it without
+network dependencies. The adjacent analysis-state digest makes clear which governed input
+the recipe describes; the command still requires the named analysis JSON to be present.
+
+The default 40-finding, three-path, six-level projection is configurable on `sfmea report`,
+`sfmea pdf`, and `sfmea diagram` with `--propagation-record-limit`,
+`--propagation-path-limit`, and `--propagation-depth`. Record limits range from 1 to 250,
+path limits from 0 to 25, and depth from 0 to 12. A conservative preflight estimate includes
+finding/effect/control infrastructure and must fit the canonical 2,000-node budget. This makes
+large-record or path-rich views possible without allowing an unsafe combination to be built.
+The chosen values are preserved under `report.diagram_configuration`, diagram metadata, and
+the JSON diagram bundle's `generation.failure_propagation` record, together with requested
+finding pins.
+When `sfmea diagram` targets a category other than `all` or `failure_propagation`, custom
+propagation limits and finding pins are rejected because that output cannot apply them.
 
 Circuit-breaker state diagrams are generated only when bounded AST evidence identifies
 a candidate breaker. They visualize inferred CLOSED, OPEN, HALF-OPEN, trip, cooldown,
 probe, and degraded-fallback relationships. Extraction does not prove that a transition
 is reachable, atomic, correctly timed, isolated, or effective; dedicated assurance
 obligations require controlled-clock, concurrency, and dependency fault-injection evidence.
+Members of a class-based breaker are correlated by source path and containing class, so a
+distributed implementation produces one scope-level diagram while preserving each method's
+local findings and evidence.
+Solid state nodes represent states observed in AST evidence. Dashed conceptual nodes and the
+review-gap node make missing lifecycle evidence explicit without claiming a defect. Transitions
+are emitted only when their supporting role is present; for example, a recovery-success edge is
+not drawn when no success-reset behavior was observed.
 
 ## Include custom diagrams in a report
 

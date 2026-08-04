@@ -19,7 +19,17 @@ from .assurance import (
     verify_pytest_scaffold,
 )
 from .config import load_config, write_config_template
-from .diagrams import GENERATED_DIAGRAM_KINDS, export_diagram_bundle
+from .diagrams import (
+    DEFAULT_PROPAGATION_DEPTH,
+    DEFAULT_PROPAGATION_PATH_LIMIT,
+    DEFAULT_PROPAGATION_RECORD_LIMIT,
+    GENERATED_DIAGRAM_KINDS,
+    MAX_PROPAGATION_DEPTH,
+    MAX_PROPAGATION_PATH_LIMIT,
+    MAX_PROPAGATION_RECORD_LIMIT,
+    export_diagram_bundle,
+    verify_diagram_bundle_integrity,
+)
 from .discovery import (
     OpenAICompatibleProvider,
     deterministic_summary,
@@ -72,6 +82,51 @@ from .validation import review_queue, validate_analysis
 from .version import __version__
 from .visuals import export_coverage, export_sequence, export_traceability
 from .workflow import workflow_status
+
+
+def _add_propagation_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--propagation-include-finding",
+        dest="propagation_include_finding",
+        action="append",
+        default=[],
+        metavar="FINDING_ID",
+        help=(
+            "active finding ID guaranteed inclusion in the bounded propagation "
+            "diagram; repeat for multiple findings (count must not exceed the "
+            "record limit)"
+        ),
+    )
+    parser.add_argument(
+        "--propagation-record-limit",
+        type=int,
+        default=DEFAULT_PROPAGATION_RECORD_LIMIT,
+        help=(
+            "findings embedded in the failure-propagation diagram "
+            f"(1-{MAX_PROPAGATION_RECORD_LIMIT}; default: "
+            f"{DEFAULT_PROPAGATION_RECORD_LIMIT}); combined limits must fit the "
+            "canonical node budget"
+        ),
+    )
+    parser.add_argument(
+        "--propagation-path-limit",
+        type=int,
+        default=DEFAULT_PROPAGATION_PATH_LIMIT,
+        help=(
+            "caller paths embedded per component "
+            f"(0-{MAX_PROPAGATION_PATH_LIMIT}; default: "
+            f"{DEFAULT_PROPAGATION_PATH_LIMIT})"
+        ),
+    )
+    parser.add_argument(
+        "--propagation-depth",
+        type=int,
+        default=DEFAULT_PROPAGATION_DEPTH,
+        help=(
+            f"caller levels rendered per path (0-{MAX_PROPAGATION_DEPTH}; "
+            f"default: {DEFAULT_PROPAGATION_DEPTH})"
+        ),
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -211,6 +266,7 @@ def _parser() -> argparse.ArgumentParser:
         default=10_000,
         help=f"maximum embedded records (1-{MAX_REPORT_RECORDS}; default: 10000)",
     )
+    _add_propagation_arguments(report)
     report.set_defaults(handler=_html_report)
 
     pdf = subparsers.add_parser(
@@ -237,6 +293,7 @@ def _parser() -> argparse.ArgumentParser:
         help="explicit Edge, Chrome, or Chromium executable path",
     )
     pdf.add_argument("--timeout-seconds", type=int, default=180)
+    _add_propagation_arguments(pdf)
     pdf.set_defaults(handler=_pdf_report)
 
     diagram = subparsers.add_parser(
@@ -250,6 +307,7 @@ def _parser() -> argparse.ArgumentParser:
         help="diagram category to generate",
     )
     diagram.add_argument("-o", "--output", help="destination JSON path")
+    _add_propagation_arguments(diagram)
     diagram.set_defaults(handler=_diagram)
 
     sfta = subparsers.add_parser(
@@ -908,12 +966,20 @@ def _html_report(args: argparse.Namespace) -> int:
         notes=args.notes,
         max_records=args.max_records,
         diagrams=args.diagram,
+        propagation_record_limit=args.propagation_record_limit,
+        propagation_path_limit=args.propagation_path_limit,
+        propagation_depth=args.propagation_depth,
+        propagation_include_finding_ids=args.propagation_include_finding,
     )
     size_mib = result.stat().st_size / (1024 * 1024)
     embedded_records = min(len(analysis.get("items", [])), args.max_records)
     print(
         f"Created self-contained SFMEA report: {result} "
-        f"({embedded_records:,} records; {size_mib:.1f} MiB)"
+        f"({embedded_records:,} records; {size_mib:.1f} MiB); propagation "
+        f"records={args.propagation_record_limit}, "
+        f"paths/component={args.propagation_path_limit}, "
+        f"depth={args.propagation_depth}, "
+        f"included_findings={len(dict.fromkeys(args.propagation_include_finding))}"
     )
     if len(analysis.get("items", [])) > args.max_records:
         print(
@@ -938,6 +1004,10 @@ def _pdf_report(args: argparse.Namespace) -> int:
         notes=args.notes,
         max_records=args.max_records,
         diagrams=args.diagram,
+        propagation_record_limit=args.propagation_record_limit,
+        propagation_path_limit=args.propagation_path_limit,
+        propagation_depth=args.propagation_depth,
+        propagation_include_finding_ids=args.propagation_include_finding,
         browser=args.browser,
         timeout_seconds=args.timeout_seconds,
     )
@@ -953,8 +1023,23 @@ def _diagram(args: argparse.Namespace) -> int:
         if args.output
         else source.with_name(source.stem + f"-{args.type}-diagrams.json")
     )
-    result = export_diagram_bundle(analysis, output, kind=args.type)
+    result = export_diagram_bundle(
+        analysis,
+        output,
+        kind=args.type,
+        propagation_record_limit=args.propagation_record_limit,
+        propagation_path_limit=args.propagation_path_limit,
+        propagation_depth=args.propagation_depth,
+        propagation_include_finding_ids=args.propagation_include_finding,
+    )
     print(f"Exported canonical SFMEA diagrams: {result}")
+    bundle = json.loads(result.read_text(encoding="utf-8"))
+    verification = verify_diagram_bundle_integrity(bundle, analysis=analysis)
+    print(
+        "Verified diagram artifact: "
+        f"analysis-state={verification['analysis_state_sha256'][:12]}..., "
+        f"content={verification['content_sha256'][:12]}..."
+    )
     return 0
 
 

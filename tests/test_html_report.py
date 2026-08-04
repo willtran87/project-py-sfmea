@@ -85,6 +85,7 @@ class HtmlReportTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_report_is_self_contained_navigable_and_safely_embedded(self) -> None:
+        included_id = self.analysis["items"][-1]["id"]
         notes = self.root / "notes.md"
         notes.write_text(
             "# Review leads\n\n- Confirm <authorization>.\n- </script><script>bad()</script>\n",
@@ -94,6 +95,10 @@ class HtmlReportTests(unittest.TestCase):
             self.analysis,
             self.root / "report.html",
             notes=notes,
+            propagation_record_limit=2,
+            propagation_path_limit=1,
+            propagation_depth=1,
+            propagation_include_finding_ids=[included_id],
         )
         document = output.read_text(encoding="utf-8")
         self.assertTrue(document.startswith("<!doctype html>"))
@@ -113,6 +118,36 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn('data-view="failure-modes"', document)
         self.assertIn('data-view="coverage"', document)
         self.assertIn('data-view="architecture"', document)
+        self.assertIn("Control model review questions", document)
+        self.assertIn("Cascade observation context", document)
+        self.assertIn('data-kind="unconfirmed_state"', document)
+        self.assertIn('data-kind="review_gap"', document)
+        self.assertIn('data-kind="containment_boundary"', document)
+        self.assertIn('data-kind="cascade_component"', document)
+        self.assertIn('data-kind="cascade_origin"', document)
+        self.assertIn('includes("observed_runtime")', document)
+        self.assertIn("discovered caller paths", document)
+        self.assertIn("available_discovered_cascade_paths", document)
+        self.assertIn("Projection omissions:", document)
+        self.assertIn("Pinned review scope:", document)
+        self.assertIn("Projection configuration", document)
+        self.assertIn("projectionStatusLabel", document)
+        self.assertIn("node budget", document)
+        self.assertIn('id="diagramCopyRecipe"', document)
+        self.assertIn('id="diagramRecipeText"', document)
+        self.assertIn("function projectionCommand", document)
+        self.assertIn("Projection command copied", document)
+        self.assertIn("--propagation-include-finding", document)
+        self.assertIn("Analysis state SHA-256", document)
+        self.assertIn("total_active_components", document)
+        self.assertIn("repeated paths shared", document)
+        self.assertIn('id="detailPropagation"', document)
+        self.assertIn('id="detailAssurance"', document)
+        self.assertIn("openPropagationForFinding", document)
+        self.assertIn("openAssuranceForFinding", document)
+        self.assertIn("Finding outside bounded projection", document)
+        self.assertIn("#diagrams/${encodeURIComponent(activeDiagram.id)}", document)
+        self.assertIn("decodeHashPart", document)
         self.assertIn('data-view="traceability"', document)
         self.assertIn('data-view="sequences"', document)
         self.assertIn('data-view="diagrams"', document)
@@ -149,6 +184,35 @@ class HtmlReportTests(unittest.TestCase):
         self.assertEqual(payload["interfaces"][0]["id"], "IF-API")
         self.assertTrue(payload["sequences"])
         self.assertTrue(payload["diagrams"])
+        self.assertEqual(
+            payload["report"]["diagram_configuration"]["failure_propagation"],
+            {
+                "record_limit": 2,
+                "paths_per_component": 1,
+                "depth": 1,
+                "include_finding_ids": [included_id],
+            },
+        )
+        propagation = next(
+            value
+            for value in payload["diagrams"]
+            if value["metadata"].get("category") == "failure_propagation"
+        )
+        self.assertEqual(propagation["metadata"]["record_limit"], 2)
+        self.assertEqual(propagation["metadata"]["cascade_paths_per_component"], 1)
+        self.assertEqual(propagation["metadata"]["cascade_depth"], 1)
+        self.assertEqual(
+            propagation["metadata"]["requested_included_finding_ids"],
+            [included_id],
+        )
+        self.assertEqual(
+            propagation["metadata"]["projection_status"], "bounded_projection"
+        )
+        self.assertTrue(propagation["metadata"]["projection_reason_codes"])
+        self.assertIn(
+            f"failure:{included_id}",
+            {node["id"] for node in propagation["nodes"]},
+        )
         self.assertIn("planning_percent", payload["assurance"]["progress"])
         self.assertEqual(payload["report"]["binding"]["format"], HTML_REPORT_FORMAT)
         self.assertEqual(
@@ -165,6 +229,34 @@ class HtmlReportTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "max_records"):
             build_html_report_data(self.analysis, max_records=0)
+
+    def test_pinned_propagation_finding_is_retained_in_bounded_report(self) -> None:
+        included_id = self.analysis["items"][-1]["id"]
+        payload = build_html_report_data(
+            self.analysis,
+            max_records=1,
+            propagation_record_limit=1,
+            propagation_path_limit=0,
+            propagation_depth=0,
+            propagation_include_finding_ids=[included_id, included_id],
+        )
+
+        self.assertEqual([record["id"] for record in payload["records"]], [included_id])
+        self.assertEqual(
+            payload["report"]["diagram_configuration"]["failure_propagation"][
+                "include_finding_ids"
+            ],
+            [included_id],
+        )
+        with self.assertRaisesRegex(ValueError, "report record limit"):
+            build_html_report_data(
+                self.analysis,
+                max_records=1,
+                propagation_include_finding_ids=[
+                    self.analysis["items"][0]["id"],
+                    included_id,
+                ],
+            )
 
     def test_large_registers_use_truthful_bounded_report_projections(self) -> None:
         payload = build_html_report_data(self.analysis)

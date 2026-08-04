@@ -19,6 +19,7 @@ from typing import Any
 from .architecture import export_architecture
 from .assurance import export_assurance_register
 from .guidance import guidance_traceability
+from .integrity import canonical_json_sha256
 from .interchange import cyclonedx_document, sarif_document
 from .manifest import current_audit_manifest
 from .model import calculate_rpn, utc_now
@@ -957,14 +958,7 @@ def analysis_state_sha256(
     """Hash the governed analysis state, optionally after portable redaction."""
 
     snapshot = _portable_analysis_snapshot(analysis) if portable else analysis
-    return hashlib.sha256(
-        json.dumps(
-            snapshot,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
-    ).hexdigest()
+    return canonical_json_sha256(snapshot)
 
 
 def _verify_review_archive(source: Path) -> dict[str, Any]:

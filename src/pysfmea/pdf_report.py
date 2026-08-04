@@ -6,9 +6,15 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
+from .diagrams import (
+    DEFAULT_PROPAGATION_DEPTH,
+    DEFAULT_PROPAGATION_PATH_LIMIT,
+    DEFAULT_PROPAGATION_RECORD_LIMIT,
+)
 from .html_report import MAX_REPORT_RECORDS, export_html_report
 
 _BROWSER_COMMANDS = (
@@ -85,6 +91,10 @@ def export_pdf_report(
     notes: str | Path | None = None,
     max_records: int = 10_000,
     diagrams: list[str | Path] | None = None,
+    propagation_record_limit: int = DEFAULT_PROPAGATION_RECORD_LIMIT,
+    propagation_path_limit: int = DEFAULT_PROPAGATION_PATH_LIMIT,
+    propagation_depth: int = DEFAULT_PROPAGATION_DEPTH,
+    propagation_include_finding_ids: Iterable[str] | None = None,
     browser: str | Path | None = None,
     timeout_seconds: int = 180,
 ) -> Path:
@@ -106,6 +116,10 @@ def export_pdf_report(
             notes=notes,
             max_records=max_records,
             diagrams=diagrams,
+            propagation_record_limit=propagation_record_limit,
+            propagation_path_limit=propagation_path_limit,
+            propagation_depth=propagation_depth,
+            propagation_include_finding_ids=propagation_include_finding_ids,
         )
         rendered = staging / "report.pdf"
         command = [

@@ -127,7 +127,10 @@ class ScannerTests(unittest.TestCase):
         control = check["detected_controls"][0]
         self.assertEqual(control["kind"], "circuit_breaker")
         self.assertEqual(control["confidence"], "static_candidate")
-        self.assertTrue({"closed", "open", "half_open"} <= set(control["states"]))
+        self.assertEqual(control["observed_states"], ["open"])
+        self.assertTrue(
+            {"closed", "open", "half_open"} <= set(control["expected_states"])
+        )
         self.assertIn("admission_guard", control["roles"])
         self.assertIn("recovery_timer", control["roles"])
         self.assertIn("time.time", control["clock_sources"])
@@ -162,17 +165,119 @@ class ScannerTests(unittest.TestCase):
         self.assertTrue(
             all(not value["review"]["prevention_controls"] for value in findings)
         )
-        obligation = next(
-            value
+        obligations = {
+            value["rule_id"]: value
             for value in analysis["assurance"]["obligations"]
-            if value["finding_id"] == findings[0]["id"]
-        )
+            if value["finding_id"] in {finding["id"] for finding in findings}
+        }
+        obligation = obligations["resilience.circuit_breaker_containment"]
         self.assertEqual(obligation["verification_method"], "fault_injection_test")
         self.assertEqual(
             obligation["detected_control_model"]["kind"], "circuit_breaker"
         )
-        self.assertTrue(
+        self.assertFalse(
             any("HALF-OPEN" in value for value in obligation["acceptance_criteria"])
+        )
+        recovery = obligations["resilience.circuit_breaker_recovery"]
+        self.assertTrue(
+            any("HALF-OPEN" in value for value in recovery["acceptance_criteria"])
+        )
+        self.assertTrue(recovery["control_review_questions"])
+        isolation = obligations["resilience.circuit_breaker_isolation"]
+        self.assertTrue(
+            any("unrelated isolation key" in value for value in isolation["acceptance_criteria"])
+        )
+        self.assertFalse(
+            any("Cooldown" in value for value in isolation["acceptance_criteria"])
+        )
+        fallback = next(
+            value
+            for value in analysis["assurance"]["obligations"]
+            if value["rule_id"] == "resilience.circuit_breaker_fallback"
+        )
+        self.assertTrue(
+            any("Fallback/degraded output" in value for value in fallback["acceptance_criteria"])
+        )
+        self.assertFalse(
+            any("Cooldown" in value for value in fallback["acceptance_criteria"])
+        )
+
+    def test_scan_correlates_distributed_class_breaker_members(self) -> None:
+        (self.root / "class_breaker.py").write_text(
+            "import time\n\n"
+            "class CircuitBreaker:\n"
+            "    def __init__(self, failure_threshold=3, recovery_timeout=30):\n"
+            "        self.state = 'CLOSED'\n"
+            "        self.failure_count = 0\n"
+            "        self.failure_threshold = failure_threshold\n"
+            "        self.recovery_timeout = recovery_timeout\n"
+            "        self.last_failure_time = 0.0\n\n"
+            "    def allow_request(self):\n"
+            "        if self.state == 'OPEN':\n"
+            "            if time.monotonic() - self.last_failure_time >= self.recovery_timeout:\n"
+            "                self.state = 'HALF_OPEN'\n"
+            "                return True\n"
+            "            return False\n"
+            "        return True\n\n"
+            "    def record_failure(self):\n"
+            "        self.failure_count += 1\n"
+            "        if self.failure_count >= self.failure_threshold:\n"
+            "            self.state = 'OPEN'\n"
+            "            self.last_failure_time = time.monotonic()\n\n"
+            "    def record_success(self):\n"
+            "        self.failure_count = 0\n"
+            "        self.state = 'CLOSED'\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        members = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value["qualname"].startswith("CircuitBreaker.")
+        }
+        controls = [
+            value["detected_controls"][0]
+            for value in members.values()
+            if value["detected_controls"]
+        ]
+
+        self.assertEqual(len(controls), 4)
+        self.assertEqual(
+            {value["scope_qualname"] for value in controls}, {"CircuitBreaker"}
+        )
+        self.assertEqual(
+            {value["member_qualname"] for value in controls}, set(members)
+        )
+        self.assertTrue(
+            {"admission_guard", "failure_recording", "success_reset", "recovery_timer"}
+            <= {role for value in controls for role in value["roles"]}
+        )
+        self.assertTrue(all(value["detection_basis"] for value in controls))
+
+    def test_scan_does_not_treat_descriptive_circuit_text_as_a_control(self) -> None:
+        (self.root / "documentation.py").write_text(
+            "def describe_circuit_diagram():\n"
+            "    return 'A circuit diagram connects ordinary components.'\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        component = next(
+            value
+            for value in analysis["components"]
+            if value["qualname"] == "describe_circuit_diagram"
+        )
+        self.assertNotIn("circuit_breaker", component["signals"])
+        self.assertEqual(component["detected_controls"], [])
+        self.assertFalse(
+            any(
+                item["component_id"] == component["id"]
+                and item["scanner"]["rule_id"].startswith(
+                    "resilience.circuit_breaker_"
+                )
+                for item in analysis["items"]
+            )
         )
 
     def test_scan_records_context_repository_coverage_and_adapter_contributions(self) -> None:
@@ -1002,6 +1107,66 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertTrue(first["upstream_paths"])
         self.assertLessEqual(max(len(path) for path in first["upstream_paths"]), 7)
+
+    def test_caller_path_inventory_discloses_path_and_depth_limits(self) -> None:
+        fanout = ["def target(value):\n    return value"]
+        fanout.extend(
+            f"def caller_{index:02d}(value):\n    return target(value)"
+            for index in range(30)
+        )
+        chain = [
+            f"def chain_{index}(value):\n    return chain_{index + 1}(value)"
+            for index in range(8)
+        ]
+        chain.append("def chain_8(value):\n    return value")
+        (self.root / "bounded_calls.py").write_text(
+            "\n\n".join([*fanout, *chain]) + "\n", encoding="utf-8"
+        )
+
+        analysis = scan_repository(self.root)
+        components = {
+            value["qualname"]: value for value in analysis["components"]
+        }
+        target = components["target"]
+        deepest = components["chain_8"]
+
+        self.assertEqual(len(target["upstream_paths"]), 25)
+        self.assertTrue(target["upstream_path_analysis"]["path_limit_truncated"])
+        self.assertFalse(
+            target["upstream_path_analysis"]["complete_within_static_call_model"]
+        )
+        self.assertGreater(
+            deepest["upstream_path_analysis"]["depth_limited_paths"], 0
+        )
+        self.assertFalse(
+            deepest["upstream_path_analysis"]["complete_within_static_call_model"]
+        )
+        target_item = next(
+            value for value in analysis["items"] if value["component_id"] == target["id"]
+        )
+        self.assertEqual(
+            target_item["scanner"]["upstream_path_analysis"],
+            target["upstream_path_analysis"],
+        )
+        obligation = next(
+            value
+            for value in analysis["assurance"]["obligations"]
+            if value["finding_id"] == target_item["id"]
+        )
+        self.assertFalse(
+            obligation["cascade_context"]["static_path_analysis"][
+                "complete_within_static_call_model"
+            ]
+        )
+        self.assertTrue(
+            any("caller-path inventory is bounded" in gap for gap in obligation["planning_gaps"])
+        )
+        self.assertTrue(
+            any(
+                "compensating runtime" in criterion
+                for criterion in obligation["acceptance_criteria"]
+            )
+        )
 
     def test_analysis_is_json_serializable(self) -> None:
         analysis = scan_repository(self.root)

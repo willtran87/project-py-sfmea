@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import uuid
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .architecture import architecture_graph
 from .guidance import guidance_traceability
+from .integrity import canonical_json_sha256
 from .model import stable_id, utc_now
 from .sfta import build_sfta
 from .version import __version__
@@ -42,7 +46,52 @@ MAX_DIAGRAM_NODES = 2_000
 MAX_DIAGRAM_EDGES = 5_000
 MAX_DIAGRAM_FILE_BYTES = 5_000_000
 MAX_TEXT_LENGTH = 8_000
+DEFAULT_PROPAGATION_RECORD_LIMIT = 40
+DEFAULT_PROPAGATION_PATH_LIMIT = 3
+DEFAULT_PROPAGATION_DEPTH = 6
+MAX_PROPAGATION_RECORD_LIMIT = 250
+MAX_PROPAGATION_PATH_LIMIT = 25
+MAX_PROPAGATION_DEPTH = 12
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
+
+
+def validate_propagation_limits(
+    record_limit: int, path_limit: int, depth: int
+) -> None:
+    """Reject invalid or conservatively oversized propagation projections."""
+
+    if not 1 <= record_limit <= MAX_PROPAGATION_RECORD_LIMIT:
+        raise ValueError(
+            "propagation record limit must be from 1 through "
+            f"{MAX_PROPAGATION_RECORD_LIMIT}"
+        )
+    if not 0 <= path_limit <= MAX_PROPAGATION_PATH_LIMIT:
+        raise ValueError(
+            "propagation path limit must be from 0 through "
+            f"{MAX_PROPAGATION_PATH_LIMIT}"
+        )
+    if not 0 <= depth <= MAX_PROPAGATION_DEPTH:
+        raise ValueError(
+            f"propagation depth must be from 0 through {MAX_PROPAGATION_DEPTH}"
+        )
+    estimated_nodes = record_limit * (8 + path_limit * depth)
+    if estimated_nodes > MAX_DIAGRAM_NODES:
+        raise ValueError(
+            "combined propagation limits exceed the conservative diagram node budget "
+            f"({estimated_nodes} > {MAX_DIAGRAM_NODES}); reduce the record, path, or depth limit"
+        )
+
+
+def normalize_propagation_finding_ids(
+    values: Iterable[str] | None,
+) -> list[str]:
+    """Normalize repeatable projection pins without changing request order."""
+
+    return list(
+        dict.fromkeys(
+            str(value).strip() for value in (values or []) if str(value).strip()
+        )
+    )
 
 
 def _string(value: Any, field: str, *, required: bool = False) -> str:
@@ -479,17 +528,184 @@ def _ordered_items(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
 
+def _component_diverse_items(
+    ordered_items: list[dict[str, Any]],
+    record_limit: int,
+    *,
+    represented_component_ids: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """Select one priority-ordered finding per component before filling capacity."""
+
+    if record_limit <= 0:
+        return []
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    represented_components = {str(value) for value in represented_component_ids}
+    for item in ordered_items:
+        component_id = str(item.get("component_id", "")) or str(item.get("id", ""))
+        if component_id in represented_components:
+            continue
+        selected.append(item)
+        selected_ids.add(str(item.get("id", "")))
+        represented_components.add(component_id)
+        if len(selected) >= record_limit:
+            return selected
+    for item in ordered_items:
+        item_id = str(item.get("id", ""))
+        if item_id in selected_ids:
+            continue
+        selected.append(item)
+        if len(selected) >= record_limit:
+            break
+    return selected
+
+
+def _valid_upstream_paths(component: dict[str, Any]) -> list[list[str]]:
+    """Return normalized caller paths without changing their discovery order."""
+
+    return [
+        [str(reference) for reference in path if str(reference)]
+        for path in component.get("upstream_paths", [])
+        if isinstance(path, list) and len(path) > 1
+    ]
+
+
 def failure_propagation_diagram(
-    analysis: dict[str, Any], *, record_limit: int = 40
+    analysis: dict[str, Any],
+    *,
+    record_limit: int = DEFAULT_PROPAGATION_RECORD_LIMIT,
+    cascade_paths_per_component: int = DEFAULT_PROPAGATION_PATH_LIMIT,
+    cascade_depth: int = DEFAULT_PROPAGATION_DEPTH,
+    include_finding_ids: Iterable[str] | None = None,
 ) -> dict[str, Any]:
+    """Build reviewed effect chains plus bounded static/observed caller exposure paths."""
+
+    validate_propagation_limits(
+        record_limit, cascade_paths_per_component, cascade_depth
+    )
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
-    for item in _ordered_items(analysis)[:record_limit]:
+    components = {
+        str(value.get("id", "")): value
+        for value in analysis.get("components", [])
+        if value.get("id")
+    }
+    components_by_reference = {
+        f"{value.get('source', {}).get('path', '')}:{value.get('qualname', '')}": value
+        for value in components.values()
+    }
+    runtime_relations = {
+        (
+            str(value.get("source_component_id", "")),
+            str(value.get("target_component_id", "")),
+        )
+        for value in analysis.get("runtime_evidence", {}).get("edges", [])
+        if value.get("source_component_id") and value.get("target_component_id")
+    }
+    cascade_path_count = 0
+    cascade_edge_count = 0
+    observed_cascade_edge_count = 0
+    records_with_cascade_paths = 0
+    components_with_cascade_paths: set[str] = set()
+    emitted_cascade_components: set[str] = set()
+    shared_edges: set[str] = set()
+    ordered_items = _ordered_items(analysis)
+    requested_finding_ids = normalize_propagation_finding_ids(include_finding_ids)
+    if len(requested_finding_ids) > record_limit:
+        raise ValueError(
+            "propagation include-finding count exceeds the propagation record limit"
+        )
+    items_by_id = {str(value.get("id", "")): value for value in ordered_items}
+    unknown_finding_ids = [
+        value for value in requested_finding_ids if value not in items_by_id
+    ]
+    if unknown_finding_ids:
+        raise ValueError(
+            "propagation include finding IDs must identify active findings: "
+            + ", ".join(unknown_finding_ids)
+        )
+    pinned_items = [items_by_id[value] for value in requested_finding_ids]
+    pinned_component_ids = {
+        str(value.get("component_id", "")) or str(value.get("id", ""))
+        for value in pinned_items
+    }
+    pinned_ids = set(requested_finding_ids)
+    remaining_items = [
+        value for value in ordered_items if str(value.get("id", "")) not in pinned_ids
+    ]
+    selected_items = [
+        *pinned_items,
+        *_component_diverse_items(
+            remaining_items,
+            record_limit - len(pinned_items),
+            represented_component_ids=pinned_component_ids,
+        ),
+    ]
+    active_component_ids = {
+        str(value.get("component_id", "")) or str(value.get("id", ""))
+        for value in ordered_items
+    }
+    selected_component_ids = {
+        str(value.get("component_id", "")) or str(value.get("id", ""))
+        for value in selected_items
+    }
+    total_active_components = len(active_component_ids)
+    embedded_components = len(selected_component_ids)
+    component_pass_additions = len(selected_component_ids - pinned_component_ids)
+    path_inventory = {
+        component_id: _valid_upstream_paths(components.get(component_id, {}))
+        for component_id in active_component_ids
+    }
+    available_cascade_paths = sum(len(paths) for paths in path_inventory.values())
+    selected_available_cascade_paths = sum(
+        len(path_inventory.get(component_id, []))
+        for component_id in selected_component_ids
+    )
+    paths_omitted_by_component_projection = sum(
+        len(paths)
+        for component_id, paths in path_inventory.items()
+        if component_id not in selected_component_ids
+    )
+    paths_omitted_by_path_limit = sum(
+        max(0, len(path_inventory.get(component_id, [])) - cascade_paths_per_component)
+        for component_id in selected_component_ids
+    )
+    selected_paths = [
+        path
+        for component_id in selected_component_ids
+        for path in path_inventory.get(component_id, [])[:cascade_paths_per_component]
+    ]
+    depth_truncated_paths = sum(
+        len(path) - 1 > cascade_depth for path in selected_paths
+    )
+    segments_omitted_by_depth_limit = sum(
+        max(0, len(path) - 1 - cascade_depth) for path in selected_paths
+    )
+    source_path_inventory_truncated_components = sum(
+        1
+        for component_id in active_component_ids
+        if not components.get(component_id, {})
+        .get("upstream_path_analysis", {})
+        .get("complete_within_static_call_model", True)
+    )
+    finding_counts_by_component: dict[str, int] = {}
+    for value in selected_items:
+        component_key = str(value.get("component_id", ""))
+        finding_counts_by_component[component_key] = (
+            finding_counts_by_component.get(component_key, 0) + 1
+        )
+    for item in selected_items:
         item_id = str(item.get("id", ""))
         review = item.get("review", {})
         scanner = item.get("scanner", {})
-        component_id = f"component:{item.get('component_id', '')}"
+        raw_component_id = str(item.get("component_id", ""))
+        component = components.get(raw_component_id, {})
+        component_id = f"component:{raw_component_id}"
         failure_id = f"failure:{item_id}"
+        all_upstream_paths = path_inventory.get(raw_component_id, [])
+        upstream_paths = all_upstream_paths[:cascade_paths_per_component]
+        if upstream_paths:
+            records_with_cascade_paths += 1
         nodes.setdefault(
             component_id,
             _node(
@@ -507,7 +723,12 @@ def failure_propagation_diagram(
             "failure_mode",
             description=str(review.get("trigger") or scanner.get("trigger", "")),
             source=item_id,
-            tags=[str(scanner.get("failure_class", "")), str(scanner.get("screening_priority", ""))],
+            tags=[
+                str(scanner.get("failure_class", "")),
+                str(scanner.get("screening_priority", "")),
+                *(["static_cascade_paths"] if upstream_paths else []),
+            ],
+            metrics={"static_upstream_paths": len(all_upstream_paths)},
             layer=1,
         )
         edges.append(
@@ -520,6 +741,265 @@ def failure_propagation_diagram(
                 evidence=str(scanner.get("rule_id", "")),
             )
         )
+
+        cascade_start = failure_id
+        cascade_layer = 1
+        breaker = next(
+            (
+                value
+                for value in scanner.get("detected_controls", [])
+                if isinstance(value, dict) and value.get("kind") == "circuit_breaker"
+            ),
+            {},
+        )
+        if breaker and (
+            breaker.get("clock_sources") or breaker.get("cooldown_expressions")
+        ):
+            breaker_scope = str(
+                breaker.get("scope_qualname")
+                or item.get("component", {}).get("qualname", "")
+            )
+            breaker_scope_key = stable_id(
+                "breaker-scope",
+                str(item.get("source", {}).get("path", "")),
+                breaker_scope,
+            ).lower()
+            timing_id = f"timing:{breaker_scope_key}"
+            nodes.setdefault(
+                timing_id,
+                _node(
+                    timing_id,
+                    "BREAKER TIMING WINDOW",
+                    "timing_boundary",
+                    description="Shared clock and cooldown evidence that bounds containment or recovery behavior.",
+                    source=f"{item.get('source', {}).get('path', '')}:{breaker_scope}",
+                    tags=("static_candidate", "timing_review_required", "scope_shared"),
+                    metrics={
+                        "clock_sources": breaker.get("clock_sources", []),
+                        "cooldown_expressions": breaker.get("cooldown_expressions", []),
+                        "control_scope": breaker_scope,
+                    },
+                    layer=2,
+                ),
+            )
+            timing_metrics = nodes[timing_id]["metrics"]
+            for field in ("clock_sources", "cooldown_expressions"):
+                timing_metrics[field] = sorted(
+                    {
+                        *timing_metrics.get(field, []),
+                        *breaker.get(field, []),
+                    }
+                )
+            edges.append(
+                _edge(
+                    f"{item_id}-timing-window",
+                    failure_id,
+                    timing_id,
+                    "occurs across timing boundary",
+                    "timing_exposure",
+                    evidence="static breaker clock/cooldown evidence",
+                )
+            )
+            cascade_start = timing_id
+            cascade_layer = 2
+        if breaker:
+            breaker_scope = str(
+                breaker.get("scope_qualname")
+                or item.get("component", {}).get("qualname", "")
+            )
+            breaker_scope_key = stable_id(
+                "breaker-scope",
+                str(item.get("source", {}).get("path", "")),
+                breaker_scope,
+            ).lower()
+            containment_id = f"containment:{breaker_scope_key}"
+            nodes.setdefault(
+                containment_id,
+                _node(
+                    containment_id,
+                    breaker_scope or "CIRCUIT BREAKER",
+                    "containment_boundary",
+                    description="Shared candidate containment boundary. Static detection does not establish effectiveness.",
+                    source=f"{item.get('source', {}).get('path', '')}:{breaker_scope}",
+                    tags=("static_candidate", "control_not_credited", "scope_shared"),
+                    metrics={
+                        "roles": breaker.get("roles", []),
+                        "evidence_strength": breaker.get("evidence_strength", "static_candidate"),
+                        "control_scope": breaker_scope,
+                    },
+                    layer=cascade_layer + 1,
+                ),
+            )
+            containment_metrics = nodes[containment_id]["metrics"]
+            containment_metrics["roles"] = sorted(
+                {
+                    *containment_metrics.get("roles", []),
+                    *breaker.get("roles", []),
+                }
+            )
+            if breaker.get("evidence_strength") == "strong":
+                containment_metrics["evidence_strength"] = "strong"
+            if cascade_start.startswith("timing:"):
+                boundary_edge_id = f"{breaker_scope_key}-timing-containment"
+            else:
+                boundary_edge_id = f"{item_id}-containment-boundary"
+            if boundary_edge_id not in shared_edges:
+                edges.append(
+                    _edge(
+                        boundary_edge_id,
+                        cascade_start,
+                        containment_id,
+                        "challenges containment",
+                        "containment_challenge",
+                        evidence="detected control candidate; effectiveness unconfirmed",
+                    )
+                )
+                shared_edges.add(boundary_edge_id)
+            cascade_start = containment_id
+            cascade_layer += 1
+
+        cascade_origin_id = ""
+        paths_to_emit: list[list[str]] = []
+        if upstream_paths:
+            components_with_cascade_paths.add(raw_component_id)
+            cascade_origin_id = f"cascade-origin:{raw_component_id}"
+            nodes.setdefault(
+                cascade_origin_id,
+                _node(
+                    cascade_origin_id,
+                    f"{component.get('qualname', 'component')} · CALLER EXPOSURE",
+                    "cascade_origin",
+                    group=_component_group(component) if component else "Unassigned",
+                    description="Shared origin for bounded upstream caller paths contributed by this component's selected failure modes.",
+                    source=(
+                        f"{component.get('source', {}).get('path', '')}:"
+                        f"{component.get('source', {}).get('line', '')}"
+                    ),
+                    tags=("static_ast", "component_shared"),
+                    metrics={
+                        "selected_findings": finding_counts_by_component.get(raw_component_id, 0),
+                        "available_static_paths": len(all_upstream_paths),
+                        "embedded_static_paths": len(upstream_paths),
+                        "paths_omitted_by_diagram_limit": max(
+                            0, len(all_upstream_paths) - len(upstream_paths)
+                        ),
+                        "source_path_inventory_complete": component.get(
+                            "upstream_path_analysis", {}
+                        ).get("complete_within_static_call_model", True),
+                        "source_depth_limited_paths": component.get(
+                            "upstream_path_analysis", {}
+                        ).get("depth_limited_paths", 0),
+                    },
+                    layer=cascade_layer + 1,
+                ),
+            )
+            if cascade_start.startswith(("containment:", "timing:")):
+                origin_edge_id = stable_id(
+                    "cascade-origin-edge", cascade_start, cascade_origin_id
+                ).lower()
+            else:
+                origin_edge_id = f"{item_id}-cascade-origin"
+            if origin_edge_id not in shared_edges:
+                edges.append(
+                    _edge(
+                        origin_edge_id,
+                        cascade_start,
+                        cascade_origin_id,
+                        "may escape to callers",
+                        "potential_cascade_origin",
+                        evidence="bounded static upstream paths",
+                        description="Shared path infrastructure; each incoming finding remains independently reviewable.",
+                    )
+                )
+                shared_edges.add(origin_edge_id)
+            if raw_component_id not in emitted_cascade_components:
+                emitted_cascade_components.add(raw_component_id)
+                paths_to_emit = upstream_paths
+
+        for path_index, path in enumerate(paths_to_emit, start=1):
+            cascade_path_count += 1
+            outward_chain = list(reversed(path))
+            callee_reference = outward_chain[0]
+            previous = cascade_origin_id
+            seen_references = {callee_reference}
+            for depth, caller_reference in enumerate(
+                outward_chain[1 : cascade_depth + 1], start=1
+            ):
+                caller = components_by_reference.get(caller_reference, {})
+                callee = components_by_reference.get(callee_reference, {})
+                cycle = caller_reference in seen_references
+                caller_node_id = stable_id(
+                    "cascade",
+                    raw_component_id,
+                    str(path_index),
+                    str(depth),
+                    caller_reference,
+                ).lower()
+                observed = bool(
+                    caller
+                    and callee
+                    and (
+                        str(caller.get("id", "")),
+                        str(callee.get("id", "")),
+                    )
+                    in runtime_relations
+                )
+                nodes[caller_node_id] = _node(
+                    caller_node_id,
+                    str(caller.get("qualname") or caller_reference),
+                    "cascade_component",
+                    group=_component_group(caller) if caller else "Unresolved static caller",
+                    description=(
+                        "Caller relation is present in imported runtime evidence."
+                        if observed
+                        else "Potential caller exposure derived from conservative static call evidence."
+                    ),
+                    source=(
+                        f"{caller.get('source', {}).get('path', '')}:"
+                        f"{caller.get('source', {}).get('line', '')}"
+                        if caller
+                        else caller_reference
+                    ),
+                    tags=(
+                        ("static_ast", "observed_runtime")
+                        if observed
+                        else ("static_ast", "causality_unconfirmed")
+                    ),
+                    metrics={
+                        "path_index": path_index,
+                        "cascade_depth": depth,
+                        "runtime_relation_observed": observed,
+                        "cycle": cycle,
+                    },
+                    layer=cascade_layer + 1 + depth,
+                    order=path_index * 10 + depth,
+                )
+                edges.append(
+                    _edge(
+                        stable_id(
+                            "cascade-edge",
+                            raw_component_id,
+                            str(path_index),
+                            str(depth),
+                        ).lower(),
+                        previous,
+                        caller_node_id,
+                        "observed caller exposure" if observed else "may expose caller",
+                        "observed_upstream_exposure"
+                        if observed
+                        else "potential_upstream_exposure",
+                        evidence="static_ast + observed_runtime" if observed else "static_ast",
+                        description="This relationship is exposure evidence, not proof of effect propagation.",
+                        order=path_index * 10 + depth,
+                        cycle=cycle,
+                    )
+                )
+                cascade_edge_count += 1
+                observed_cascade_edge_count += int(observed)
+                previous = caller_node_id
+                callee_reference = caller_reference
+                seen_references.add(caller_reference)
+
         previous = failure_id
         for layer, (field, kind, label) in enumerate(
             (
@@ -545,19 +1025,112 @@ def failure_propagation_diagram(
                 )
             )
             previous = effect_id
+    records_truncated = len(selected_items) < len(ordered_items)
+    cascade_paths_truncated = (
+        cascade_path_count < available_cascade_paths
+        or source_path_inventory_truncated_components > 0
+    )
+    projection_reason_codes = [
+        code
+        for condition, code in (
+            (records_truncated, "finding_record_limit"),
+            (embedded_components < total_active_components, "component_projection"),
+            (paths_omitted_by_path_limit > 0, "path_limit"),
+            (segments_omitted_by_depth_limit > 0, "depth_limit"),
+            (
+                source_path_inventory_truncated_components > 0,
+                "source_path_inventory_limit",
+            ),
+        )
+        if condition
+    ]
+    if source_path_inventory_truncated_components:
+        projection_status = "source_inventory_bounded"
+    elif projection_reason_codes:
+        projection_status = "bounded_projection"
+    else:
+        projection_status = "complete_within_discovered_static_inventory"
     return normalize_diagram_model(
         {
             "id": "failure-propagation",
             "title": "Failure propagation",
             "type": "cause_effect",
-            "description": "Component-to-failure-to-effect chains for the highest-priority active records.",
-            "notice": f"Bounded to {record_limit} records. Candidate and seeded effects require engineering confirmation.",
+            "description": "Component-to-failure-to-effect chains with bounded upstream caller exposure, timing, and containment evidence.",
+            "notice": f"{'Explicitly included findings are embedded first; remaining capacity uses component-first selection. ' if requested_finding_ids else ''}Component-first selection embeds one priority-ordered finding per component before filling the {record_limit}-record limit; caller paths are bounded to {cascade_paths_per_component} per component and depth {cascade_depth}. Coverage counts scanner-emitted static paths and explicitly reports source, component, path, and depth truncation. Shared paths reduce duplicate graph infrastructure; static caller paths show potential exposure, not runtime causality or confirmed effect propagation.",
             "nodes": list(nodes.values()),
             "edges": edges,
             "metadata": {
                 "category": "failure_propagation",
                 "record_limit": record_limit,
-                "total_active_records": len(_ordered_items(analysis)),
+                "conservative_node_estimate": record_limit
+                * (8 + cascade_paths_per_component * cascade_depth),
+                "projection_node_budget": MAX_DIAGRAM_NODES,
+                "node_budget_utilization_percent": round(
+                    100
+                    * record_limit
+                    * (8 + cascade_paths_per_component * cascade_depth)
+                    / MAX_DIAGRAM_NODES,
+                    1,
+                ),
+                "records_embedded": len(selected_items),
+                "records_truncated": records_truncated,
+                "projection_status": projection_status,
+                "projection_reason_codes": projection_reason_codes,
+                "selection_policy": (
+                    "pinned_then_component_first_then_priority_fill"
+                    if requested_finding_ids
+                    else "component_first_then_priority_fill"
+                ),
+                "requested_included_finding_ids": requested_finding_ids,
+                "pinned_findings_embedded": len(pinned_items),
+                "pinned_components_embedded": len(pinned_component_ids),
+                "components_embedded": embedded_components,
+                "total_active_components": total_active_components,
+                "components_truncated": embedded_components < total_active_components,
+                "additional_findings_after_component_pass": max(
+                    0,
+                    len(selected_items)
+                    - len(pinned_items)
+                    - component_pass_additions,
+                ),
+                "component_coverage_percent": round(
+                    100 * embedded_components / total_active_components, 1
+                )
+                if total_active_components
+                else None,
+                "cascade_paths_per_component": cascade_paths_per_component,
+                "cascade_depth": cascade_depth,
+                "available_discovered_cascade_paths": available_cascade_paths,
+                "selected_component_discovered_cascade_paths": selected_available_cascade_paths,
+                "embedded_cascade_paths": cascade_path_count,
+                "cascade_paths_truncated": cascade_paths_truncated,
+                "known_cascade_path_coverage_percent": round(
+                    100 * cascade_path_count / available_cascade_paths, 1
+                )
+                if available_cascade_paths
+                else None,
+                "paths_omitted_by_component_projection": paths_omitted_by_component_projection,
+                "paths_omitted_by_path_limit": paths_omitted_by_path_limit,
+                "depth_truncated_paths": depth_truncated_paths,
+                "segments_omitted_by_depth_limit": segments_omitted_by_depth_limit,
+                "source_path_inventory_truncated_components": source_path_inventory_truncated_components,
+                "cascade_projection_complete": not any(
+                    (
+                        paths_omitted_by_component_projection,
+                        paths_omitted_by_path_limit,
+                        depth_truncated_paths,
+                        source_path_inventory_truncated_components,
+                    )
+                ),
+                "embedded_cascade_edges": cascade_edge_count,
+                "observed_cascade_edges": observed_cascade_edge_count,
+                "records_with_cascade_paths": records_with_cascade_paths,
+                "components_with_cascade_paths": len(components_with_cascade_paths),
+                "deduplicated_record_path_reuses": max(
+                    0,
+                    records_with_cascade_paths - len(components_with_cascade_paths),
+                ),
+                "total_active_records": len(ordered_items),
             },
         }
     )
@@ -566,91 +1139,207 @@ def failure_propagation_diagram(
 def circuit_breaker_diagrams(
     analysis: dict[str, Any], *, breaker_limit: int = 12
 ) -> list[dict[str, Any]]:
-    """Render statically detected breaker candidates as reviewable state models."""
+    """Render one reviewable state model per detected breaker scope.
 
-    candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    Class-based controls are usually distributed across admission, failure,
+    success, and recovery methods.  Their local evidence is deliberately retained
+    on each component, while this view merges only members that declare the same
+    source path and control scope.
+    """
+
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
     for component in analysis.get("components", []):
         for control in component.get("detected_controls", []):
             if isinstance(control, dict) and control.get("kind") == "circuit_breaker":
-                candidates.append((component, control))
-    candidates.sort(
+                path = str(component.get("source", {}).get("path", ""))
+                scope = str(
+                    control.get("scope_qualname")
+                    or control.get("member_qualname")
+                    or component.get("qualname", "")
+                )
+                entry = grouped.setdefault(
+                    (path, scope),
+                    {"components": [], "controls": []},
+                )
+                entry["components"].append(component)
+                entry["controls"].append(control)
+    candidates = sorted(
+        grouped.items(),
         key=lambda value: (
-            str(value[0].get("source", {}).get("path", "")),
-            int(value[0].get("source", {}).get("line", 0) or 0),
-            str(value[0].get("qualname", "")),
+            value[0][0],
+            min(
+                int(component.get("source", {}).get("line", 0) or 0)
+                for component in value[1]["components"]
+            ),
+            value[0][1],
         )
     )
     diagrams: list[dict[str, Any]] = []
-    for index, (component, control) in enumerate(candidates[:breaker_limit], start=1):
+    list_fields = (
+        "roles",
+        "states",
+        "observed_states",
+        "expected_states",
+        "state_symbols",
+        "failure_counter_symbols",
+        "threshold_expressions",
+        "cooldown_expressions",
+        "clock_sources",
+        "synchronization",
+        "scope_keys",
+        "fallback_indicators",
+        "detection_basis",
+    )
+    for index, ((path, scope), group) in enumerate(
+        candidates[:breaker_limit], start=1
+    ):
+        components = sorted(
+            group["components"],
+            key=lambda component: (
+                int(component.get("source", {}).get("line", 0) or 0),
+                str(component.get("qualname", "")),
+            ),
+        )
+        component = components[0]
+        control = {
+            field: sorted(
+                {
+                    str(value)
+                    for member_control in group["controls"]
+                    for value in member_control.get(field, [])
+                    if str(value)
+                }
+            )
+            for field in list_fields
+        }
+        member_qualnames = sorted(
+            {
+                str(value.get("qualname", ""))
+                for value in components
+                if value.get("qualname")
+            }
+        )
         prefix = stable_id(
             "CB",
-            str(component.get("id", "")),
-            str(component.get("qualname", "")),
+            path,
+            scope,
         ).casefold()
         source = (
             f"{component.get('source', {}).get('path', '')}:"
             f"{component.get('source', {}).get('line', '')}"
         )
-        states = set(control.get("states", []))
+        observed_states = set(
+            control.get("observed_states") or control.get("states", [])
+        )
+        expected_states = set(control.get("expected_states", [])) | {
+            "closed",
+            "open",
+        }
         roles = set(control.get("roles", []))
+        review_gaps: list[str] = []
+        if "admission_guard" not in roles:
+            review_gaps.append("Open-state admission guard is not statically evident.")
+        if "failure_recording" not in roles:
+            review_gaps.append("Failure accounting is not statically evident.")
+        if not control.get("threshold_expressions"):
+            review_gaps.append("Trip threshold expression is not statically evident.")
+        recovery_expected = "half_open" in expected_states or "recovery_timer" in roles
+        if recovery_expected and not control.get("cooldown_expressions"):
+            review_gaps.append("Cooldown boundary expression is not statically evident.")
+        if recovery_expected and not control.get("clock_sources"):
+            review_gaps.append("Elapsed-time clock source is not statically evident.")
+        if recovery_expected and "half_open" not in observed_states:
+            review_gaps.append("HALF-OPEN state or bounded recovery probe is not explicit.")
+        if recovery_expected and "success_reset" not in roles:
+            review_gaps.append("Successful recovery-to-CLOSED transition is not statically evident.")
+        clock_sources = set(control.get("clock_sources", []))
+        if any(value.endswith("time") for value in clock_sources) and not any(
+            value.endswith(("monotonic", "perf_counter")) for value in clock_sources
+        ):
+            review_gaps.append("Wall-clock timing is present without an observed monotonic duration source.")
+        if recovery_expected and not control.get("synchronization"):
+            review_gaps.append("Concurrent recovery-probe serialization is not statically evident.")
+        if not control.get("scope_keys"):
+            review_gaps.append("Dependency or tenant isolation key is not statically evident.")
+        if "degraded_fallback" not in roles:
+            review_gaps.append("Caller-visible degraded or fallback contract is not statically evident.")
+
+        def state_node(state: str, label: str, description: str, layer: int, order: int) -> dict[str, Any]:
+            observed = state in observed_states
+            return _node(
+                f"{prefix}-{state.replace('_', '-')}",
+                label,
+                "breaker_state" if observed else "unconfirmed_state",
+                description=(
+                    description
+                    if observed
+                    else f"Conceptual breaker state requiring confirmation. {description}"
+                ),
+                source=source,
+                tags=("observed",) if observed else ("conceptual", "review_required"),
+                metrics={
+                    "evidence_status": "observed in AST" if observed else "not directly observed",
+                    "scope_members": len(member_qualnames),
+                },
+                layer=layer,
+                order=order,
+            )
+
         nodes = [
-            _node(
-                f"{prefix}-closed",
+            state_node(
+                "closed",
                 "CLOSED",
-                "breaker_state",
-                description="Dependency calls are admitted and consecutive failures are counted.",
-                source=source,
-                layer=0,
-                order=0,
+                "Dependency calls are admitted and consecutive failures are counted.",
+                0,
+                0,
             ),
-            _node(
-                f"{prefix}-open",
+            state_node(
+                "open",
                 "OPEN",
-                "breaker_state",
-                description="Dependency calls are contained until the recovery policy permits a probe.",
-                source=source,
-                layer=1,
-                order=1,
+                "Dependency calls are contained until the recovery policy permits a probe.",
+                1,
+                1,
             ),
         ]
         edges: list[dict[str, Any]] = []
-        threshold = " | ".join(control.get("threshold_expressions", [])) or "static candidate threshold"
-        cooldown = " | ".join(control.get("cooldown_expressions", [])) or "configured cooldown"
+        threshold_evidence = " | ".join(control.get("threshold_expressions", []))
+        cooldown_evidence = " | ".join(control.get("cooldown_expressions", []))
         if roles & {"failure_recording", "admission_guard", "breaker_state_management"}:
             edges.append(
                 _edge(
                     f"{prefix}-trip",
                     f"{prefix}-closed",
                     f"{prefix}-open",
-                    "failure threshold reached",
+                    "failure threshold reached" if threshold_evidence else "trip policy invoked",
                     "state_transition",
-                    evidence=threshold,
+                    evidence=threshold_evidence or "Trip threshold requires definition and review.",
                     order=0,
                 )
             )
-        if "half_open" in states:
+        if recovery_expected:
+            half_open_observed = "half_open" in observed_states
             nodes.append(
-                _node(
-                    f"{prefix}-half-open",
-                    "HALF-OPEN",
-                    "breaker_state",
-                    description="A bounded recovery probe determines whether normal admission can resume.",
-                    source=source,
-                    layer=2,
-                    order=2,
+                state_node(
+                    "half_open",
+                    "HALF-OPEN" if half_open_observed else "RECOVERY PROBE",
+                    "A bounded recovery probe determines whether normal admission can resume.",
+                    2,
+                    2,
                 )
             )
-            edges.extend(
-                [
-                    _edge(
-                        f"{prefix}-cooldown",
-                        f"{prefix}-open",
-                        f"{prefix}-half-open",
-                        "cooldown elapsed",
-                        "timed_transition",
-                        evidence=cooldown,
-                        order=1,
-                    ),
+            edges.append(
+                _edge(
+                    f"{prefix}-cooldown",
+                    f"{prefix}-open",
+                    f"{prefix}-half-open",
+                    "cooldown elapsed" if cooldown_evidence else "recovery policy permits probe",
+                    "timed_transition",
+                    evidence=cooldown_evidence or "Cooldown boundary requires definition and review.",
+                    order=1,
+                )
+            )
+            if "success_reset" in roles:
+                edges.append(
                     _edge(
                         f"{prefix}-probe-success",
                         f"{prefix}-half-open",
@@ -659,7 +1348,10 @@ def circuit_breaker_diagrams(
                         "state_transition",
                         evidence="success-reset candidate",
                         order=2,
-                    ),
+                    )
+                )
+            if "failure_recording" in roles:
+                edges.append(
                     _edge(
                         f"{prefix}-probe-failure",
                         f"{prefix}-half-open",
@@ -668,8 +1360,19 @@ def circuit_breaker_diagrams(
                         "state_transition",
                         evidence="failure-recording candidate",
                         order=3,
-                    ),
-                ]
+                    )
+                )
+        elif "success_reset" in roles:
+            edges.append(
+                _edge(
+                    f"{prefix}-reset",
+                    f"{prefix}-open",
+                    f"{prefix}-closed",
+                    "reset or success",
+                    "state_transition",
+                    evidence="success-reset candidate; recovery policy requires review",
+                    order=2,
+                )
             )
         if "degraded_fallback" in roles:
             nodes.append(
@@ -694,20 +1397,61 @@ def circuit_breaker_diagrams(
                     order=4,
                 )
             )
+        if review_gaps:
+            nodes.append(
+                _node(
+                    f"{prefix}-review-gaps",
+                    f"REVIEW GAPS · {len(review_gaps)}",
+                    "review_gap",
+                    description="\n".join(review_gaps),
+                    source=source,
+                    tags=("static_evidence_gap", "review_required"),
+                    metrics={"gap_count": len(review_gaps)},
+                    layer=3,
+                    order=10,
+                )
+            )
+            edges.append(
+                _edge(
+                    f"{prefix}-gap-link",
+                    f"{prefix}-open",
+                    f"{prefix}-review-gaps",
+                    "requires definition / evidence",
+                    "evidence_gap",
+                    evidence=" | ".join(review_gaps),
+                    order=10,
+                )
+            )
         diagrams.append(
             normalize_diagram_model(
                 {
                     "id": f"circuit-breaker-{index}-{prefix}",
-                    "title": f"Circuit breaker: {component.get('qualname', 'component')}",
+                    "title": f"Circuit breaker: {scope or component.get('qualname', 'component')}",
                     "type": "state",
-                    "description": "Candidate breaker state machine extracted from Python AST evidence.",
-                    "notice": "Static candidate only. Transitions, timing, isolation, and fallback effectiveness require controlled fault-injection evidence.",
+                    "description": (
+                        "Candidate breaker state machine composed from Python AST "
+                        f"evidence across {len(member_qualnames)} callable(s)."
+                    ),
+                    "notice": "Observed states are distinguished from conceptual states. Review gaps record missing static evidence, not proven defects; effectiveness still requires controlled fault-injection evidence.",
                     "nodes": nodes,
                     "edges": edges,
                     "metadata": {
                         "category": "circuit_breaker",
                         "component_id": str(component.get("id", "")),
+                        "component_ids": sorted(
+                            {
+                                str(value.get("id", ""))
+                                for value in components
+                                if value.get("id")
+                            }
+                        ),
+                        "scope_qualname": scope,
+                        "member_qualnames": member_qualnames,
                         "roles": sorted(roles),
+                        "observed_states": sorted(observed_states),
+                        "expected_states": sorted(expected_states),
+                        "review_gaps": review_gaps,
+                        "detection_basis": control.get("detection_basis", []),
                         "clock_sources": control.get("clock_sources", []),
                         "scope_keys": control.get("scope_keys", []),
                         "threshold_expressions": control.get("threshold_expressions", []),
@@ -1244,13 +1988,35 @@ def sequence_diagrams(analysis: dict[str, Any], *, limit: int = 6) -> list[dict[
 
 
 def build_diagram_models(
-    analysis: dict[str, Any], *, kind: str = "all"
+    analysis: dict[str, Any],
+    *,
+    kind: str = "all",
+    propagation_record_limit: int = DEFAULT_PROPAGATION_RECORD_LIMIT,
+    propagation_path_limit: int = DEFAULT_PROPAGATION_PATH_LIMIT,
+    propagation_depth: int = DEFAULT_PROPAGATION_DEPTH,
+    propagation_include_finding_ids: Iterable[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one category or the complete default set of canonical diagrams."""
 
     if kind not in GENERATED_DIAGRAM_KINDS:
         raise ValueError(
             f"diagram kind must be one of: {', '.join(GENERATED_DIAGRAM_KINDS)}"
+        )
+    included_finding_ids = normalize_propagation_finding_ids(
+        propagation_include_finding_ids
+    )
+    propagation_settings_are_custom = bool(included_finding_ids) or (
+        propagation_record_limit != DEFAULT_PROPAGATION_RECORD_LIMIT
+        or propagation_path_limit != DEFAULT_PROPAGATION_PATH_LIMIT
+        or propagation_depth != DEFAULT_PROPAGATION_DEPTH
+    )
+    if (
+        kind not in {"all", "failure_propagation"}
+        and propagation_settings_are_custom
+    ):
+        raise ValueError(
+            "propagation projection options require diagram kind "
+            "'failure_propagation' or 'all'"
         )
     builders = {
         "architecture": lambda: [architecture_diagram(analysis)],
@@ -1259,7 +2025,15 @@ def build_diagram_models(
         "guidance_traceability": lambda: [guidance_traceability_diagram(analysis)],
         "assurance_traceability": lambda: [assurance_traceability_diagram(analysis)],
         "sfta": lambda: sfta_diagrams(analysis),
-        "failure_propagation": lambda: [failure_propagation_diagram(analysis)],
+        "failure_propagation": lambda: [
+            failure_propagation_diagram(
+                analysis,
+                record_limit=propagation_record_limit,
+                cascade_paths_per_component=propagation_path_limit,
+                cascade_depth=propagation_depth,
+                include_finding_ids=included_finding_ids,
+            )
+        ],
         "control_coverage": lambda: [control_coverage_diagram(analysis)],
         "circuit_breaker": lambda: circuit_breaker_diagrams(analysis),
         "sequence": lambda: sequence_diagrams(analysis),
@@ -1286,6 +2060,15 @@ def load_diagram_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError(f"diagram file is not valid UTF-8 JSON: {path}: {exc}") from exc
+        if (
+            isinstance(payload, dict)
+            and payload.get("schema_version") == DIAGRAM_BUNDLE_SCHEMA
+            and "integrity" in payload
+        ):
+            try:
+                verify_diagram_bundle_integrity(payload)
+            except ValueError as exc:
+                raise ValueError(f"diagram bundle integrity failed: {path}: {exc}") from exc
         if isinstance(payload, dict) and "diagrams" in payload:
             raw_diagrams = payload.get("diagrams")
         elif isinstance(payload, list):
@@ -1307,9 +2090,18 @@ def load_diagram_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
 
 
 def diagram_bundle(
-    analysis: dict[str, Any], *, kind: str = "all"
+    analysis: dict[str, Any],
+    *,
+    kind: str = "all",
+    propagation_record_limit: int = DEFAULT_PROPAGATION_RECORD_LIMIT,
+    propagation_path_limit: int = DEFAULT_PROPAGATION_PATH_LIMIT,
+    propagation_depth: int = DEFAULT_PROPAGATION_DEPTH,
+    propagation_include_finding_ids: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    return {
+    included_finding_ids = normalize_propagation_finding_ids(
+        propagation_include_finding_ids
+    )
+    bundle = {
         "schema_version": DIAGRAM_BUNDLE_SCHEMA,
         "generator": {"name": "PySFMEA", "version": __version__},
         "generated_at": utc_now(),
@@ -1317,7 +2109,85 @@ def diagram_bundle(
             "name": analysis.get("project", {}).get("name", ""),
             "baseline_id": analysis.get("project", {}).get("baseline", {}).get("id", ""),
         },
-        "diagrams": build_diagram_models(analysis, kind=kind),
+        "generation": {
+            "kind": kind,
+            "failure_propagation": {
+                "record_limit": propagation_record_limit,
+                "paths_per_component": propagation_path_limit,
+                "depth": propagation_depth,
+                "include_finding_ids": included_finding_ids,
+            },
+        },
+        "binding": {
+            "format": DIAGRAM_BUNDLE_SCHEMA,
+            "baseline_id": str(
+                analysis.get("project", {}).get("baseline", {}).get("id", "")
+            ),
+            "analysis_schema_version": str(analysis.get("schema_version", "")),
+            "analysis_state_sha256": canonical_json_sha256(analysis),
+        },
+        "diagrams": build_diagram_models(
+            analysis,
+            kind=kind,
+            propagation_record_limit=propagation_record_limit,
+            propagation_path_limit=propagation_path_limit,
+            propagation_depth=propagation_depth,
+            propagation_include_finding_ids=included_finding_ids,
+        ),
+    }
+    bundle["integrity"] = {
+        "algorithm": "sha256",
+        "canonicalization": "json-sort-keys-compact-utf8",
+        "content_sha256": _diagram_bundle_content_sha256(bundle),
+    }
+    return bundle
+
+
+def _diagram_bundle_content_sha256(bundle: dict[str, Any]) -> str:
+    unsigned = {key: value for key, value in bundle.items() if key != "integrity"}
+    return canonical_json_sha256(unsigned)
+
+
+def verify_diagram_bundle_integrity(
+    bundle: dict[str, Any], *, analysis: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Verify bundle content and optionally its governed-analysis binding."""
+
+    if bundle.get("schema_version") != DIAGRAM_BUNDLE_SCHEMA:
+        raise ValueError("diagram bundle schema version is not supported")
+    integrity = bundle.get("integrity")
+    if not isinstance(integrity, dict):
+        raise ValueError("diagram bundle integrity record is missing")
+    if integrity.get("algorithm") != "sha256":
+        raise ValueError("diagram bundle integrity algorithm must be sha256")
+    expected = str(integrity.get("content_sha256", "")).lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise ValueError("diagram bundle content digest is malformed")
+    actual = _diagram_bundle_content_sha256(bundle)
+    if actual != expected:
+        raise ValueError("diagram bundle content digest does not match its contents")
+    binding = bundle.get("binding")
+    if not isinstance(binding, dict):
+        raise ValueError("diagram bundle analysis binding is missing")
+    if binding.get("format") != DIAGRAM_BUNDLE_SCHEMA:
+        raise ValueError("diagram bundle binding format does not match its schema")
+    bound_state = str(binding.get("analysis_state_sha256", "")).lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", bound_state):
+        raise ValueError("diagram bundle analysis-state digest is malformed")
+    binding_matches: bool | None = None
+    if analysis is not None:
+        binding_matches = bound_state == canonical_json_sha256(analysis)
+        if not binding_matches:
+            raise ValueError("diagram bundle analysis-state binding does not match")
+        if str(binding.get("analysis_schema_version", "")) != str(
+            analysis.get("schema_version", "")
+        ):
+            raise ValueError("diagram bundle analysis schema binding does not match")
+    return {
+        "algorithm": "sha256",
+        "content_sha256": actual,
+        "analysis_state_sha256": bound_state,
+        "analysis_binding_matches": binding_matches,
     }
 
 
@@ -1326,12 +2196,32 @@ def export_diagram_bundle(
     destination: str | Path,
     *,
     kind: str = "all",
+    propagation_record_limit: int = DEFAULT_PROPAGATION_RECORD_LIMIT,
+    propagation_path_limit: int = DEFAULT_PROPAGATION_PATH_LIMIT,
+    propagation_depth: int = DEFAULT_PROPAGATION_DEPTH,
+    propagation_include_finding_ids: Iterable[str] | None = None,
 ) -> Path:
     path = Path(destination).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(diagram_bundle(analysis, kind=kind), indent=2, ensure_ascii=False)
-        + "\n",
-        encoding="utf-8",
+    document = (
+        json.dumps(
+            diagram_bundle(
+                analysis,
+                kind=kind,
+                propagation_record_limit=propagation_record_limit,
+                propagation_path_limit=propagation_path_limit,
+                propagation_depth=propagation_depth,
+                propagation_include_finding_ids=propagation_include_finding_ids,
+            ),
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
     )
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(document, encoding="utf-8", newline="\n")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return path

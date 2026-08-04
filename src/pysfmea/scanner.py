@@ -155,8 +155,17 @@ class FunctionFacts:
 
 def _circuit_breaker_control(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    scope_qualname: str = "",
+    member_qualname: str = "",
 ) -> dict[str, Any] | None:
-    """Extract bounded circuit-breaker semantics without crediting effectiveness."""
+    """Extract bounded circuit-breaker semantics without crediting effectiveness.
+
+    ``scope_qualname`` lets methods contribute evidence to a breaker implemented
+    across a class without pretending that any one method contains the complete
+    control.  A naming hint is never sufficient on its own: the callable must also
+    contain state, admission, accounting, timing, reset, or fallback behavior.
+    """
 
     identifiers: set[str] = {node.name.casefold()}
     strings: set[str] = set()
@@ -175,7 +184,14 @@ def _circuit_breaker_control(
             if name:
                 calls.add(name)
 
-    searchable = " ".join([*identifiers, *(value.casefold() for value in strings)])
+    searchable = " ".join(
+        [
+            scope_qualname.casefold(),
+            member_qualname.casefold(),
+            *identifiers,
+            *(value.casefold() for value in strings),
+        ]
+    )
     explicit = any(token in searchable for token in ("circuit", "breaker", "half-open", "half_open"))
     supporting = sum(
         token in searchable
@@ -184,15 +200,31 @@ def _circuit_breaker_control(
     if not explicit and supporting < 3:
         return None
 
+    comparisons = [value for value in ast.walk(node) if isinstance(value, ast.Compare)]
+    comparison_text = [ast.unparse(value)[:500] for value in comparisons]
+    assignments = [
+        value
+        for value in ast.walk(node)
+        if isinstance(value, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete))
+    ]
+    assignment_text = [ast.unparse(value)[:500] for value in assignments]
+    structural_text = " ".join(
+        value.casefold() for value in [*comparison_text, *assignment_text]
+    )
     roles: set[str] = set()
-    if any(token in searchable for token in ("check_circuit", "circuit_open", "is_open")):
+    if any(token in searchable for token in ("check_circuit", "circuit_open", "is_open")) or (
+        "open" in structural_text
+        and any(token in structural_text for token in ("state", "circuit", "breaker"))
+    ):
         roles.add("admission_guard")
     if any(token in searchable for token in ("record_failure", "failure_count", "failures")) and any(
-        isinstance(value, (ast.Assign, ast.AnnAssign, ast.AugAssign))
-        for value in ast.walk(node)
+        isinstance(value, (ast.Assign, ast.AnnAssign, ast.AugAssign)) for value in assignments
     ):
         roles.add("failure_recording")
-    if any(token in searchable for token in ("record_success", "reset", "clear")) or any(
+    if (
+        any(token in searchable for token in ("record_success", "reset", "clear"))
+        and bool(assignments)
+    ) or any(
         call.endswith((".pop", ".clear")) for call in calls
     ):
         roles.add("success_reset")
@@ -209,8 +241,13 @@ def _circuit_breaker_control(
         roles.add("recovery_timer")
     if any(token in searchable for token in ("fallback", "placeholder", "skipping", "temporarily unavailable")):
         roles.add("degraded_fallback")
-    if not roles:
+    if any(token in structural_text for token in ("circuit", "breaker")) or (
+        "state" in structural_text
+        and any(token in structural_text for token in ("closed", "open", "half_open", "half-open"))
+    ):
         roles.add("breaker_state_management")
+    if not roles:
+        return None
 
     state_symbols = sorted(
         {
@@ -228,10 +265,7 @@ def _circuit_breaker_control(
     )[:20]
     threshold_expressions: list[str] = []
     cooldown_expressions: list[str] = []
-    for value in ast.walk(node):
-        if not isinstance(value, ast.Compare):
-            continue
-        expression = ast.unparse(value)[:500]
+    for value, expression in zip(comparisons, comparison_text, strict=True):
         lowered = expression.casefold()
         if "fail" in lowered and any(
             isinstance(operator, (ast.Gt, ast.GtE, ast.Eq))
@@ -279,15 +313,45 @@ def _circuit_breaker_control(
         )
         if any(token in parameter.casefold() for token in ("server", "dependency", "client", "service", "key", "id"))
     )[:10]
-    states = ["closed", "open"]
-    if "recovery_timer" in roles or "success_reset" in roles:
-        states.append("half_open")
+    state_material = " ".join(
+        [
+            structural_text,
+            *identifiers,
+            *(value.casefold() for value in strings),
+        ]
+    ).replace("_", "-")
+    state_tokens = set(re.findall(r"[a-z0-9]+", state_material))
+    observed_states = []
+    if "closed" in state_tokens:
+        observed_states.append("closed")
+    if "open" in state_tokens:
+        observed_states.append("open")
+    if {"half", "open"} <= state_tokens:
+        observed_states.append("half_open")
+    expected_states = ["closed", "open"]
+    if "recovery_timer" in roles or "half_open" in observed_states:
+        expected_states.append("half_open")
+    detection_basis = []
+    if explicit:
+        detection_basis.append("breaker naming or state terminology")
+    if comparison_text:
+        detection_basis.append("state or threshold comparison")
+    if assignment_text:
+        detection_basis.append("state or counter mutation")
+    if calls:
+        detection_basis.append("control-related call behavior")
     return {
-        "schema_version": "pysfmea-detected-circuit-breaker-1",
+        "schema_version": "pysfmea-detected-circuit-breaker-3",
         "kind": "circuit_breaker",
         "confidence": "static_candidate",
+        "evidence_strength": "strong" if len(roles) >= 2 else "moderate",
+        "scope_qualname": scope_qualname or member_qualname or node.name,
+        "member_qualname": member_qualname or node.name,
+        "detection_basis": detection_basis,
         "roles": sorted(roles),
-        "states": states,
+        "states": observed_states,
+        "observed_states": observed_states,
+        "expected_states": expected_states,
         "state_symbols": state_symbols,
         "failure_counter_symbols": failure_counter_symbols,
         "threshold_expressions": list(dict.fromkeys(threshold_expressions))[:10],
@@ -754,7 +818,15 @@ class _ModuleCollector(ast.NodeVisitor):
         visitor = _FactVisitor(facts, self.aliases)
         for statement in node.body:
             visitor.visit(statement)
-        circuit_breaker = _circuit_breaker_control(node)
+        member_qualname = qualname
+        scope_qualname = (
+            ".".join(self.scope_stack) if self.class_stack else member_qualname
+        )
+        circuit_breaker = _circuit_breaker_control(
+            node,
+            scope_qualname=scope_qualname,
+            member_qualname=member_qualname,
+        )
         if circuit_breaker:
             facts.detected_controls.append(circuit_breaker)
             facts.signals.update(
@@ -1842,25 +1914,57 @@ def _upstream_paths(
     *,
     max_depth: int = 6,
     max_paths: int = 25,
-) -> list[list[str]]:
+) -> tuple[list[list[str]], dict[str, Any]]:
     paths: list[list[str]] = []
+    path_limit_truncated = False
+    depth_limited_paths = 0
 
     def walk(current: str, path: list[str]) -> None:
+        nonlocal depth_limited_paths, path_limit_truncated
         if len(paths) >= max_paths:
+            path_limit_truncated = True
             return
         upstream = callers.get(current, [])
         if len(path) >= max_depth or not upstream:
             if len(path) > 1:
                 paths.append(list(reversed(path)))
+                if upstream:
+                    depth_limited_paths += 1
             return
         for caller in upstream:
+            if len(paths) >= max_paths:
+                path_limit_truncated = True
+                break
             if caller in path:
                 paths.append(list(reversed([*path, caller])))
             else:
                 walk(caller, [*path, caller])
 
     walk(target_reference, [target_reference])
-    return paths
+    complete = not path_limit_truncated and depth_limited_paths == 0
+    limitations = []
+    if path_limit_truncated:
+        limitations.append(
+            f"additional caller paths may exist beyond the {max_paths}-path discovery limit"
+        )
+    if depth_limited_paths:
+        limitations.append(
+            f"{depth_limited_paths} emitted path(s) reached the {max_depth}-component discovery depth"
+        )
+    return paths, {
+        "max_depth_components": max_depth,
+        "max_paths": max_paths,
+        "emitted_paths": len(paths),
+        "path_limit_truncated": path_limit_truncated,
+        "depth_limited_paths": depth_limited_paths,
+        "complete_within_static_call_model": complete,
+        "limitations": limitations,
+        "notice": (
+            "Caller-path discovery was complete within the bounded static call model."
+            if complete
+            else "Caller-path discovery is a bounded projection; " + "; ".join(limitations) + "."
+        ),
+    }
 
 
 def _screening(
@@ -2425,6 +2529,7 @@ def _component_dict(
     critical_context: list[dict[str, Any]],
     mapping_context: list[dict[str, Any]],
     upstream_paths: list[list[str]],
+    upstream_path_analysis: dict[str, Any],
 ) -> dict[str, Any]:
     component_id = stable_id("CMP", facts.path, facts.qualname, facts.kind)
     return {
@@ -2449,6 +2554,7 @@ def _component_dict(
         "fan_in": fan_in,
         "called_by": called_by,
         "upstream_paths": upstream_paths,
+        "upstream_path_analysis": upstream_path_analysis,
         "complexity": facts.complexity,
         "arithmetic_operations": facts.arithmetic_ops,
         "source_fingerprint": facts.source_fingerprint,
@@ -2636,6 +2742,15 @@ def _item_dict(
             "screening_priority": component["screening"]["priority"],
             "screening_reasons": component["screening"]["reasons"],
             "evidence": evidence,
+            "called_by": copy.deepcopy(component.get("called_by", [])[:50]),
+            "upstream_paths": copy.deepcopy(component.get("upstream_paths", [])[:25]),
+            "upstream_path_analysis": copy.deepcopy(
+                component.get("upstream_path_analysis", {})
+            ),
+            "propagation_notice": (
+                "Static caller paths indicate potential exposure, not runtime causality "
+                "or confirmed failure-effect propagation."
+            ),
             "detected_controls": detected_controls,
             "citations": citations_for_rule(rule["rule_id"]),
         },
@@ -2775,6 +2890,9 @@ def scan_repository(
         mapping_context = _mapping_context(facts, mapping_entries)
         if any(entry.get("interfaces") for entry in mapping_context):
             facts.signals.add("external_interface")
+        upstream_paths, upstream_path_analysis = _upstream_paths(
+            _component_ref(facts), callers
+        )
         component = _component_dict(
             facts,
             fan_in,
@@ -2783,7 +2901,8 @@ def scan_repository(
             function_coverage,
             critical_context,
             mapping_context,
-            _upstream_paths(_component_ref(facts), callers),
+            upstream_paths,
+            upstream_path_analysis,
         )
         component["analysis_context_fingerprint"] = _analysis_context_fingerprint(
             component, config

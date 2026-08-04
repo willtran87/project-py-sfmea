@@ -105,10 +105,52 @@ Ordered call evidence and common framework decorators identify HTTP routes, back
 Circuit-breaker extraction recognizes bounded identifier, comparison, clock, lock,
 state-mutation, isolation-key, and fallback evidence. It records a candidate control model
 and generates dedicated containment, timed-recovery, isolation, and fallback failure modes.
+For class-based implementations, method-local evidence is correlated through the containing
+class scope so admission, failure accounting, reset, and timed recovery contribute to one
+state diagram without moving findings away from their source callable. Naming alone does not
+create a candidate; behavioral evidence is also required.
+State diagrams distinguish states directly observed in AST evidence from conceptual states
+needed to review a complete breaker lifecycle. Missing thresholds, cooldown expressions,
+clock sources, recovery transitions, synchronization, isolation keys, and degraded contracts
+are emitted as review gaps, not asserted defects. Assurance contracts are tailored by finding:
+containment tests threshold/admission, recovery tests controlled time and probe concurrency,
+isolation tests independent scopes, and fallback tests caller-visible degraded behavior.
 The extracted model is never copied into reviewer-owned prevention or detection controls.
 Fault-injection obligations require threshold-boundary call counts, controlled elapsed time,
 concurrent HALF-OPEN probes, independent isolation keys, and caller-visible degraded behavior
 before the breaker can be credited as effective containment.
+
+Failure-cascade projection follows the scanner's bounded upstream call paths from the failed
+component toward potential callers. It records the path and depth in the canonical diagram,
+marks imported runtime corroboration separately, and inserts detected timing and containment
+boundaries for breaker findings. A static or observed call relation establishes exposure, not
+causal propagation; reviewed next-higher and end effects remain the authoritative consequence
+fields.
+To keep large analyses navigable, caller paths are emitted once per component and breaker
+timing/containment nodes once per detected control scope. Failure modes remain separate nodes
+with independent edges into the shared infrastructure. Projection metadata records embedded
+and total findings, unique paths, runtime-observed links, and deduplicated record-path reuse.
+The bounded record selector first takes the highest-priority finding for every component in
+the global risk order, then fills remaining capacity with additional findings. This preserves
+priority while maximizing component diversity. Finding and component coverage/truncation are
+reported separately so the overview cannot be mistaken for a complete register.
+The default projection bounds can be tailored at export time for HTML, PDF, and canonical JSON.
+Each setting has a hard range and the combined finding/path/depth request is conservatively
+estimated before graph construction against the canonical node ceiling. Configuration is
+recorded with the output so a larger visual remains reproducible and a rejected combination
+fails explicitly rather than producing a partial or unstable graph.
+Caller-path discovery also carries its own machine-readable completeness record. It states the
+scanner path and component-depth limits, emitted path count, path-limit truncation, and paths
+that terminate at the discovery depth. The diagram then accounts separately for discovered
+paths omitted by record projection, its per-component path limit, and path segments omitted by
+its rendering depth. Report percentages therefore describe coverage of discovered paths, not
+whole-program call-graph completeness. Any earlier scanner truncation remains a visible lower-
+bound qualification.
+The same bounded paths are copied into each deterministic verification obligation and flattened
+into CSV exports with their completeness and limitation fields so test authors can select an
+exercised path, instrument its caller boundaries, and retain the static-versus-observed and
+bounded-inventory limitations with the checklist. An incomplete inventory becomes a planning
+gap and requires compensating runtime, integration, or architectural evidence.
 
 Imported simple or OpenTelemetry JSON spans add observed parent-child relations. Each import is hashed, baseline-linked, bounded, and audited. Static and observed relationships remain visibly distinct because one is approximate source evidence and the other is incomplete execution evidence.
 
@@ -213,6 +255,23 @@ coverage, and ordered static/observed sequences. Projects can import custom flow
 state, traceability, cause/effect, sequence, or directed-graph models. Imported
 relationships retain their declared evidence but receive no additional credibility
 from validation or rendering.
+
+The failure-propagation projection is explicitly bounded. By default it selects one
+priority-ordered finding per component before filling remaining capacity. Operators can
+pin named active findings for a review objective; pins consume the same record budget and
+are embedded before the component-diversity pass. Requested pins, effective selection
+policy, component coverage, caller-path/depth omissions, and the conservative node-budget
+estimate remain machine-readable provenance. Pinning changes view composition only: it
+does not change finding priority, evidence strength, review state, or causal credibility.
+The projection also emits categorical status and reason codes. A “complete” state means
+only that no configured report bound omitted material from the scanner-discovered static
+inventory; source-inventory bounds remain a distinct, more conservative state. The HTML
+report presents the same scope, selection, and budget facts beside the visual model.
+It also exposes a copyable regeneration recipe beside the exact report analysis-state
+digest. Canonical JSON diagram bundles carry the same state binding plus an internal content
+digest, are verified when re-imported, and are atomically published. These mechanisms detect
+accidental or unauthorized byte-level change after generation; they do not authenticate an
+author, establish approval, or replace detached signatures for governed review packages.
 
 Traceability graph identities are namespaced by element kind. Human catalog IDs remain
 visible as `reference_id`, while a requirement and hazard that happen to share the same

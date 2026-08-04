@@ -18,7 +18,7 @@ from typing import Any
 from .model import stable_id, utc_now
 
 ASSURANCE_SCHEMA_VERSION = "1.0"
-PLANNER_VERSION = "deterministic-verification-planner-3"
+PLANNER_VERSION = "deterministic-verification-planner-6"
 ASSURANCE_SCAFFOLD_FORMAT = "pysfmea-pytest-assurance-scaffold-6"
 ASSURANCE_SCAFFOLD_VERIFICATION_FORMAT = (
     "pysfmea-assurance-scaffold-verification-5"
@@ -314,6 +314,32 @@ def _detected_circuit_breaker(scanner: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _circuit_breaker_review_questions(control: dict[str, Any]) -> list[str]:
+    """Return non-gating questions for breaker details absent from static evidence."""
+
+    roles = set(_text_list(control.get("roles", [])))
+    questions = []
+    if not control.get("threshold_expressions"):
+        questions.append("What exact failure-count or rate threshold opens the breaker?")
+    if "recovery_timer" in roles and not control.get("cooldown_expressions"):
+        questions.append("What exact cooldown boundary permits a recovery probe?")
+    if "recovery_timer" in roles and not control.get("clock_sources"):
+        questions.append("Which controlled elapsed-time source governs recovery?")
+    if "recovery_timer" in roles and "half_open" not in set(
+        _text_list(control.get("observed_states", control.get("states", [])))
+    ):
+        questions.append("How is the bounded recovery-probe or HALF-OPEN policy represented?")
+    if "recovery_timer" in roles and "success_reset" not in roles:
+        questions.append("What observed transition returns a successful recovery probe to CLOSED?")
+    if "recovery_timer" in roles and not control.get("synchronization"):
+        questions.append("How are concurrent recovery probes serialized or bounded?")
+    if not control.get("scope_keys"):
+        questions.append("What dependency, tenant, or instance identity scopes breaker state?")
+    if "degraded_fallback" not in roles:
+        questions.append("Is a caller-visible degraded contract required, or explicitly not applicable?")
+    return questions
+
+
 def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
     review = item.get("review", {})
     scanner = item.get("scanner", {})
@@ -339,6 +365,13 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
         for value in _text_list(scanner.get("evidence", []))
         if value.startswith("Textual test references:")
     ]
+    direct_callers = _text_list(scanner.get("called_by", []))[:50]
+    upstream_paths = [
+        _text_list(path)[:7]
+        for path in scanner.get("upstream_paths", [])[:25]
+        if isinstance(path, list) and len(path) > 1
+    ]
+    upstream_path_analysis = copy.deepcopy(scanner.get("upstream_path_analysis", {}))
     gaps = []
     if not next_effect:
         gaps.append("next-higher effect requires engineering definition")
@@ -348,6 +381,12 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
         gaps.append("required prevention, detection, containment, or recovery control is not confirmed")
     if not safe_state and not degraded_behavior and not recovery_behavior:
         gaps.append("required safe-state, degraded, or recovery behavior is not defined")
+    if upstream_paths and not upstream_path_analysis.get(
+        "complete_within_static_call_model", True
+    ):
+        gaps.append(
+            "static caller-path inventory is bounded; verification scope must address the recorded path/depth limitations"
+        )
     proposed_name = f"test_assurance_{_slug(component.get('qualname', 'component'), 28)}_{obligation_id[-8:].casefold()}"
     proposed_path = f"tests/assurance/{proposed_name}.py"
     expected_control = (
@@ -380,6 +419,20 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
         ),
         "failure_condition": failure_mode,
         "detected_control_model": circuit_breaker,
+        "control_review_questions": _circuit_breaker_review_questions(circuit_breaker)
+        if circuit_breaker
+        else [],
+        "cascade_context": {
+            "direct_callers": direct_callers,
+            "static_upstream_paths": upstream_paths,
+            "static_path_analysis": upstream_path_analysis,
+            "notice": str(
+                scanner.get(
+                    "propagation_notice",
+                    "Static caller paths indicate potential exposure, not confirmed causal propagation.",
+                )
+            ),
+        },
         "operational_context": {
             "mode": str(review.get("operational_mode", "")),
             "state": str(review.get("operational_state", "")),
@@ -468,38 +521,97 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
         },
         "history": [{"event": "obligation_generated", "at": utc_now()}],
     }
+    if upstream_paths:
+        obligation["preconditions"].append(
+            "The test identifies which bounded static caller path is being exercised and records any unresolved dynamic dispatch."
+        )
+        obligation["oracles"].append(
+            "Observe the failed component, immediate caller, and outermost exercised caller independently; do not infer propagation from call linkage alone."
+        )
+        obligation["acceptance_criteria"].append(
+            "Observed behavior across the exercised caller path matches the approved local, next-higher, and system-effect boundaries."
+        )
+        obligation["evidence_requirements"].append(
+            "selected static caller path plus runtime trace or explicit test instrumentation showing which caller boundaries were exercised"
+        )
+        if not upstream_path_analysis.get("complete_within_static_call_model", True):
+            obligation["acceptance_criteria"].append(
+                "The verification record identifies caller paths omitted by discovery limits and documents compensating runtime, integration, or architectural evidence."
+            )
     if circuit_breaker:
+        rule_id = str(scanner.get("rule_id", ""))
         obligation["preconditions"].extend(
             [
                 "The dependency call count and breaker state are observable without relying only on logs.",
-                "The test controls dependency success/failure, elapsed time, and concurrent admission attempts.",
+                "The test controls dependency success/failure and proves whether each downstream call was admitted or suppressed.",
             ]
         )
         obligation["oracles"].extend(
             [
-                "Observe CLOSED, OPEN, and HALF-OPEN-equivalent state transitions and the exact transition trigger.",
-                "Count real downstream calls before, at, and after the trip threshold; calls suppressed while open must be distinguishable from successful calls.",
-                "Observe breaker state independently for each configured isolation key.",
-                "Observe the caller-visible degraded/fallback contract and prohibited downstream side effects.",
+                "Observe each exercised breaker state transition and its exact trigger.",
+                "Count real downstream calls; suppressed calls must be distinguishable from successful calls.",
             ]
         )
-        obligation["acceptance_criteria"].extend(
-            [
+        if rule_id == "resilience.circuit_breaker_containment":
+            obligation["preconditions"].append(
+                "The test can place failures immediately before, at, and after the approved trip boundary."
+            )
+            obligation["acceptance_criteria"].extend(
+                [
                 "The breaker opens at the reviewer-approved consecutive-failure boundary and never admits a normal dependency call while open.",
-                "A healthy dependency or unrelated isolation key is not tripped by another dependency's failures.",
+                    "Success/reset and concurrent failure accounting cannot bypass or prematurely trigger containment.",
+                ]
+            )
+            obligation["required_environment"].append(
+                "Controllable dependency double, exact call counter, and scheduler barrier for threshold interleavings."
+            )
+        elif rule_id == "resilience.circuit_breaker_recovery":
+            obligation["preconditions"].append(
+                "The test controls elapsed time and concurrent recovery-admission attempts."
+            )
+            obligation["oracles"].append(
+                "Observe OPEN, recovery-probe/HALF-OPEN-equivalent, re-open, and close decisions at cooldown boundaries."
+            )
+            obligation["acceptance_criteria"].extend(
+                [
                 "Cooldown uses the approved clock semantics and does not recover before the full interval elapses.",
                 "At most the approved number of HALF-OPEN probes execute concurrently; success closes and failure reopens the breaker deterministically.",
+                ]
+            )
+            obligation["required_environment"].append(
+                "Controllable dependency double, monotonic/fake clock, and scheduler barrier for concurrent recovery probes."
+            )
+            obligation["evidence_requirements"].append(
+                "controlled-clock and concurrent recovery-probe results immediately before, at, and after cooldown boundaries"
+            )
+        elif rule_id == "resilience.circuit_breaker_isolation":
+            obligation["preconditions"].append(
+                "At least two independently identifiable breaker scopes can fail and recover separately."
+            )
+            obligation["oracles"].append(
+                "Observe breaker state and downstream call decisions independently for every exercised isolation key."
+            )
+            obligation["acceptance_criteria"].append(
+                "A healthy dependency, tenant, or unrelated isolation key is not tripped, reset, or bypassed by another scope's state."
+            )
+            obligation["required_environment"].append(
+                "Controllable dependency doubles and independent call/state counters for every exercised isolation key."
+            )
+        elif rule_id == "resilience.circuit_breaker_fallback":
+            obligation["preconditions"].append(
+                "The breaker is held open while every caller-visible fallback path is exercised."
+            )
+            obligation["oracles"].append(
+                "Observe the caller-visible degraded/fallback contract and all prohibited downstream side effects."
+            )
+            obligation["acceptance_criteria"].append(
                 "Fallback/degraded output is explicit, observable, and cannot be mistaken for a complete successful dependency result.",
-            ]
-        )
-        obligation["required_environment"].append(
-            "Controllable dependency double, monotonic/fake clock, scheduler barrier, and per-isolation-key call counters."
-        )
-        obligation["evidence_requirements"].extend(
-            [
-                "state-transition trace with timestamps, isolation key, failure count, and admitted/suppressed call decision",
-                "controlled-clock and concurrent HALF-OPEN probe results at cooldown boundaries",
-            ]
+            )
+            obligation["required_environment"].append(
+                "Controllable dependency double and caller-side side-effect instrumentation while the breaker remains open."
+            )
+        obligation["evidence_requirements"].append(
+            "state-transition trace with timestamps, isolation identity, failure count, and admitted/suppressed call decision"
         )
         obligation["repeatability"] = {
             "minimum_runs": 3,
@@ -884,6 +996,13 @@ ASSURANCE_CSV_FIELDS = [
     "assurance_status",
     "evidence_status",
     "planning_gaps",
+    "control_review_questions",
+    "direct_callers",
+    "static_upstream_paths",
+    "cascade_path_inventory_complete",
+    "cascade_path_inventory_emitted",
+    "cascade_path_inventory_limitations",
+    "cascade_notice",
     "citation_ids",
     "reviewer",
     "owner",
@@ -914,6 +1033,31 @@ def _flat_row(value: dict[str, Any]) -> dict[str, Any]:
         "assurance_status": value.get("assurance_status", ""),
         "evidence_status": value.get("evidence_status", ""),
         "planning_gaps": " | ".join(_text_list(value.get("planning_gaps", []))),
+        "control_review_questions": " | ".join(
+            _text_list(value.get("control_review_questions", []))
+        ),
+        "direct_callers": " | ".join(
+            _text_list(value.get("cascade_context", {}).get("direct_callers", []))
+        ),
+        "static_upstream_paths": " | ".join(
+            " -> ".join(_text_list(path))
+            for path in value.get("cascade_context", {}).get("static_upstream_paths", [])
+            if isinstance(path, list)
+        ),
+        "cascade_path_inventory_complete": value.get("cascade_context", {})
+        .get("static_path_analysis", {})
+        .get("complete_within_static_call_model", ""),
+        "cascade_path_inventory_emitted": value.get("cascade_context", {})
+        .get("static_path_analysis", {})
+        .get("emitted_paths", ""),
+        "cascade_path_inventory_limitations": " | ".join(
+            _text_list(
+                value.get("cascade_context", {})
+                .get("static_path_analysis", {})
+                .get("limitations", [])
+            )
+        ),
+        "cascade_notice": value.get("cascade_context", {}).get("notice", ""),
         "citation_ids": " | ".join(_text_list(value.get("citation_ids", []))),
         "reviewer": value.get("review", {}).get("reviewer", ""),
         "owner": value.get("review", {}).get("owner", ""),

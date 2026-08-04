@@ -32,6 +32,15 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 - Static/observed Mermaid exports plus canonical renderer-neutral architecture,
   interface, traceability, failure-propagation, control, circuit-breaker state,
   sequence, state, and custom diagrams
+- Bounded failure-cascade paths that trace potential caller exposure, distinguish
+  conservative static links from runtime-observed relations, and place timing and
+  uncredited circuit-breaker containment boundaries in the propagation view;
+  repeated finding paths and breaker infrastructure are shared by component/control
+  scope while every failure mode retains an independent trace edge. Bounded views
+  select one priority-ordered finding per component before using remaining capacity,
+  preventing a few finding-heavy components from crowding out the system overview.
+  Scanner and report metadata disclose path-count and depth limits, omitted paths and
+  segments, and whether the underlying static caller-path inventory was itself truncated
 - SFMEA linkage and review-coverage reports
 - Self-contained interactive HTML reports with executive metrics, filters, record
   drill-down, architecture, traceability, sequences, notes, CSV extraction, and print styling
@@ -41,11 +50,15 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 - FastAPI, Flask, Django, Celery, Kafka, RabbitMQ, Click, and Typer entrypoint metadata
 - First-class circuit-breaker candidates with extracted roles, CLOSED/OPEN/HALF-OPEN
   state models, trip/cooldown expressions, clock and synchronization evidence,
-  isolation keys, degraded fallback contracts, and fault-injection obligations
+  isolation keys, degraded fallback contracts, class-wide method correlation,
+  observed-versus-conceptual state labeling, explicit model-review gaps, and
+  failure-mode-specific fault-injection obligations
 - OpenAPI, Swagger, JSON Schema, and protobuf contract inventory with compatibility failure prompts
 - Simple and OpenTelemetry JSON runtime-span evidence import
 - Provider-neutral, grounded machine discovery and summarization with explicit suggestion review
-- A baseline-aware Verification Obligation Register generated from every active finding
+- A baseline-aware Verification Obligation Register generated from every active finding,
+  with structured direct-caller and bounded upstream-path observation context, inventory
+  completeness metadata, and compensating-evidence criteria when discovery is truncated
 - Automation-ready pytest scaffolds that fail until meaningful assurance tests are implemented
 - CSV and Markdown exports
 - Immutable scan manifests with source/configuration/guidance/adapter/dependency/contract digests, a typed health-reporting adapter registry, and a hashed per-adapter contribution ledger
@@ -194,7 +207,11 @@ subsystem summaries, requirement/hazard traceability, automatically selected bou
 sequence views, system-context completeness, repository coverage/opaque-region
 accounting, stable record deep links, column controls, and methodology limitations.
 Finding details support previous/next traversal across the current filtered result set,
-Alt+Left/Alt+Right keyboard navigation, and copyable stable deep links. The report also
+Alt+Left/Alt+Right keyboard navigation, copyable stable deep links, and direct jumps to
+the exact failure-propagation node or assurance checklist entry. Diagram nodes link back
+to their governed finding and checklist, and stable diagram/node hashes restore the same
+trace location when shared. If a bounded projection omitted a requested finding, the report
+states that explicitly and preserves a return path to the full finding record. The report also
 offers deterministic review-order, priority, RPN, severity, source, component, and
 disposition sorting plus one-click view reset. It supports a printer-friendly layout
 and filtered CSV download.
@@ -207,6 +224,33 @@ sfmea report sfmea-analysis.json `
   --notes engineering-review-notes.md `
   -o .artifacts\sfmea-report.html
 ```
+
+Failure-propagation coverage can be expanded or simplified without changing code:
+
+```powershell
+sfmea report sfmea-analysis.json `
+  --propagation-record-limit 75 `
+  --propagation-path-limit 2 `
+  --propagation-depth 6 `
+  --propagation-include-finding FM-EXAMPLE-001 `
+  -o .artifacts\sfmea-report.html
+```
+
+The same options are available on `sfmea pdf` and `sfmea diagram`. Defaults remain
+40 findings, three caller paths per component, and six caller levels. Values are
+individually bounded and their combination must fit the canonical 2,000-node diagram
+budget. To show more findings, reduce path count or depth; selected limits are stored
+in report data, diagram metadata, and JSON bundle generation provenance.
+Use repeatable `--propagation-include-finding FINDING_ID` options when named active
+findings must appear regardless of their global priority. Pinned findings are embedded
+first, duplicate IDs are collapsed, and remaining capacity keeps the component-first
+selection policy. The distinct pin count cannot exceed the record limit.
+The report's diagram status and inspector show the effective selection policy, pinned
+scope, configured finding/path/depth limits, conservative node-budget use, projection
+status, and machine-readable omission reasons. Custom propagation settings are rejected
+for unrelated `sfmea diagram --type` values instead of being silently ignored.
+The propagation view also presents a copyable regeneration command bound visually to the
+report's analysis-state SHA-256, making a reviewed projection straightforward to reproduce.
 
 All styles, scripts, and report data are embedded. Repository-controlled text is
 inserted as data and rendered through safe DOM text operations; a restrictive content
@@ -226,8 +270,11 @@ It also contains a general inline-SVG diagram explorer. PySFMEA generates
 canonical architecture, interface-flow, requirement/hazard traceability,
 failure-propagation, control/action coverage, and bounded sequence models. The
 explorer provides deterministic layout, node/edge counts, element-type filtering,
-text search, zoom/fit, keyboard-accessible node inspection, evidence details, and
-SVG download.
+text search, zoom/fit, keyboard-accessible node inspection, evidence details,
+bidirectional finding/checklist navigation, stable node links, and SVG download.
+Exported JSON diagram bundles bind the exact governed analysis-state digest and schema,
+carry a canonical content digest, verify that digest when re-imported, and publish
+atomically so a failed write cannot replace the previous artifact.
 
 Project-specific diagrams can represent state machines, deployment flows,
 cause/effect chains, data flow, or another directed relationship model. Include one

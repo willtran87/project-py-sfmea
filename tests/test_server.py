@@ -150,6 +150,8 @@ class ServerTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Assurance plan", REVIEW_HTML)
+        self.assertIn("Control model questions", REVIEW_HTML)
+        self.assertIn("Cascade observation paths", REVIEW_HTML)
         self.assertIn("saveAssurancePlan", REVIEW_HTML)
         self.assertIn("'If-Match':state.revision", REVIEW_HTML)
         self.assertIn("Discard unsaved assurance-plan changes?", REVIEW_HTML)
