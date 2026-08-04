@@ -10,6 +10,7 @@ service.
 ```powershell
 sfmea diagram sfmea-analysis.json -o diagrams.json
 sfmea diagram sfmea-analysis.json --type failure_propagation -o propagation.json
+sfmea diagram sfmea-analysis.json --type circuit_breaker -o circuit-breakers.json
 ```
 
 The output is a `pysfmea-diagram-bundle-1` object containing project provenance
@@ -20,11 +21,18 @@ and one or more `pysfmea-diagram-1` diagrams. Supported generated categories are
 - `traceability`
 - `failure_propagation`
 - `control_coverage`
+- `circuit_breaker`
 - `sequence`
 
 Generated architecture, propagation, control, and sequence views are explicitly
 bounded and record their limits or truncation state in the diagram notice and
 metadata.
+
+Circuit-breaker state diagrams are generated only when bounded AST evidence identifies
+a candidate breaker. They visualize inferred CLOSED, OPEN, HALF-OPEN, trip, cooldown,
+probe, and degraded-fallback relationships. Extraction does not prove that a transition
+is reachable, atomic, correctly timed, isolated, or effective; dedicated assurance
+obligations require controlled-clock, concurrency, and dependency fault-injection evidence.
 
 ## Include custom diagrams in a report
 

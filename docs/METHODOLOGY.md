@@ -90,6 +90,7 @@ The scanner maps observable source characteristics onto prompts drawn from NASA 
 | Runtime, dependency, or toolchain incompatibility | `environment.runtime_incompatibility`, `environment.dependency_drift` |
 | Hardware off-nominal response | `hardware.abnormal_response` |
 | Shared/dependent failure | project-defined `common_cause.*` |
+| Circuit-breaker containment, recovery, isolation, or fallback failure | `resilience.circuit_breaker_containment`, `resilience.circuit_breaker_recovery`, `resilience.circuit_breaker_isolation`, `resilience.circuit_breaker_fallback` |
 
 The rules intentionally state failure at the functional boundary. A coding defect such as an incorrect comparison is normally a cause; “returns an incorrect authorization decision” is the failure mode; unauthorized access or denial of legitimate access are effects.
 
@@ -100,6 +101,14 @@ Scanner evidence includes source location, AST signals, approximate internal cal
 Confidence describes how directly a rule was triggered by observable syntax. It is not likelihood or occurrence. The two baseline functional rules are generated systematically even when no specialized syntax is present.
 
 Ordered call evidence and common framework decorators identify HTTP routes, background tasks, event handlers, and CLI commands. Framework recognition is metadata and a screening aid; it does not prove the runtime router, dependency injection graph, middleware order, or deployed configuration.
+
+Circuit-breaker extraction recognizes bounded identifier, comparison, clock, lock,
+state-mutation, isolation-key, and fallback evidence. It records a candidate control model
+and generates dedicated containment, timed-recovery, isolation, and fallback failure modes.
+The extracted model is never copied into reviewer-owned prevention or detection controls.
+Fault-injection obligations require threshold-boundary call counts, controlled elapsed time,
+concurrent HALF-OPEN probes, independent isolation keys, and caller-visible degraded behavior
+before the breaker can be credited as effective containment.
 
 Imported simple or OpenTelemetry JSON spans add observed parent-child relations. Each import is hashed, baseline-linked, bounded, and audited. Static and observed relationships remain visibly distinct because one is approximate source evidence and the other is incomplete execution evidence.
 

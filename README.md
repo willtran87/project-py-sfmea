@@ -30,7 +30,8 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 - Configurable completeness gates with CLI, browser, CSV, and Markdown findings
 - Functional propagation and system/component inventory worksheets
 - Static/observed Mermaid exports plus canonical renderer-neutral architecture,
-  interface, traceability, failure-propagation, control, sequence, state, and custom diagrams
+  interface, traceability, failure-propagation, control, circuit-breaker state,
+  sequence, state, and custom diagrams
 - SFMEA linkage and review-coverage reports
 - Self-contained interactive HTML reports with executive metrics, filters, record
   drill-down, architecture, traceability, sequences, notes, CSV extraction, and print styling
@@ -38,6 +39,9 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 - Dependency baselines, common-cause records, categorical severity, and review audit history
 - Lockfile and recursively included requirements baselines
 - FastAPI, Flask, Django, Celery, Kafka, RabbitMQ, Click, and Typer entrypoint metadata
+- First-class circuit-breaker candidates with extracted roles, CLOSED/OPEN/HALF-OPEN
+  state models, trip/cooldown expressions, clock and synchronization evidence,
+  isolation keys, degraded fallback contracts, and fault-injection obligations
 - OpenAPI, Swagger, JSON Schema, and protobuf contract inventory with compatibility failure prompts
 - Simple and OpenTelemetry JSON runtime-span evidence import
 - Provider-neutral, grounded machine discovery and summarization with explicit suggestion review

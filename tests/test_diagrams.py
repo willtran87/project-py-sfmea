@@ -192,6 +192,38 @@ class DiagramTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertTrue((self.root / "analysis-failure_propagation-diagrams.json").is_file())
 
+    def test_detected_circuit_breaker_generates_state_diagram(self) -> None:
+        (self.root / "breaker.py").write_text(
+            "import asyncio\nimport time\n"
+            "_circuit_lock = asyncio.Lock()\n"
+            "_failures = {}\n_circuit_open = {}\n"
+            "async def check_circuit(service_id):\n"
+            "    async with _circuit_lock:\n"
+            "        if service_id in _circuit_open:\n"
+            "            if time.monotonic() - _circuit_open[service_id] < 30:\n"
+            "                return True\n"
+            "            del _circuit_open[service_id]\n"
+            "        if _failures.get(service_id, 0) >= 3:\n"
+            "            _circuit_open[service_id] = time.monotonic()\n"
+            "            return True\n"
+            "        return False\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        diagrams = build_diagram_models(analysis, kind="circuit_breaker")
+        self.assertEqual(len(diagrams), 1)
+        diagram = diagrams[0]
+        self.assertEqual(diagram["type"], "state")
+        self.assertEqual(diagram["metadata"]["category"], "circuit_breaker")
+        self.assertEqual(
+            {value["label"] for value in diagram["nodes"]},
+            {"CLOSED", "OPEN", "HALF-OPEN"},
+        )
+        self.assertTrue(
+            {"failure threshold reached", "cooldown elapsed", "probe succeeds", "probe fails"}
+            <= {value["label"] for value in diagram["edges"]}
+        )
+
     def test_custom_diagram_import_is_bounded_and_embedded_safely(self) -> None:
         custom_path = self.root / "custom.json"
         custom_path.write_text(json.dumps(custom_state_diagram()), encoding="utf-8")

@@ -34,6 +34,7 @@ GENERATED_DIAGRAM_KINDS = (
     "sfta",
     "failure_propagation",
     "control_coverage",
+    "circuit_breaker",
     "sequence",
 )
 MAX_DIAGRAMS = 50
@@ -560,6 +561,162 @@ def failure_propagation_diagram(
             },
         }
     )
+
+
+def circuit_breaker_diagrams(
+    analysis: dict[str, Any], *, breaker_limit: int = 12
+) -> list[dict[str, Any]]:
+    """Render statically detected breaker candidates as reviewable state models."""
+
+    candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for component in analysis.get("components", []):
+        for control in component.get("detected_controls", []):
+            if isinstance(control, dict) and control.get("kind") == "circuit_breaker":
+                candidates.append((component, control))
+    candidates.sort(
+        key=lambda value: (
+            str(value[0].get("source", {}).get("path", "")),
+            int(value[0].get("source", {}).get("line", 0) or 0),
+            str(value[0].get("qualname", "")),
+        )
+    )
+    diagrams: list[dict[str, Any]] = []
+    for index, (component, control) in enumerate(candidates[:breaker_limit], start=1):
+        prefix = stable_id(
+            "CB",
+            str(component.get("id", "")),
+            str(component.get("qualname", "")),
+        ).casefold()
+        source = (
+            f"{component.get('source', {}).get('path', '')}:"
+            f"{component.get('source', {}).get('line', '')}"
+        )
+        states = set(control.get("states", []))
+        roles = set(control.get("roles", []))
+        nodes = [
+            _node(
+                f"{prefix}-closed",
+                "CLOSED",
+                "breaker_state",
+                description="Dependency calls are admitted and consecutive failures are counted.",
+                source=source,
+                layer=0,
+                order=0,
+            ),
+            _node(
+                f"{prefix}-open",
+                "OPEN",
+                "breaker_state",
+                description="Dependency calls are contained until the recovery policy permits a probe.",
+                source=source,
+                layer=1,
+                order=1,
+            ),
+        ]
+        edges: list[dict[str, Any]] = []
+        threshold = " | ".join(control.get("threshold_expressions", [])) or "static candidate threshold"
+        cooldown = " | ".join(control.get("cooldown_expressions", [])) or "configured cooldown"
+        if roles & {"failure_recording", "admission_guard", "breaker_state_management"}:
+            edges.append(
+                _edge(
+                    f"{prefix}-trip",
+                    f"{prefix}-closed",
+                    f"{prefix}-open",
+                    "failure threshold reached",
+                    "state_transition",
+                    evidence=threshold,
+                    order=0,
+                )
+            )
+        if "half_open" in states:
+            nodes.append(
+                _node(
+                    f"{prefix}-half-open",
+                    "HALF-OPEN",
+                    "breaker_state",
+                    description="A bounded recovery probe determines whether normal admission can resume.",
+                    source=source,
+                    layer=2,
+                    order=2,
+                )
+            )
+            edges.extend(
+                [
+                    _edge(
+                        f"{prefix}-cooldown",
+                        f"{prefix}-open",
+                        f"{prefix}-half-open",
+                        "cooldown elapsed",
+                        "timed_transition",
+                        evidence=cooldown,
+                        order=1,
+                    ),
+                    _edge(
+                        f"{prefix}-probe-success",
+                        f"{prefix}-half-open",
+                        f"{prefix}-closed",
+                        "probe succeeds",
+                        "state_transition",
+                        evidence="success-reset candidate",
+                        order=2,
+                    ),
+                    _edge(
+                        f"{prefix}-probe-failure",
+                        f"{prefix}-half-open",
+                        f"{prefix}-open",
+                        "probe fails",
+                        "state_transition",
+                        evidence="failure-recording candidate",
+                        order=3,
+                    ),
+                ]
+            )
+        if "degraded_fallback" in roles:
+            nodes.append(
+                _node(
+                    f"{prefix}-fallback",
+                    "DEGRADED / FALLBACK",
+                    "degraded_output",
+                    description="Caller-visible response while the protected dependency is isolated.",
+                    source=source,
+                    layer=2,
+                    order=3,
+                )
+            )
+            edges.append(
+                _edge(
+                    f"{prefix}-fallback-route",
+                    f"{prefix}-open",
+                    f"{prefix}-fallback",
+                    "return degraded response",
+                    "fallback",
+                    evidence=" | ".join(control.get("fallback_indicators", [])),
+                    order=4,
+                )
+            )
+        diagrams.append(
+            normalize_diagram_model(
+                {
+                    "id": f"circuit-breaker-{index}-{prefix}",
+                    "title": f"Circuit breaker: {component.get('qualname', 'component')}",
+                    "type": "state",
+                    "description": "Candidate breaker state machine extracted from Python AST evidence.",
+                    "notice": "Static candidate only. Transitions, timing, isolation, and fallback effectiveness require controlled fault-injection evidence.",
+                    "nodes": nodes,
+                    "edges": edges,
+                    "metadata": {
+                        "category": "circuit_breaker",
+                        "component_id": str(component.get("id", "")),
+                        "roles": sorted(roles),
+                        "clock_sources": control.get("clock_sources", []),
+                        "scope_keys": control.get("scope_keys", []),
+                        "threshold_expressions": control.get("threshold_expressions", []),
+                        "cooldown_expressions": control.get("cooldown_expressions", []),
+                    },
+                }
+            )
+        )
+    return diagrams
 
 
 def guidance_traceability_diagram(
@@ -1104,6 +1261,7 @@ def build_diagram_models(
         "sfta": lambda: sfta_diagrams(analysis),
         "failure_propagation": lambda: [failure_propagation_diagram(analysis)],
         "control_coverage": lambda: [control_coverage_diagram(analysis)],
+        "circuit_breaker": lambda: circuit_breaker_diagrams(analysis),
         "sequence": lambda: sequence_diagrams(analysis),
     }
     selected = list(builders) if kind == "all" else [kind]

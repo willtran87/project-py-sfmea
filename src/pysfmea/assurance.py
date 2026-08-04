@@ -18,7 +18,7 @@ from typing import Any
 from .model import stable_id, utc_now
 
 ASSURANCE_SCHEMA_VERSION = "1.0"
-PLANNER_VERSION = "deterministic-verification-planner-2"
+PLANNER_VERSION = "deterministic-verification-planner-3"
 ASSURANCE_SCAFFOLD_FORMAT = "pysfmea-pytest-assurance-scaffold-6"
 ASSURANCE_SCAFFOLD_VERIFICATION_FORMAT = (
     "pysfmea-assurance-scaffold-verification-5"
@@ -239,6 +239,8 @@ def _method_for(item: dict[str, Any]) -> tuple[str, str]:
     scanner = item.get("scanner", {})
     rule = str(scanner.get("rule_id", ""))
     failure_class = str(scanner.get("failure_class", ""))
+    if rule.startswith("resilience.circuit_breaker_"):
+        return "fault_injection_test", "Exercise trip, isolation, degraded fallback, and timed recovery across controlled breaker-state transitions."
     if rule.startswith(("storage.", "persistence.")):
         return "fault_injection_test", "Exercise rollback and externally visible side effects at persistence failure boundaries."
     if rule.startswith("state."):
@@ -301,9 +303,21 @@ def _stimulus(method: str, item: dict[str, Any]) -> dict[str, Any]:
     return obligation
 
 
+def _detected_circuit_breaker(scanner: dict[str, Any]) -> dict[str, Any]:
+    return next(
+        (
+            copy.deepcopy(value)
+            for value in scanner.get("detected_controls", [])
+            if isinstance(value, dict) and value.get("kind") == "circuit_breaker"
+        ),
+        {},
+    )
+
+
 def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
     review = item.get("review", {})
     scanner = item.get("scanner", {})
+    circuit_breaker = _detected_circuit_breaker(scanner)
     component = item.get("component", {})
     source = item.get("source", {})
     method, method_rationale = _method_for(item)
@@ -365,6 +379,7 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
             "documented effects escaping the approved boundary."
         ),
         "failure_condition": failure_mode,
+        "detected_control_model": circuit_breaker,
         "operational_context": {
             "mode": str(review.get("operational_mode", "")),
             "state": str(review.get("operational_state", "")),
@@ -453,6 +468,43 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
         },
         "history": [{"event": "obligation_generated", "at": utc_now()}],
     }
+    if circuit_breaker:
+        obligation["preconditions"].extend(
+            [
+                "The dependency call count and breaker state are observable without relying only on logs.",
+                "The test controls dependency success/failure, elapsed time, and concurrent admission attempts.",
+            ]
+        )
+        obligation["oracles"].extend(
+            [
+                "Observe CLOSED, OPEN, and HALF-OPEN-equivalent state transitions and the exact transition trigger.",
+                "Count real downstream calls before, at, and after the trip threshold; calls suppressed while open must be distinguishable from successful calls.",
+                "Observe breaker state independently for each configured isolation key.",
+                "Observe the caller-visible degraded/fallback contract and prohibited downstream side effects.",
+            ]
+        )
+        obligation["acceptance_criteria"].extend(
+            [
+                "The breaker opens at the reviewer-approved consecutive-failure boundary and never admits a normal dependency call while open.",
+                "A healthy dependency or unrelated isolation key is not tripped by another dependency's failures.",
+                "Cooldown uses the approved clock semantics and does not recover before the full interval elapses.",
+                "At most the approved number of HALF-OPEN probes execute concurrently; success closes and failure reopens the breaker deterministically.",
+                "Fallback/degraded output is explicit, observable, and cannot be mistaken for a complete successful dependency result.",
+            ]
+        )
+        obligation["required_environment"].append(
+            "Controllable dependency double, monotonic/fake clock, scheduler barrier, and per-isolation-key call counters."
+        )
+        obligation["evidence_requirements"].extend(
+            [
+                "state-transition trace with timestamps, isolation key, failure count, and admitted/suppressed call decision",
+                "controlled-clock and concurrent HALF-OPEN probe results at cooldown boundaries",
+            ]
+        )
+        obligation["repeatability"] = {
+            "minimum_runs": 3,
+            "additional_runs_when_nondeterministic": 20,
+        }
     obligation["provenance"]["contract_sha256"] = _contract_sha256(obligation)
     return obligation
 

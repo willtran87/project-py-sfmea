@@ -46,6 +46,7 @@ BUILTIN_ADAPTERS = (
     AdapterDescriptor("python.data_flow_signals", "analyzer", "1", ("input_boundaries", "serialization", "persistence", "calculation_signals"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
     AdapterDescriptor("python.interface_analyzer", "analyzer", "1", ("external_calls", "internal_contracts", "storage_interfaces", "hardware_interfaces"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
     AdapterDescriptor("python.concurrency_analyzer", "analyzer", "1", ("async_operations", "task_creation", "timing_and_ordering"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
+    AdapterDescriptor("python.resilience_control_analyzer", "analyzer", "1", ("circuit_breaker_roles", "state_machine", "trip_threshold", "cooldown_clock", "isolation_key", "fallback_contract"), "python-ast-facts-1", "detected-resilience-control-1", "heuristic"),
     AdapterDescriptor("repository.configuration_analyzer", "analyzer", "1", ("environment_access", "configuration_failure", "runtime_compatibility"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
     AdapterDescriptor("python.security_boundary_analyzer", "analyzer", "1", ("subprocess_boundaries", "masked_failures", "untrusted_input_signals"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
     AdapterDescriptor("python.complexity_analyzer", "analyzer", "1", ("complexity", "loops", "resource_exhaustion_signals"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
@@ -106,6 +107,8 @@ def _contribution_adapters(item: dict[str, Any]) -> list[str]:
         adapters.add("contracts.local_schema")
     if failure_class == "common_cause":
         adapters.add("hazard.sfta")
+    if rule_id.startswith("resilience.circuit_breaker_"):
+        adapters.add("python.resilience_control_analyzer")
     return sorted(adapters)
 
 

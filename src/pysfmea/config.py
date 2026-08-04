@@ -127,6 +127,10 @@ RESERVED_SCANNER_RULE_IDS = {
     "timing.late_or_early",
     "detection.masked_failure",
     "resource.exhaustion",
+    "resilience.circuit_breaker_containment",
+    "resilience.circuit_breaker_recovery",
+    "resilience.circuit_breaker_isolation",
+    "resilience.circuit_breaker_fallback",
     "manual",
 }
 

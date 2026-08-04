@@ -150,6 +150,154 @@ class FunctionFacts:
     raises: int = 0
     arithmetic_ops: int = 0
     signals: set[str] = field(default_factory=set)
+    detected_controls: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _circuit_breaker_control(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> dict[str, Any] | None:
+    """Extract bounded circuit-breaker semantics without crediting effectiveness."""
+
+    identifiers: set[str] = {node.name.casefold()}
+    strings: set[str] = set()
+    calls: set[str] = set()
+    for value in ast.walk(node):
+        if isinstance(value, ast.Name):
+            identifiers.add(value.id.casefold())
+        elif isinstance(value, ast.Attribute):
+            identifiers.add(_dotted_name(value).casefold())
+        elif isinstance(value, ast.Constant) and isinstance(value.value, str):
+            text = value.value.strip()
+            if text:
+                strings.add(text[:500])
+        elif isinstance(value, ast.Call):
+            name = _dotted_name(value.func).casefold()
+            if name:
+                calls.add(name)
+
+    searchable = " ".join([*identifiers, *(value.casefold() for value in strings)])
+    explicit = any(token in searchable for token in ("circuit", "breaker", "half-open", "half_open"))
+    supporting = sum(
+        token in searchable
+        for token in ("cooldown", "failure", "threshold", "record_success", "record_failure")
+    )
+    if not explicit and supporting < 3:
+        return None
+
+    roles: set[str] = set()
+    if any(token in searchable for token in ("check_circuit", "circuit_open", "is_open")):
+        roles.add("admission_guard")
+    if any(token in searchable for token in ("record_failure", "failure_count", "failures")) and any(
+        isinstance(value, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+        for value in ast.walk(node)
+    ):
+        roles.add("failure_recording")
+    if any(token in searchable for token in ("record_success", "reset", "clear")) or any(
+        call.endswith((".pop", ".clear")) for call in calls
+    ):
+        roles.add("success_reset")
+    has_clock_call = any(
+        call.endswith(("time", "monotonic", "perf_counter")) for call in calls
+    )
+    deletes_state = any(isinstance(value, ast.Delete) for value in ast.walk(node))
+    if (
+        "cooldown" in searchable
+        or "half-open" in searchable
+        or "half_open" in searchable
+        or (has_clock_call and deletes_state)
+    ):
+        roles.add("recovery_timer")
+    if any(token in searchable for token in ("fallback", "placeholder", "skipping", "temporarily unavailable")):
+        roles.add("degraded_fallback")
+    if not roles:
+        roles.add("breaker_state_management")
+
+    state_symbols = sorted(
+        {
+            identifier
+            for identifier in identifiers
+            if any(token in identifier for token in ("circuit", "breaker", "open"))
+        }
+    )[:20]
+    failure_counter_symbols = sorted(
+        {
+            identifier
+            for identifier in identifiers
+            if "failure" in identifier or "failures" in identifier
+        }
+    )[:20]
+    threshold_expressions: list[str] = []
+    cooldown_expressions: list[str] = []
+    for value in ast.walk(node):
+        if not isinstance(value, ast.Compare):
+            continue
+        expression = ast.unparse(value)[:500]
+        lowered = expression.casefold()
+        if "fail" in lowered and any(
+            isinstance(operator, (ast.Gt, ast.GtE, ast.Eq))
+            for operator in value.ops
+        ):
+            threshold_expressions.append(expression)
+        if any(token in lowered for token in ("cooldown", "circuit_open", "breaker")) and any(
+            token in lowered for token in ("time", "monotonic", "clock")
+        ):
+            cooldown_expressions.append(expression)
+
+    clock_sources = sorted(
+        call
+        for call in calls
+        if call.endswith(("time", "monotonic", "perf_counter"))
+    )[:10]
+    synchronization = sorted(
+        {
+            ast.unparse(item.context_expr)[:300]
+            for value in ast.walk(node)
+            if isinstance(value, (ast.With, ast.AsyncWith))
+            for item in value.items
+            if "lock" in ast.unparse(item.context_expr).casefold()
+        }
+    )[:10]
+    fallback_indicators = sorted(
+        {
+            value
+            for value in [*calls, *strings]
+            if any(
+                token in value.casefold()
+                for token in ("fallback", "placeholder", "skipping", "temporarily unavailable")
+            )
+        }
+    )[:20]
+    scope_keys = sorted(
+        parameter
+        for parameter in (
+            argument.arg
+            for argument in [
+                *node.args.posonlyargs,
+                *node.args.args,
+                *node.args.kwonlyargs,
+            ]
+        )
+        if any(token in parameter.casefold() for token in ("server", "dependency", "client", "service", "key", "id"))
+    )[:10]
+    states = ["closed", "open"]
+    if "recovery_timer" in roles or "success_reset" in roles:
+        states.append("half_open")
+    return {
+        "schema_version": "pysfmea-detected-circuit-breaker-1",
+        "kind": "circuit_breaker",
+        "confidence": "static_candidate",
+        "roles": sorted(roles),
+        "states": states,
+        "state_symbols": state_symbols,
+        "failure_counter_symbols": failure_counter_symbols,
+        "threshold_expressions": list(dict.fromkeys(threshold_expressions))[:10],
+        "cooldown_expressions": list(dict.fromkeys(cooldown_expressions))[:10],
+        "clock_sources": clock_sources,
+        "synchronization": synchronization,
+        "scope_keys": scope_keys,
+        "fallback_indicators": fallback_indicators,
+        "notice": "Static candidate only; containment effectiveness requires fault-injection evidence.",
+    }
 
 
 class _FactVisitor(ast.NodeVisitor):
@@ -606,6 +754,18 @@ class _ModuleCollector(ast.NodeVisitor):
         visitor = _FactVisitor(facts, self.aliases)
         for statement in node.body:
             visitor.visit(statement)
+        circuit_breaker = _circuit_breaker_control(node)
+        if circuit_breaker:
+            facts.detected_controls.append(circuit_breaker)
+            facts.signals.update(
+                {"circuit_breaker", "resilience_control", "state_mutation"}
+            )
+            if circuit_breaker.get("clock_sources") or circuit_breaker.get(
+                "cooldown_expressions"
+            ):
+                facts.signals.add("timing")
+            if circuit_breaker.get("synchronization"):
+                facts.signals.add("concurrency")
         self.functions.append(facts)
         if self.include_nested:
             self.function_depth += 1
@@ -2090,6 +2250,109 @@ def _candidate_rules(
                 ["Define timing requirements and clock semantics", "Use monotonic deadlines for durations", "Test deadline and overload behavior"],
             )
         )
+    circuit_breaker = next(
+        (
+            value
+            for value in facts.detected_controls
+            if value.get("kind") == "circuit_breaker"
+        ),
+        None,
+    )
+    if circuit_breaker:
+        roles = set(circuit_breaker.get("roles", []))
+        if roles & {"admission_guard", "failure_recording", "breaker_state_management"}:
+            rules.append(
+                _rule(
+                    "resilience.circuit_breaker_containment",
+                    "Circuit breaker fails to contain or trips incorrectly",
+                    f"The circuit breaker managed by {name} opens too early, fails to open at the failure threshold, or permits calls while open.",
+                    "Dependency calls repeatedly fail, recover, or execute concurrently around the configured trip threshold.",
+                    "Failure traffic escapes containment, or healthy traffic is rejected and the affected capability becomes unnecessarily unavailable.",
+                    [
+                        "Incorrect or non-atomic failure count",
+                        "Threshold comparison or reset is wrong",
+                        "Open-state check races with dependency admission",
+                        "Success clears a failure history at the wrong time",
+                    ],
+                    [
+                        "Verify exact threshold boundary and open-state admission behavior",
+                        "Control concurrent failure/success interleavings",
+                        "Prove downstream calls are suppressed while open",
+                    ],
+                    "high",
+                    "logic",
+                )
+            )
+        if roles & {"recovery_timer", "success_reset"}:
+            rules.append(
+                _rule(
+                    "resilience.circuit_breaker_recovery",
+                    "Circuit breaker recovers at the wrong time or state",
+                    f"The circuit breaker managed by {name} remains open too long, closes too early, admits multiple half-open probes, or resets incorrectly after recovery.",
+                    "The cooldown expires, the clock changes, or concurrent callers attempt recovery while the dependency is degraded or newly healthy.",
+                    "Recovery is delayed, unstable, or causes a renewed burst of calls that propagates dependency failure.",
+                    [
+                        "Wall-clock adjustment changes elapsed-time behavior",
+                        "Half-open state is implicit or not serialized",
+                        "Multiple recovery probes execute concurrently",
+                        "Success or failure transitions reset the wrong state",
+                    ],
+                    [
+                        "Use a monotonic elapsed-time source",
+                        "Define CLOSED, OPEN, and HALF-OPEN transitions explicitly",
+                        "Permit and observe a bounded recovery probe",
+                        "Test cooldown boundaries, clock shifts, and concurrent probes",
+                    ],
+                    "high",
+                    "timing",
+                )
+            )
+        if circuit_breaker.get("scope_keys"):
+            rules.append(
+                _rule(
+                    "resilience.circuit_breaker_isolation",
+                    "Circuit breaker scope or isolation is incorrect",
+                    f"The circuit breaker managed by {name} shares, loses, or applies state under the wrong dependency identity.",
+                    "Multiple dependencies, tenants, processes, or server identities fail and recover independently.",
+                    "One dependency can trip, reset, or bypass another dependency's containment boundary and create a wider cascade.",
+                    [
+                        "Unstable or colliding breaker key",
+                        "Process-local state assumed to be distributed",
+                        "State is not bounded or removed",
+                        "Dependency identity changes across configuration reloads",
+                    ],
+                    [
+                        "Define the breaker isolation key and lifecycle",
+                        "Test independent dependency failures and recoveries",
+                        "Document process-local versus shared-state behavior",
+                    ],
+                    "high",
+                    "interface",
+                )
+            )
+        if "degraded_fallback" in roles:
+            rules.append(
+                _rule(
+                    "resilience.circuit_breaker_fallback",
+                    "Circuit breaker fallback masks or amplifies failure",
+                    f"The fallback selected by {name} is indistinguishable from success, violates the degraded contract, or triggers further unsafe work.",
+                    "The breaker is open and the caller receives a placeholder, cached result, default, or explicit degraded response.",
+                    "Callers proceed with incomplete capability, repeatedly retry, or fail to detect that the dependency was isolated.",
+                    [
+                        "Fallback has success-shaped semantics",
+                        "Degraded status is not propagated",
+                        "Caller retries or performs side effects despite isolation",
+                        "Fallback observability lacks dependency identity and breaker state",
+                    ],
+                    [
+                        "Define an explicit degraded response contract",
+                        "Trace fallback handling through every caller",
+                        "Test prohibited side effects and retry behavior while open",
+                    ],
+                    "high",
+                    "detection",
+                )
+            )
     if facts.broad_handlers or facts.silent_handlers:
         rules.append(
             _rule(
@@ -2192,6 +2455,7 @@ def _component_dict(
         "content_fingerprint": facts.content_fingerprint,
         "context_fingerprint": facts.context_fingerprint,
         "signals": sorted(facts.signals),
+        "detected_controls": copy.deepcopy(facts.detected_controls),
         "test_references": test_refs,
         "coverage": coverage,
         "critical_context": critical_context,
@@ -2323,6 +2587,25 @@ def _item_dict(
         evidence.append("Observed internal callers: " + ", ".join(component["called_by"][:10]))
     for path in component.get("upstream_paths", [])[:5]:
         evidence.append("Observed propagation path: " + " -> ".join(path))
+    detected_controls = copy.deepcopy(component.get("detected_controls", []))
+    for control in detected_controls:
+        if control.get("kind") != "circuit_breaker":
+            continue
+        evidence.append(
+            "Detected circuit-breaker candidate roles: "
+            + ", ".join(control.get("roles", []))
+        )
+        if control.get("threshold_expressions"):
+            evidence.append(
+                "Circuit-breaker threshold expression(s): "
+                + " | ".join(control["threshold_expressions"])
+            )
+        if control.get("cooldown_expressions"):
+            evidence.append(
+                "Circuit-breaker cooldown expression(s): "
+                + " | ".join(control["cooldown_expressions"])
+            )
+        evidence.append(str(control.get("notice", "")))
     return {
         "id": item_id,
         "component_id": component["id"],
@@ -2353,6 +2636,7 @@ def _item_dict(
             "screening_priority": component["screening"]["priority"],
             "screening_reasons": component["screening"]["reasons"],
             "evidence": evidence,
+            "detected_controls": detected_controls,
             "citations": citations_for_rule(rule["rule_id"]),
         },
         "review": review,

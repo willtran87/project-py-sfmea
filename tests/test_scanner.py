@@ -94,6 +94,87 @@ class ScannerTests(unittest.TestCase):
         }
         self.assertIn("calculation.precision_or_range", calculate_rules)
 
+    def test_scan_extracts_circuit_breaker_semantics_without_crediting_control(self) -> None:
+        (self.root / "breaker.py").write_text(
+            "import asyncio\n"
+            "import time\n\n"
+            "TIMEOUTS = {'circuit_breaker_cooldown': 300}\n"
+            "_circuit_lock = asyncio.Lock()\n"
+            "_server_failures = {}\n"
+            "_server_circuit_open = {}\n\n"
+            "async def check_circuit(server_id):\n"
+            "    async with _circuit_lock:\n"
+            "        if server_id in _server_circuit_open:\n"
+            "            if time.time() - _server_circuit_open[server_id] "
+            "< TIMEOUTS['circuit_breaker_cooldown']:\n"
+            "                return True\n"
+            "            del _server_circuit_open[server_id]\n"
+            "            _server_failures.pop(server_id, None)\n"
+            "        if _server_failures.get(server_id, 0) >= 3:\n"
+            "            _server_circuit_open[server_id] = time.time()\n"
+            "            return True\n"
+            "        return False\n\n"
+            "async def degraded_tool(server_id):\n"
+            "    if await check_circuit(server_id):\n"
+            "        return 'circuit-breaker: server temporarily unavailable placeholder'\n"
+            "    return 'normal'\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        components = {value["qualname"]: value for value in analysis["components"]}
+        check = components["check_circuit"]
+        self.assertIn("circuit_breaker", check["signals"])
+        control = check["detected_controls"][0]
+        self.assertEqual(control["kind"], "circuit_breaker")
+        self.assertEqual(control["confidence"], "static_candidate")
+        self.assertTrue({"closed", "open", "half_open"} <= set(control["states"]))
+        self.assertIn("admission_guard", control["roles"])
+        self.assertIn("recovery_timer", control["roles"])
+        self.assertIn("time.time", control["clock_sources"])
+        self.assertIn("server_id", control["scope_keys"])
+        self.assertTrue(control["threshold_expressions"])
+        self.assertTrue(control["cooldown_expressions"])
+        self.assertEqual(control["synchronization"], ["_circuit_lock"])
+
+        findings = [
+            value
+            for value in analysis["items"]
+            if value["component"]["qualname"] == "check_circuit"
+            and value["scanner"]["rule_id"].startswith(
+                "resilience.circuit_breaker_"
+            )
+        ]
+        self.assertEqual(
+            {value["scanner"]["rule_id"] for value in findings},
+            {
+                "resilience.circuit_breaker_containment",
+                "resilience.circuit_breaker_recovery",
+                "resilience.circuit_breaker_isolation",
+            },
+        )
+        self.assertTrue(
+            all(
+                "python.resilience_control_analyzer"
+                in value["scanner"]["adapter_ids"]
+                for value in findings
+            )
+        )
+        self.assertTrue(
+            all(not value["review"]["prevention_controls"] for value in findings)
+        )
+        obligation = next(
+            value
+            for value in analysis["assurance"]["obligations"]
+            if value["finding_id"] == findings[0]["id"]
+        )
+        self.assertEqual(obligation["verification_method"], "fault_injection_test")
+        self.assertEqual(
+            obligation["detected_control_model"]["kind"], "circuit_breaker"
+        )
+        self.assertTrue(
+            any("HALF-OPEN" in value for value in obligation["acceptance_criteria"])
+        )
+
     def test_scan_records_context_repository_coverage_and_adapter_contributions(self) -> None:
         (self.root / "README.md").write_text("# System\n", encoding="utf-8")
         (self.root / "opaque.bin").write_bytes(b"\x00\x01")
