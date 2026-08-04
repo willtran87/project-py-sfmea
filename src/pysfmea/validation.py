@@ -1,0 +1,877 @@
+"""Completeness checks for a governed SFMEA review workflow."""
+
+from __future__ import annotations
+
+import fnmatch
+from collections import Counter
+from datetime import date
+from typing import Any
+
+from .config import DEFAULT_CONFIG
+from .model import calculate_rpn, utc_now
+
+
+LEVELS = {"error", "warning", "information"}
+
+
+def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Return review-quality findings without changing *analysis*."""
+
+    quality = dict(DEFAULT_CONFIG["quality"])
+    quality.update(analysis.get("context", {}).get("quality", {}))
+    risk = analysis.get("context", {}).get("risk", {})
+    severity_categories = set(risk.get("severity_categories", []))
+    hazards = {
+        hazard.get("id")
+        for hazard in analysis.get("context", {}).get("hazards", [])
+        if isinstance(hazard, dict) and hazard.get("id")
+    }
+    findings: list[dict[str, Any]] = []
+
+    def add(
+        rule_id: str,
+        level: str,
+        message: str,
+        *,
+        item: dict[str, Any] | None = None,
+        field: str = "",
+    ) -> None:
+        findings.append(
+            {
+                "rule_id": rule_id,
+                "level": level,
+                "message": message,
+                "item_id": (item or {}).get("id", ""),
+                "component": (item or {}).get("component", {}).get("qualname", ""),
+                "field": field,
+            }
+        )
+
+    project_context = analysis.get("context", {}).get("project", {})
+    analysis_context = analysis.get("context", {}).get("analysis", {})
+    if quality["require_project_context"]:
+        for field in ("purpose", "boundary", "operating_context"):
+            if not project_context.get(field):
+                add(
+                    f"project.missing_{field}",
+                    "error",
+                    f"Project {field.replace('_', ' ')} is not configured.",
+                    field=f"project.{field}",
+                )
+    if not hazards:
+        add(
+            "project.no_hazards",
+            "information",
+            "No project hazards are configured; confirm that hazard linkage is outside this analysis scope.",
+            field="hazards",
+        )
+    if not analysis_context.get("ground_rules"):
+        add(
+            "analysis.no_ground_rules",
+            "error",
+            "No SFMEA ground rules are configured.",
+            field="analysis.ground_rules",
+        )
+    if not analysis_context.get("revision"):
+        add(
+            "analysis.no_revision",
+            "error",
+            "No analysis revision or lifecycle baseline name is configured.",
+            field="analysis.revision",
+        )
+    baseline = analysis.get("project", {}).get("baseline", {})
+    if not baseline.get("id") or not baseline.get("source_digest"):
+        add(
+            "analysis.missing_source_baseline",
+            "error",
+            "The analysis does not identify a reproducible source/configuration baseline.",
+            field="project.baseline",
+        )
+    elif baseline.get("vcs", {}).get("dirty") is True:
+        add(
+            "analysis.dirty_worktree",
+            "warning",
+            "The scan was produced from a Git worktree with uncommitted or untracked changes.",
+            field="project.baseline.vcs",
+        )
+    configured_reviewer_records = analysis.get("context", {}).get("reviewers", [])
+    if not configured_reviewer_records:
+        add(
+            "analysis.no_reviewers",
+            "error",
+            "No cross-functional reviewers are identified.",
+            field="reviewers",
+        )
+    elif len({reviewer.get("role", "") for reviewer in configured_reviewer_records}) < 2:
+        add(
+            "analysis.insufficient_review_diversity",
+            "warning",
+            "The configured review team represents fewer than two distinct roles.",
+            field="reviewers",
+        )
+    for hazard in analysis.get("context", {}).get("hazards", []):
+        if not hazard.get("description"):
+            add(
+                "catalog.hazard_missing_description",
+                "error",
+                f"Hazard {hazard.get('id', '<missing ID>')} has no description.",
+                field="hazards",
+            )
+        if not hazard.get("end_effect"):
+            add(
+                "catalog.hazard_missing_end_effect",
+                "error",
+                f"Hazard {hazard.get('id', '<missing ID>')} has no system/end effect.",
+                field="hazards",
+            )
+    for requirement in analysis.get("context", {}).get("requirements", []):
+        if not requirement.get("text"):
+            add(
+                "catalog.requirement_missing_text",
+                "error",
+                f"Requirement {requirement.get('id', '<missing ID>')} has no requirement text.",
+                field="requirements",
+            )
+        if not requirement.get("source"):
+            add(
+                "catalog.requirement_missing_source",
+                "warning",
+                f"Requirement {requirement.get('id', '<missing ID>')} has no authoritative source.",
+                field="requirements",
+            )
+    for interface in analysis.get("context", {}).get("system_interfaces", []):
+        interface_id = interface.get("id", "<missing ID>")
+        if not interface.get("source") or not interface.get("target"):
+            add(
+                "catalog.interface_missing_endpoint",
+                "error",
+                f"System interface {interface_id} has an incomplete source/target boundary.",
+                field="system_interfaces",
+            )
+        if not interface.get("description"):
+            add(
+                "catalog.interface_missing_description",
+                "warning",
+                f"System interface {interface_id} has no functional description.",
+                field="system_interfaces",
+            )
+    if not analysis.get("context", {}).get("component_mappings"):
+        add(
+            "analysis.no_architecture_mapping",
+            "warning",
+            "No components are mapped to requirements, hazards, or subsystems.",
+            field="component_mappings",
+        )
+    for warning in analysis.get("warnings", []):
+        add(
+            "scan.warning",
+            quality["scan_warning_level"],
+            f"Scanner warning for {warning.get('path', 'unknown path')}: {warning.get('message', '')}",
+        )
+    if not analysis.get("components"):
+        add(
+            "analysis.no_components",
+            "error",
+            "The analysis contains no scanned or configured components.",
+            field="components",
+        )
+    if not analysis.get("items"):
+        add(
+            "analysis.no_failure_modes",
+            "error",
+            "The analysis contains no candidate or manually added failure modes.",
+            field="items",
+        )
+    for suggestion in analysis.get("suggestions", []):
+        if suggestion.get("status") == "stale":
+            add(
+                "discovery.stale_suggestion",
+                "warning",
+                f"Machine suggestion {suggestion.get('id', '')} was generated against an older baseline.",
+                field="suggestions",
+            )
+        elif suggestion.get("status") == "proposed":
+            add(
+                "discovery.unreviewed_suggestion",
+                "information",
+                f"Machine suggestion {suggestion.get('id', '')} awaits explicit review.",
+                field="suggestions",
+            )
+    for summary in analysis.get("generated_summaries", []):
+        if summary.get("stale"):
+            add(
+                "discovery.stale_summary",
+                "warning",
+                f"Generated summary {summary.get('id', '')} was produced for an older baseline.",
+                field="generated_summaries",
+            )
+    runtime_spans = analysis.get("runtime_evidence", {}).get("spans", [])
+    unmapped_runtime = sum(not span.get("component_id") for span in runtime_spans)
+    if unmapped_runtime:
+        add(
+            "runtime.unmapped_spans",
+            "warning",
+            f"{unmapped_runtime} imported runtime span(s) are not mapped to scanned components.",
+            field="runtime_evidence",
+        )
+    current_baseline_id = analysis.get("project", {}).get("baseline", {}).get("id", "")
+    stale_trace_imports = sum(
+        value.get("baseline_id") != current_baseline_id
+        for value in analysis.get("runtime_evidence", {}).get("imports", [])
+    )
+    if stale_trace_imports:
+        add(
+            "runtime.stale_trace_baseline",
+            "warning",
+            f"{stale_trace_imports} runtime trace import(s) were captured for an older source baseline.",
+            field="runtime_evidence",
+        )
+
+    seen_component_ids: set[str] = set()
+    for component in analysis.get("components", []):
+        component_id = component.get("id", "")
+        if not component_id or component_id in seen_component_ids:
+            add(
+                "analysis.duplicate_or_missing_component_id",
+                "error",
+                "Component ID is missing or duplicated.",
+                field="components",
+            )
+        seen_component_ids.add(component_id)
+    seen_ids: set[str] = set()
+    component_ids = seen_component_ids
+    observed_hazards: set[str] = set()
+    observed_requirements: set[str] = set()
+    mapped_interfaces = {
+        interface
+        for component in analysis.get("components", [])
+        for interface in component.get("interface_ids", [])
+    }
+    code_component_refs = [
+        f"{component.get('source', {}).get('path', '')}:{component.get('qualname', '')}"
+        for component in analysis.get("components", [])
+        if component.get("kind") not in {"environment", "common_cause"}
+    ]
+    for mapping in analysis.get("context", {}).get("component_mappings", []):
+        if not any(
+            fnmatch.fnmatchcase(reference, mapping.get("pattern", ""))
+            for reference in code_component_refs
+        ):
+            add(
+                "trace.unmatched_component_mapping",
+                "warning",
+                f"Component mapping pattern matches no scanned component: {mapping.get('pattern', '')}",
+                field="component_mappings",
+            )
+    for critical in analysis.get("context", {}).get("critical_functions", []):
+        if not any(
+            fnmatch.fnmatchcase(reference, critical.get("pattern", ""))
+            for reference in code_component_refs
+        ):
+            add(
+                "trace.unmatched_critical_function",
+                "error",
+                f"Critical-function pattern matches no scanned component: {critical.get('pattern', '')}",
+                field="critical_functions",
+            )
+    for component in analysis.get("components", []):
+        if component.get("kind") == "common_cause" and len(
+            component.get("affected_component_ids", [])
+        ) < 2:
+            add(
+                "analysis.incomplete_common_cause",
+                "warning",
+                f"{component.get('qualname', 'Common cause')} affects fewer than two scanned components.",
+                field="common_causes",
+            )
+    for item in analysis.get("items", []):
+        item_id = item.get("id", "")
+        if not item_id or item_id in seen_ids:
+            add("analysis.duplicate_or_missing_id", "error", "Item ID is missing or duplicated.", item=item)
+        seen_ids.add(item_id)
+        review = item.get("review", {})
+        disposition = review.get("disposition", "unreviewed")
+        status = review.get("status", "draft")
+        active = item.get("source_status", "active") == "active"
+        if item.get("source_status", "active") not in {"active", "removed"}:
+            add(
+                "integrity.invalid_source_status",
+                "error",
+                f"Invalid source status: {item.get('source_status')!r}",
+                item=item,
+                field="source_status",
+            )
+        if item.get("source_change", "") not in {
+            "new",
+            "changed",
+            "impacted",
+            "moved",
+            "unchanged",
+            "removed",
+            "manual",
+            "legacy",
+        }:
+            add(
+                "integrity.invalid_source_change",
+                "error",
+                f"Invalid source-change classification: {item.get('source_change')!r}",
+                item=item,
+                field="source_change",
+            )
+        if item.get("component_id") and item.get("component_id") not in component_ids:
+            add(
+                "integrity.unknown_component",
+                "error",
+                "Failure-mode record references an unknown component.",
+                item=item,
+                field="component_id",
+            )
+        if disposition not in {"unreviewed", "accepted", "rejected", "needs_information"}:
+            add(
+                "integrity.invalid_disposition",
+                "error",
+                f"Invalid review disposition: {disposition!r}",
+                item=item,
+                field="disposition",
+            )
+        if status not in {"draft", "in_review", "action_required", "verified", "closed"}:
+            add(
+                "integrity.invalid_status",
+                "error",
+                f"Invalid workflow status: {status!r}",
+                item=item,
+                field="status",
+            )
+        for rating in (
+            "severity",
+            "occurrence",
+            "detection",
+            "post_action_severity",
+            "post_action_occurrence",
+            "post_action_detection",
+        ):
+            value = review.get(rating)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 1 <= value <= 10
+            ):
+                add(
+                    "integrity.invalid_rating",
+                    "error",
+                    f"{rating.replace('_', ' ').title()} must be an integer from 1 through 10.",
+                    item=item,
+                    field=rating,
+                )
+        for date_field in ("target_date", "approval_date"):
+            value = review.get(date_field)
+            if value:
+                try:
+                    date.fromisoformat(value)
+                except (TypeError, ValueError):
+                    add(
+                        "integrity.invalid_date",
+                        "error",
+                        f"{date_field.replace('_', ' ').title()} must use YYYY-MM-DD.",
+                        item=item,
+                        field=date_field,
+                    )
+        for category_field in ("severity_category", "post_action_severity_category"):
+            value = review.get(category_field, "")
+            if value and (not severity_categories or value not in severity_categories):
+                add(
+                    "integrity.invalid_severity_category",
+                    "error",
+                    f"{category_field.replace('_', ' ').title()} is not in the configured scale.",
+                    item=item,
+                    field=category_field,
+                )
+
+        if active and review.get("revalidation_required"):
+            add(
+                "review.revalidation_required",
+                "error",
+                "The reviewed item must be revalidated against the current source.",
+                item=item,
+                field="revalidation_required",
+            )
+        if active and review.get("reviewed_at") and not review.get("revalidation_required"):
+            fingerprint_pairs = (
+                ("validated_fingerprint", "source_fingerprint"),
+                ("validated_context_fingerprint", "context_fingerprint"),
+                (
+                    "validated_analysis_context_fingerprint",
+                    "analysis_context_fingerprint",
+                ),
+            )
+            for validated_field, scanner_field in fingerprint_pairs:
+                current = item.get("scanner", {}).get(scanner_field, "")
+                validated = review.get(validated_field, "")
+                if current and validated != current:
+                    add(
+                        "review.stale_validation_fingerprint",
+                        "error",
+                        "Review validation evidence does not match the current analysis context.",
+                        item=item,
+                        field=validated_field,
+                    )
+                    break
+            current_baseline_id = baseline.get("id", "")
+            if current_baseline_id and review.get("validated_baseline_id") != current_baseline_id:
+                add(
+                    "review.stale_validation_baseline",
+                    "error",
+                    "Review validation evidence does not match the current repository baseline.",
+                    item=item,
+                    field="validated_baseline_id",
+                )
+        if active and disposition == "unreviewed":
+            add(
+                "review.unreviewed",
+                quality["unreviewed_level"],
+                "Candidate has not received a review disposition.",
+                item=item,
+                field="disposition",
+            )
+        elif active and disposition == "needs_information":
+            add(
+                "review.needs_information",
+                "warning",
+                "Review is waiting for additional information.",
+                item=item,
+                field="disposition",
+            )
+        elif active and disposition == "rejected" and quality["require_rejection_rationale"]:
+            if not review.get("disposition_rationale"):
+                add(
+                    "review.missing_rejection_rationale",
+                    "error",
+                    "Rejected scanner candidate has no disposition rationale.",
+                    item=item,
+                    field="disposition_rationale",
+                )
+
+        unknown_hazards = set(review.get("linked_hazards", [])) - hazards
+        observed_hazards.update(review.get("linked_hazards", []))
+        if "hazards" in analysis.get("context", {}) and unknown_hazards:
+            add(
+                "trace.unknown_hazard",
+                "error",
+                "Unknown linked hazard ID(s): " + ", ".join(sorted(unknown_hazards)),
+                item=item,
+                field="linked_hazards",
+            )
+        requirements = {
+            requirement.get("id")
+            for requirement in analysis.get("context", {}).get("requirements", [])
+            if isinstance(requirement, dict) and requirement.get("id")
+        }
+        linked_requirements = {
+            value.strip()
+            for line in str(review.get("requirement", "")).splitlines()
+            for value in line.split(",")
+            if value.strip()
+        }
+        unknown_requirements = linked_requirements - requirements
+        observed_requirements.update(linked_requirements)
+        if requirements and unknown_requirements:
+            add(
+                "trace.unknown_requirement",
+                "error",
+                "Unknown requirement ID(s): " + ", ".join(sorted(unknown_requirements)),
+                item=item,
+                field="requirement",
+            )
+        configured_reviewers = {
+            reviewer.get("name")
+            for reviewer in analysis.get("context", {}).get("reviewers", [])
+            if isinstance(reviewer, dict) and reviewer.get("name")
+        }
+        if (
+            active
+            and disposition != "unreviewed"
+            and quality["require_reviewer_for_decision"]
+            and not review.get("reviewer")
+        ):
+            add(
+                "review.missing_reviewer",
+                "error",
+                "A review disposition requires a named reviewer.",
+                item=item,
+                field="reviewer",
+            )
+        if (
+            configured_reviewers
+            and (review.get("reviewed_at") or disposition != "unreviewed")
+            and review.get("reviewer") not in configured_reviewers
+        ):
+            add(
+                "review.unidentified_reviewer",
+                "error",
+                "The latest reviewer is not in the configured review team.",
+                item=item,
+                field="reviewer",
+            )
+
+        if disposition == "accepted":
+            if not item.get("component_id") or item.get("component_id") not in component_ids:
+                add(
+                    "accepted.unassigned_component",
+                    "error",
+                    "Accepted failure mode is not assigned to a known analysis component.",
+                    item=item,
+                    field="component_id",
+                )
+            for field, label in (
+                ("function", "intended function"),
+                ("failure_mode", "failure mode"),
+                ("end_effect", "system/end effect"),
+            ):
+                if not review.get(field):
+                    add(
+                        f"accepted.missing_{field}",
+                        "error",
+                        f"Accepted failure mode is missing its {label}.",
+                        item=item,
+                        field=field,
+                    )
+            if quality["require_requirement_for_accepted"] and not review.get("requirement"):
+                add(
+                    "accepted.missing_requirement",
+                    "error",
+                    "Accepted failure mode has no requirement or trace identifier.",
+                    item=item,
+                    field="requirement",
+                )
+            if quality["require_hazard_for_accepted"] and not review.get("linked_hazards"):
+                add(
+                    "accepted.missing_hazard",
+                    "error",
+                    "Accepted failure mode is not linked to a project hazard.",
+                    item=item,
+                    field="linked_hazards",
+                )
+            if (
+                quality["require_severity_for_accepted"]
+                and (
+                    (risk.get("method") == "sod_rpn" and review.get("severity") is None)
+                    or (
+                        review.get("severity") is None
+                        and not review.get("severity_category")
+                    )
+                )
+            ):
+                add(
+                    "accepted.missing_severity",
+                    "error",
+                    "Accepted failure mode has no severity rating.",
+                    item=item,
+                    field="severity",
+                )
+            if quality["require_next_higher_effect_for_accepted"] and not review.get(
+                "next_higher_effect"
+            ):
+                add(
+                    "accepted.missing_next_higher_effect",
+                    "error",
+                    "Accepted failure mode has no next-higher-level effect.",
+                    item=item,
+                    field="next_higher_effect",
+                )
+            if quality["require_local_effect_for_accepted"] and not review.get(
+                "local_effect"
+            ):
+                add(
+                    "accepted.missing_local_effect",
+                    "error",
+                    "Accepted failure mode has no local component effect.",
+                    item=item,
+                    field="local_effect",
+                )
+            if quality["require_causes_for_accepted"] and not review.get("causes"):
+                add(
+                    "accepted.missing_causes",
+                    "error",
+                    "Accepted failure mode has no documented potential cause.",
+                    item=item,
+                    field="causes",
+                )
+            if quality["require_rating_rationales"] and (
+                review.get("severity") is not None or review.get("severity_category")
+            ):
+                if not review.get("severity_rationale"):
+                    add(
+                        "accepted.missing_severity_rationale",
+                        "error",
+                        "Severity rating has no rationale.",
+                        item=item,
+                        field="severity_rationale",
+                    )
+            if risk.get("method") == "sod_rpn":
+                for rating in ("occurrence", "detection"):
+                    if review.get(rating) is None:
+                        add(
+                            f"accepted.missing_{rating}",
+                            "error",
+                            f"The configured S/O/D method requires a {rating} rating.",
+                            item=item,
+                            field=rating,
+                        )
+                    elif quality["require_rating_rationales"] and not review.get(
+                        f"{rating}_rationale"
+                    ):
+                        add(
+                            f"accepted.missing_{rating}_rationale",
+                            "error",
+                            f"{rating.title()} rating has no rationale.",
+                            item=item,
+                            field=f"{rating}_rationale",
+                        )
+            if quality["require_controls_for_accepted"] and not (
+                review.get("prevention_controls") or review.get("detection_controls")
+            ):
+                add(
+                    "accepted.missing_controls",
+                    "error",
+                    "Accepted failure mode has no existing prevention or detection controls.",
+                    item=item,
+                    field="prevention_controls",
+                )
+
+        if status == "action_required":
+            if quality["require_action_description_for_action"] and not review.get(
+                "recommended_actions"
+            ):
+                add(
+                    "action.missing_description",
+                    "error",
+                    "Action-required item has no recommended action description.",
+                    item=item,
+                    field="recommended_actions",
+                )
+            if quality["require_owner_for_action"] and not review.get("owner"):
+                add(
+                    "action.missing_owner",
+                    "error",
+                    "Action-required item has no owner.",
+                    item=item,
+                    field="owner",
+                )
+            if quality["require_target_date_for_action"] and not review.get("target_date"):
+                add(
+                    "action.missing_target_date",
+                    "error",
+                    "Action-required item has no target date.",
+                    item=item,
+                    field="target_date",
+                )
+
+        if status in {"verified", "closed"}:
+            if disposition != "accepted":
+                add(
+                    "closure.not_accepted",
+                    "error",
+                    "Verified or closed items must have an accepted disposition.",
+                    item=item,
+                    field="disposition",
+                )
+            if quality["require_verification_for_verified"] and not review.get(
+                "verification_evidence"
+            ):
+                add(
+                    "closure.missing_verification",
+                    "error",
+                    "Verified or closed item has no verification evidence.",
+                    item=item,
+                    field="verification_evidence",
+                )
+        if status == "closed" and quality["require_approval_for_closed"]:
+            threshold = quality["approval_severity_threshold"]
+            severities = (
+                review.get("severity"),
+                review.get("post_action_severity"),
+            )
+            severity_categories_for_item = (
+                review.get("severity_category"),
+                review.get("post_action_severity_category"),
+            )
+            approval_required = any(
+                isinstance(severity, int)
+                and not isinstance(severity, bool)
+                and severity >= threshold
+                for severity in severities
+            )
+            approval_required = approval_required or bool(
+                set(severity_categories_for_item)
+                & set(quality["approval_severity_categories"])
+            )
+            if approval_required:
+                if not review.get("approved_by") or not review.get("approval_date"):
+                    add(
+                        "closure.missing_approval",
+                        "error",
+                        f"Closed item at or above severity {threshold} lacks named, dated approval.",
+                        item=item,
+                        field="approved_by",
+                    )
+                elif configured_reviewers and review.get("approved_by") not in configured_reviewers:
+                    add(
+                        "closure.unidentified_approver",
+                        "error",
+                        "The named risk approver is not in the configured review team.",
+                        item=item,
+                        field="approved_by",
+                    )
+        if status == "closed" and quality["require_actions_taken_for_closed"]:
+            if not review.get("actions_taken"):
+                add(
+                    "closure.missing_action_resolution",
+                    "error",
+                    "Closed item does not record actions taken or an explicit no-action resolution.",
+                    item=item,
+                    field="actions_taken",
+                )
+        if status == "closed" and quality["require_post_action_assessment_for_closed"]:
+            has_post_severity = review.get("post_action_severity") is not None
+            if risk.get("method") != "sod_rpn":
+                has_post_severity = has_post_severity or bool(
+                    review.get("post_action_severity_category")
+                )
+            required_residual = [] if has_post_severity else ["post_action_severity"]
+            if risk.get("method") == "sod_rpn":
+                required_residual.extend(["post_action_occurrence", "post_action_detection"])
+            missing_residual = [field for field in required_residual if review.get(field) is None]
+            if missing_residual:
+                add(
+                    "closure.missing_post_action_assessment",
+                    "error",
+                    "Closed item lacks the configured residual/post-action assessment.",
+                    item=item,
+                    field=missing_residual[0],
+                )
+            if quality["require_rating_rationales"]:
+                residual_rationales = []
+                if has_post_severity and not review.get("post_action_severity_rationale"):
+                    residual_rationales.append("post_action_severity_rationale")
+                if risk.get("method") == "sod_rpn":
+                    for rating in ("occurrence", "detection"):
+                        if review.get(f"post_action_{rating}") is not None and not review.get(
+                            f"post_action_{rating}_rationale"
+                        ):
+                            residual_rationales.append(f"post_action_{rating}_rationale")
+                if residual_rationales:
+                    add(
+                        "closure.missing_post_action_rationale",
+                        "error",
+                        "Closed item has residual ratings without supporting rationale.",
+                        item=item,
+                        field=residual_rationales[0],
+                    )
+        if any(review.get(field) is not None for field in (
+            "post_action_severity",
+            "post_action_occurrence",
+            "post_action_detection",
+        )) and calculate_rpn(item, post_action=True) is None and risk.get("method") == "sod_rpn":
+            add(
+                "residual.incomplete_ratings",
+                "warning",
+                "Post-action S/O/D assessment is incomplete.",
+                item=item,
+                field="post_action_severity",
+            )
+
+    for hazard_id in sorted(hazards - observed_hazards):
+        add(
+            "trace.unlinked_hazard",
+            "warning",
+            f"Configured hazard {hazard_id} is not linked to any failure-mode record.",
+            field="hazards",
+        )
+    configured_requirements = {
+        requirement.get("id")
+        for requirement in analysis.get("context", {}).get("requirements", [])
+        if isinstance(requirement, dict) and requirement.get("id")
+    }
+    for requirement_id in sorted(configured_requirements - observed_requirements):
+        add(
+            "trace.unlinked_requirement",
+            "warning",
+            f"Configured requirement {requirement_id} is not linked to any failure-mode record.",
+            field="requirements",
+        )
+    configured_interfaces = {
+        interface.get("id")
+        for interface in analysis.get("context", {}).get("system_interfaces", [])
+        if isinstance(interface, dict) and interface.get("id")
+    }
+    for interface_id in sorted(configured_interfaces - mapped_interfaces):
+        add(
+            "trace.unmapped_system_interface",
+            "warning",
+            f"Configured system interface {interface_id} is not mapped to a scanned component.",
+            field="system_interfaces",
+        )
+
+    counts = Counter(finding["level"] for finding in findings)
+    return {
+        "generated_at": utc_now(),
+        "counts": {level: counts.get(level, 0) for level in ("error", "warning", "information")},
+        "findings": findings,
+    }
+
+
+def review_queue(analysis: dict[str, Any], *, limit: int = 25) -> list[dict[str, Any]]:
+    """Return active records ordered for human triage and review."""
+
+    report = validate_analysis(analysis)
+    findings_by_item: dict[str, list[dict[str, Any]]] = {}
+    for finding in report["findings"]:
+        if finding["item_id"]:
+            findings_by_item.setdefault(finding["item_id"], []).append(finding)
+    priority_rank = {"high": 0, "medium": 1, "low": 2, "manual": 3}
+    change_rank = {"changed": 0, "impacted": 1, "moved": 2, "new": 3, "manual": 4}
+    candidates = []
+    for item in analysis.get("items", []):
+        if item.get("source_status", "active") != "active":
+            continue
+        review = item.get("review", {})
+        findings = findings_by_item.get(item.get("id", ""), [])
+        errors = sum(finding["level"] == "error" for finding in findings)
+        warnings = sum(finding["level"] == "warning" for finding in findings)
+        if review.get("status") == "closed" and not errors and not review.get(
+            "revalidation_required"
+        ):
+            continue
+        candidates.append(
+            {
+                "id": item.get("id", ""),
+                "component": item.get("component", {}).get("qualname", ""),
+                "failure_class": item.get("scanner", {}).get("failure_class", ""),
+                "failure_mode": review.get("failure_mode")
+                or item.get("scanner", {}).get("failure_mode", ""),
+                "source_change": item.get("source_change", ""),
+                "screening_priority": item.get("scanner", {}).get(
+                    "screening_priority", ""
+                ),
+                "disposition": review.get("disposition", ""),
+                "status": review.get("status", ""),
+                "revalidation_required": bool(review.get("revalidation_required")),
+                "errors": errors,
+                "warnings": warnings,
+                "finding_rules": [finding["rule_id"] for finding in findings],
+                "_rank": (
+                    0 if review.get("revalidation_required") else 1,
+                    0 if errors else 1,
+                    change_rank.get(item.get("source_change", ""), 9),
+                    priority_rank.get(
+                        item.get("scanner", {}).get("screening_priority", ""), 9
+                    ),
+                    item.get("source", {}).get("path", ""),
+                    item.get("source", {}).get("line", 0) or 0,
+                ),
+            }
+        )
+    candidates.sort(key=lambda value: value["_rank"])
+    for value in candidates:
+        value.pop("_rank", None)
+    return candidates[:limit]

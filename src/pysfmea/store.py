@@ -1,0 +1,838 @@
+"""Persistence, rescan merging, and reviewer update validation."""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import uuid
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+from .config import DEFAULT_CONFIG, normalize_config
+from .model import SCHEMA_VERSION, calculate_rpn, empty_review, utc_now, validate_rating
+from .version import __version__
+
+
+EDITABLE_REVIEW_FIELDS = {
+    "disposition",
+    "disposition_rationale",
+    "status",
+    "requirement",
+    "linked_hazards",
+    "function",
+    "failure_mode",
+    "trigger",
+    "causes",
+    "local_effect",
+    "next_higher_effect",
+    "end_effect",
+    "severity",
+    "severity_category",
+    "severity_rationale",
+    "occurrence",
+    "occurrence_rationale",
+    "detection",
+    "detection_rationale",
+    "prevention_controls",
+    "detection_controls",
+    "recommended_actions",
+    "actions_taken",
+    "verification_evidence",
+    "post_action_severity",
+    "post_action_severity_category",
+    "post_action_severity_rationale",
+    "post_action_occurrence",
+    "post_action_occurrence_rationale",
+    "post_action_detection",
+    "post_action_detection_rationale",
+    "owner",
+    "target_date",
+    "approved_by",
+    "approval_date",
+    "reviewer",
+    "revalidation_required",
+    "notes",
+}
+LIST_FIELDS = {
+    "causes",
+    "prevention_controls",
+    "detection_controls",
+    "recommended_actions",
+    "actions_taken",
+    "verification_evidence",
+    "linked_hazards",
+}
+RATING_FIELDS = {
+    "severity",
+    "occurrence",
+    "detection",
+    "post_action_severity",
+    "post_action_occurrence",
+    "post_action_detection",
+}
+DATE_FIELDS = {"target_date", "approval_date"}
+ALLOWED_DISPOSITIONS = {"unreviewed", "accepted", "rejected", "needs_information"}
+ALLOWED_STATUSES = {"draft", "in_review", "action_required", "verified", "closed"}
+
+
+def load_analysis(path: str | Path) -> dict[str, Any]:
+    source = Path(path)
+    with source.open("r", encoding="utf-8") as handle:
+        analysis = json.load(handle)
+    if not isinstance(analysis, dict):
+        raise ValueError("analysis file root must be a JSON object")
+    if analysis.get("schema_version") == "0.1":
+        analysis = _migrate_01_to_02(analysis)
+    if analysis.get("schema_version") == "0.2":
+        analysis = _migrate_02_to_03(analysis)
+    if analysis.get("schema_version") == "0.3":
+        analysis = _migrate_03_to_04(analysis)
+    if analysis.get("schema_version") != SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported schema version {analysis.get('schema_version')!r}; expected {SCHEMA_VERSION!r}"
+        )
+    analysis.setdefault(
+        "generator",
+        {
+            "name": "PySFMEA",
+            "version": "unknown",
+            "analysis_schema_version": analysis["schema_version"],
+            "loaded_by_version": __version__,
+        },
+    )
+    _validate_analysis_structure(analysis)
+    return analysis
+
+
+def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
+    """Reject malformed persisted records before review or export code consumes them."""
+
+    for field in ("items", "components"):
+        if not isinstance(analysis.get(field), list):
+            raise ValueError(f"analysis file has no {field} list")
+    for field in ("history", "warnings"):
+        if field in analysis and not isinstance(analysis[field], list):
+            raise ValueError(f"analysis {field} must be a list")
+    for field in ("suggestions", "generated_summaries"):
+        if not isinstance(analysis.get(field, []), list):
+            raise ValueError(f"analysis {field} must be a list")
+    generator = analysis.get("generator", {})
+    if not isinstance(generator, dict) or not all(
+        isinstance(generator.get(field, ""), str)
+        for field in ("name", "version", "analysis_schema_version")
+    ):
+        raise ValueError("analysis generator provenance must contain string fields")
+    runtime_evidence = analysis.get("runtime_evidence", {})
+    if not isinstance(runtime_evidence, dict) or any(
+        not isinstance(runtime_evidence.get(field, []), list)
+        for field in ("imports", "spans", "edges")
+    ):
+        raise ValueError("analysis runtime_evidence must contain list-valued imports, spans, and edges")
+    for index, suggestion in enumerate(analysis.get("suggestions", []), start=1):
+        if not isinstance(suggestion, dict):
+            raise ValueError(f"analysis suggestion {index} must be an object")
+        if suggestion.get("status") not in {"proposed", "accepted", "rejected", "stale"}:
+            raise ValueError(f"analysis suggestion {index} has an invalid status")
+        if not isinstance(suggestion.get("content", {}), dict) or not isinstance(
+            suggestion.get("provenance", {}), dict
+        ):
+            raise ValueError(f"analysis suggestion {index} content and provenance must be objects")
+        for field in ("evidence_ids", "uncertainties", "questions", "history"):
+            if not isinstance(suggestion.get(field, []), list):
+                raise ValueError(f"analysis suggestion {index} {field} must be a list")
+        if not isinstance(suggestion.get("id", ""), str) or not suggestion.get("id"):
+            raise ValueError(f"analysis suggestion {index} requires an ID")
+    for collection in ("spans", "edges", "imports"):
+        if not all(isinstance(value, dict) for value in runtime_evidence.get(collection, [])):
+            raise ValueError(f"analysis runtime_evidence.{collection} entries must be objects")
+    context = analysis.get("context", {})
+    if not isinstance(context, dict):
+        raise ValueError("analysis context must be an object")
+    contracts = context.get("contracts", [])
+    if not isinstance(contracts, list) or not all(
+        isinstance(contract, dict) for contract in contracts
+    ):
+        raise ValueError("analysis context.contracts must be a list of objects")
+    normalize_config(
+        {field: context[field] for field in DEFAULT_CONFIG if field in context}
+    )
+    for index, item in enumerate(analysis["items"], start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"analysis item {index} must be an object")
+        for field in ("source", "component", "scanner", "review"):
+            if not isinstance(item.get(field), dict):
+                raise ValueError(f"analysis item {index} {field} must be an object")
+        for field in ("evidence", "screening_reasons"):
+            value = item["scanner"].get(field, [])
+            if not isinstance(value, list) or not all(
+                isinstance(entry, str) for entry in value
+            ):
+                raise ValueError(f"analysis item {index} scanner.{field} must be a string list")
+        if not isinstance(item.get("review_history", []), list):
+            raise ValueError(f"analysis item {index} review_history must be a list")
+        review = item["review"]
+        for field in LIST_FIELDS:
+            value = review.get(field, [])
+            if not isinstance(value, list) or not all(
+                isinstance(entry, str) for entry in value
+            ):
+                raise ValueError(f"analysis item {index} review.{field} must be a string list")
+        for field in RATING_FIELDS:
+            try:
+                validate_rating(review.get(field))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"analysis item {index} review.{field} is invalid") from exc
+        if not isinstance(review.get("revalidation_required", False), bool):
+            raise ValueError(
+                f"analysis item {index} review.revalidation_required must be boolean"
+            )
+        for field in EDITABLE_REVIEW_FIELDS - LIST_FIELDS - RATING_FIELDS - {
+            "revalidation_required"
+        }:
+            if field in review and not isinstance(review[field], str):
+                raise ValueError(f"analysis item {index} review.{field} must be a string")
+        for history_index, event in enumerate(item.get("review_history", []), start=1):
+            if not isinstance(event, dict) or not isinstance(event.get("changes", {}), dict):
+                raise ValueError(
+                    f"analysis item {index} review_history entry {history_index} is invalid"
+                )
+            for change in event.get("changes", {}).values():
+                if not isinstance(change, dict):
+                    raise ValueError(
+                        f"analysis item {index} review_history entry {history_index} "
+                        "contains an invalid field change"
+                    )
+
+
+def _migrate_01_to_02(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Add 0.2 review fields without changing existing decisions."""
+
+    defaults = empty_review()
+    for item in analysis.get("items", []):
+        review = item.setdefault("review", {})
+        for key, value in defaults.items():
+            if key not in review:
+                review[key] = list(value) if isinstance(value, list) else value
+        item.setdefault("source_change", "legacy")
+        item.setdefault("review_history", [])
+    analysis.setdefault("context", {})
+    analysis["schema_version"] = "0.2"
+    return analysis
+
+
+def _migrate_02_to_03(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Add lifecycle traceability fields introduced with schema 0.3."""
+
+    defaults = empty_review()
+    for item in analysis.get("items", []):
+        review = item.setdefault("review", {})
+        for key, value in defaults.items():
+            if key not in review:
+                review[key] = list(value) if isinstance(value, list) else value
+        item.setdefault("review_history", [])
+        scanner = item.setdefault("scanner", {})
+        source_fingerprint = scanner.get("source_fingerprint", "")
+        scanner.setdefault("content_fingerprint", source_fingerprint)
+        scanner.setdefault("context_fingerprint", "")
+    context = analysis.setdefault("context", {})
+    for field, default in (
+        ("analysis", {}),
+        ("requirements", []),
+        ("component_mappings", []),
+        ("system_interfaces", []),
+        ("reviewers", []),
+        ("dependencies", []),
+        ("common_causes", []),
+    ):
+        context.setdefault(field, default)
+    analysis["schema_version"] = "0.3"
+    return analysis
+
+
+def _migrate_03_to_04(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Add governed discovery, summary, and runtime-evidence collections."""
+
+    analysis.setdefault("suggestions", [])
+    analysis.setdefault("generated_summaries", [])
+    analysis.setdefault("runtime_evidence", {"imports": [], "spans": [], "edges": []})
+    analysis.setdefault("context", {}).setdefault("contracts", [])
+    for component in analysis.get("components", []):
+        component.setdefault("ordered_calls", list(component.get("calls", [])))
+        component.setdefault("frameworks", [])
+        component.setdefault("entrypoint_types", [])
+    analysis["schema_version"] = SCHEMA_VERSION
+    return analysis
+
+
+def save_analysis(path: str | Path, analysis: dict[str, Any]) -> None:
+    """Atomically save an analysis to avoid truncation on interrupted writes."""
+
+    destination = Path(path).expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    refresh_summary(analysis)
+    _validate_analysis_structure(analysis)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=destination.name + ".",
+        suffix=".tmp",
+        dir=str(destination.parent),
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(analysis, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, destination)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
+
+
+def merge_rescan(previous: dict[str, Any], scanned: dict[str, Any]) -> dict[str, Any]:
+    """Preserve human review fields while refreshing scanner-owned evidence."""
+
+    old_by_id = {item["id"]: item for item in previous.get("items", [])}
+    old_by_fingerprint: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for old_item in previous.get("items", []):
+        if old_item.get("source_status", "active") != "active":
+            continue
+        key = (
+            old_item.get("scanner", {}).get("content_fingerprint")
+            or old_item.get("scanner", {}).get("source_fingerprint", ""),
+            old_item.get("scanner", {}).get("rule_id", ""),
+        )
+        if all(key) and key[1] != "manual":
+            old_by_fingerprint.setdefault(key, []).append(old_item)
+    new_key_counts: dict[tuple[str, str], int] = {}
+    for item in scanned.get("items", []):
+        key = (
+            item.get("scanner", {}).get("content_fingerprint")
+            or item.get("scanner", {}).get("source_fingerprint", ""),
+            item.get("scanner", {}).get("rule_id", ""),
+        )
+        new_key_counts[key] = new_key_counts.get(key, 0) + 1
+    active_ids: set[str] = set()
+    matched_old_ids: set[str] = set()
+    merged_items: list[dict[str, Any]] = []
+    change_counts = {
+        "new": 0,
+        "changed": 0,
+        "moved": 0,
+        "impacted": 0,
+        "unchanged": 0,
+        "removed": 0,
+        "manual": 0,
+    }
+    for item in scanned.get("items", []):
+        item_id = item["id"]
+        active_ids.add(item_id)
+        old_item = old_by_id.get(item_id)
+        moved = False
+        if old_item is None:
+            key = (
+                item.get("scanner", {}).get("content_fingerprint")
+                or item.get("scanner", {}).get("source_fingerprint", ""),
+                item.get("scanner", {}).get("rule_id", ""),
+            )
+            candidates = old_by_fingerprint.get(key, [])
+            if len(candidates) == 1 and new_key_counts.get(key) == 1:
+                old_item = candidates[0]
+                moved = True
+                matched_old_ids.add(old_item["id"])
+        if old_item and isinstance(old_item.get("review"), dict):
+            item["review"] = dict(old_item["review"])
+            item["review_history"] = list(old_item.get("review_history", []))
+            old_fingerprint = old_item.get("scanner", {}).get("source_fingerprint", "")
+            new_fingerprint = item.get("scanner", {}).get("source_fingerprint", "")
+            old_context = old_item.get("scanner", {}).get("context_fingerprint", "")
+            new_context = item.get("scanner", {}).get("context_fingerprint", "")
+            old_analysis_context = old_item.get("scanner", {}).get(
+                "analysis_context_fingerprint", ""
+            )
+            new_analysis_context = item.get("scanner", {}).get(
+                "analysis_context_fingerprint", ""
+            )
+            source_changed = bool(
+                old_fingerprint and new_fingerprint and old_fingerprint != new_fingerprint
+            )
+            context_changed = bool(old_context and new_context and old_context != new_context)
+            analysis_context_changed = bool(
+                old_analysis_context
+                and new_analysis_context
+                and old_analysis_context != new_analysis_context
+            )
+            item["change_reasons"] = [
+                reason
+                for changed, reason in (
+                    (source_changed, "function implementation changed"),
+                    (context_changed, "module or class context changed"),
+                    (analysis_context_changed, "SFMEA project context changed"),
+                    (moved, "component moved or was renamed"),
+                )
+                if changed
+            ]
+            if moved:
+                item["source_change"] = "moved"
+            elif source_changed or context_changed or analysis_context_changed:
+                item["source_change"] = "changed"
+            else:
+                item["source_change"] = "unchanged"
+            if moved:
+                item["previous_ids"] = [
+                    *old_item.get("previous_ids", []),
+                    old_item["id"],
+                ]
+            if (
+                source_changed or context_changed or analysis_context_changed or moved
+            ) and _has_material_review(item["review"]):
+                _mark_revalidation(
+                    item,
+                    scanned["project"]["scanned_at"],
+                    item["change_reasons"],
+                )
+            change_counts[item["source_change"]] += 1
+        else:
+            item["source_change"] = "new"
+            item["review_history"] = []
+            change_counts["new"] += 1
+        merged_items.append(item)
+
+    changed_references = {
+        _item_reference(item)
+        for item in merged_items
+        if item.get("source_change") in {"changed", "moved"}
+    }
+    changed_dependency_baseline = any(
+        item.get("source_change") == "changed"
+        and item.get("scanner", {}).get("rule_id") == "environment.dependency_drift"
+        for item in merged_items
+    )
+    impacted_reasons: dict[str, set[str]] = {}
+    for component in scanned.get("components", []):
+        component_reference = (
+            f"{component.get('source', {}).get('path', '')}:"
+            f"{component.get('qualname', '')}"
+        )
+        if component_reference not in changed_references:
+            continue
+        upstream = set(component.get("called_by", []))
+        for path in component.get("upstream_paths", []):
+            upstream.update(path[:-1])
+        for reference in upstream:
+            impacted_reasons.setdefault(reference, set()).add(component_reference)
+
+    for item in merged_items:
+        if item.get("source_change") != "unchanged":
+            continue
+        reference = _item_reference(item)
+        dependencies = impacted_reasons.get(reference, set())
+        if not dependencies and not changed_dependency_baseline:
+            continue
+        item["source_change"] = "impacted"
+        item["change_reasons"] = [
+            *(f"called component changed: {value}" for value in sorted(dependencies)),
+            *(["declared dependency baseline changed"] if changed_dependency_baseline else []),
+        ]
+        change_counts["unchanged"] -= 1
+        change_counts["impacted"] += 1
+        if _has_material_review(item.get("review", {})):
+            _mark_revalidation(
+                item,
+                scanned["project"]["scanned_at"],
+                item["change_reasons"],
+            )
+
+    for old_item in previous.get("items", []):
+        if old_item.get("id") in active_ids or old_item.get("id") in matched_old_ids:
+            continue
+        if old_item.get("scanner", {}).get("rule_id") in {"manual", "machine_suggestion"}:
+            merged_items.append(old_item)
+            change_counts["manual"] += 1
+            continue
+        retired = dict(old_item)
+        retired["review"] = dict(old_item.get("review", {}))
+        retired["review_history"] = list(old_item.get("review_history", []))
+        retired["source_status"] = "removed"
+        retired["source_change"] = "removed"
+        if _has_material_review(retired.get("review", {})):
+            _mark_revalidation(
+                retired,
+                scanned["project"]["scanned_at"],
+                ["source-backed candidate was removed"],
+            )
+        retired["removed_at"] = scanned["project"]["scanned_at"]
+        merged_items.append(retired)
+        change_counts["removed"] += 1
+
+    scanned["items"] = merged_items
+    previous_baseline_id = previous.get("project", {}).get("baseline", {}).get("id", "")
+    current_baseline_id = scanned.get("project", {}).get("baseline", {}).get("id", "")
+    scanned["suggestions"] = []
+    for old_suggestion in previous.get("suggestions", []):
+        suggestion = dict(old_suggestion)
+        suggestion["history"] = list(old_suggestion.get("history", []))
+        if (
+            suggestion.get("status") == "proposed"
+            and previous_baseline_id != current_baseline_id
+        ):
+            suggestion["status"] = "stale"
+            suggestion["history"].append(
+                {
+                    "event": "baseline_invalidated",
+                    "at": scanned["project"]["scanned_at"],
+                    "previous_baseline_id": previous_baseline_id,
+                    "baseline_id": current_baseline_id,
+                }
+            )
+        scanned["suggestions"].append(suggestion)
+    scanned["generated_summaries"] = [
+        {**summary, "stale": summary.get("baseline_id") != current_baseline_id}
+        for summary in previous.get("generated_summaries", [])
+    ]
+    scanned["runtime_evidence"] = previous.get(
+        "runtime_evidence", {"imports": [], "spans": [], "edges": []}
+    )
+    scanned["history"] = list(previous.get("history", []))
+    scanned["history"].append(
+        {
+            "event": "rescan",
+            "at": scanned["project"]["scanned_at"],
+            "previous_candidate_count": len(previous.get("items", [])),
+            "active_candidate_count": len(active_ids),
+            "removed_candidate_count": change_counts["removed"],
+            "changes": change_counts,
+            "previous_baseline_id": previous.get("project", {})
+            .get("baseline", {})
+            .get("id", ""),
+            "baseline_id": scanned.get("project", {}).get("baseline", {}).get("id", ""),
+        }
+    )
+    refresh_summary(scanned)
+    return scanned
+
+
+def _has_material_review(review: dict[str, Any]) -> bool:
+    return bool(
+        review.get("reviewed_at")
+        or review.get("disposition") != "unreviewed"
+        or review.get("status") != "draft"
+        or review.get("requirement")
+        or review.get("next_higher_effect")
+        or review.get("prevention_controls")
+        or review.get("detection_controls")
+        or review.get("actions_taken")
+        or review.get("verification_evidence")
+        or review.get("post_action_severity") is not None
+        or review.get("post_action_occurrence") is not None
+        or review.get("post_action_detection") is not None
+        or review.get("owner")
+        or review.get("approved_by")
+        or review.get("notes")
+    )
+
+
+def _item_reference(item: dict[str, Any]) -> str:
+    return (
+        f"{item.get('source', {}).get('path', '')}:"
+        f"{item.get('component', {}).get('qualname', '')}"
+    )
+
+
+def _mark_revalidation(item: dict[str, Any], at: str, reasons: list[str]) -> None:
+    review = item.setdefault("review", {})
+    if review.get("revalidation_required"):
+        return
+    review["revalidation_required"] = True
+    item.setdefault("review_history", []).append(
+        {
+            "event": "source_change_revalidation_required",
+            "at": at,
+            "reviewer": "system",
+            "changes": {
+                "revalidation_required": {"before": False, "after": True},
+            },
+            "reasons": list(reasons),
+        }
+    )
+
+
+def update_item_review(
+    analysis: dict[str, Any], item_id: str, changes: dict[str, Any]
+) -> dict[str, Any]:
+    item = next((entry for entry in analysis["items"] if entry.get("id") == item_id), None)
+    if item is None:
+        raise KeyError(item_id)
+    unknown = set(changes) - EDITABLE_REVIEW_FIELDS
+    if unknown:
+        raise ValueError("unsupported review field(s): " + ", ".join(sorted(unknown)))
+
+    normalized: dict[str, Any] = {}
+    for key, value in changes.items():
+        if key in RATING_FIELDS:
+            normalized[key] = validate_rating(value)
+        elif key in LIST_FIELDS:
+            if isinstance(value, str):
+                value = [line.strip() for line in value.splitlines() if line.strip()]
+            if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
+                raise ValueError(f"{key} must be a list of strings")
+            normalized[key] = [entry.strip() for entry in value if entry.strip()]
+        elif key == "disposition":
+            if value not in ALLOWED_DISPOSITIONS:
+                raise ValueError(f"invalid disposition: {value!r}")
+            normalized[key] = value
+        elif key == "status":
+            if value not in ALLOWED_STATUSES:
+                raise ValueError(f"invalid status: {value!r}")
+            normalized[key] = value
+        elif key == "revalidation_required":
+            if not isinstance(value, bool):
+                raise ValueError("revalidation_required must be a boolean")
+            normalized[key] = value
+        elif key in DATE_FIELDS:
+            if not isinstance(value, str):
+                raise ValueError(f"{key} must be an ISO date string")
+            value = value.strip()
+            if value:
+                try:
+                    date.fromisoformat(value)
+                except ValueError as exc:
+                    raise ValueError(f"{key} must use YYYY-MM-DD") from exc
+            normalized[key] = value
+        elif not isinstance(value, str):
+            raise ValueError(f"{key} must be a string")
+        else:
+            normalized[key] = value.strip()
+
+    if "linked_hazards" in normalized:
+        context = analysis.get("context", {})
+        known_hazards = {
+            hazard.get("id")
+            for hazard in context.get("hazards", [])
+            if isinstance(hazard, dict) and hazard.get("id")
+        }
+        if "hazards" in context:
+            unknown_hazards = set(normalized["linked_hazards"]) - known_hazards
+            if unknown_hazards:
+                raise ValueError(
+                    "unknown linked hazard ID(s): " + ", ".join(sorted(unknown_hazards))
+                )
+    for category_field in ("severity_category", "post_action_severity_category"):
+        category = normalized.get(category_field)
+        if category:
+            categories = set(
+                analysis.get("context", {}).get("risk", {}).get("severity_categories", [])
+            )
+            if category not in categories:
+                raise ValueError(
+                    f"{category_field} is not in the configured risk.severity_categories"
+                )
+
+    item.setdefault("review", {})
+    changed_fields = {
+        key: {"before": item["review"].get(key), "after": value}
+        for key, value in normalized.items()
+        if item["review"].get(key) != value
+    }
+    closure_sensitive_fields = {
+        "disposition",
+        "disposition_rationale",
+        "requirement",
+        "linked_hazards",
+        "function",
+        "failure_mode",
+        "trigger",
+        "causes",
+        "local_effect",
+        "next_higher_effect",
+        "end_effect",
+        "severity",
+        "severity_category",
+        "severity_rationale",
+        "occurrence",
+        "occurrence_rationale",
+        "detection",
+        "detection_rationale",
+        "prevention_controls",
+        "detection_controls",
+        "recommended_actions",
+        "actions_taken",
+        "verification_evidence",
+        "post_action_severity",
+        "post_action_severity_category",
+        "post_action_severity_rationale",
+        "post_action_occurrence",
+        "post_action_occurrence_rationale",
+        "post_action_detection",
+        "post_action_detection_rationale",
+    }
+    if (
+        item["review"].get("status") in {"verified", "closed"}
+        and closure_sensitive_fields & changed_fields.keys()
+    ):
+        normalized["status"] = "in_review"
+        changed_fields["status"] = {
+            "before": item["review"].get("status"),
+            "after": "in_review",
+        }
+    if (
+        item["review"].get("approved_by")
+        and closure_sensitive_fields & changed_fields.keys()
+    ):
+        normalized["approved_by"] = ""
+        normalized["approval_date"] = ""
+        changed_fields["approved_by"] = {
+            "before": item["review"].get("approved_by"),
+            "after": "",
+        }
+        changed_fields["approval_date"] = {
+            "before": item["review"].get("approval_date"),
+            "after": "",
+        }
+    if not changed_fields:
+        refresh_summary(analysis)
+        return item
+    reviewed_at = utc_now()
+    item["review"].update(normalized)
+    item["review"]["reviewed_at"] = reviewed_at
+    if not item["review"].get("revalidation_required"):
+        scanner = item.get("scanner", {})
+        item["review"]["validated_fingerprint"] = scanner.get("source_fingerprint", "")
+        item["review"]["validated_context_fingerprint"] = scanner.get(
+            "context_fingerprint", ""
+        )
+        item["review"]["validated_analysis_context_fingerprint"] = scanner.get(
+            "analysis_context_fingerprint", ""
+        )
+        item["review"]["validated_baseline_id"] = (
+            analysis.get("project", {}).get("baseline", {}).get("id", "")
+        )
+        item["review"]["validated_at"] = reviewed_at
+    item.setdefault("review_history", []).append(
+        {
+            "event": "review_update",
+            "at": reviewed_at,
+            "reviewer": item["review"].get("reviewer") or "unspecified",
+            "changes": changed_fields,
+        }
+    )
+    refresh_summary(analysis)
+    return item
+
+
+def add_manual_item(analysis: dict[str, Any], component_id: str | None = None) -> dict[str, Any]:
+    component = next(
+        (entry for entry in analysis.get("components", []) if entry.get("id") == component_id),
+        None,
+    )
+    review = empty_review()
+    review.update(
+        {
+            "function": (component or {}).get("docstring_summary", ""),
+            "failure_mode": "Describe how the function could fail.",
+            "trigger": "Describe the initiating condition.",
+        }
+    )
+    item = {
+        "id": "SFMEA-MANUAL-" + uuid.uuid4().hex[:12].upper(),
+        "component_id": component_id or "",
+        "source_status": "active",
+        "source_change": "manual",
+        "source": (component or {}).get("source", {"path": "", "line": "", "end_line": ""}),
+        "component": {
+            "kind": (component or {}).get("kind", "manual"),
+            "qualname": (component or {}).get("qualname", "Unassigned component"),
+            "signature": (component or {}).get("signature", ""),
+        },
+        "scanner": {
+            "rule_id": "manual",
+            "guideword": "Reviewer identified",
+            "failure_mode": "",
+            "trigger": "",
+            "confidence": "reviewer",
+            "screening_priority": "manual",
+            "screening_reasons": [],
+            "evidence": ["Manually added by reviewer"],
+        },
+        "review": review,
+        "review_history": [
+            {
+                "event": "manual_item_created",
+                "at": utc_now(),
+                "reviewer": "unspecified",
+                "changes": {},
+            }
+        ],
+    }
+    analysis.setdefault("items", []).append(item)
+    refresh_summary(analysis)
+    return item
+
+
+def refresh_summary(analysis: dict[str, Any]) -> None:
+    summary = analysis.setdefault("summary", {})
+    items = analysis.get("items", [])
+    active = [item for item in items if item.get("source_status", "active") == "active"]
+    dispositions = {name: 0 for name in ALLOWED_DISPOSITIONS}
+    statuses = {name: 0 for name in ALLOWED_STATUSES}
+    rated = 0
+    post_action_rated = 0
+    for item in active:
+        review = item.get("review", {})
+        disposition = review.get("disposition", "unreviewed")
+        dispositions[disposition] = dispositions.get(disposition, 0) + 1
+        status = review.get("status", "draft")
+        statuses[status] = statuses.get(status, 0) + 1
+        if calculate_rpn(item) is not None:
+            rated += 1
+        if calculate_rpn(item, post_action=True) is not None:
+            post_action_rated += 1
+    summary["candidate_failure_modes"] = len(active)
+    summary["removed_candidates"] = len(items) - len(active)
+    summary["review_dispositions"] = dispositions
+    summary["review_statuses"] = statuses
+    summary["fully_sod_rated"] = rated
+    summary["fully_post_action_sod_rated"] = post_action_rated
+    summary["revalidation_required"] = sum(
+        1 for item in active if item.get("review", {}).get("revalidation_required")
+    )
+    source_changes: dict[str, int] = {}
+    failure_classes: dict[str, int] = {}
+    screening_priorities: dict[str, int] = {}
+    subsystems: dict[str, int] = {}
+    for item in items:
+        change = item.get("source_change", "unknown")
+        source_changes[change] = source_changes.get(change, 0) + 1
+        if item.get("source_status", "active") != "active":
+            continue
+        failure_class = item.get("scanner", {}).get("failure_class", "unknown")
+        failure_classes[failure_class] = failure_classes.get(failure_class, 0) + 1
+        priority = item.get("scanner", {}).get("screening_priority", "unknown")
+        screening_priorities[priority] = screening_priorities.get(priority, 0) + 1
+        item_subsystems = item.get("component", {}).get("subsystems", []) or ["unmapped"]
+        for subsystem in item_subsystems:
+            subsystems[subsystem] = subsystems.get(subsystem, 0) + 1
+    summary["source_changes"] = source_changes
+    summary["failure_classes"] = failure_classes
+    summary["screening_priorities"] = screening_priorities
+    summary["subsystems"] = subsystems
+    summary["last_saved_at"] = utc_now()
+    suggestion_statuses: dict[str, int] = {}
+    for suggestion in analysis.get("suggestions", []):
+        status = suggestion.get("status", "unknown")
+        suggestion_statuses[status] = suggestion_statuses.get(status, 0) + 1
+    summary["suggestions"] = suggestion_statuses
+    runtime = analysis.get("runtime_evidence", {})
+    imports = runtime.get("imports", [])
+    summary["runtime_imports"] = len(imports)
+    summary["runtime_spans"] = len(runtime.get("spans", []))
+    summary["runtime_mapped_spans"] = sum(
+        int(record.get("mapped_span_count", 0)) for record in imports
+    )
+    summary["runtime_unmapped_spans"] = sum(
+        int(record.get("unmapped_span_count", 0)) for record in imports
+    )
