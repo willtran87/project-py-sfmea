@@ -223,6 +223,7 @@ sfmea assurance-scaffold-verify C:\path\to\python-repo\sfmea-analysis.json assur
 sfmea package C:\path\to\python-repo\sfmea-analysis.json
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable --zip
+sfmea package C:\path\to\python-repo\sfmea-analysis.json -o review-package.zip --json
 sfmea verify-package C:\path\to\python-repo\sfmea-analysis-review-package
 sfmea verify-package C:\path\to\python-repo\sfmea-analysis-review-package.zip
 sfmea verify-package C:\path\to\python-repo\sfmea-analysis-review-package --json
@@ -375,11 +376,27 @@ twelve self-contained assurance, diagram, workflow, package, catalog, signature,
 schema documents, a standalone `assurance-work.json` hardening queue,
 and a SHA-256 manifest. A non-empty destination is protected unless `--force` is supplied.
 The manifest explicitly declares `analysis_diagnostics_projection_v1`,
-`assurance_register_projection`, and `assurance_work_queue_projection` capabilities so offline
-consumers can discover these contracts without guessing from filenames or tool versions.
-Packages are generated in a staging directory and published only after every report
-and checksum succeeds. `--force` refreshes recognized package files but refuses a
+`assurance_register_projection`, `assurance_work_queue_projection`,
+`evidence_catalog_projection_v1`, `guidance_traceability_projection_v1`,
+`interchange_artifacts_projection_v1`, `package_provenance_projection_v1`,
+`review_views_projection_v1`, and
+`sfta_projection_v1` capabilities so offline
+consumers can discover these contracts without
+guessing from filenames or tool versions.
+The exporter first deep-copies the requested analysis and materializes deterministic assurance
+and SFTA derived state on that private copy. `analysis.json`, its state digest, and every report
+projection therefore share one frozen snapshot even when the input omitted or malformed a
+derived assurance container; the caller's governed analysis remains unchanged.
+Packages are generated in a staging directory and published only after every report and
+checksum succeeds and the independent semantic package verifier accepts the complete staged
+artifact set. A rejected generation reports bounded verifier rule IDs, removes its staging
+content, and leaves any existing destination unchanged. `--force` refreshes recognized package files but refuses a
 directory containing unrecognized files, protecting reviewer-added material.
+`--json` suppresses human progress text and emits the same schema-backed
+`pysfmea-review-package-verification-1` verdict as `verify-package --json` after publication.
+This gives CI a single machine-readable receipt with the resolved path, container, artifact
+count, capabilities, state binding, and every nested projection check; an invalid receipt returns
+a nonzero exit status.
 `--portable` keeps repository-relative source evidence while removing machine-local
 absolute repository, configuration, coverage, trace, and source-analysis paths from
 the packaged snapshot. The governed working analysis is not modified.
@@ -387,7 +404,15 @@ the packaged snapshot. The governed working analysis is not modified.
 `sfmea verify-package` independently checks the package format, complete artifact
 set, path safety, regular-file boundaries, byte sizes, SHA-256 checksums, baseline,
 analysis schema, generator provenance, schema-catalog completeness, schema identities,
-canonical schema digests, and the manifest/verdict contract boundary. It also verifies the
+canonical schema digests, and the manifest/verdict contract boundary. Before hashing or
+regenerating projections, it iteratively bounds `analysis.json` to 100 levels and 2,000,000
+JSON nodes, validates projection-critical container types, and reports all three checks in the
+`analysis_structure` verdict. Malformed core objects and collections are withheld from every
+semantic projector; parser recursion, complexity, and core-contract failures become stable
+invalid-package findings rather than uncaught exceptions. This gate protects verifier
+availability and does not claim complete analysis-schema validation. A final sanitized exception
+boundary returns `package.semantic_verification_aborted` if an unforeseen semantic projector
+failure escapes these checks; internal exception text is not included in the verdict. It also verifies the
 work queue's own digest and recomputes its exact projection from packaged `analysis.json`, so
 rewriting the queue and updating the manifest checksum is still rejected. The verifier also
 regenerates the full `assurance-register.json`, verifies its embedded queue,
@@ -395,9 +420,24 @@ and requires that embedded and standalone queues agree exactly. It also regenera
 summary, validation findings, resolved system context, repository inventory, and adapter-run
 ledger from packaged analysis. A changed diagnostic artifact remains invalid even if its
 manifest checksum is recomputed; the validation generation timestamp is treated as provenance
-while counts and findings match exactly. Producer version is verified as
-provenance but excluded from semantic queue matching, so compatible format-2 artifacts remain
-valid across verifier upgrades. JSON verdicts carry a dedicated
+while counts and findings match exactly. The full guidance trace and standalone citation catalog
+are also regenerated and required to agree, so citation evidence cannot be silently rewritten
+behind updated checksums. The top-down SFTA model and flat reconciliation-gap register are
+regenerated together and their counts reconciled, protecting the SFMEA/SFTA handoff from the same
+class of checksum rewrite. The execution-evidence catalog is reconciled to the packaged baseline,
+execution records, and evidence-artifact inventory, preventing package metadata from overstating
+recorded verification evidence. SARIF findings and the CycloneDX declared-component inventory
+are regenerated from the same packaged analysis and required to share its baseline identity;
+rewriting either interchange view behind updated checksums is rejected.
+The ten reviewer-facing worksheet, system-view, audit, guidance, and assurance exports are also
+regenerated from one isolated analysis snapshot and compared as canonical UTF-8 text, preventing a human-readable
+conclusion from drifting away from the governed analysis behind a refreshed checksum while
+remaining portable across LF/CRLF platforms. The package-time audit manifest and reviewer README
+are regenerated as a separate provenance projection with explicit timestamp and baseline checks.
+The outer manifest still checks every transferred byte exactly. Producer version is
+verified as provenance but excluded from semantic queue matching. Exact SARIF and CycloneDX
+reconciliation also uses the package's declared producer version, so compatible historical
+artifacts remain valid across verifier upgrades. JSON verdicts carry a dedicated
 `pysfmea-review-package-verification-1` discriminator independently of the artifact
 format they observe. The verifier rejects traversal paths, symbolic links,
 missing or extra files, malformed metadata, and content tampering, and returns a
@@ -414,7 +454,10 @@ mixed, partial, duplicated, and unknown profiles are rejected.
 ZIP verifier output identifies embedded artifacts with stable logical references such as
 `package.zip!/assurance-work.json`; it never exposes a deleted temporary extraction path.
 
-`--zip` atomically publishes the same complete package as a single ZIP file. The
+`--zip` atomically publishes the same complete package as a single ZIP file. An explicit
+case-insensitive `.zip` output suffix also selects archive publication, so
+`sfmea package analysis.json -o review-package.zip` is sufficient and cannot silently create
+a directory that merely looks like an archive. The
 verifier reads ZIP packages through a guarded temporary staging area: entry names
 must be unique, canonical root-level paths; directories, symbolic links, encrypted
 members, unknown files, oversized entries, excessive expanded size, and suspicious
@@ -832,8 +875,15 @@ SFMEA is reconciled with user-defined top-down Software Fault Trees. Add one or 
 `[[fault_trees]]` entries to `sfmea.toml`; each tree identifies its hazard and top event,
 explicit events, and AND, OR, VOTE, or INHIBIT gates. Events can correlate to findings by
 stable finding ID, `path:qualified-name` component glob, and failure-mode text glob. The
+selector relationship is explicit IDs **or** configured glob matches; when both component and
+failure-mode globs are present, a finding must satisfy both glob dimensions. Unknown explicit
+IDs remain unmatched and surface through the top-down reconciliation gap rather than widening
+the match. The
 configuration validator rejects duplicate IDs, unknown inputs, invalid voting thresholds,
 unknown hazards, unsupported node types, and logical cycles.
+Package verification replays the selector semantics declared by the producing version for SFTA
+artifacts, validation findings, and validation-bearing CSV/Markdown worksheets, so a genuine
+older package remains verifiable while newly generated models use exact ID matching.
 
 ```powershell
 sfmea sfta sfmea-analysis.json --format json -o sfta.json

@@ -34,9 +34,19 @@ class InterchangeTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_sarif_preserves_candidate_semantics_and_stable_locations(self) -> None:
-        document = sarif_document(self.analysis)
+        document = sarif_document(self.analysis, tool_version="0.55.0")
         self.assertEqual(document["version"], "2.1.0")
         run = document["runs"][0]
+        self.assertEqual(run["tool"]["driver"]["semanticVersion"], "0.55.0")
+        self.assertEqual(
+            run["tool"]["driver"]["informationUri"],
+            "https://github.com/Will-A-W/project-py-sfmea",
+        )
+        current_document = sarif_document(self.analysis, tool_version="0.56.1")
+        self.assertEqual(
+            current_document["runs"][0]["tool"]["driver"]["informationUri"],
+            "https://github.com/willtran87/project-py-sfmea",
+        )
         self.assertTrue(run["tool"]["driver"]["rules"])
         result = run["results"][0]
         self.assertEqual(result["level"], "note")
@@ -46,9 +56,20 @@ class InterchangeTests(unittest.TestCase):
         self.assertFalse(result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].startswith("C:"))
 
     def test_cyclonedx_labels_inventory_as_declared_not_resolved(self) -> None:
-        document = cyclonedx_document(self.analysis)
+        document = cyclonedx_document(
+            self.analysis,
+            generated_at="2026-08-04T12:00:00+00:00",
+            tool_version="0.55.0",
+        )
         self.assertEqual(document["bomFormat"], "CycloneDX")
         self.assertEqual(document["specVersion"], "1.6")
+        self.assertEqual(
+            document["metadata"]["timestamp"], "2026-08-04T12:00:00+00:00"
+        )
+        self.assertEqual(
+            document["metadata"]["tools"]["components"][0]["version"],
+            "0.55.0",
+        )
         names = {value["name"] for value in document["components"]}
         self.assertIn("requests", names)
         request = next(value for value in document["components"] if value["name"] == "requests")

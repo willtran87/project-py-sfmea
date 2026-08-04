@@ -29,7 +29,9 @@ def _digest(value: Any) -> str:
     ).hexdigest()
 
 
-def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
+def validate_analysis(
+    analysis: dict[str, Any], *, legacy_sfta_id_wildcard: bool = False
+) -> dict[str, Any]:
     """Return review-quality findings without changing *analysis*."""
 
     quality = dict(DEFAULT_CONFIG["quality"])
@@ -1174,7 +1176,9 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
             field="system_interfaces",
         )
 
-    sfta = build_sfta(analysis)
+    sfta = build_sfta(
+        analysis, legacy_id_wildcard=legacy_sfta_id_wildcard
+    )
     for tree in sfta.get("trees", []):
         if tree.get("source") == "generated_placeholder":
             add(

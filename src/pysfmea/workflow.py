@@ -147,6 +147,213 @@ def _verify_package_artifact(
                 or 0
             ),
         },
+        "analysis_structure": {
+            "present": bool(verification.get("analysis_structure")),
+            "valid": (
+                bool(verification.get("analysis_structure", {}).get("valid"))
+                if verification.get("analysis_structure")
+                else None
+            ),
+            "checks": dict(
+                verification.get("analysis_structure", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("analysis_structure", {}).get("errors", [])
+            )[:20],
+            "node_count": int(
+                verification.get("analysis_structure", {}).get("node_count", 0)
+                or 0
+            ),
+            "max_depth": int(
+                verification.get("analysis_structure", {}).get("max_depth", 0)
+                or 0
+            ),
+            "limits": dict(
+                verification.get("analysis_structure", {}).get("limits", {})
+            ),
+        },
+        "guidance_traceability": {
+            "present": bool(verification.get("guidance_traceability")),
+            "valid": (
+                bool(verification.get("guidance_traceability", {}).get("valid"))
+                if verification.get("guidance_traceability")
+                else None
+            ),
+            "checks": dict(
+                verification.get("guidance_traceability", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("guidance_traceability", {}).get("errors", [])
+            )[:20],
+            "artifact_count": int(
+                verification.get("guidance_traceability", {}).get(
+                    "artifact_count", 0
+                )
+                or 0
+            ),
+            "citation_count": int(
+                verification.get("guidance_traceability", {}).get(
+                    "citation_count", 0
+                )
+                or 0
+            ),
+            "finding_link_count": int(
+                verification.get("guidance_traceability", {}).get(
+                    "finding_link_count", 0
+                )
+                or 0
+            ),
+        },
+        "sfta_projection": {
+            "present": bool(verification.get("sfta_projection")),
+            "valid": (
+                bool(verification.get("sfta_projection", {}).get("valid"))
+                if verification.get("sfta_projection")
+                else None
+            ),
+            "checks": dict(
+                verification.get("sfta_projection", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("sfta_projection", {}).get("errors", [])
+            )[:20],
+            "artifact_count": int(
+                verification.get("sfta_projection", {}).get(
+                    "artifact_count", 0
+                )
+                or 0
+            ),
+            "tree_count": int(
+                verification.get("sfta_projection", {}).get("tree_count", 0)
+                or 0
+            ),
+            "gap_count": int(
+                verification.get("sfta_projection", {}).get("gap_count", 0)
+                or 0
+            ),
+        },
+        "evidence_catalog": {
+            "present": bool(verification.get("evidence_catalog")),
+            "valid": (
+                bool(verification.get("evidence_catalog", {}).get("valid"))
+                if verification.get("evidence_catalog")
+                else None
+            ),
+            "checks": dict(
+                verification.get("evidence_catalog", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("evidence_catalog", {}).get("errors", [])
+            )[:20],
+            "artifact_count": int(
+                verification.get("evidence_catalog", {}).get(
+                    "artifact_count", 0
+                )
+                or 0
+            ),
+            "execution_count": int(
+                verification.get("evidence_catalog", {}).get(
+                    "execution_count", 0
+                )
+                or 0
+            ),
+            "evidence_artifact_count": int(
+                verification.get("evidence_catalog", {}).get(
+                    "evidence_artifact_count", 0
+                )
+                or 0
+            ),
+        },
+        "interchange_artifacts": {
+            "present": bool(verification.get("interchange_artifacts")),
+            "valid": (
+                bool(verification.get("interchange_artifacts", {}).get("valid"))
+                if verification.get("interchange_artifacts")
+                else None
+            ),
+            "checks": dict(
+                verification.get("interchange_artifacts", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("interchange_artifacts", {}).get("errors", [])
+            )[:20],
+            "artifact_count": int(
+                verification.get("interchange_artifacts", {}).get(
+                    "artifact_count", 0
+                )
+                or 0
+            ),
+            "sarif_result_count": int(
+                verification.get("interchange_artifacts", {}).get(
+                    "sarif_result_count", 0
+                )
+                or 0
+            ),
+            "cyclonedx_component_count": int(
+                verification.get("interchange_artifacts", {}).get(
+                    "cyclonedx_component_count", 0
+                )
+                or 0
+            ),
+        },
+        "review_views": {
+            "present": bool(verification.get("review_views")),
+            "valid": (
+                bool(verification.get("review_views", {}).get("valid"))
+                if verification.get("review_views")
+                else None
+            ),
+            "checks": dict(
+                verification.get("review_views", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("review_views", {}).get("errors", [])
+            )[:20],
+            "artifact_count": int(
+                verification.get("review_views", {}).get("artifact_count", 0)
+                or 0
+            ),
+            "finding_count": int(
+                verification.get("review_views", {}).get("finding_count", 0)
+                or 0
+            ),
+            "component_count": int(
+                verification.get("review_views", {}).get("component_count", 0)
+                or 0
+            ),
+        },
+        "package_provenance": {
+            "present": bool(verification.get("package_provenance")),
+            "valid": (
+                bool(verification.get("package_provenance", {}).get("valid"))
+                if verification.get("package_provenance")
+                else None
+            ),
+            "checks": dict(
+                verification.get("package_provenance", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("package_provenance", {}).get("errors", [])
+            )[:20],
+            "artifact_count": int(
+                verification.get("package_provenance", {}).get(
+                    "artifact_count", 0
+                )
+                or 0
+            ),
+            "review_decision_count": int(
+                verification.get("package_provenance", {}).get(
+                    "review_decision_count", 0
+                )
+                or 0
+            ),
+            "execution_count": int(
+                verification.get("package_provenance", {}).get(
+                    "execution_count", 0
+                )
+                or 0
+            ),
+        },
         "assurance_work_queue": {
             "present": bool(verification.get("assurance_work_queue")),
             "valid": (

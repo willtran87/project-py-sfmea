@@ -3,6 +3,228 @@
 Notable user-visible changes are recorded here. PySFMEA follows semantic versioning for the
 package; public artifact and schema identifiers carry their own explicit compatibility versions.
 
+## 0.57.8 - 2026-08-04
+
+### Machine-readable package publication receipt
+
+- Added `sfmea package --json` for directory and ZIP outputs, emitting the stable public
+  `pysfmea-review-package-verification-1` verdict after publication.
+- Keep JSON mode free of human progress text so CI and orchestration systems can parse exactly
+  one schema-backed document without console scraping.
+- Return a nonzero status if the post-publication verification receipt is invalid, retaining the
+  same structured diagnostic envelope used by `sfmea verify-package --json`.
+- Added directory/ZIP CLI coverage that validates each receipt against the published JSON Schema
+  and checks container identity, artifact count, capabilities, and resolved package path.
+
+## 0.57.7 - 2026-08-04
+
+### Fail-closed package publication
+
+- Run the independent package verifier against the complete staging directory before any new or
+  replacement review package becomes visible at its destination.
+- Withhold internally inconsistent generated packages with a concise, bounded list of verifier
+  rule IDs instead of publishing artifacts that the same release rejects.
+- Preserve an existing package byte-for-byte when a forced refresh fails its internal gate, and
+  remove the rejected staging directory without modifying the caller's analysis.
+- Added fault-injection coverage for rejection, cleanup, source immutability, and atomic prior-
+  destination preservation.
+
+## 0.57.6 - 2026-08-04
+
+### Intuitive review-archive output
+
+- Infer ZIP publication from a case-insensitive `.zip` output suffix, preventing the CLI from
+  silently creating a directory whose name looks like an archive.
+- Preserve `--zip` for the default archive destination while making it optional when `-o`
+  already communicates the requested container type.
+- Updated command help and workflow documentation to describe suffix-based dispatch.
+- Added an end-to-end CLI regression that creates a `.ZIP` output and independently verifies
+  it as a valid ZIP review package.
+
+## 0.57.5 - 2026-08-04
+
+### Frozen package-analysis snapshot
+
+- Materialize deterministic assurance state on the package's deep-copied analysis before the
+  first artifact is written, so every projection observes one settled snapshot.
+- Repair absent or malformed derived assurance containers during packaging without modifying
+  the caller's governed working analysis.
+- Keep `analysis.json`, its manifest state digest, the full assurance register, and the focused
+  work queue semantically aligned instead of allowing package generation order to create an
+  internally invalid package.
+- Added regression coverage proving both repaired cases produce verifier-valid packages whose
+  declared analysis-state digest exactly matches the packaged analysis.
+
+## 0.57.4 - 2026-08-04
+
+### Total semantic-verifier fault containment
+
+- Extended the early analysis contract to validate resolved project analysis/risk/quality
+  configuration, fault-tree references, hazard-link string lists, finding/guidance citation
+  identifiers, guidance profile mappings, and projection-critical provenance collections.
+- Reuse the production configuration normalizer at the package boundary so malformed scalar
+  policy values and fault-tree semantics are rejected before deterministic regeneration.
+- Added a final public verifier exception boundary that converts an unforeseen semantic failure
+  into a sanitized `package.semantic_verification_aborted` verdict without exposing internal
+  exception text or returning a traceback.
+- Added targeted leaf-value mutation tests for every previously uncaught path plus a forced
+  internal-failure test proving the public JSON verdict remains schema-valid and sanitized.
+
+## 0.57.3 - 2026-08-04
+
+### Fail-closed package analysis contract
+
+- Added a lightweight, backward-compatible core-container contract before package semantic
+  projection, covering projection-critical objects, arrays, object collections, finding
+  subrecords, runtime evidence, assurance records, fault-tree nodes, and provenance views.
+- Invalid but checksum-consistent analysis content is withheld from every projector and returns
+  `package.analysis_contract_invalid` plus bounded, path-specific machine-readable errors.
+- Prevented uncaught type errors for malformed items, context, project, assurance, SFTA,
+  guidance, runtime evidence, summaries, inventory, adapter runs, and system-context content.
+- Extended the public `analysis_structure` verdict with an exact `core_contract` check while
+  preserving the explicit distinction between availability protection and schema/engineering
+  validity.
+- Added direct contract-mutation coverage and an end-to-end adversarial package test whose
+  checksum and governed-state digest are recomputed after inserting a malformed finding.
+
+## 0.57.2 - 2026-08-04
+
+### Exact SFTA selector semantics
+
+- Corrected ID-only SFTA event selectors so an explicit `finding_ids` list links only those
+  active findings instead of treating absent glob selectors as match-all wildcards.
+- Defined mixed selector behavior as the union of exact finding IDs and pattern matches, with
+  component and failure-mode globs applied conjunctively when both are configured.
+- Resolve ID-only correlations through an index without scanning every finding, and reuse that
+  index during hazard-link reconciliation to remove avoidable quadratic lookups.
+- Replay the historical ID-wildcard behavior across SFTA, validation, and validation-bearing
+  worksheet regeneration only when verifying packages that declare a pre-0.57.2 producer,
+  preserving genuine older evidence without weakening new projections.
+- Added regression coverage for unknown IDs, exact ID-only selection, mixed selector algebra,
+  the ID-only fast path, cross-version SFTA/diagnostic verification, and worksheet parity.
+
+## 0.57.1 - 2026-08-04
+
+### Bounded analysis verification
+
+- Added an iterative, machine-readable `analysis_structure` verdict that reports observed JSON
+  node count and depth before governed-state hashing or artifact regeneration.
+- Reject analysis snapshots above the 100-level or 2,000,000-node verification limits, including
+  packages whose analysis checksum and governed-state digest were recomputed after tampering.
+- Convert parser recursion failures into stable invalid-package findings instead of allowing an
+  unhandled verification failure.
+- Reuse one isolated analysis snapshot across all ten reviewer-view regenerations, eliminating
+  repeated full-analysis copies while retaining side-effect isolation from the caller.
+- Exposed structural metrics through human/JSON CLI output, the public verification schema, and
+  workflow status, with adversarial depth/node and clean-package regression coverage.
+
+## 0.57.0 - 2026-08-04
+
+### Package provenance reconciliation
+
+- Added `package_provenance_projection_v1` for the package-time audit manifest and reviewer
+  README, with exact analysis-derived review/execution inventories plus explicit timestamp and
+  baseline consistency checks.
+- Unified outer-manifest, audit-manifest, CycloneDX, and README generation timestamps and made
+  audit regeneration producer-version aware for future verifier upgrades.
+- Added semantic rejection of forged audit decisions even when both the audit record's internal
+  digest and the outer package checksum are recomputed.
+- Made review-view and README reconciliation portable across LF/CRLF platforms by comparing
+  canonical UTF-8 text while retaining exact transferred-byte verification in `manifest.json`.
+- Preserved v0.56.1 and earlier capability contracts and exposed the nested provenance verdict
+  through CLI, JSON Schema, workflow status, directory/ZIP verification, and release guidance.
+
+## 0.56.1 - 2026-08-04
+
+### Cross-version interchange verification
+
+- Fixed exact SARIF and CycloneDX reconciliation so a newer verifier regenerates embedded tool
+  metadata with the package's declared producer version rather than its own installed version.
+- Strengthened compatibility coverage with a genuine v0.55 fixture whose embedded interchange
+  versions and manifest hashes are rewritten consistently, preserving tamper detection without
+  rejecting valid historical packages.
+- Corrected new SARIF driver information URIs to the public `willtran87/project-py-sfmea`
+  repository while retaining the historical URI during exact verification of older producers
+  and preserving the explicit candidate-not-defect semantics.
+
+## 0.56.0 - 2026-08-04
+
+### Reviewer-view reconciliation
+
+- Added the `review_views_projection_v1` package capability for ten human-review artifacts:
+  worksheet CSV/Markdown, inventory, architecture, traceability, coverage, audit history,
+  guidance CSV, and assurance CSV/Markdown.
+- Package verification now regenerates those views in an isolated temporary workspace and
+  compares exact bytes, rejecting rewritten reviewer-facing conclusions even when manifest
+  hashes are recomputed.
+- Exposed the five grouped projection checks plus artifact, finding, and component counts
+  through human/JSON CLI output, workflow status, and the public verification schema.
+- Preserved v0.55 and earlier capability contracts and added current, legacy, directory, ZIP,
+  schema, workflow, and forged-checksum coverage.
+
+## 0.55.0 - 2026-08-04
+
+### SARIF and CycloneDX reconciliation
+
+- Added the `interchange_artifacts_projection_v1` package capability for the SARIF finding
+  exchange and CycloneDX declared-component inventory.
+- Package verification now regenerates both artifacts from packaged analysis, checks exact
+  projections and shared baseline identity, and rejects rewritten interchange content even
+  when manifest hashes are recomputed.
+- Unified the package manifest, README, and CycloneDX generation timestamp so current package
+  exports are reproducible from a single auditable time declaration.
+- Exposed SARIF-result and CycloneDX-component counts through human/JSON CLI output, workflow
+  status, and the public package-verification schema while preserving v0.54 and older contracts.
+
+## 0.54.0 - 2026-08-04
+
+### Execution-evidence catalog reconciliation
+
+- Added the `evidence_catalog_projection_v1` package capability for recorded assurance
+  executions and evidence-artifact inventory.
+- Package verification now checks the exact catalog projection, analysis-baseline binding,
+  execution inventory, and evidence-artifact inventory. Forged evidence records remain invalid
+  when manifest hashes are recomputed.
+- Exposed execution/artifact counts and the four-check verdict through human/JSON CLI output,
+  workflow status, and the public package-verification schema.
+- Preserved v0.53 and earlier capability contracts and added current, legacy, forged-checksum,
+  schema, directory, ZIP, and workflow coverage.
+
+## 0.53.0 - 2026-08-04
+
+### SFTA projection reconciliation
+
+- Added the `sfta_projection_v1` package capability for the complete top-down Software Fault
+  Tree model and its flat reconciliation-gap register.
+- Package verification now regenerates both artifacts from packaged analysis, checks exact model
+  and CSV-row projections, and reconciles model/gap counts. Rewritten SFTA content remains invalid
+  when manifest hashes are recomputed.
+- Review-package export now operates on a detached analysis snapshot and materializes SFTA once,
+  preventing export-time mutation of a library caller's governed analysis.
+- Exposed tree/gap counts and the three-check verdict through human/JSON CLI output, workflow
+  status, and the public package-verification schema while preserving v0.52 and older packages.
+
+## 0.52.0 - 2026-08-04
+
+### Guidance-traceability reconciliation
+
+- Added the `guidance_traceability_projection_v1` package capability for the complete guidance
+  trace and standalone citation catalog.
+- Package verification now regenerates both JSON artifacts from packaged analysis and checks
+  their cross-artifact consistency. Rewriting citation evidence and recomputing its manifest
+  checksum no longer produces a valid current package.
+- Exposed citation and finding-link counts plus the three-check verdict through human/JSON CLI
+  output, workflow status, and the public package-verification schema.
+- Preserved v0.51 and earlier capability contracts and added current, legacy, forged-checksum,
+  schema, directory, ZIP, and workflow coverage.
+
+### Save determinism
+
+- No-op saves now preserve `summary.last_saved_at` and byte identity across clock boundaries,
+  while any substantive governed-analysis change still advances the saved timestamp.
+- Added a forced-time regression so this behavior no longer depends on two operations occurring
+  within the same second.
+
 ## 0.51.0 - 2026-08-04
 
 ### Bounded directory-package verification

@@ -39,7 +39,7 @@ Available names:
 | `diagram-bundle-verification` | Success, rejection, and incomplete diagram-verifier verdicts |
 | `html-report-verification` | Success, rejection, and incomplete HTML-verifier verdicts |
 | `review-package-manifest` | Package file inventory, checksums, provenance, and state binding |
-| `review-package-verification` | Success and rejection verdicts from `verify-package --json` |
+| `review-package-verification` | Success and rejection verdicts from `verify-package --json` and publication receipts from `package --json` |
 | `schema-bundle-verification` | Success and rejection verdicts for the offline schema set |
 | `schema-catalog` | Content-addressed discovery metadata for the complete public contract set |
 | `workflow-status` | Lifecycle stage, handoff gates, evidence, summaries, and remediation actions |
@@ -64,14 +64,42 @@ projection with packaged `analysis.json`. The JSON verdict exposes this nested v
 exporter or analysis-generator provenance requires it.
 
 Current manifests declare the closed capabilities `analysis_diagnostics_projection_v1`,
-`assurance_register_projection`, and `assurance_work_queue_projection`. Current provenance
-requires all three, while legacy manifests may omit capabilities introduced after their producer
-version. The manifest schema describes the identifiers and `verify-package` enforces
+`assurance_register_projection`, `assurance_work_queue_projection`,
+`evidence_catalog_projection_v1`, `guidance_traceability_projection_v1`,
+`interchange_artifacts_projection_v1`, `package_provenance_projection_v1`,
+`review_views_projection_v1`, and `sfta_projection_v1`. Current provenance requires all nine,
+while legacy manifests may omit
+capabilities introduced after their producer version.
+The manifest schema describes the identifiers and `verify-package` enforces
 version/capability/artifact consistency. Diagnostic verification regenerates summary,
 validation, context, repository-inventory, and adapter-ledger views from packaged analysis.
+Every readable packaged analysis also receives an `analysis_structure` verdict before hashing or
+projection work. The verdict reports the observed iterative node/depth traversal against the
+2,000,000-node and 100-level availability limits plus a `core_contract` check for the object,
+array, and object-collection types consumed by semantic projectors. Failed content is withheld
+from projection and produces bounded path-specific errors. This is verifier policy rather than a
+package capability, so historical packages receive the same protection without changing their
+declarations; passing it is not represented as complete analysis-schema validation.
+Known malformed fields receive path-specific contract errors. An unforeseen exception beyond
+that contract is converted to the same stable verdict envelope with the sanitized
+`package.semantic_verification_aborted` rule; integrations never need to parse a traceback.
+Guidance verification regenerates the complete trace and standalone citation catalog and checks
+that the two artifacts agree.
+SFTA verification regenerates the complete top-down model and flat gap register and reconciles
+their gap counts.
+Evidence verification reconciles the catalog baseline and its execution and evidence-artifact
+inventories with packaged analysis.
+Interchange verification regenerates SARIF and CycloneDX content and checks their shared
+analysis-baseline identity. Embedded tool metadata is regenerated with the manifest's declared
+producer version so a newer verifier does not reject an otherwise compatible older package.
+Review-view verification regenerates ten human-facing worksheet, system, audit, guidance, and
+assurance exports and compares canonical UTF-8 text in an isolated temporary workspace. Exact
+transferred bytes remain independently checked by the outer manifest.
+Package-provenance verification regenerates the package-time audit manifest and reviewer README,
+then reconciles audit/package timestamps and audit/package/analysis baselines.
 Register verification regenerates deterministic content, checks the embedded queue, and
-reconciles it with the standalone queue. The package-verdict schema defines all three nested
-verifier envelopes. For ZIP inputs, nested queue paths use the stable
+reconciles it with the standalone queue. The package-verdict schema defines all nine nested
+projection-verifier envelopes. For ZIP inputs, nested queue paths use the stable
 `PACKAGE.zip!/assurance-work.json` notation.
 
 Older `pysfmea-review-package-1` artifacts without schemas remain supported. Schema contracts

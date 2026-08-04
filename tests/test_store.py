@@ -68,9 +68,23 @@ class StoreTests(unittest.TestCase):
                 mock.patch(
                     "pysfmea.sfta.utc_now", return_value="2099-01-01T00:00:00+00:00"
                 ),
+                mock.patch(
+                    "pysfmea.store.utc_now", return_value="2099-01-01T00:00:00+00:00"
+                ),
             ):
                 save_analysis(path, first)
             self.assertEqual(path.read_bytes(), first_bytes)
+
+            first["items"][0]["review"]["notes"] = "A substantive governed change."
+            with mock.patch(
+                "pysfmea.store.utc_now", return_value="2099-01-01T00:00:00+00:00"
+            ):
+                save_analysis(path, first)
+            changed = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                changed["summary"]["last_saved_at"],
+                "2099-01-01T00:00:00+00:00",
+            )
 
     def test_atomic_round_trip_and_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -518,6 +518,7 @@ def save_analysis(
     refresh_assurance_register(analysis, analysis.get("assurance", {}))
     analysis["sfta"] = build_sfta(analysis)
     refresh_summary(analysis)
+    _reconcile_last_saved_at(destination, analysis)
     _validate_analysis_structure(analysis)
     descriptor, temp_name = tempfile.mkstemp(
         prefix=destination.name + ".",
@@ -548,6 +549,48 @@ def save_analysis(
         except OSError:
             pass
         raise
+
+
+def _without_last_saved_at(analysis: dict[str, Any]) -> dict[str, Any]:
+    snapshot = copy.deepcopy(analysis)
+    summary = snapshot.get("summary")
+    if isinstance(summary, dict):
+        summary.pop("last_saved_at", None)
+    return snapshot
+
+
+def _reconcile_last_saved_at(
+    destination: Path, analysis: dict[str, Any]
+) -> None:
+    """Preserve byte identity for no-op saves and advance time for real changes."""
+
+    summary = analysis.setdefault("summary", {})
+    if not destination.is_file() or destination.is_symlink():
+        summary.setdefault("last_saved_at", utc_now())
+        return
+    try:
+        with destination.open("r", encoding="utf-8") as handle:
+            previous = json.load(handle)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        summary["last_saved_at"] = utc_now()
+        return
+    if not isinstance(previous, dict):
+        summary["last_saved_at"] = utc_now()
+        return
+    previous_summary = previous.get("summary", {})
+    previous_saved_at = (
+        previous_summary.get("last_saved_at")
+        if isinstance(previous_summary, dict)
+        else None
+    )
+    if (
+        isinstance(previous_saved_at, str)
+        and previous_saved_at
+        and _without_last_saved_at(previous) == _without_last_saved_at(analysis)
+    ):
+        summary["last_saved_at"] = previous_saved_at
+    else:
+        summary["last_saved_at"] = utc_now()
 
 
 def merge_rescan(previous: dict[str, Any], scanned: dict[str, Any]) -> dict[str, Any]:
@@ -1046,6 +1089,7 @@ def add_manual_item(analysis: dict[str, Any], component_id: str | None = None) -
 
 def refresh_summary(analysis: dict[str, Any]) -> None:
     summary = analysis.setdefault("summary", {})
+    previous_summary = copy.deepcopy(summary)
     items = analysis.get("items", [])
     active = [item for item in items if item.get("source_status", "active") == "active"]
     dispositions = {name: 0 for name in ALLOWED_DISPOSITIONS}
@@ -1091,7 +1135,6 @@ def refresh_summary(analysis: dict[str, Any]) -> None:
     summary["failure_classes"] = failure_classes
     summary["screening_priorities"] = screening_priorities
     summary["subsystems"] = subsystems
-    summary["last_saved_at"] = utc_now()
     suggestion_statuses: dict[str, int] = {}
     for suggestion in analysis.get("suggestions", []):
         status = suggestion.get("status", "unknown")
@@ -1109,3 +1152,19 @@ def refresh_summary(analysis: dict[str, Any]) -> None:
     )
     assurance = ensure_assurance_register(analysis)
     summary["assurance"] = copy.deepcopy(assurance.get("summary", {}))
+    previous_saved_at = previous_summary.get("last_saved_at")
+    previous_content = {
+        key: value
+        for key, value in previous_summary.items()
+        if key != "last_saved_at"
+    }
+    current_content = {
+        key: value for key, value in summary.items() if key != "last_saved_at"
+    }
+    summary["last_saved_at"] = (
+        previous_saved_at
+        if isinstance(previous_saved_at, str)
+        and previous_saved_at
+        and previous_content == current_content
+        else utc_now()
+    )

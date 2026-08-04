@@ -17,6 +17,16 @@ SFTA_NOTICE = (
     "infer causal sufficiency, independence, minimal cut sets, or hazard completeness. "
     "Automatically created placeholder trees identify missing decomposition only."
 )
+SFTA_GAP_FIELDS = (
+    "gap_type",
+    "tree_id",
+    "hazard_id",
+    "event_id",
+    "finding_id",
+    "component",
+    "failure_mode",
+    "description",
+)
 
 
 def _active_findings(analysis: dict[str, Any]) -> list[dict[str, Any]]:
@@ -37,15 +47,19 @@ def _failure_text(item: dict[str, Any]) -> str:
     return str(review.get("failure_mode") or item.get("scanner", {}).get("failure_mode", ""))
 
 
-def _matches_event(item: dict[str, Any], event: dict[str, Any]) -> bool:
+def _matches_event(
+    item: dict[str, Any],
+    event: dict[str, Any],
+    *,
+    legacy_id_wildcard: bool = False,
+) -> bool:
     finding_ids = set(event.get("finding_ids", []))
     component_patterns = list(event.get("component_patterns", []))
     failure_patterns = list(event.get("failure_mode_patterns", []))
-    selectors_present = bool(finding_ids or component_patterns or failure_patterns)
-    if not selectors_present:
-        return False
     if item.get("id") in finding_ids:
         return True
+    if not component_patterns and not failure_patterns:
+        return bool(legacy_id_wildcard and finding_ids)
     component_match = not component_patterns or any(
         fnmatch.fnmatchcase(_component_key(item), pattern) for pattern in component_patterns
     )
@@ -54,6 +68,36 @@ def _matches_event(item: dict[str, Any], event: dict[str, Any]) -> bool:
         fnmatch.fnmatchcase(text, pattern.casefold()) for pattern in failure_patterns
     )
     return component_match and failure_match
+
+
+def _matched_finding_ids(
+    findings: list[dict[str, Any]],
+    findings_by_id: dict[str, dict[str, Any]],
+    event: dict[str, Any],
+    *,
+    legacy_id_wildcard: bool = False,
+) -> list[str]:
+    """Resolve explicit IDs directly and scan only when glob selectors are present."""
+
+    matched = {
+        finding_id
+        for value in event.get("finding_ids", [])
+        if (finding_id := str(value)) in findings_by_id
+    }
+    if (
+        event.get("component_patterns")
+        or event.get("failure_mode_patterns")
+        or (legacy_id_wildcard and event.get("finding_ids"))
+    ):
+        matched.update(
+            str(value["id"])
+            for value in findings
+            if value.get("id")
+            and _matches_event(
+                value, event, legacy_id_wildcard=legacy_id_wildcard
+            )
+        )
+    return sorted(matched)
 
 
 def _placeholder_tree(hazard: dict[str, Any]) -> dict[str, Any]:
@@ -110,6 +154,9 @@ def _explicit_tree(
     definition: dict[str, Any],
     hazard: dict[str, Any],
     findings: list[dict[str, Any]],
+    findings_by_id: dict[str, dict[str, Any]],
+    *,
+    legacy_id_wildcard: bool = False,
 ) -> dict[str, Any]:
     hazard_id = str(definition.get("hazard", ""))
     nodes: list[dict[str, Any]] = []
@@ -135,8 +182,11 @@ def _explicit_tree(
             }
         )
     for event in definition.get("events", []):
-        matched = sorted(
-            value["id"] for value in findings if _matches_event(value, event)
+        matched = _matched_finding_ids(
+            findings,
+            findings_by_id,
+            event,
+            legacy_id_wildcard=legacy_id_wildcard,
         )
         nodes.append(
             {
@@ -182,16 +232,27 @@ def _explicit_tree(
     }
 
 
-def build_sfta(analysis: dict[str, Any]) -> dict[str, Any]:
+def build_sfta(
+    analysis: dict[str, Any], *, legacy_id_wildcard: bool = False
+) -> dict[str, Any]:
     """Build explicit/placeholder fault trees and bidirectional coverage gaps."""
 
     context = analysis.get("context", {})
     hazards = [value for value in context.get("hazards", []) if value.get("id")]
     hazard_by_id = {str(value["id"]): value for value in hazards}
     findings = _active_findings(analysis)
+    findings_by_id = {
+        str(value["id"]): value for value in findings if value.get("id")
+    }
     definitions = list(context.get("fault_trees", []))
     trees = [
-        _explicit_tree(definition, hazard_by_id[str(definition["hazard"])], findings)
+        _explicit_tree(
+            definition,
+            hazard_by_id[str(definition["hazard"])],
+            findings,
+            findings_by_id,
+            legacy_id_wildcard=legacy_id_wildcard,
+        )
         for definition in definitions
     ]
     hazards_with_tree = {value["hazard_id"] for value in trees}
@@ -228,7 +289,7 @@ def build_sfta(analysis: dict[str, Any]) -> dict[str, Any]:
                         "hazard_id": tree["hazard_id"],
                     }
                 )
-                item = next(value for value in findings if value["id"] == finding_id)
+                item = findings_by_id[finding_id]
                 if tree["hazard_id"] not in item.get("review", {}).get("linked_hazards", []):
                     hazard_link_mismatches.append(
                         {
@@ -306,6 +367,19 @@ def export_sfta(
         return target
     if format != "csv":
         raise ValueError("SFTA export format must be json or csv")
+    rows = sfta_gap_rows(model)
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=SFTA_GAP_FIELDS, extrasaction="ignore"
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    return target
+
+
+def sfta_gap_rows(model: dict[str, Any]) -> list[dict[str, str]]:
+    """Return the deterministic flat reconciliation-gap projection."""
+
     rows: list[dict[str, str]] = []
     reconciliation = model["reconciliation"]
     for value in reconciliation["top_down_uncovered_events"]:
@@ -314,18 +388,4 @@ def export_sfta(
         rows.append({"gap_type": "bottom_up_unmapped_finding", **value})
     for value in reconciliation["hazard_link_mismatches"]:
         rows.append({"gap_type": "hazard_link_mismatch", **value})
-    fields = [
-        "gap_type",
-        "tree_id",
-        "hazard_id",
-        "event_id",
-        "finding_id",
-        "component",
-        "failure_mode",
-        "description",
-    ]
-    with target.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
-    return target
+    return rows

@@ -22,9 +22,12 @@ def _digest(value: Any) -> str:
     ).hexdigest()
 
 
-def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
+def create_run_manifest(
+    analysis: dict[str, Any], *, tool_version: str | None = None
+) -> dict[str, Any]:
     """Create the immutable resolved manifest for a completed deterministic scan."""
 
+    producer_version = tool_version or __version__
     baseline = analysis.get("project", {}).get("baseline", {})
     registry = adapter_registry_snapshot(analysis)
     guidance_profiles = analysis_guidance_profiles(analysis)
@@ -70,7 +73,7 @@ def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
         "resolved_inputs_sha256": _digest(inputs),
         "tool": {
             "name": "PySFMEA",
-            "version": __version__,
+            "version": producer_version,
             "analysis_schema_version": analysis.get("schema_version", ""),
             "settings": analysis.get("project", {}).get("settings", {}),
         },
@@ -124,10 +127,17 @@ def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
     return manifest
 
 
-def current_audit_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
+def current_audit_manifest(
+    analysis: dict[str, Any],
+    *,
+    generated_at: str | None = None,
+    tool_version: str | None = None,
+) -> dict[str, Any]:
     """Build a package-time audit view without mutating the immutable scan manifest."""
 
-    scan_manifest = analysis.get("run_manifest") or create_run_manifest(analysis)
+    scan_manifest = analysis.get("run_manifest") or create_run_manifest(
+        analysis, tool_version=tool_version
+    )
     reviews = []
     waivers = []
     risk_acceptances = []
@@ -167,7 +177,7 @@ def current_audit_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
     ]
     result = {
         "schema_version": "pysfmea-current-audit-manifest-1",
-        "generated_at": utc_now(),
+        "generated_at": generated_at or utc_now(),
         "scan_manifest": scan_manifest,
         "review_decisions": reviews,
         "waivers": waivers,

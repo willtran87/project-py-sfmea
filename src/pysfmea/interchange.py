@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -10,10 +11,24 @@ from typing import Any
 from .model import stable_id, utc_now
 from .version import __version__
 
+SARIF_INFORMATION_URI = "https://github.com/willtran87/project-py-sfmea"
+LEGACY_SARIF_INFORMATION_URI = "https://github.com/Will-A-W/project-py-sfmea"
 
-def sarif_document(analysis: dict[str, Any]) -> dict[str, Any]:
+
+def _sarif_information_uri(tool_version: str) -> str:
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", tool_version)
+    if match and tuple(int(value) for value in match.groups()) >= (0, 56, 1):
+        return SARIF_INFORMATION_URI
+    return LEGACY_SARIF_INFORMATION_URI
+
+
+def sarif_document(
+    analysis: dict[str, Any], *, tool_version: str | None = None
+) -> dict[str, Any]:
     """Return SARIF 2.1.0 screening results without claiming confirmed defects."""
 
+    producer_version = tool_version or __version__
+    information_uri = _sarif_information_uri(producer_version)
     active = [
         value
         for value in analysis.get("items", [])
@@ -87,8 +102,8 @@ def sarif_document(analysis: dict[str, Any]) -> dict[str, Any]:
                 "tool": {
                     "driver": {
                         "name": "PySFMEA",
-                        "semanticVersion": __version__,
-                        "informationUri": "https://github.com/Will-A-W/project-py-sfmea",
+                        "semanticVersion": producer_version,
+                        "informationUri": information_uri,
                         "rules": rules,
                     }
                 },
@@ -113,11 +128,15 @@ def sarif_document(analysis: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def cyclonedx_document(analysis: dict[str, Any]) -> dict[str, Any]:
+def cyclonedx_document(
+    analysis: dict[str, Any], *, generated_at: str | None = None,
+    tool_version: str | None = None
+) -> dict[str, Any]:
     """Return a CycloneDX 1.6 inventory of declared dependencies and hashed manifests."""
 
     project_name = str(analysis.get("project", {}).get("name", "python-project"))
     baseline_id = str(analysis.get("project", {}).get("baseline", {}).get("id", ""))
+    producer_version = tool_version or __version__
     components = []
     for dependency in analysis.get("context", {}).get("dependencies", []):
         name = str(dependency.get("name", "unknown"))
@@ -143,8 +162,8 @@ def cyclonedx_document(analysis: dict[str, Any]) -> dict[str, Any]:
         "serialNumber": f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, f'pysfmea:{project_name}:{baseline_id}')}",
         "version": 1,
         "metadata": {
-            "timestamp": utc_now(),
-            "tools": {"components": [{"type": "application", "name": "PySFMEA", "version": __version__}]},
+            "timestamp": generated_at or utc_now(),
+            "tools": {"components": [{"type": "application", "name": "PySFMEA", "version": producer_version}]},
             "component": {
                 "type": "application",
                 "bom-ref": "project",

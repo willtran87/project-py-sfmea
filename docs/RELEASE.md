@@ -8,10 +8,30 @@ signing remain explicit maintainer actions.
 - Work from an approved release branch with intended changes reviewed.
 - Confirm the version in `src/pysfmea/version.py` and the matching changelog entry.
 - Confirm public format/schema compatibility and update major identifiers for breaking changes.
-- Confirm current diagnostic/register/work-queue review-package capabilities are explicitly
-  declared and verifier-enforced.
+- Confirm current diagnostic/guidance/SFTA/evidence/interchange/provenance/review-view/register/work-queue review-package
+  capabilities are explicitly declared and verifier-enforced.
 - Confirm directory and ZIP package verification retains bounded entry, file, and total sizes,
-  streaming hashes, flat layouts, and bounded semantic JSON reads.
+  streaming hashes, flat layouts, bounded semantic JSON reads, and iterative analysis node/depth
+  limits plus fail-closed core-container checks before governed-state hashing or projection
+  regeneration.
+- Confirm malformed scalar/configuration mutations and forced semantic-projector failures return
+  schema-valid sanitized verdicts without tracebacks or internal exception messages.
+- Confirm absent and malformed derived assurance state is materialized on a private package
+  snapshot, the input analysis remains unchanged, and the resulting directory and ZIP packages
+  pass exact analysis-state, register, and work-queue reconciliation.
+- Confirm an explicit case-insensitive `.zip` package output selects archive publication without
+  requiring `--zip`, while `--zip` without an output retains the default archive filename.
+- Confirm package generation independently verifies the complete staging directory before
+  publication and that a forced-refresh verification failure preserves the prior destination,
+  removes staging residue, and returns bounded rule identifiers.
+- Confirm `package --json` emits exactly one schema-valid post-publication verification verdict
+  for directory and ZIP outputs and returns nonzero for an invalid receipt.
+- Confirm exact interchange verification uses package-producer metadata and retains genuine
+  prior-version package compatibility under the current verifier.
+- Confirm exact SFTA, validation, and worksheet verification use the package producer's selector
+  semantics and that current ID-only selectors cannot widen to unrelated findings.
+- Confirm package/audit/CycloneDX/README timestamps reconcile and text projections remain
+  semantically portable across LF and CRLF while manifest byte checks remain exact.
 - Confirm NASA/FAA/other guidance metadata and captured hashes were not changed unintentionally.
 - Ensure the CI matrix is green and dependency-update alerts are reviewed.
 
@@ -40,7 +60,7 @@ sfmea evaluate benchmark-analysis.json `
   benchmarks\python_sfmea_corpus\expected.json --json
 sfmea assurance benchmark-analysis.json --format work-json -o benchmark-assurance-work.json
 sfmea assurance-work-verify benchmark-assurance-work.json --analysis benchmark-analysis.json --json
-sfmea package benchmark-analysis.json -o benchmark-review-package
+sfmea package benchmark-analysis.json -o benchmark-review-package --json
 sfmea verify-package benchmark-review-package --json
 ```
 

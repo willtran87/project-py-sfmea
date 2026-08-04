@@ -37,8 +37,25 @@ SCHEMA_CATALOG_FORMAT = "pysfmea-schema-catalog-1"
 SCHEMA_BUNDLE_VERIFICATION_FORMAT = "pysfmea-schema-bundle-verification-1"
 REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
 REVIEW_PACKAGE_VERIFICATION_FORMAT = "pysfmea-review-package-verification-1"
+ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = (
+    "pysfmea-analysis-structure-verification-1"
+)
 ANALYSIS_DIAGNOSTICS_VERIFICATION_FORMAT = (
     "pysfmea-analysis-diagnostics-verification-1"
+)
+GUIDANCE_TRACEABILITY_VERIFICATION_FORMAT = (
+    "pysfmea-guidance-traceability-verification-1"
+)
+SFTA_PROJECTION_VERIFICATION_FORMAT = "pysfmea-sfta-projection-verification-1"
+EVIDENCE_CATALOG_VERIFICATION_FORMAT = (
+    "pysfmea-evidence-catalog-verification-1"
+)
+INTERCHANGE_ARTIFACTS_VERIFICATION_FORMAT = (
+    "pysfmea-interchange-artifacts-verification-1"
+)
+REVIEW_VIEWS_VERIFICATION_FORMAT = "pysfmea-review-views-verification-1"
+PACKAGE_PROVENANCE_VERIFICATION_FORMAT = (
+    "pysfmea-package-provenance-verification-1"
 )
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
 
@@ -760,6 +777,12 @@ def _review_package_manifest_schema() -> dict[str, Any]:
                         "analysis_diagnostics_projection_v1",
                         "assurance_register_projection",
                         "assurance_work_queue_projection",
+                        "evidence_catalog_projection_v1",
+                        "guidance_traceability_projection_v1",
+                        "interchange_artifacts_projection_v1",
+                        "package_provenance_projection_v1",
+                        "review_views_projection_v1",
+                        "sfta_projection_v1",
                     ]
                 },
             },
@@ -813,6 +836,52 @@ def _review_package_verification_schema() -> dict[str, Any]:
             "level": {"enum": ["error", "warning"]},
             "message": {"type": "string"},
             "path": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+    analysis_structure_check_names = (
+        "json_object",
+        "depth_limit",
+        "node_limit",
+        "core_contract",
+    )
+    analysis_structure_verdict = {
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "checks",
+            "errors",
+            "node_count",
+            "max_depth",
+            "limits",
+            "notice",
+        ],
+        "properties": {
+            "format": {"const": ANALYSIS_STRUCTURE_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "checks": {
+                "type": "object",
+                "required": list(analysis_structure_check_names),
+                "properties": {
+                    name: {"type": "boolean"}
+                    for name in analysis_structure_check_names
+                },
+                "additionalProperties": False,
+            },
+            "errors": {"type": "array", "items": _error_schema()},
+            "node_count": {"type": "integer", "minimum": 0},
+            "max_depth": {"type": "integer", "minimum": 0},
+            "limits": {
+                "type": "object",
+                "required": ["max_nodes", "max_depth"],
+                "properties": {
+                    "max_nodes": {"type": "integer", "minimum": 1},
+                    "max_depth": {"type": "integer", "minimum": 1},
+                },
+                "additionalProperties": False,
+            },
+            "notice": {"type": "string", "minLength": 1},
         },
         "additionalProperties": False,
     }
@@ -883,6 +952,226 @@ def _review_package_verification_schema() -> dict[str, Any]:
         },
         "additionalProperties": False,
     }
+    guidance_check_names = (
+        "traceability_projection",
+        "citation_catalog_projection",
+        "cross_artifact_consistency",
+    )
+    guidance_verdict = {
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "checks",
+            "errors",
+            "artifact_count",
+            "citation_count",
+            "finding_link_count",
+            "notice",
+        ],
+        "properties": {
+            "format": {"const": GUIDANCE_TRACEABILITY_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "checks": {
+                "type": "object",
+                "required": list(guidance_check_names),
+                "properties": {
+                    name: {"type": "boolean"} for name in guidance_check_names
+                },
+                "additionalProperties": False,
+            },
+            "errors": {"type": "array", "items": _error_schema()},
+            "artifact_count": {"const": 2},
+            "citation_count": {"type": "integer", "minimum": 0},
+            "finding_link_count": {"type": "integer", "minimum": 0},
+            "notice": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+    sfta_check_names = (
+        "model_projection",
+        "gap_register_projection",
+        "gap_count_consistency",
+    )
+    sfta_verdict = {
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "checks",
+            "errors",
+            "artifact_count",
+            "tree_count",
+            "gap_count",
+            "notice",
+        ],
+        "properties": {
+            "format": {"const": SFTA_PROJECTION_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "checks": {
+                "type": "object",
+                "required": list(sfta_check_names),
+                "properties": {
+                    name: {"type": "boolean"} for name in sfta_check_names
+                },
+                "additionalProperties": False,
+            },
+            "errors": {"type": "array", "items": _error_schema()},
+            "artifact_count": {"const": 2},
+            "tree_count": {"type": "integer", "minimum": 0},
+            "gap_count": {"type": "integer", "minimum": 0},
+            "notice": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+    evidence_check_names = (
+        "semantic_projection",
+        "baseline_binding",
+        "execution_inventory",
+        "evidence_artifact_inventory",
+    )
+    evidence_verdict = {
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "checks",
+            "errors",
+            "artifact_count",
+            "execution_count",
+            "evidence_artifact_count",
+            "notice",
+        ],
+        "properties": {
+            "format": {"const": EVIDENCE_CATALOG_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "checks": {
+                "type": "object",
+                "required": list(evidence_check_names),
+                "properties": {
+                    name: {"type": "boolean"} for name in evidence_check_names
+                },
+                "additionalProperties": False,
+            },
+            "errors": {"type": "array", "items": _error_schema()},
+            "artifact_count": {"const": 1},
+            "execution_count": {"type": "integer", "minimum": 0},
+            "evidence_artifact_count": {"type": "integer", "minimum": 0},
+            "notice": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+    interchange_check_names = (
+        "sarif_projection",
+        "cyclonedx_projection",
+        "baseline_consistency",
+    )
+    interchange_verdict = {
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "checks",
+            "errors",
+            "artifact_count",
+            "sarif_result_count",
+            "cyclonedx_component_count",
+            "notice",
+        ],
+        "properties": {
+            "format": {"const": INTERCHANGE_ARTIFACTS_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "checks": {
+                "type": "object",
+                "required": list(interchange_check_names),
+                "properties": {
+                    name: {"type": "boolean"} for name in interchange_check_names
+                },
+                "additionalProperties": False,
+            },
+            "errors": {"type": "array", "items": _error_schema()},
+            "artifact_count": {"const": 2},
+            "sarif_result_count": {"type": "integer", "minimum": 0},
+            "cyclonedx_component_count": {"type": "integer", "minimum": 0},
+            "notice": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+    review_view_check_names = (
+        "worksheet_projection",
+        "system_views_projection",
+        "audit_projection",
+        "guidance_csv_projection",
+        "assurance_views_projection",
+    )
+    review_views_verdict = {
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "checks",
+            "errors",
+            "artifact_count",
+            "finding_count",
+            "component_count",
+            "notice",
+        ],
+        "properties": {
+            "format": {"const": REVIEW_VIEWS_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "checks": {
+                "type": "object",
+                "required": list(review_view_check_names),
+                "properties": {
+                    name: {"type": "boolean"} for name in review_view_check_names
+                },
+                "additionalProperties": False,
+            },
+            "errors": {"type": "array", "items": _error_schema()},
+            "artifact_count": {"const": 10},
+            "finding_count": {"type": "integer", "minimum": 0},
+            "component_count": {"type": "integer", "minimum": 0},
+            "notice": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+    provenance_check_names = (
+        "run_manifest_projection",
+        "readme_projection",
+        "timestamp_consistency",
+        "baseline_consistency",
+    )
+    provenance_verdict = {
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "checks",
+            "errors",
+            "artifact_count",
+            "review_decision_count",
+            "execution_count",
+            "notice",
+        ],
+        "properties": {
+            "format": {"const": PACKAGE_PROVENANCE_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "checks": {
+                "type": "object",
+                "required": list(provenance_check_names),
+                "properties": {
+                    name: {"type": "boolean"} for name in provenance_check_names
+                },
+                "additionalProperties": False,
+            },
+            "errors": {"type": "array", "items": _error_schema()},
+            "artifact_count": {"const": 2},
+            "review_decision_count": {"type": "integer", "minimum": 0},
+            "execution_count": {"type": "integer", "minimum": 0},
+            "notice": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
     return {
         "$schema": JSON_SCHEMA_DRAFT,
         "$id": _schema_id("review-package-verification"),
@@ -918,6 +1207,12 @@ def _review_package_verification_schema() -> dict[str, Any]:
                         "analysis_diagnostics_projection_v1",
                         "assurance_register_projection",
                         "assurance_work_queue_projection",
+                        "evidence_catalog_projection_v1",
+                        "guidance_traceability_projection_v1",
+                        "interchange_artifacts_projection_v1",
+                        "package_provenance_projection_v1",
+                        "review_views_projection_v1",
+                        "sfta_projection_v1",
                     ]
                 },
             },
@@ -931,6 +1226,48 @@ def _review_package_verification_schema() -> dict[str, Any]:
                 "oneOf": [
                     {"type": "object", "maxProperties": 0},
                     diagnostics_verdict,
+                ]
+            },
+            "analysis_structure": {
+                "oneOf": [
+                    {"type": "object", "maxProperties": 0},
+                    analysis_structure_verdict,
+                ]
+            },
+            "guidance_traceability": {
+                "oneOf": [
+                    {"type": "object", "maxProperties": 0},
+                    guidance_verdict,
+                ]
+            },
+            "sfta_projection": {
+                "oneOf": [
+                    {"type": "object", "maxProperties": 0},
+                    sfta_verdict,
+                ]
+            },
+            "evidence_catalog": {
+                "oneOf": [
+                    {"type": "object", "maxProperties": 0},
+                    evidence_verdict,
+                ]
+            },
+            "interchange_artifacts": {
+                "oneOf": [
+                    {"type": "object", "maxProperties": 0},
+                    interchange_verdict,
+                ]
+            },
+            "review_views": {
+                "oneOf": [
+                    {"type": "object", "maxProperties": 0},
+                    review_views_verdict,
+                ]
+            },
+            "package_provenance": {
+                "oneOf": [
+                    {"type": "object", "maxProperties": 0},
+                    provenance_verdict,
                 ]
             },
             "assurance_work_queue": {

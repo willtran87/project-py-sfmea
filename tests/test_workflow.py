@@ -161,6 +161,12 @@ class WorkflowStatusTests(unittest.TestCase):
                 "analysis_diagnostics_projection_v1",
                 "assurance_register_projection",
                 "assurance_work_queue_projection",
+                "evidence_catalog_projection_v1",
+                "guidance_traceability_projection_v1",
+                "interchange_artifacts_projection_v1",
+                "package_provenance_projection_v1",
+                "review_views_projection_v1",
+                "sfta_projection_v1",
             ],
         )
         self.assertTrue(current["artifacts"]["review_package"]["binding"]["valid"])
@@ -190,6 +196,89 @@ class WorkflowStatusTests(unittest.TestCase):
                 "analysis_diagnostics"
             ]["artifact_count"],
             5,
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"][
+                "guidance_traceability"
+            ]["valid"]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"][
+                "guidance_traceability"
+            ]["artifact_count"],
+            2,
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"][
+                "sfta_projection"
+            ]["valid"]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"][
+                "sfta_projection"
+            ]["artifact_count"],
+            2,
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"][
+                "evidence_catalog"
+            ]["valid"]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"][
+                "evidence_catalog"
+            ]["artifact_count"],
+            1,
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"][
+                "interchange_artifacts"
+            ]["valid"]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"][
+                "interchange_artifacts"
+            ]["artifact_count"],
+            2,
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"][
+                "analysis_structure"
+            ]["valid"]
+        )
+        self.assertGreater(
+            current["artifacts"]["review_package"]["integrity"][
+                "analysis_structure"
+            ]["node_count"],
+            0,
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"][
+                "analysis_structure"
+            ]["limits"],
+            {"max_nodes": 2_000_000, "max_depth": 100},
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"]["review_views"][
+                "valid"
+            ]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"]["review_views"][
+                "artifact_count"
+            ],
+            10,
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"][
+                "package_provenance"
+            ]["valid"]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"][
+                "package_provenance"
+            ]["artifact_count"],
+            2,
         )
         self.assertTrue(
             current["artifacts"]["review_package"]["integrity"][

@@ -474,7 +474,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     package.add_argument("analysis", help="analysis JSON path")
     package.add_argument(
-        "-o", "--output", help="destination directory or, with --zip, .zip path"
+        "-o",
+        "--output",
+        help="destination directory or .zip archive (.zip implies --zip)",
     )
     package.add_argument(
         "--force",
@@ -489,7 +491,12 @@ def _parser() -> argparse.ArgumentParser:
     package.add_argument(
         "--zip",
         action="store_true",
-        help="create a single atomically published ZIP instead of a directory",
+        help="create a single archive (also inferred from a .zip output path)",
+    )
+    package.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the schema-backed post-publication verification verdict",
     )
     package.set_defaults(handler=_package)
 
@@ -1446,9 +1453,15 @@ def _diff(args: argparse.Namespace) -> int:
 def _package(args: argparse.Namespace) -> int:
     source = Path(args.analysis).expanduser().resolve()
     analysis = load_analysis(source)
-    default_name = source.stem + "-review-package" + (".zip" if args.zip else "")
+    output_has_zip_suffix = bool(
+        args.output and Path(args.output).suffix.lower() == ".zip"
+    )
+    archive_requested = args.zip or output_has_zip_suffix
+    default_name = (
+        source.stem + "-review-package" + (".zip" if archive_requested else "")
+    )
     output = Path(args.output) if args.output else source.with_name(default_name)
-    if args.zip:
+    if archive_requested:
         result = export_review_archive(
             analysis,
             output,
@@ -1456,7 +1469,8 @@ def _package(args: argparse.Namespace) -> int:
             overwrite=args.force,
             portable=args.portable,
         )
-        print(f"Created SFMEA review archive: {result}")
+        if not args.json:
+            print(f"Created SFMEA review archive: {result}")
     else:
         result = export_review_package(
             analysis,
@@ -1465,8 +1479,13 @@ def _package(args: argparse.Namespace) -> int:
             overwrite=args.force,
             portable=args.portable,
         )
-        print(f"Created SFMEA review package: {result}")
-        print(f"Manifest: {result / 'manifest.json'}")
+        if not args.json:
+            print(f"Created SFMEA review package: {result}")
+            print(f"Manifest: {result / 'manifest.json'}")
+    if args.json:
+        verification = verify_review_package(result)
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+        return 0 if verification["valid"] else 1
     print(f"Next: sfmea verify-package \"{result}\"")
     return 0
 
@@ -1500,12 +1519,70 @@ def _verify_package(args: argparse.Namespace) -> int:
                 f"Schema catalog: valid={schema_catalog['valid']}, "
                 f"schemas={schema_catalog['schema_count']}"
             )
+        if result.get("analysis_structure"):
+            structure = result["analysis_structure"]
+            print(
+                "Analysis structure: "
+                f"valid={structure['valid']}, nodes={structure['node_count']}, "
+                f"depth={structure['max_depth']}, "
+                f"limits={structure['limits']['max_nodes']} nodes/"
+                f"{structure['limits']['max_depth']} levels"
+            )
         if result.get("analysis_diagnostics"):
             diagnostics = result["analysis_diagnostics"]
             print(
                 "Analysis diagnostics: "
                 f"valid={diagnostics['valid']}, "
                 f"artifacts={diagnostics['artifact_count']}"
+            )
+        if result.get("guidance_traceability"):
+            guidance = result["guidance_traceability"]
+            print(
+                "Guidance traceability: "
+                f"valid={guidance['valid']}, "
+                f"citations={guidance['citation_count']}, "
+                f"finding-links={guidance['finding_link_count']}"
+            )
+        if result.get("sfta_projection"):
+            sfta = result["sfta_projection"]
+            print(
+                "SFTA projection: "
+                f"valid={sfta['valid']}, trees={sfta['tree_count']}, "
+                f"gaps={sfta['gap_count']}"
+            )
+        if result.get("evidence_catalog"):
+            evidence = result["evidence_catalog"]
+            print(
+                "Evidence catalog: "
+                f"valid={evidence['valid']}, "
+                f"executions={evidence['execution_count']}, "
+                f"artifacts={evidence['evidence_artifact_count']}"
+            )
+        if result.get("interchange_artifacts"):
+            interchange = result["interchange_artifacts"]
+            print(
+                "Interchange artifacts: "
+                f"valid={interchange['valid']}, "
+                f"SARIF-results={interchange['sarif_result_count']}, "
+                "CycloneDX-components="
+                f"{interchange['cyclonedx_component_count']}"
+            )
+        if result.get("review_views"):
+            review_views = result["review_views"]
+            print(
+                "Review views: "
+                f"valid={review_views['valid']}, "
+                f"artifacts={review_views['artifact_count']}, "
+                f"findings={review_views['finding_count']}, "
+                f"components={review_views['component_count']}"
+            )
+        if result.get("package_provenance"):
+            provenance = result["package_provenance"]
+            print(
+                "Package provenance: "
+                f"valid={provenance['valid']}, "
+                f"review-decisions={provenance['review_decision_count']}, "
+                f"executions={provenance['execution_count']}"
             )
         if result.get("assurance_work_queue"):
             work_queue = result["assurance_work_queue"]

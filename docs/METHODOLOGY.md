@@ -232,7 +232,12 @@ Project configuration may supply formal Software Fault Trees for configured haza
 inputs are typed events and explicit AND, OR, VOTE, or INHIBIT gates. PySFMEA validates node
 identity, references, voting thresholds, and acyclic structure, then preserves that logic in
 the canonical analysis and renderer-neutral diagrams. Finding selectors are explicit stable
-IDs or glob patterns over component identity and failure-mode text.
+IDs or glob patterns over component identity and failure-mode text. Exact IDs are unioned with
+glob matches; component and failure-mode glob dimensions are conjunctive when both are supplied.
+An unknown exact ID remains unmatched rather than broadening the event to unrelated findings.
+ID-only events use indexed lookup, while package verification replays the historical matching
+rule across SFTA, validation, and validation-bearing worksheet projections only for artifacts
+that declare a producer older than the corrected selector contract.
 
 No causal gate is inferred from a call graph or from the presence of linked SFMEA findings.
 If a hazard has no supplied tree, the generated model contains one clearly labeled
