@@ -16,7 +16,6 @@ from typing import Any
 from .model import utc_now
 from .report import verify_review_package
 
-
 SIGNATURE_FORMAT = "pysfmea-detached-signature-1"
 STATEMENT_FORMAT = "pysfmea-signature-statement-1"
 MAX_KEY_BYTES = 1_000_000

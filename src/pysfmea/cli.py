@@ -10,17 +10,22 @@ from typing import Any
 
 from .architecture import export_architecture
 from .assurance import (
+    PLANNING_REVIEW_STATUSES,
+    archive_pytest_scaffold,
     export_assurance_register,
     export_pytest_scaffold,
+    refresh_pytest_scaffold,
     review_obligation,
+    verify_pytest_scaffold,
 )
 from .config import load_config, write_config_template
+from .diagrams import GENERATED_DIAGRAM_KINDS, export_diagram_bundle
 from .discovery import (
     OpenAICompatibleProvider,
     deterministic_summary,
     discover_suggestions,
-    evidence_packets,
     evaluate_candidates,
+    evidence_packets,
     generate_summary,
     review_suggestion,
 )
@@ -33,7 +38,6 @@ from .execution import (
     review_execution_evidence,
     run_sandbox_execution,
 )
-from .diagrams import GENERATED_DIAGRAM_KINDS, export_diagram_bundle
 from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
 from .html_report import MAX_REPORT_RECORDS, export_html_report
 from .interchange import (
@@ -43,6 +47,7 @@ from .interchange import (
     sarif_document,
 )
 from .pdf_report import export_pdf_report
+from .readiness import repository_readiness
 from .report import (
     export_audit,
     export_csv,
@@ -53,26 +58,38 @@ from .report import (
     export_review_package,
     verify_review_package,
 )
-from .readiness import repository_readiness
-from .scanner import scan_repository
 from .runtime import import_runtime_trace
+from .scanner import scan_repository
 from .server import serve_review
+from .sfta import export_sfta
 from .signing import (
     passphrase_from_environment,
     sign_review_package,
     verify_review_signature,
 )
 from .store import load_analysis, merge_rescan, save_analysis
-from .sfta import export_sfta
 from .validation import review_queue, validate_analysis
-from .visuals import export_coverage, export_sequence, export_traceability
 from .version import __version__
+from .visuals import export_coverage, export_sequence, export_traceability
+from .workflow import workflow_status
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sfmea",
         description="Scan a Python repository and create a reviewable Software FMEA starter.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Core workflow:\n"
+            "  sfmea init REPOSITORY\n"
+            "  sfmea doctor REPOSITORY\n"
+            "  sfmea scan REPOSITORY\n"
+            "  sfmea review REPOSITORY/sfmea-analysis.json\n"
+            "  sfmea report REPOSITORY/sfmea-analysis.json\n"
+            "  sfmea package REPOSITORY/sfmea-analysis.json --portable --zip\n\n"
+            "Run `sfmea status REPOSITORY` at any point for the current stage and "
+            "recommended next commands."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"PySFMEA {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -89,6 +106,29 @@ def _parser() -> argparse.ArgumentParser:
     doctor.add_argument("--config", help="sfmea.toml path")
     doctor.add_argument("--json", action="store_true")
     doctor.set_defaults(handler=_doctor)
+
+    status = subparsers.add_parser(
+        "status", help="show the current workflow stage, artifact freshness, and next actions"
+    )
+    status.add_argument("repository", nargs="?", default=".")
+    status.add_argument("--config", help="sfmea.toml path; auto-discovered by default")
+    status.add_argument("--analysis", help="analysis JSON path; auto-discovered by default")
+    status.add_argument(
+        "--assurance-scaffold",
+        action="append",
+        default=[],
+        help=(
+            "optional scaffold directory; repeat for multiple queues; conventional nearby "
+            "names are auto-discovered when omitted"
+        ),
+    )
+    status.add_argument("--json", action="store_true", help="emit machine-readable status")
+    status.add_argument(
+        "--require-handoff-ready",
+        action="store_true",
+        help="exit nonzero unless every handoff gate is satisfied",
+    )
+    status.set_defaults(handler=_status)
 
     scan = subparsers.add_parser("scan", help="scan a Python repository")
     scan.add_argument("repository", help="path to the Python repository")
@@ -428,20 +468,7 @@ def _parser() -> argparse.ArgumentParser:
     assurance_review.add_argument(
         "--status",
         required=True,
-        choices=(
-            "candidate",
-            "confirmed",
-            "control_missing",
-            "control_implemented",
-            "verification_planned",
-            "test_proposed",
-            "evidence_collected",
-            "partially_verified",
-            "residual_risk_review",
-            "reopened",
-            "not_applicable",
-            "retired",
-        ),
+        choices=tuple(sorted(PLANNING_REVIEW_STATUSES)),
     )
     assurance_review.add_argument("--reviewer", required=True)
     assurance_review.add_argument("--rationale", required=True)
@@ -458,7 +485,59 @@ def _parser() -> argparse.ArgumentParser:
         "--scope", default="*", help="path:component, finding-ID, or obligation-ID glob"
     )
     assurance_scaffold.add_argument("--limit", type=int, default=100)
+    assurance_scaffold.add_argument(
+        "--disposition",
+        choices=("accepted", "rejected", "unreviewed", "all"),
+        default="accepted",
+        help="finding disposition to scaffold; accepted is the safe default",
+    )
+    assurance_scaffold.add_argument(
+        "--include-implemented",
+        action="store_true",
+        help="also emit obligations already bound to implemented tests",
+    )
+    assurance_scaffold.add_argument(
+        "--queue-id", default="", help="stable queue identifier; derived when omitted"
+    )
+    assurance_scaffold.add_argument(
+        "--owner", default="", help="team or person responsible for the queue"
+    )
+    assurance_scaffold.add_argument(
+        "--purpose", default="", help="bounded reason or subsystem scope for the queue"
+    )
     assurance_scaffold.set_defaults(handler=_assurance_scaffold)
+
+    assurance_scaffold_refresh = subparsers.add_parser(
+        "assurance-scaffold-refresh",
+        help="safely refresh an untouched scaffold in place",
+    )
+    assurance_scaffold_refresh.add_argument("analysis", help="analysis JSON path")
+    assurance_scaffold_refresh.add_argument("scaffold", help="scaffold directory")
+    assurance_scaffold_refresh.set_defaults(handler=_assurance_scaffold_refresh)
+
+    assurance_scaffold_archive = subparsers.add_parser(
+        "assurance-scaffold-archive",
+        help="non-destructively archive an untouched retirement-candidate queue",
+    )
+    assurance_scaffold_archive.add_argument("analysis", help="analysis JSON path")
+    assurance_scaffold_archive.add_argument("scaffold", help="scaffold directory")
+    assurance_scaffold_archive.add_argument(
+        "-o",
+        "--output",
+        help="archive directory; defaults beneath the queue's sibling .sfmea-archive",
+    )
+    assurance_scaffold_archive.set_defaults(handler=_assurance_scaffold_archive)
+
+    assurance_scaffold_verify = subparsers.add_parser(
+        "assurance-scaffold-verify",
+        help="verify a pytest scaffold and its governed-analysis binding",
+    )
+    assurance_scaffold_verify.add_argument("analysis", help="analysis JSON path")
+    assurance_scaffold_verify.add_argument("scaffold", help="scaffold directory")
+    assurance_scaffold_verify.add_argument(
+        "--json", action="store_true", help="emit machine-readable verification"
+    )
+    assurance_scaffold_verify.set_defaults(handler=_assurance_scaffold_verify)
 
     assurance_test = subparsers.add_parser(
         "assurance-test-register",
@@ -605,9 +684,9 @@ def _scan(args: argparse.Namespace) -> int:
 
 def _init(args: argparse.Namespace) -> int:
     destination = Path(args.path).expanduser()
-    if destination.exists() and destination.is_dir():
-        destination = destination / "sfmea.toml"
-    elif destination.suffix.lower() != ".toml":
+    if (destination.exists() and destination.is_dir()) or (
+        destination.suffix.lower() != ".toml"
+    ):
         destination = destination / "sfmea.toml"
     result = write_config_template(destination, overwrite=args.force)
     print(f"Created SFMEA configuration: {result}")
@@ -630,6 +709,165 @@ def _doctor(args: argparse.Namespace) -> int:
             print(f"[{check['status'].upper()}] {check['id']}: {check['message']}")
         print(result["notice"])
     return int(not result["ready"])
+
+
+def _status(args: argparse.Namespace) -> int:
+    result = workflow_status(
+        args.repository,
+        config_path=args.config,
+        analysis_path=args.analysis,
+        assurance_scaffold_path=args.assurance_scaffold,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return int(args.require_handoff_ready and not result["ready_for_handoff"])
+    readiness = result["readiness"]
+    analysis = result["analysis"]
+    print(f"Workflow stage: {result['stage'].replace('_', ' ')}")
+    print(f"Repository: {result['repository']}")
+    print(f"Configuration: {result['paths']['configuration']}")
+    print(
+        "Readiness: "
+        f"errors={readiness['counts']['error']}, "
+        f"warnings={readiness['counts']['warning']}, "
+        f"ready={'yes' if readiness['ready'] else 'no'}"
+    )
+    if analysis["exists"]:
+        counts = analysis["counts"]
+        validation = counts.get("validation", {})
+        print(
+            f"Analysis: {result['paths']['analysis']} "
+            f"(baseline {analysis['baseline_id'] or 'not recorded'})"
+        )
+        print(
+            "Review: "
+            f"active={counts.get('active_findings', 0)}, "
+            f"unreviewed={counts.get('unreviewed', 0)}, "
+            f"accepted={counts.get('accepted', 0)}, "
+            f"revalidation={counts.get('revalidation_required', 0)}, "
+            f"complete={counts.get('review_percent', 0)}%"
+        )
+        print(
+            "Validation: "
+            f"errors={validation.get('error', 0)}, "
+            f"warnings={validation.get('warning', 0)}, "
+            f"information={validation.get('information', 0)}"
+        )
+        assurance = counts.get("assurance", {})
+        planning_percent = assurance.get("planning_percent")
+        planning_label = (
+            f"{planning_percent}%" if planning_percent is not None else "n/a"
+        )
+        print(
+            "Assurance: "
+            f"obligations={assurance.get('active_obligations', 0)}, "
+            f"applicable={assurance.get('applicable_findings', 0)}, "
+            f"plan={planning_label}, "
+            f"implemented={assurance.get('implemented_tests', 0)}, "
+            f"executions={assurance.get('recorded_executions', 0)}, "
+            f"verified={assurance.get('verified_obligations', 0)}"
+        )
+
+        def print_artifact(name: str, artifact: dict[str, Any]) -> None:
+            integrity = artifact.get("integrity")
+            integrity_text = (
+                f", integrity={'valid' if integrity['valid'] else 'invalid'}, "
+                f"checked={integrity['checked_files']}"
+                if integrity
+                else ""
+            )
+            binding = artifact.get("binding")
+            binding_text = f", binding={binding['status']}" if binding else ""
+            generated_changes = artifact.get("generated_files_changed")
+            generated_text = (
+                f", generated changes={generated_changes}"
+                if generated_changes is not None
+                else ""
+            )
+            contract_summary = artifact.get("contract_change_summary")
+            contract_changes = (
+                sum(
+                    int(contract_summary.get(key, 0))
+                    for key in ("added", "removed", "changed")
+                )
+                if contract_summary
+                else None
+            )
+            contract_text = (
+                f", contract changes={contract_changes}"
+                if contract_changes is not None
+                else ""
+            )
+            queue = artifact.get("queue", {})
+            queue_text = (
+                f", queue={queue.get('id', 'unknown')}, "
+                f"owner={queue.get('owner') or 'unassigned'}"
+                if queue
+                else ""
+            )
+            current_selection = artifact.get("current_selection")
+            lifecycle = str(artifact.get("lifecycle", "")).replace("_", " ")
+            selection_text = (
+                f", selected now={current_selection.get('obligation_count', 0)}, "
+                f"lifecycle={lifecycle}"
+                if current_selection and lifecycle
+                else ""
+            )
+            print(
+                f"  - {name}: {artifact['status']}"
+                f"{integrity_text}{binding_text}{generated_text}{contract_text}"
+                f"{queue_text}{selection_text} "
+                f"({artifact['path']})"
+            )
+
+        if result["artifacts"]:
+            print("Artifacts:")
+            for name, artifact in result["artifacts"].items():
+                print_artifact(name.replace("_", " "), artifact)
+            for index, artifact in enumerate(
+                result.get("assurance_scaffolds", [])[1:], start=2
+            ):
+                print_artifact(f"assurance scaffold {index}", artifact)
+        portfolio = result.get("assurance_scaffold_portfolio", {})
+        if portfolio:
+            coverage = portfolio.get("coverage_percent")
+            coverage_text = f"{coverage}%" if coverage is not None else "n/a"
+            print(
+                "Assurance queue portfolio: "
+                f"queues={portfolio['queue_count']}, "
+                f"current={portfolio['current_queues']}, "
+                f"accepted coverage={coverage_text}, "
+                f"uncovered={portfolio['uncovered_accepted_obligations']}, "
+                f"overlaps={portfolio['duplicate_assignment_count']}, "
+                f"unowned={portfolio['unowned_current_queues']}, "
+                f"duplicate queue IDs={portfolio['duplicate_queue_id_count']}"
+            )
+            for duplicate in portfolio["duplicate_assignments"][:10]:
+                print(
+                    f"  - overlap {duplicate['obligation_id']}: "
+                    + ", ".join(duplicate["scaffold_paths"])
+                )
+            if len(portfolio["duplicate_assignments"]) > 10:
+                print(
+                    f"  ... {len(portfolio['duplicate_assignments']) - 10} additional "
+                    "overlap(s) omitted; use --json for the complete portfolio."
+                )
+            for duplicate in portfolio["duplicate_queue_ids"][:10]:
+                print(
+                    f"  - duplicate queue ID {duplicate['queue_id']}: "
+                    + ", ".join(duplicate["scaffold_paths"])
+                )
+    else:
+        print(f"Analysis: not found ({result['paths']['analysis']})")
+    if result["next_actions"]:
+        print("Next actions:")
+        for index, action in enumerate(result["next_actions"], start=1):
+            print(f"  {index}. {action['command']}")
+            print(f"     {action['reason']}")
+    else:
+        print("Next actions: none; handoff artifacts are current and gates are satisfied.")
+    print(result["notice"])
+    return int(args.require_handoff_ready and not result["ready_for_handoff"])
 
 
 def _review(args: argparse.Namespace) -> int:
@@ -671,7 +909,12 @@ def _html_report(args: argparse.Namespace) -> int:
         max_records=args.max_records,
         diagrams=args.diagram,
     )
-    print(f"Created self-contained SFMEA report: {result}")
+    size_mib = result.stat().st_size / (1024 * 1024)
+    embedded_records = min(len(analysis.get("items", [])), args.max_records)
+    print(
+        f"Created self-contained SFMEA report: {result} "
+        f"({embedded_records:,} records; {size_mib:.1f} MiB)"
+    )
     if len(analysis.get("items", [])) > args.max_records:
         print(
             f"Report record set was bounded to {args.max_records}; "
@@ -1117,6 +1360,16 @@ def _evaluate(args: argparse.Namespace) -> int:
             f"matched={result['matched']}, recall={result['recall']}, "
             f"precision={result['precision']}"
         )
+        metrics = result.get("metrics", {})
+        print(
+            "Quality metrics: "
+            f"duplicates={metrics.get('duplicate_rate')}, "
+            f"localization={metrics.get('source_localization_accuracy')}, "
+            f"citations={metrics.get('citation_link_accuracy')}, "
+            f"traceability={metrics.get('traceability_integrity')}, "
+            f"adapter_provenance={metrics.get('adapter_provenance_coverage')}, "
+            f"source_accounting={metrics.get('repository_source_accounting')}"
+        )
         findings = [
             *(
                 f"Missing: {value.get('source') or '*'}:{value['component']} / "
@@ -1134,7 +1387,14 @@ def _evaluate(args: argparse.Namespace) -> int:
         if len(findings) > args.max_findings:
             print(f"... {len(findings) - args.max_findings} additional finding(s) omitted")
         print(result["notice"])
-    return int(bool(result["missing"]))
+    return int(
+        bool(
+            result["missing"]
+            or result["unexpected"]
+            or result.get("metrics", {}).get("duplicate_count")
+            or result.get("metrics", {}).get("unsupported_verification_claims")
+        )
+    )
 
 
 def _guidance(args: argparse.Namespace) -> int:
@@ -1207,6 +1467,11 @@ def _assurance_scaffold(args: argparse.Namespace) -> int:
         args.output,
         scope=args.scope,
         limit=args.limit,
+        disposition=args.disposition,
+        include_implemented=args.include_implemented,
+        queue_id=args.queue_id,
+        owner=args.owner,
+        purpose=args.purpose,
     )
     count = len(
         json.loads((result / "assurance-manifest.json").read_text(encoding="utf-8"))[
@@ -1218,6 +1483,83 @@ def _assurance_scaffold(args: argparse.Namespace) -> int:
     )
     print("Implement and execute them only in an approved sandbox; they are not evidence yet.")
     return 0
+
+
+def _assurance_scaffold_refresh(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    result = refresh_pytest_scaffold(analysis, args.scaffold)
+    manifest = json.loads(
+        (result / "assurance-manifest.json").read_text(encoding="utf-8")
+    )
+    print(
+        f"Refreshed assurance scaffold {manifest['queue']['id']} with "
+        f"{len(manifest['obligations'])} placeholder(s): {result}"
+    )
+    print("Generated-file edits were not present; no implementation work was overwritten.")
+    return 0
+
+
+def _assurance_scaffold_archive(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    result = archive_pytest_scaffold(analysis, args.scaffold, args.output)
+    record = json.loads(
+        (result / "retirement-record.json").read_text(encoding="utf-8")
+    )
+    print(f"Archived assurance scaffold {record['queue']['id']}: {result}")
+    print(
+        "The original manifest, generated files, contract diff, and integrity-protected "
+        "retirement record were preserved."
+    )
+    return 0
+
+
+def _assurance_scaffold_verify(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    result = verify_pytest_scaffold(analysis, args.scaffold)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(f"Assurance scaffold: {result['status']} ({result['path']})")
+        print(
+            f"Queue: {result['queue']['id']} "
+            f"(owner: {result['queue']['owner'] or 'unassigned'})"
+        )
+        print(f"Obligations: {result['obligation_count']}")
+        print(
+            f"Current selection: {result['current_selection']['obligation_count']} "
+            f"({result['lifecycle'].replace('_', ' ')})"
+        )
+        changed = sum(
+            not value["unchanged_from_generated"]
+            for value in result["generated_files"]
+        )
+        print(f"Generated starting files changed or missing: {changed}")
+        contract_summary = result["contract_change_summary"]
+        print(
+            "Contract selection: "
+            f"current={contract_summary['current']}, "
+            f"added={contract_summary['added']}, "
+            f"removed={contract_summary['removed']}, "
+            f"changed={contract_summary['changed']}"
+        )
+        for change in result["contract_changes"][:25]:
+            fields = ", ".join(change["changed_fields"]) or "selection membership"
+            print(
+                f"  - {change['obligation_id']}: {change['status']} "
+                f"({fields})"
+            )
+        if len(result["contract_changes"]) > 25:
+            print(
+                f"  ... {len(result['contract_changes']) - 25} additional contract "
+                "change(s) omitted; use --json for the complete diff."
+            )
+        for finding in result["findings"]:
+            print(
+                f"[{finding['level'].upper()}] {finding['rule_id']}: "
+                f"{finding['message']}"
+            )
+        print(result["notice"])
+    return 0 if result["valid"] else 1
 
 
 def _assurance_test_register(args: argparse.Namespace) -> int:

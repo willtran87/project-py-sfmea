@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
+import json
 from collections import Counter
 from datetime import date
 from typing import Any
@@ -18,8 +20,13 @@ from .guidance import (
 from .model import calculate_rpn, utc_now
 from .sfta import build_sfta
 
-
 LEVELS = {"error", "warning", "information"}
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
@@ -66,7 +73,6 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
             str(exc),
             field="guidance.active_profiles",
         )
-    expected_guidance = guidance_bundle(active_guidance_profiles)
     supplied_guidance = analysis.get("guidance", {})
     if not isinstance(supplied_guidance, dict):
         add(
@@ -76,15 +82,39 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
             field="guidance",
         )
         supplied_guidance = {}
-    elif supplied_guidance.get("catalog_sha256") != expected_guidance["catalog_sha256"]:
-        add(
-            "guidance.catalog_drift",
-            "warning",
-            "The embedded guidance catalog differs from the catalog supplied by this PySFMEA version.",
-            field="guidance.catalog_sha256",
-        )
+    else:
+        catalog_fields = [
+            "schema_version",
+            "catalog_version",
+            "retrieved_at",
+            "sources",
+            "profiles",
+            "citations",
+            "rule_mappings",
+        ]
+        if "organizational_packs" in supplied_guidance:
+            catalog_fields.append("organizational_packs")
+        supplied_material = {
+            key: supplied_guidance.get(key) for key in catalog_fields
+        }
+        if supplied_guidance.get("catalog_sha256") != _digest(supplied_material):
+            add(
+                "guidance.catalog_integrity_mismatch",
+                "error",
+                "The embedded guidance catalog digest does not match its content.",
+                field="guidance.catalog_sha256",
+            )
+        elif not supplied_guidance.get("organizational_packs"):
+            expected_guidance = guidance_bundle(active_guidance_profiles)
+            if supplied_guidance.get("catalog_sha256") != expected_guidance["catalog_sha256"]:
+                add(
+                    "guidance.catalog_drift",
+                    "warning",
+                    "The embedded guidance catalog differs from the catalog supplied by this PySFMEA version.",
+                    field="guidance.catalog_sha256",
+                )
     known_citations = {
-        citation["id"] for citation in expected_guidance.get("citations", [])
+        citation["id"] for citation in supplied_guidance.get("citations", [])
     }
     analysis_context = analysis.get("context", {}).get("analysis", {})
     if quality["require_project_context"]:
@@ -96,6 +126,96 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
                     f"Project {field.replace('_', ' ')} is not configured.",
                     field=f"project.{field}",
                 )
+    system_context = analysis.get("system_context", {})
+    if system_context.get("schema_version") != "pysfmea-system-context-1":
+        add(
+            "context.missing_manifest",
+            "error",
+            "The resolved system-context manifest is missing or uses an unsupported schema.",
+            field="system_context",
+        )
+    else:
+        context_material = {
+            key: system_context.get(key)
+            for key in (
+                "resolved",
+                "fields",
+                "status",
+                "completeness_percent",
+                "missing_required",
+                "missing_recommended",
+                "unresolved_questions",
+                "limitations",
+            )
+        }
+        if system_context.get("context_sha256") != _digest(context_material):
+            add(
+                "context.integrity_mismatch",
+                "error",
+                "The resolved system-context digest does not match its content.",
+                field="system_context.context_sha256",
+            )
+        for field in system_context.get("missing_recommended", []):
+            add(
+                "context.unresolved_recommended_field",
+                "information",
+                f"Recommended system context remains unresolved: {str(field).replace('_', ' ')}.",
+                field=f"system_context.resolved.{field}",
+            )
+    repository_inventory = analysis.get("repository_inventory", {})
+    if repository_inventory.get("schema_version") != "pysfmea-repository-inventory-1":
+        add(
+            "coverage.missing_repository_inventory",
+            "error",
+            "The repository artifact inventory is missing or uses an unsupported schema.",
+            field="repository_inventory",
+        )
+    else:
+        inventory_material = {
+            key: repository_inventory.get(key)
+            for key in ("entries", "regions", "truncated")
+        }
+        if repository_inventory.get("inventory_sha256") != _digest(inventory_material):
+            add(
+                "coverage.inventory_integrity_mismatch",
+                "error",
+                "The repository inventory digest does not match its content.",
+                field="repository_inventory.inventory_sha256",
+            )
+        if repository_inventory.get("truncated"):
+            add(
+                "coverage.inventory_truncated",
+                "warning",
+                "Repository artifact inventory reached its bounded safety limit.",
+                field="repository_inventory.truncated",
+            )
+        opaque_or_unresolved = repository_inventory.get("summary", {}).get(
+            "opaque_or_unresolved", 0
+        )
+        if opaque_or_unresolved:
+            add(
+                "coverage.opaque_or_unresolved_artifacts",
+                "information",
+                f"{opaque_or_unresolved} repository artifact(s) or region(s) are opaque or unresolved.",
+                field="repository_inventory.summary.opaque_or_unresolved",
+            )
+    adapter_runs = analysis.get("adapter_runs", {})
+    if adapter_runs.get("schema_version") != "pysfmea-adapter-run-ledger-1":
+        add(
+            "provenance.missing_adapter_run_ledger",
+            "error",
+            "The adapter execution/contribution ledger is missing or unsupported.",
+            field="adapter_runs",
+        )
+    elif adapter_runs.get("ledger_sha256") != _digest(
+        {"runs": adapter_runs.get("runs", [])}
+    ):
+        add(
+            "provenance.adapter_ledger_integrity_mismatch",
+            "error",
+            "The adapter-run ledger digest does not match its content.",
+            field="adapter_runs.ledger_sha256",
+        )
     if not hazards:
         add(
             "project.no_hazards",
@@ -292,6 +412,16 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
                     item=item,
                     field="assurance.obligations.assurance_status",
                 )
+        if status == "closed" and not obligation.get("review", {}).get(
+            "acceptance_approved_by"
+        ):
+            add(
+                "assurance.unapproved_closure",
+                "error",
+                f"Verification obligation {obligation.get('id', '')} is closed without named approval.",
+                item=item,
+                field="assurance.obligations.review.acceptance_approved_by",
+            )
     for execution in executions_by_id.values():
         obligation = next(
             (
@@ -327,16 +457,6 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
                 f"Execution {execution.get('id', '')} awaits independent evidence review.",
                 item=item,
                 field="assurance.executions.reviews",
-            )
-        if status == "closed" and not obligation.get("review", {}).get(
-            "acceptance_approved_by"
-        ):
-            add(
-                "assurance.unapproved_closure",
-                "error",
-                f"Verification obligation {obligation.get('id', '')} is closed without named approval.",
-                item=item,
-                field="assurance.obligations.review.acceptance_approved_by",
             )
     for finding_id, item in items_by_id.items():
         if item.get("source_status", "active") != "active":

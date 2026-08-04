@@ -11,9 +11,8 @@ from .architecture import architecture_graph
 from .guidance import guidance_traceability
 from .model import stable_id, utc_now
 from .sfta import build_sfta
-from .visuals import sequence_model
 from .version import __version__
-
+from .visuals import sequence_model
 
 DIAGRAM_SCHEMA = "pysfmea-diagram-1"
 DIAGRAM_BUNDLE_SCHEMA = "pysfmea-diagram-bundle-1"

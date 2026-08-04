@@ -6,8 +6,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
-
-SCHEMA_VERSION = "0.5"
+SCHEMA_VERSION = "0.6"
 
 
 def utc_now() -> str:
@@ -32,6 +31,11 @@ def empty_review() -> dict[str, Any]:
         "function": "",
         "failure_mode": "",
         "trigger": "",
+        "operational_mode": "",
+        "operational_state": "",
+        "required_safe_state": "",
+        "degraded_behavior": "",
+        "recovery_behavior": "",
         "causes": [],
         "local_effect": "",
         "next_higher_effect": "",
@@ -55,6 +59,7 @@ def empty_review() -> dict[str, Any]:
         "post_action_occurrence_rationale": "",
         "post_action_detection": None,
         "post_action_detection_rationale": "",
+        "residual_risk": "",
         "owner": "",
         "target_date": "",
         "approved_by": "",

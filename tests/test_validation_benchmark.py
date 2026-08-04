@@ -24,6 +24,13 @@ class ToolValidationBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["unexpected"], [])
         self.assertEqual(result["recall"], 1.0)
         self.assertEqual(result["precision"], 1.0)
+        self.assertEqual(result["metrics"]["duplicate_rate"], 0.0)
+        self.assertEqual(result["metrics"]["source_localization_accuracy"], 1.0)
+        self.assertEqual(result["metrics"]["citation_link_accuracy"], 1.0)
+        self.assertEqual(result["metrics"]["traceability_integrity"], 1.0)
+        self.assertEqual(result["metrics"]["adapter_provenance_coverage"], 1.0)
+        self.assertEqual(result["metrics"]["repository_source_accounting"], 1.0)
+        self.assertEqual(result["metrics"]["unsupported_verification_claims"], [])
 
     def test_repeated_scan_has_stable_source_and_resolved_input_digests(self) -> None:
         first = scan_repository(self.corpus / "repository")
@@ -49,6 +56,29 @@ class ToolValidationBenchmarkTests(unittest.TestCase):
         self.assertFalse(
             {link["source_id"] for link in commercial}
             & {link["source_id"] for link in airworthiness}
+        )
+
+    def test_tool_self_sfmea_has_complete_machine_readable_records(self) -> None:
+        path = self.corpus.parent / "tool_sfmea.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["schema_version"], "pysfmea-tool-sfmea-1")
+        self.assertGreaterEqual(len(payload["failure_modes"]), 10)
+        required = {
+            "id",
+            "function",
+            "failure_mode",
+            "trigger",
+            "effects",
+            "controls",
+            "verification",
+            "residual_risk",
+        }
+        self.assertTrue(
+            all(required <= set(record) for record in payload["failure_modes"])
+        )
+        self.assertEqual(
+            len({record["id"] for record in payload["failure_modes"]}),
+            len(payload["failure_modes"]),
         )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import tempfile
@@ -11,6 +12,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from .adapters import build_adapter_run_ledger
 from .assurance import (
     ASSURANCE_STATUSES,
     EVIDENCE_STATUSES,
@@ -20,13 +22,14 @@ from .assurance import (
     refresh_assurance_register,
 )
 from .config import DEFAULT_CONFIG, normalize_config
-from .guidance import ensure_guidance_traceability
 from .execution import EXECUTION_STATUSES
-from .sfta import build_sfta
-from .model import SCHEMA_VERSION, calculate_rpn, empty_review, utc_now, validate_rating
+from .guidance import ensure_guidance_traceability
 from .manifest import create_run_manifest
+from .model import SCHEMA_VERSION, calculate_rpn, empty_review, utc_now, validate_rating
+from .repository_inventory import legacy_repository_inventory
+from .sfta import build_sfta
+from .system_context import build_system_context
 from .version import __version__
-
 
 EDITABLE_REVIEW_FIELDS = {
     "disposition",
@@ -37,6 +40,11 @@ EDITABLE_REVIEW_FIELDS = {
     "function",
     "failure_mode",
     "trigger",
+    "operational_mode",
+    "operational_state",
+    "required_safe_state",
+    "degraded_behavior",
+    "recovery_behavior",
     "causes",
     "local_effect",
     "next_higher_effect",
@@ -60,6 +68,7 @@ EDITABLE_REVIEW_FIELDS = {
     "post_action_occurrence_rationale",
     "post_action_detection",
     "post_action_detection_rationale",
+    "residual_risk",
     "owner",
     "target_date",
     "approved_by",
@@ -68,6 +77,20 @@ EDITABLE_REVIEW_FIELDS = {
     "revalidation_required",
     "notes",
 }
+
+
+class AnalysisRevisionConflictError(RuntimeError):
+    """The governed analysis changed before an atomic replacement."""
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 LIST_FIELDS = {
     "causes",
     "prevention_controls",
@@ -104,6 +127,8 @@ def load_analysis(path: str | Path) -> dict[str, Any]:
         analysis = _migrate_03_to_04(analysis)
     if analysis.get("schema_version") == "0.4":
         analysis = _migrate_04_to_05(analysis)
+    if analysis.get("schema_version") == "0.5":
+        analysis = _migrate_05_to_06(analysis)
     if analysis.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(
             f"unsupported schema version {analysis.get('schema_version')!r}; expected {SCHEMA_VERSION!r}"
@@ -120,7 +145,13 @@ def load_analysis(path: str | Path) -> dict[str, Any]:
     ensure_guidance_traceability(analysis)
     ensure_assurance_register(analysis)
     analysis.setdefault("context", {}).setdefault("fault_trees", [])
-    analysis["sfta"] = build_sfta(analysis)
+    sfta = analysis.get("sfta")
+    if (
+        not isinstance(sfta, dict)
+        or not isinstance(sfta.get("trees"), list)
+        or not isinstance(sfta.get("reconciliation"), dict)
+    ):
+        analysis["sfta"] = build_sfta(analysis)
     if "run_manifest" not in analysis:
         analysis["run_manifest"] = create_run_manifest(analysis)
     _validate_analysis_structure(analysis)
@@ -250,6 +281,31 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         or not run_manifest.get("manifest_sha256")
     ):
         raise ValueError("analysis run_manifest is missing required reproducibility fields")
+    system_context = analysis.get("system_context", {})
+    if (
+        not isinstance(system_context, dict)
+        or system_context.get("schema_version") != "pysfmea-system-context-1"
+        or not isinstance(system_context.get("fields", []), list)
+        or not isinstance(system_context.get("unresolved_questions", []), list)
+    ):
+        raise ValueError("analysis system_context is missing required context fields")
+    inventory = analysis.get("repository_inventory", {})
+    if (
+        not isinstance(inventory, dict)
+        or inventory.get("schema_version") != "pysfmea-repository-inventory-1"
+        or not isinstance(inventory.get("entries", []), list)
+        or not isinstance(inventory.get("regions", []), list)
+        or not inventory.get("inventory_sha256")
+    ):
+        raise ValueError("analysis repository_inventory is missing required coverage fields")
+    adapter_runs = analysis.get("adapter_runs", {})
+    if (
+        not isinstance(adapter_runs, dict)
+        or adapter_runs.get("schema_version") != "pysfmea-adapter-run-ledger-1"
+        or not isinstance(adapter_runs.get("runs", []), list)
+        or not adapter_runs.get("ledger_sha256")
+    ):
+        raise ValueError("analysis adapter_runs is missing required provenance fields")
     for index, suggestion in enumerate(analysis.get("suggestions", []), start=1):
         if not isinstance(suggestion, dict):
             raise ValueError(f"analysis suggestion {index} must be an object")
@@ -302,6 +358,13 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         ):
             raise ValueError(
                 f"analysis item {index} scanner.citations must be a list of objects"
+            )
+        adapter_ids = item["scanner"].get("adapter_ids", [])
+        if not isinstance(adapter_ids, list) or not all(
+            isinstance(entry, str) and entry for entry in adapter_ids
+        ):
+            raise ValueError(
+                f"analysis item {index} scanner.adapter_ids must be a non-empty string list"
             )
         if not isinstance(item.get("review_history", []), list):
             raise ValueError(f"analysis item {index} review_history must be a list")
@@ -406,14 +469,47 @@ def _migrate_03_to_04(analysis: dict[str, Any]) -> dict[str, Any]:
 def _migrate_04_to_05(analysis: dict[str, Any]) -> dict[str, Any]:
     """Add the executable assurance-contract register introduced with schema 0.5."""
 
-    analysis["schema_version"] = SCHEMA_VERSION
+    analysis["schema_version"] = "0.5"
     if isinstance(analysis.get("generator"), dict):
-        analysis["generator"]["analysis_schema_version"] = SCHEMA_VERSION
+        analysis["generator"]["analysis_schema_version"] = "0.5"
     refresh_assurance_register(analysis, {})
     return analysis
 
 
-def save_analysis(path: str | Path, analysis: dict[str, Any]) -> None:
+def _migrate_05_to_06(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Add context, coverage, adapter-run, and safe/recovery review records."""
+
+    defaults = empty_review()
+    for item in analysis.get("items", []):
+        review = item.setdefault("review", {})
+        for key, value in defaults.items():
+            if key not in review:
+                review[key] = list(value) if isinstance(value, list) else value
+    context = analysis.setdefault("context", {})
+    analysis.setdefault("system_context", build_system_context(context))
+    analysis.setdefault(
+        "repository_inventory",
+        legacy_repository_inventory(
+            "Repository artifact coverage was not captured by the original pre-0.6 scan; "
+            "rescan to establish analyzed, excluded, unresolved, and opaque regions."
+        ),
+    )
+    refresh_assurance_register(analysis, analysis.get("assurance", {}))
+    analysis["sfta"] = build_sfta(analysis)
+    analysis["adapter_runs"] = build_adapter_run_ledger(analysis)
+    analysis["schema_version"] = "0.6"
+    if isinstance(analysis.get("generator"), dict):
+        analysis["generator"]["analysis_schema_version"] = "0.6"
+    analysis["run_manifest"] = create_run_manifest(analysis)
+    return analysis
+
+
+def save_analysis(
+    path: str | Path,
+    analysis: dict[str, Any],
+    *,
+    expected_sha256: str | None = None,
+) -> None:
     """Atomically save an analysis to avoid truncation on interrupted writes."""
 
     destination = Path(path).expanduser().resolve()
@@ -434,6 +530,17 @@ def save_analysis(path: str | Path, analysis: dict[str, Any]) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
+        if expected_sha256 is not None:
+            try:
+                current_sha256 = _file_sha256(destination)
+            except OSError as exc:
+                raise AnalysisRevisionConflictError(
+                    "governed analysis disappeared before atomic replacement"
+                ) from exc
+            if current_sha256 != expected_sha256:
+                raise AnalysisRevisionConflictError(
+                    "governed analysis changed before atomic replacement"
+                )
         os.replace(temp_name, destination)
     except Exception:
         try:
@@ -798,6 +905,11 @@ def update_item_review(
         "function",
         "failure_mode",
         "trigger",
+        "operational_mode",
+        "operational_state",
+        "required_safe_state",
+        "degraded_behavior",
+        "recovery_behavior",
         "causes",
         "local_effect",
         "next_higher_effect",
@@ -821,6 +933,7 @@ def update_item_review(
         "post_action_occurrence_rationale",
         "post_action_detection",
         "post_action_detection_rationale",
+        "residual_risk",
     }
     if (
         item["review"].get("status") in {"verified", "closed"}
@@ -873,6 +986,7 @@ def update_item_review(
         }
     )
     analysis["sfta"] = build_sfta(analysis)
+    refresh_assurance_register(analysis, analysis.get("assurance", {}))
     refresh_summary(analysis)
     return item
 
@@ -903,6 +1017,7 @@ def add_manual_item(analysis: dict[str, Any], component_id: str | None = None) -
         },
         "scanner": {
             "rule_id": "manual",
+            "failure_class": "manual",
             "guideword": "Reviewer identified",
             "failure_mode": "",
             "trigger": "",
@@ -910,6 +1025,9 @@ def add_manual_item(analysis: dict[str, Any], component_id: str | None = None) -
             "screening_priority": "manual",
             "screening_reasons": [],
             "evidence": ["Manually added by reviewer"],
+            "adapter_id": "human.manual_finding",
+            "adapter_ids": ["human.manual_finding"],
+            "citations": [],
         },
         "review": review,
         "review_history": [

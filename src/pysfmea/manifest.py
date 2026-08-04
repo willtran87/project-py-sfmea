@@ -13,7 +13,6 @@ from .guidance import analysis_guidance_profiles, guidance_bundle
 from .model import stable_id, utc_now
 from .version import __version__
 
-
 GROUNDED_DISCOVERY_PROMPT_VERSION = "sfmea-grounded-discovery-2"
 
 
@@ -29,7 +28,12 @@ def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
     baseline = analysis.get("project", {}).get("baseline", {})
     registry = adapter_registry_snapshot(analysis)
     guidance_profiles = analysis_guidance_profiles(analysis)
-    guidance = guidance_bundle(guidance_profiles)
+    embedded_guidance = analysis.get("guidance")
+    guidance = (
+        embedded_guidance
+        if isinstance(embedded_guidance, dict) and embedded_guidance.get("catalog_sha256")
+        else guidance_bundle(guidance_profiles)
+    )
     inputs = {
         "source_digest": baseline.get("source_digest", ""),
         "configuration_digest": baseline.get("config_digest", ""),
@@ -40,6 +44,15 @@ def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
         ),
         "contract_inventory_sha256": _digest(
             analysis.get("context", {}).get("contracts", [])
+        ),
+        "repository_inventory_sha256": analysis.get("repository_inventory", {}).get(
+            "inventory_sha256", ""
+        ),
+        "system_context_sha256": analysis.get("system_context", {}).get(
+            "context_sha256", ""
+        ),
+        "adapter_run_ledger_sha256": analysis.get("adapter_runs", {}).get(
+            "ledger_sha256", ""
         ),
     }
     created_at = str(analysis.get("project", {}).get("scanned_at") or utc_now())

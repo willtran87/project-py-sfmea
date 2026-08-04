@@ -6,8 +6,8 @@ import copy
 import hashlib
 import json
 from collections import Counter
+from pathlib import Path
 from typing import Any
-
 
 GUIDANCE_SCHEMA_VERSION = "1.1"
 GUIDANCE_CATALOG_VERSION = "2026.08.04"
@@ -737,13 +737,16 @@ _CITATIONS_BY_ID = {citation["id"]: citation for citation in GUIDANCE_CITATIONS}
 _SOURCES_BY_ID = {source["id"]: source for source in GUIDANCE_DOCUMENTS}
 
 
-def normalize_profile_ids(profile_ids: list[str] | None) -> list[str]:
+def normalize_profile_ids(
+    profile_ids: list[str] | None, catalog: dict[str, Any] | None = None
+) -> list[str]:
     """Validate, deduplicate, and deterministically order a profile selection."""
 
     selected = DEFAULT_GUIDANCE_PROFILES if profile_ids is None else profile_ids
     if not isinstance(selected, list) or not all(isinstance(value, str) for value in selected):
         raise ValueError("guidance profiles must be an array of strings")
-    known = {profile["id"] for profile in GUIDELINE_PROFILES}
+    profiles = (catalog or {}).get("profiles", GUIDELINE_PROFILES)
+    known = {profile["id"] for profile in profiles}
     if unknown := sorted(set(selected) - known):
         raise ValueError("unknown guidance profile(s): " + ", ".join(unknown))
     if not selected:
@@ -752,13 +755,21 @@ def normalize_profile_ids(profile_ids: list[str] | None) -> list[str]:
 
 
 def citations_for_rule(
-    rule_id: str, profile_ids: list[str] | None = None
+    rule_id: str,
+    profile_ids: list[str] | None = None,
+    *,
+    catalog: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return curated, typed citation links inherited by one scanner rule."""
 
-    active_profiles = normalize_profile_ids(profile_ids)
+    active_profiles = normalize_profile_ids(profile_ids, catalog)
+    mappings = (catalog or {}).get("rule_mappings", GUIDANCE_RULE_MAPPINGS)
+    citations_by_id = {
+        value["id"]: value
+        for value in (catalog or {}).get("citations", GUIDANCE_CITATIONS)
+    }
     links: list[dict[str, Any]] = []
-    for mapping in GUIDANCE_RULE_MAPPINGS:
+    for mapping in mappings:
         if not _selector_matches(mapping["rule_selector"], rule_id):
             continue
         matched_profiles = [
@@ -766,7 +777,7 @@ def citations_for_rule(
         ]
         if not matched_profiles:
             continue
-        citation = _CITATIONS_BY_ID[mapping["citation_id"]]
+        citation = citations_by_id[mapping["citation_id"]]
         links.append(
             {
                 "citation_id": citation["id"],
@@ -783,10 +794,13 @@ def citations_for_rule(
     return links
 
 
-def guidance_bundle(profile_ids: list[str] | None = None) -> dict[str, Any]:
+def guidance_bundle(
+    profile_ids: list[str] | None = None,
+    *,
+    organizational_packs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Return the complete immutable-in-practice catalog as detached JSON data."""
 
-    active_profiles = normalize_profile_ids(profile_ids)
     core = {
         "schema_version": GUIDANCE_SCHEMA_VERSION,
         "catalog_version": GUIDANCE_CATALOG_VERSION,
@@ -797,6 +811,26 @@ def guidance_bundle(profile_ids: list[str] | None = None) -> dict[str, Any]:
         "rule_mappings": GUIDANCE_RULE_MAPPINGS,
     }
     bundle = copy.deepcopy(core)
+    pack_records = []
+    for pack in organizational_packs or []:
+        _merge_organizational_pack(bundle, pack)
+        pack_records.append(copy.deepcopy(pack["provenance"]))
+    if pack_records:
+        bundle["organizational_packs"] = pack_records
+        core = {
+            key: bundle[key]
+            for key in (
+                "schema_version",
+                "catalog_version",
+                "retrieved_at",
+                "sources",
+                "profiles",
+                "citations",
+                "rule_mappings",
+                "organizational_packs",
+            )
+        }
+    active_profiles = normalize_profile_ids(profile_ids, bundle)
     bundle["catalog_sha256"] = hashlib.sha256(
         json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -822,12 +856,221 @@ def selected_guidance_sources(profile_ids: list[str] | None = None) -> list[dict
     )
 
 
+def selected_sources_from_bundle(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return sources selected by a resolved built-in/organizational catalog."""
+
+    active_profiles = normalize_profile_ids(bundle.get("active_profiles"), bundle)
+    source_ids = {
+        source_id
+        for profile in bundle.get("profiles", [])
+        if profile.get("id") in active_profiles
+        for source_id in profile.get("source_ids", [])
+    }
+    return copy.deepcopy(
+        [source for source in bundle.get("sources", []) if source.get("id") in source_ids]
+    )
+
+
+def load_organizational_guidance_pack(path: str | Path) -> dict[str, Any]:
+    """Load and strictly validate a local organizational guidance pack."""
+
+    source_path = Path(path).expanduser().resolve()
+    if not source_path.is_file():
+        raise ValueError(f"organizational guidance pack does not exist: {source_path}")
+    if source_path.stat().st_size > 5_000_000:
+        raise ValueError("organizational guidance pack exceeds the 5 MB safety limit")
+    raw = source_path.read_bytes()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid organizational guidance pack JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("organizational guidance pack root must be an object")
+    allowed = {"schema_version", "profile", "sources", "citations", "rule_mappings"}
+    if unknown := set(payload) - allowed:
+        raise ValueError("unknown organizational guidance pack field(s): " + ", ".join(sorted(unknown)))
+    if payload.get("schema_version") != "pysfmea-organizational-guidance-pack-1":
+        raise ValueError("unsupported organizational guidance pack schema")
+    profile = payload.get("profile")
+    sources = payload.get("sources")
+    citations = payload.get("citations")
+    mappings = payload.get("rule_mappings")
+    if not isinstance(profile, dict):
+        raise ValueError("organizational guidance pack profile must be an object")
+    if not all(isinstance(value, list) for value in (sources, citations, mappings)):
+        raise ValueError("organizational guidance pack sources, citations, and rule_mappings must be arrays")
+    required_profile = {
+        "id",
+        "title",
+        "status",
+        "applicability",
+        "risk_semantics",
+        "verification_semantics",
+        "tailoring",
+        "compliance_claim",
+    }
+    if missing := required_profile - set(profile):
+        raise ValueError("organizational profile missing field(s): " + ", ".join(sorted(missing)))
+    if not isinstance(profile.get("id"), str) or not profile["id"].startswith("org."):
+        raise ValueError("organizational profile id must start with 'org.'")
+    for field in required_profile - {"compliance_claim"}:
+        if not isinstance(profile.get(field), str) or not profile[field].strip():
+            raise ValueError(f"organizational profile {field} must be a non-empty string")
+    if profile.get("compliance_claim") is not False:
+        raise ValueError("organizational guidance packs cannot assert a compliance claim")
+    required_source = {
+        "id",
+        "publisher",
+        "title",
+        "version",
+        "status",
+        "published_at",
+        "url",
+        "official_source",
+        "scope",
+        "use",
+        "access",
+        "quote_policy",
+    }
+    source_ids: set[str] = set()
+    for index, source in enumerate(sources, start=1):
+        if not isinstance(source, dict):
+            raise ValueError(f"organizational source {index} must be an object")
+        if missing := required_source - set(source):
+            raise ValueError(
+                f"organizational source {index} missing field(s): "
+                + ", ".join(sorted(missing))
+            )
+        source_id = source.get("id")
+        if not isinstance(source_id, str) or not source_id.startswith("ORG-"):
+            raise ValueError("organizational source ids must start with 'ORG-'")
+        if source_id in source_ids:
+            raise ValueError(f"duplicate organizational source id: {source_id}")
+        for field in required_source - {"id"}:
+            if not isinstance(source.get(field), str) or not source[field].strip():
+                raise ValueError(
+                    f"organizational source {source_id} {field} must be a non-empty string"
+                )
+        artifact = source.get("artifact")
+        if artifact is not None:
+            if not isinstance(artifact, dict):
+                raise ValueError(
+                    f"organizational source {source_id} artifact must be an object"
+                )
+            digest = artifact.get("sha256", "")
+            if not isinstance(digest, str) or len(digest) != 64 or any(
+                character not in "0123456789abcdefABCDEF" for character in digest
+            ):
+                raise ValueError(
+                    f"organizational source {source_id} artifact requires a SHA-256 digest"
+                )
+        source_ids.add(source_id)
+        source["applicability"] = "organizational"
+        material = {key: value for key, value in source.items() if key != "record_sha256"}
+        source["record_sha256"] = hashlib.sha256(
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    citation_ids: set[str] = set()
+    for index, citation in enumerate(citations, start=1):
+        if not isinstance(citation, dict):
+            raise ValueError(f"organizational citation {index} must be an object")
+        required = {"id", "source_id", "locator", "summary"}
+        if missing := required - set(citation):
+            raise ValueError(
+                f"organizational citation {index} missing field(s): "
+                + ", ".join(sorted(missing))
+            )
+        citation_id = citation.get("id")
+        if not isinstance(citation_id, str) or not citation_id.startswith("ORG-CIT-"):
+            raise ValueError("organizational citation ids must start with 'ORG-CIT-'")
+        if citation_id in citation_ids:
+            raise ValueError(f"duplicate organizational citation id: {citation_id}")
+        if citation.get("source_id") not in source_ids:
+            raise ValueError(f"organizational citation {citation_id} references an unknown source")
+        if not isinstance(citation.get("summary"), str) or not citation[
+            "summary"
+        ].strip():
+            raise ValueError(
+                f"organizational citation {citation_id} summary must be a non-empty string"
+            )
+        locator = citation.get("locator")
+        if not isinstance(locator, dict) or not (
+            str(locator.get("section", "")).strip()
+            or str(locator.get("heading", "")).strip()
+        ):
+            raise ValueError(f"organizational citation {citation_id} requires an exact locator")
+        citation["applicability"] = "organizational"
+        citation_ids.add(citation_id)
+    for index, mapping in enumerate(mappings, start=1):
+        if not isinstance(mapping, dict):
+            raise ValueError(f"organizational rule mapping {index} must be an object")
+        required = {"id", "rule_selector", "citation_id", "relationship", "strength"}
+        if missing := required - set(mapping):
+            raise ValueError(
+                f"organizational rule mapping {index} missing field(s): "
+                + ", ".join(sorted(missing))
+            )
+        if mapping.get("citation_id") not in citation_ids:
+            raise ValueError(f"organizational mapping {mapping.get('id')} references an unknown citation")
+        if mapping.get("relationship") not in RELATIONSHIP_TYPES:
+            raise ValueError(f"organizational mapping {mapping.get('id')} has an invalid relationship")
+        if mapping.get("strength") not in MAPPING_STRENGTHS:
+            raise ValueError(f"organizational mapping {mapping.get('id')} has an invalid strength")
+        if not isinstance(mapping.get("id"), str) or not mapping["id"].startswith(
+            "ORG-MAP-"
+        ):
+            raise ValueError("organizational mapping ids must start with 'ORG-MAP-'")
+        if not isinstance(mapping.get("rule_selector"), str) or not mapping[
+            "rule_selector"
+        ].strip():
+            raise ValueError(f"organizational mapping {mapping.get('id')} requires a rule selector")
+        mapping["profile_ids"] = [profile["id"]]
+    all_ids = [
+        profile["id"],
+        *(value["id"] for value in sources),
+        *(value["id"] for value in citations),
+        *(value["id"] for value in mappings),
+    ]
+    if len(all_ids) != len(set(all_ids)):
+        raise ValueError("organizational guidance pack IDs must be globally unique")
+    profile["source_ids"] = sorted(source_ids)
+    payload["provenance"] = {
+        "path": source_path.name,
+        "source_location": "local_explicit_input",
+        "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "profile_id": profile["id"],
+    }
+    return payload
+
+
+def _merge_organizational_pack(bundle: dict[str, Any], pack: dict[str, Any]) -> None:
+    existing = {
+        value.get("id")
+        for field in ("profiles", "sources", "citations", "rule_mappings")
+        for value in bundle.get(field, [])
+    }
+    incoming = [
+        pack["profile"],
+        *pack["sources"],
+        *pack["citations"],
+        *pack["rule_mappings"],
+    ]
+    collisions = sorted(str(value.get("id")) for value in incoming if value.get("id") in existing)
+    if collisions:
+        raise ValueError("organizational guidance IDs collide with the resolved catalog: " + ", ".join(collisions))
+    bundle["profiles"].append(copy.deepcopy(pack["profile"]))
+    bundle["sources"].extend(copy.deepcopy(pack["sources"]))
+    bundle["citations"].extend(copy.deepcopy(pack["citations"]))
+    bundle["rule_mappings"].extend(copy.deepcopy(pack["rule_mappings"]))
+
+
 def analysis_guidance_profiles(analysis: dict[str, Any]) -> list[str]:
     """Resolve the persisted selection without silently enabling extra authorities."""
 
     embedded = analysis.get("guidance", {})
     if isinstance(embedded, dict) and isinstance(embedded.get("active_profiles"), list):
-        return normalize_profile_ids(embedded["active_profiles"])
+        return normalize_profile_ids(embedded["active_profiles"], embedded)
     configured = analysis.get("context", {}).get("analysis", {}).get("guidance_profiles")
     return normalize_profile_ids(configured)
 
@@ -838,13 +1081,18 @@ def ensure_guidance_traceability(
     """Add missing guidance data or refresh scanner-owned mappings explicitly."""
 
     active_profiles = analysis_guidance_profiles(analysis)
+    existing_bundle = analysis.get("guidance", {})
     if refresh or not isinstance(analysis.get("guidance"), dict):
-        analysis["guidance"] = guidance_bundle(active_profiles)
+        if isinstance(existing_bundle, dict) and existing_bundle.get("organizational_packs"):
+            analysis["guidance"] = existing_bundle
+        else:
+            analysis["guidance"] = guidance_bundle(active_profiles)
+    resolved_bundle = analysis.get("guidance", {})
     methodology = analysis.setdefault("methodology", {})
     if refresh:
-        methodology["basis"] = selected_guidance_sources(active_profiles)
+        methodology["basis"] = selected_sources_from_bundle(resolved_bundle)
     else:
-        methodology.setdefault("basis", selected_guidance_sources(active_profiles))
+        methodology.setdefault("basis", selected_sources_from_bundle(resolved_bundle))
     methodology.setdefault("notice", METHODOLOGY_NOTICE)
     methodology.setdefault("review_checklist", copy.deepcopy(REVIEW_CHECKLIST))
     for item in analysis.get("items", []):
@@ -852,14 +1100,17 @@ def ensure_guidance_traceability(
         if isinstance(scanner, dict):
             if refresh:
                 inherited = citations_for_rule(
-                    str(scanner.get("rule_id", "")), active_profiles
+                    str(scanner.get("rule_id", "")),
+                    active_profiles,
+                    catalog=resolved_bundle,
                 )
                 retained = [
                     link
                     for link in scanner.get("citations", [])
                     if isinstance(link, dict)
                     and link.get("status") in {"proposed", "reviewer_accepted"}
-                    and link.get("citation_id") in _CITATIONS_BY_ID
+                    and link.get("citation_id")
+                    in {value.get("id") for value in resolved_bundle.get("citations", [])}
                 ]
                 seen = {
                     (link.get("citation_id"), link.get("relationship"))
@@ -877,7 +1128,11 @@ def ensure_guidance_traceability(
             else:
                 scanner.setdefault(
                     "citations",
-                    citations_for_rule(str(scanner.get("rule_id", "")), active_profiles),
+                    citations_for_rule(
+                        str(scanner.get("rule_id", "")),
+                        active_profiles,
+                        catalog=resolved_bundle,
+                    ),
                 )
     return analysis
 
@@ -886,7 +1141,9 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
     """Build source-to-rule-to-finding relationships for programmatic export."""
 
     active_profiles = analysis_guidance_profiles(analysis)
-    bundle = guidance_bundle(active_profiles)
+    embedded = analysis.get("guidance", {})
+    bundle = copy.deepcopy(embedded) if isinstance(embedded, dict) else guidance_bundle(active_profiles)
+    citations_by_id = {value.get("id") for value in bundle.get("citations", [])}
     active = [
         item
         for item in analysis.get("items", [])
@@ -902,11 +1159,11 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
         rule_id = str(scanner.get("rule_id", ""))
         links = scanner.get("citations")
         if not isinstance(links, list):
-            links = citations_for_rule(rule_id, active_profiles)
+            links = citations_for_rule(rule_id, active_profiles, catalog=bundle)
         normalized_links = [
             link
             for link in links
-            if isinstance(link, dict) and link.get("citation_id") in _CITATIONS_BY_ID
+            if isinstance(link, dict) and link.get("citation_id") in citations_by_id
         ]
         if normalized_links:
             cited_items.add(str(item.get("id", "")))

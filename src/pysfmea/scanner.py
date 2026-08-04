@@ -11,13 +11,13 @@ import re
 import subprocess
 import tokenize
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
+from .adapters import build_adapter_run_ledger
 from .assurance import refresh_assurance_register
-from .sfta import build_sfta
-from .manifest import create_run_manifest
 from .config import normalize_config
 from .guidance import (
     DEFAULT_EXCLUDES,
@@ -25,11 +25,15 @@ from .guidance import (
     REVIEW_CHECKLIST,
     citations_for_rule,
     guidance_bundle,
-    selected_guidance_sources,
+    load_organizational_guidance_pack,
+    selected_sources_from_bundle,
 )
+from .manifest import create_run_manifest
 from .model import SCHEMA_VERSION, empty_review, stable_id, utc_now
+from .repository_inventory import build_repository_inventory
+from .sfta import build_sfta
+from .system_context import build_system_context
 from .version import __version__
-
 
 EXTERNAL_PREFIXES = {
     "aiohttp",
@@ -1024,6 +1028,7 @@ def _repository_baseline(
     config: dict[str, Any],
     dependencies: list[dict[str, str]],
     contracts: list[dict[str, Any]],
+    repository_inventory: dict[str, Any],
 ) -> dict[str, Any]:
     content_hash = hashlib.sha256()
     for path in files:
@@ -1041,6 +1046,7 @@ def _repository_baseline(
     content_hash.update(
         json.dumps(contracts, sort_keys=True, separators=(",", ":")).encode("utf-8")
     )
+    content_hash.update(str(repository_inventory.get("inventory_sha256", "")).encode("utf-8"))
     config_digest = hashlib.sha256(
         json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -1073,6 +1079,9 @@ def _repository_baseline(
         "id": stable_id("BASELINE", source_digest, config_digest),
         "source_digest": source_digest,
         "config_digest": config_digest,
+        "repository_inventory_sha256": repository_inventory.get(
+            "inventory_sha256", ""
+        ),
         "vcs": vcs,
     }
 
@@ -2368,6 +2377,19 @@ def scan_repository(
 
     config = normalize_config(config)
     guidance_profiles = list(config["analysis"]["guidance_profiles"])
+    organizational_packs = []
+    for configured_path in config["analysis"].get("guidance_packs", []):
+        pack_path = Path(configured_path).expanduser()
+        if not pack_path.is_absolute():
+            pack_path = root_path / pack_path
+        pack = load_organizational_guidance_pack(pack_path)
+        organizational_packs.append(pack)
+        guidance_profiles.append(pack["profile"]["id"])
+    guidance_profiles = list(dict.fromkeys(guidance_profiles))
+    guidance = guidance_bundle(
+        guidance_profiles,
+        organizational_packs=organizational_packs,
+    )
     scan_config = config.get("scan", {})
     if include_private is None:
         include_private = bool(scan_config.get("include_private", True))
@@ -2390,7 +2412,7 @@ def scan_repository(
         exclude_patterns=exclude_patterns,
         warnings=warnings,
     )
-    baseline = _repository_baseline(root_path, files, config, dependencies, contracts)
+    parsed_python_paths: set[str] = set()
     for file_path in files:
         relative = file_path.relative_to(root_path).as_posix()
         try:
@@ -2400,6 +2422,7 @@ def scan_repository(
         except (OSError, SyntaxError, UnicodeError) as exc:
             warnings.append({"path": relative, "message": str(exc), "type": type(exc).__name__})
             continue
+        parsed_python_paths.add(relative)
         collector = _ModuleCollector(
             relative,
             include_private=include_private,
@@ -2417,6 +2440,22 @@ def scan_repository(
         )
         if module_facts:
             facts_list.append(module_facts)
+
+    repository_inventory = build_repository_inventory(
+        root_path,
+        selected_python_paths={path.relative_to(root_path).as_posix() for path in files},
+        parsed_python_paths=parsed_python_paths,
+        include_tests=include_tests,
+        exclude_patterns=exclude_patterns,
+    )
+    baseline = _repository_baseline(
+        root_path,
+        files,
+        config,
+        dependencies,
+        contracts,
+        repository_inventory,
+    )
 
     if focus_patterns:
         facts_list = [
@@ -2495,7 +2534,9 @@ def scan_repository(
     for item in items:
         scanner = item.setdefault("scanner", {})
         scanner["citations"] = citations_for_rule(
-            str(scanner.get("rule_id", "")), guidance_profiles
+            str(scanner.get("rule_id", "")),
+            guidance_profiles,
+            catalog=guidance,
         )
 
     priority_order = {"high": 0, "medium": 1, "low": 2, "manual": 3}
@@ -2511,7 +2552,6 @@ def scan_repository(
     priority_counts = {priority: 0 for priority in ("high", "medium", "low")}
     for item in items:
         priority_counts[item["scanner"]["screening_priority"]] += 1
-    guidance = guidance_bundle(guidance_profiles)
     analysis = {
         "schema_version": SCHEMA_VERSION,
         "generator": {
@@ -2550,9 +2590,11 @@ def scan_repository(
             "critical_functions": critical_entries,
             "custom_rule_count": len(custom_rules),
         },
+        "system_context": build_system_context(config),
+        "repository_inventory": repository_inventory,
         "methodology": {
             "name": "Software Failure Modes and Effects Analysis (SFMEA)",
-            "basis": selected_guidance_sources(guidance_profiles),
+            "basis": selected_sources_from_bundle(guidance),
             "notice": METHODOLOGY_NOTICE,
             "review_checklist": REVIEW_CHECKLIST,
         },
@@ -2563,6 +2605,12 @@ def scan_repository(
             "candidate_failure_modes": len(items),
             "screening_priorities": priority_counts,
             "warnings": len(warnings),
+            "repository_artifacts": repository_inventory.get("summary", {}).get(
+                "files", 0
+            ),
+            "opaque_or_unresolved_artifacts": repository_inventory.get(
+                "summary", {}
+            ).get("opaque_or_unresolved", 0),
         },
         "components": components,
         "items": items,
@@ -2573,5 +2621,6 @@ def scan_repository(
     }
     refresh_assurance_register(analysis, {})
     analysis["sfta"] = build_sfta(analysis)
+    analysis["adapter_runs"] = build_adapter_run_ledger(analysis)
     analysis["run_manifest"] = create_run_manifest(analysis)
     return analysis

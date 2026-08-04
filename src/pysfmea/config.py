@@ -7,16 +7,28 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_CONFIG: dict[str, Any] = {
     "project": {
         "name": "",
         "purpose": "",
+        "mission": "",
         "boundary": "",
         "operating_context": "",
+        "operational_modes": [],
+        "system_states": [],
+        "must_work_functions": [],
+        "must_not_work_functions": [],
+        "safe_states": [],
+        "degraded_states": [],
         "stakeholders": [],
         "interfaces": [],
+        "human_interactions": [],
+        "timing_constraints": [],
+        "resource_constraints": [],
+        "deployment_environments": [],
+        "criticality": "",
         "assumptions": [],
+        "exclusions": [],
     },
     "analysis": {
         "phase": "detailed_design",
@@ -39,6 +51,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "excluded_failure_classes": [],
         "fault_tolerance_assumptions": [],
         "guidance_profiles": ["core_sfmea"],
+        "guidance_packs": [],
     },
     "scan": {
         "include_private": True,
@@ -124,11 +137,24 @@ CONFIG_TEMPLATE = '''# PySFMEA project configuration
 [project]
 name = "Example Python System"
 purpose = "Describe what the system must accomplish."
+mission = "Describe the mission outcome or service objective."
 boundary = "Describe what is inside and outside this analysis."
 operating_context = "Describe users, deployment, modes, loads, and environmental assumptions."
+operational_modes = ["Normal operation", "Maintenance"]
+system_states = ["Starting", "Ready", "Degraded", "Stopped"]
+must_work_functions = ["Describe the functions whose loss is unacceptable"]
+must_not_work_functions = ["Describe prohibited or hazardous functions"]
+safe_states = ["Describe the approved safe state"]
+degraded_states = ["Describe permitted degraded behavior"]
 stakeholders = ["End user", "Operator"]
 interfaces = ["External API", "Database"]
+human_interactions = ["Operator monitors alerts and authorizes recovery"]
+timing_constraints = ["Describe deadlines, timeouts, and sequencing constraints"]
+resource_constraints = ["Describe CPU, memory, storage, and connection limits"]
+deployment_environments = ["Describe production and recovery environments"]
+criticality = "Record the approved project criticality classification."
 assumptions = ["External identity provider is available"]
+exclusions = ["Record explicitly out-of-scope systems and behaviors"]
 
 [analysis]
 phase = "detailed_design" # requirements, architecture, detailed_design, implementation, operations
@@ -141,6 +167,8 @@ included_failure_classes = ["functional", "data", "interface", "timing", "logic"
 excluded_failure_classes = []
 fault_tolerance_assumptions = ["No single software control is credited as independent redundancy."]
 guidance_profiles = ["core_sfmea"] # Optional: nasa_assurance, faa_commercial_space, faa_airworthiness, security, legacy_reference
+# Optional governed JSON packs for licensed or internal organizational standards.
+guidance_packs = []
 
 [scan]
 include_private = true
@@ -276,6 +304,14 @@ def load_config(path: str | Path | None) -> tuple[dict[str, Any], Path | None]:
         candidate = Path(coverage_path)
         if not candidate.is_absolute():
             config["scan"]["coverage_json"] = str((config_path.parent / candidate).resolve())
+    config["analysis"]["guidance_packs"] = [
+        str(
+            Path(value).expanduser().resolve()
+            if Path(value).is_absolute()
+            else (config_path.parent / value).resolve()
+        )
+        for value in config["analysis"].get("guidance_packs", [])
+    ]
     return config, config_path
 
 
@@ -317,11 +353,24 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
         "project": {
             "name",
             "purpose",
+            "mission",
             "boundary",
             "operating_context",
+            "operational_modes",
+            "system_states",
+            "must_work_functions",
+            "must_not_work_functions",
+            "safe_states",
+            "degraded_states",
             "stakeholders",
             "interfaces",
+            "human_interactions",
+            "timing_constraints",
+            "resource_constraints",
+            "deployment_environments",
+            "criticality",
             "assumptions",
+            "exclusions",
         },
         "analysis": {
             "phase",
@@ -331,6 +380,7 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "excluded_failure_classes",
             "fault_tolerance_assumptions",
             "guidance_profiles",
+            "guidance_packs",
         },
         "scan": {
             "include_private",
@@ -436,10 +486,25 @@ def write_config_template(path: str | Path, *, overwrite: bool = False) -> Path:
 
 def _validate_config(config: dict[str, Any]) -> None:
     project = config["project"]
-    for field in ("name", "purpose", "boundary", "operating_context"):
+    for field in ("name", "purpose", "mission", "boundary", "operating_context", "criticality"):
         if not isinstance(project.get(field), str):
             raise ValueError(f"project.{field} must be a string")
-    for field in ("stakeholders", "interfaces", "assumptions"):
+    for field in (
+        "operational_modes",
+        "system_states",
+        "must_work_functions",
+        "must_not_work_functions",
+        "safe_states",
+        "degraded_states",
+        "stakeholders",
+        "interfaces",
+        "human_interactions",
+        "timing_constraints",
+        "resource_constraints",
+        "deployment_environments",
+        "assumptions",
+        "exclusions",
+    ):
         if not isinstance(project.get(field), list) or not all(
             isinstance(entry, str) for entry in project[field]
         ):
@@ -461,6 +526,7 @@ def _validate_config(config: dict[str, Any]) -> None:
         "excluded_failure_classes",
         "fault_tolerance_assumptions",
         "guidance_profiles",
+        "guidance_packs",
     ):
         if not isinstance(analysis.get(field), list) or not all(
             isinstance(entry, str) for entry in analysis[field]

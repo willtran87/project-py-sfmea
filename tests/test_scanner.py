@@ -10,13 +10,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from pysfmea.config import load_config, write_config_template
 from pysfmea.architecture import architecture_graph, export_architecture
+from pysfmea.config import load_config, write_config_template
+from pysfmea.discovery import evidence_packets
 from pysfmea.model import calculate_rpn
 from pysfmea.report import export_audit, export_csv, export_inventory, export_markdown
 from pysfmea.scanner import scan_repository
 from pysfmea.store import add_manual_item, merge_rescan, update_item_review
-
 
 SAMPLE_SOURCE = """
 import asyncio
@@ -93,6 +93,146 @@ class ScannerTests(unittest.TestCase):
             if item["component"]["qualname"] == "calculate_total"
         }
         self.assertIn("calculation.precision_or_range", calculate_rules)
+
+    def test_scan_records_context_repository_coverage_and_adapter_contributions(self) -> None:
+        (self.root / "README.md").write_text("# System\n", encoding="utf-8")
+        (self.root / "opaque.bin").write_bytes(b"\x00\x01")
+        excluded = self.root / "generated"
+        excluded.mkdir()
+        (excluded / "generated.py").write_text("def hidden():\n    pass\n", encoding="utf-8")
+        (self.root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+
+        analysis = scan_repository(
+            self.root,
+            config={
+                "project": {
+                    "name": "Context example",
+                    "purpose": "Exercise governed discovery.",
+                    "boundary": "Temporary repository.",
+                    "operating_context": "Local analysis only.",
+                    "operational_modes": ["normal"],
+                    "safe_states": ["stopped"],
+                },
+                "scan": {"exclude": ["generated/**"]},
+            },
+        )
+
+        context = analysis["system_context"]
+        self.assertEqual(context["schema_version"], "pysfmea-system-context-1")
+        self.assertEqual(context["status"], "partial")
+        self.assertIn("must_work_functions", context["missing_recommended"])
+        self.assertEqual(len(context["context_sha256"]), 64)
+
+        inventory = analysis["repository_inventory"]
+        by_path = {entry["path"]: entry for entry in inventory["entries"]}
+        self.assertEqual(by_path["app.py"]["status"], "analyzed")
+        self.assertEqual(by_path["tests/test_app.py"]["status"], "excluded_region")
+        self.assertEqual(by_path["broken.py"]["status"], "unresolved")
+        self.assertEqual(by_path["opaque.bin"]["status"], "opaque")
+        self.assertTrue(
+            any(region["path"] == "generated/" for region in inventory["regions"])
+        )
+        self.assertEqual(
+            analysis["project"]["baseline"]["repository_inventory_sha256"],
+            inventory["inventory_sha256"],
+        )
+
+        contributor_ids = {
+            adapter_id
+            for item in analysis["items"]
+            for adapter_id in item["scanner"]["adapter_ids"]
+        }
+        self.assertGreater(len(contributor_ids), 2)
+        self.assertIn("python.concurrency_analyzer", contributor_ids)
+        self.assertIn("repository.configuration_analyzer", contributor_ids)
+        ledger = analysis["adapter_runs"]
+        self.assertEqual(ledger["schema_version"], "pysfmea-adapter-run-ledger-1")
+        self.assertEqual(len(ledger["ledger_sha256"]), 64)
+        failure_run = next(
+            run
+            for run in ledger["runs"]
+            if run["adapter_id"] == "python.failure_rule_analyzer"
+        )
+        self.assertEqual(failure_run["status"], "completed")
+        self.assertEqual(failure_run["contribution_count"], len(analysis["items"]))
+
+    def test_organizational_guidance_pack_is_hashed_and_traced_to_findings(self) -> None:
+        pack = {
+            "schema_version": "pysfmea-organizational-guidance-pack-1",
+            "profile": {
+                "id": "org.example_assurance",
+                "title": "Example organizational software assurance",
+                "status": "approved_internal",
+                "applicability": "Projects that formally adopt EX-STD-1.",
+                "risk_semantics": "Use the approved project risk matrix.",
+                "verification_semantics": "Controls require independent objective evidence.",
+                "tailoring": "Record the approved tailoring decision.",
+                "compliance_claim": False,
+            },
+            "sources": [
+                {
+                    "id": "ORG-EX-STD-1",
+                    "publisher": "Example Engineering",
+                    "title": "Software Assurance Standard",
+                    "version": "1.0",
+                    "status": "approved",
+                    "published_at": "2026-08-01",
+                    "url": "https://example.invalid/standards/ex-std-1",
+                    "official_source": "Controlled document system EX-STD-1",
+                    "scope": "Safety-related Python services",
+                    "use": "Failure analysis and verification planning",
+                    "access": "licensed_internal",
+                    "quote_policy": "Do not reproduce controlled text; locator summaries only.",
+                }
+            ],
+            "citations": [
+                {
+                    "id": "ORG-CIT-EX-OMISSION",
+                    "source_id": "ORG-EX-STD-1",
+                    "locator": {"section": "4.2", "heading": "Omission failures"},
+                    "summary": "Review required functions for omitted behavior.",
+                }
+            ],
+            "rule_mappings": [
+                {
+                    "id": "ORG-MAP-EX-OMISSION",
+                    "rule_selector": "functional.omission",
+                    "citation_id": "ORG-CIT-EX-OMISSION",
+                    "relationship": "failure_taxonomy",
+                    "strength": "direct",
+                }
+            ],
+        }
+        pack_path = self.root / "example-guidance.json"
+        pack_path.write_text(json.dumps(pack), encoding="utf-8")
+
+        analysis = scan_repository(
+            self.root,
+            config={"analysis": {"guidance_packs": ["example-guidance.json"]}},
+        )
+
+        guidance = analysis["guidance"]
+        self.assertIn("org.example_assurance", guidance["active_profiles"])
+        self.assertEqual(guidance["organizational_packs"][0]["path"], pack_path.name)
+        self.assertEqual(len(guidance["organizational_packs"][0]["sha256"]), 64)
+        omission = next(
+            item
+            for item in analysis["items"]
+            if item["scanner"]["rule_id"] == "functional.omission"
+        )
+        self.assertIn(
+            "ORG-CIT-EX-OMISSION",
+            {value["citation_id"] for value in omission["scanner"]["citations"]},
+        )
+        self.assertEqual(
+            analysis["run_manifest"]["resolved_inputs"]["guidance_catalog_sha256"],
+            guidance["catalog_sha256"],
+        )
+        packets = evidence_packets(analysis, limit=2)
+        self.assertTrue(packets)
+        self.assertIn(
+            "ORG-CIT-EX-OMISSION", packets[0]["allowed_citation_ids"]
+        )
 
     def test_faa_failure_classes_and_configured_scope(self) -> None:
         (self.root / "device.py").write_text(

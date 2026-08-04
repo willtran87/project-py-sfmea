@@ -10,7 +10,6 @@ from typing import Any, Iterable
 from .model import utc_now
 from .store import refresh_summary
 
-
 MAX_SPANS_PER_IMPORT = 50_000
 
 

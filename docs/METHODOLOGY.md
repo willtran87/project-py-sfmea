@@ -28,7 +28,22 @@ propose only supplied citation IDs. Those links remain proposals until the sugge
 accepted by a named reviewer, after which they are recorded as `reviewer_accepted` rather
 than being represented as curated mappings.
 
+Local organizational packs use the same relationship model without copying licensed
+documents. A strict pack records an `org.*` applicability profile; controlled source
+title, revision, scope, access, official-source reference, and quote policy; exact
+locator summaries; and typed rule mappings. Pack bytes, source records, merged catalog,
+and selection are hashed. Organizational profiles are explicit and automatically active
+when configured, but the pack cannot assert compliance. See `GUIDANCE_PACKS.md`.
+
 This boundary follows the central limitation in the public guidance: SFMEA depends on system knowledge, documentation, assumptions, and review by people with different perspectives. Source code can show that a function calls a remote service; it cannot determine whether the end effect of that service returning stale data is an inconvenience, financial loss, environmental release, or loss of life. The project configuration therefore records purpose, boundary, operating context, interfaces, assumptions, hazards, critical functions, and the project's risk policy alongside the scan.
+
+The resolved system-context manifest extends that record to mission, operational modes,
+system states, must-work and prohibited functions, safe and degraded states, human
+interactions, timing and resource constraints, deployment environments, criticality,
+and explicit exclusions. It records field-level provenance, completeness, limitations,
+and unresolved questions. Missing context does not stop deterministic discovery, but it
+remains visible and constrains claims about effect, hazard, safe-state, and residual-risk
+coverage.
 
 ## Analysis structure
 
@@ -39,6 +54,19 @@ Each component receives a stable ID derived from its relative path, qualified na
 Every new analysis records the generator name, PySFMEA version, and analysis schema
 version. Older migrated records whose original generator predates this provenance
 retain `unknown` rather than being falsely attributed to the version that loaded them.
+
+Repository discovery separately accounts for analyzed, indexed, excluded, unresolved,
+and opaque artifacts and regions. Recognized documentation, CI, deployment, dependency,
+schema, migration, result, and configuration inputs are hashed and typed even when no
+semantic analyzer consumes them. Binary, unclassified, oversized, unreadable, and
+symlinked material is never silently represented as analyzed. This inventory is bounded,
+does not follow directory links, and does not execute repository code.
+
+Each normalized finding records every specialized analyzer that contributed to it. A
+separate adapter-run ledger binds adapter capability/version/trust/isolation metadata to
+the run input digest, output digest, status, and exact contribution entity IDs. A
+completed adapter with no results, an unconfigured evidence provider, and an optional
+capability that was not invoked remain distinct states.
 
 ## Failure vocabulary mapping
 
@@ -140,7 +168,7 @@ complete or that a linked event is a necessary or sufficient cause.
 
 ## Effects and scoring
 
-The initial local effect is a prompt. Next-higher and end effects remain blank because they require architecture and operational context. When exactly one project-defined hazard is linked to a critical function, its human-authored end effect and severity may be copied into the starter with an explicit confirmation rationale. Reviewers may edit all FMEA language.
+The initial local effect is a prompt. Next-higher and end effects remain blank because they require architecture and operational context. Reviewers also record the applicable operational mode/state, required safe state, permitted degraded behavior, recovery behavior, and explicit residual-risk statement. When exactly one project-defined hazard is linked to a critical function, its human-authored end effect and severity may be copied into the starter with an explicit confirmation rationale. Reviewers may edit all FMEA language.
 
 Severity may use a configured categorical scale or a numeric 1–10 scale. S/O/D fields are optional unless the project selects `sod_rpn`. Teams must define the meaning of occurrence for software. FAA guidance notes that SFMEA commonly emphasizes severity because software failures result from latent faults and activation conditions rather than hardware wear-out.
 

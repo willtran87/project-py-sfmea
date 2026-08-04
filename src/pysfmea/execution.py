@@ -18,7 +18,6 @@ from typing import Any, BinaryIO
 from .assurance import assurance_summary, ensure_assurance_register
 from .model import stable_id, utc_now
 
-
 EXECUTION_SCHEMA_VERSION = "1.0"
 EVIDENCE_REVIEW_DECISIONS = {
     "sufficient",

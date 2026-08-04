@@ -1,0 +1,108 @@
+{
+  "schema_version": "pysfmea-tool-sfmea-1",
+  "tool": "PySFMEA",
+  "review_status": "maintained engineering baseline; release review required",
+  "notice": "Controls and tests reduce risk but do not qualify PySFMEA for certification credit or prove completeness on unseen repositories.",
+  "failure_modes": [
+    {
+      "id": "TOOL-FM-001",
+      "function": "Discover repository inputs",
+      "failure_mode": "A relevant source or supporting artifact is silently omitted.",
+      "trigger": "Exclusion, symlink, size, permission, path, or file-count boundary is encountered.",
+      "effects": ["The component/failure inventory is incomplete.", "A reviewer may overestimate analysis coverage."],
+      "controls": ["Bounded non-following walk", "Explicit analyzed/indexed/excluded/unresolved/opaque status", "Inventory digest"],
+      "verification": ["test_scan_records_context_repository_coverage_and_adapter_contributions", "portable package verification"],
+      "residual_risk": "Unsupported formats and dynamic/generated material still require project-specific analyzers or explicit manual review."
+    },
+    {
+      "id": "TOOL-FM-002",
+      "function": "Parse Python without execution",
+      "failure_mode": "Python syntax is parsed incorrectly or a parse failure is represented as analyzed.",
+      "trigger": "Unsupported syntax, encoding, malformed source, or parser-version difference.",
+      "effects": ["Components and source evidence may be missing or incorrectly localized."],
+      "controls": ["Standard-library tokenizer/AST", "Parse warnings", "Unresolved inventory status", "No repository import/execution"],
+      "verification": ["scanner syntax-error tests", "multi-version CI"],
+      "residual_risk": "AST analysis cannot resolve runtime metaprogramming or interpreter-specific behavior."
+    },
+    {
+      "id": "TOOL-FM-003",
+      "function": "Generate candidate failure modes",
+      "failure_mode": "A credible failure mode is missed or an irrelevant candidate is generated.",
+      "trigger": "Rule coverage, source pattern, framework, or project domain differs from the validation corpus.",
+      "effects": ["False negatives reduce review coverage.", "False positives consume engineering review effort."],
+      "controls": ["Software-specific taxonomy", "Multiple specialized adapter contributions", "Custom rules", "Candidate—not defect—semantics", "Golden corpus"],
+      "verification": ["sfmea evaluate recall/precision/duplicate/localization metrics", "test_validation_benchmark.py"],
+      "residual_risk": "Real-world recall and precision are unknown outside curated cases; qualified review remains mandatory."
+    },
+    {
+      "id": "TOOL-FM-004",
+      "function": "Maintain identity and review state across rescans",
+      "failure_mode": "A review is attached to the wrong element or remains valid after a material change.",
+      "trigger": "Rename, move, duplicate implementation, configuration change, dependency change, or ambiguous content fingerprint.",
+      "effects": ["Stale effects, controls, ratings, or approvals may be trusted."],
+      "controls": ["Stable and content fingerprints", "Ambiguity rejection", "Baseline/context binding", "Revalidation and reopening rules", "Field-level history"],
+      "verification": ["store rescan, move, ambiguity, and freshness tests"],
+      "residual_risk": "External behavior may change without a statically visible repository change."
+    },
+    {
+      "id": "TOOL-FM-005",
+      "function": "Trace guidance to findings",
+      "failure_mode": "A locator, revision, applicability profile, or rule relationship is wrong, stale, or leaks across domains.",
+      "trigger": "Catalog update, mapping error, profile error, or malformed organizational pack.",
+      "effects": ["Reviewers may apply irrelevant guidance or misunderstand the authority of a finding."],
+      "controls": ["Versioned profiles", "Exact locators", "Source/pack/catalog hashes", "Closed relationship vocabulary", "Collision rejection", "No compliance claims"],
+      "verification": ["guidance integrity/profile-isolation tests", "organizational pack end-to-end test"],
+      "residual_risk": "Document interpretation and legal/regulatory applicability remain human responsibilities."
+    },
+    {
+      "id": "TOOL-FM-006",
+      "function": "Use an LLM for bounded discovery and summarization",
+      "failure_mode": "Repository text overrides instructions, secrets escape, or unsupported claims are presented as facts.",
+      "trigger": "Prompt injection, malicious strings, provider behavior, oversized content, or weak evidence linkage.",
+      "effects": ["False findings, fabricated effects/citations, data disclosure, or misplaced reviewer confidence."],
+      "controls": ["Explicit opt-in", "Untrusted-data system instruction", "Bounded redacted evidence packets", "Closed output schema", "Evidence/citation ID validation", "Separate suggestion register", "Human acceptance"],
+      "verification": ["discovery schema, injection-string, secret-redaction, citation, and review tests"],
+      "residual_risk": "Third-party provider confidentiality and model behavior require organizational approval and independent review."
+    },
+    {
+      "id": "TOOL-FM-007",
+      "function": "Generate executable assurance obligations",
+      "failure_mode": "A proposed test lacks a real fault stimulus/oracle or a passing result is treated as verification.",
+      "trigger": "Placeholder implementation, false-pass test, stale baseline, incomplete evidence, or same-person review.",
+      "effects": ["A control or failure response may appear verified without objective evidence."],
+      "controls": ["Intentionally failing scaffolds", "Predefined criteria", "Stimulus proof", "Artifact hashes", "Baseline binding", "Independent evidence review", "Passing cannot close risk"],
+      "verification": ["assurance lifecycle and evidence-review tests", "unsupported verification metric"],
+      "residual_risk": "Test adequacy and oracle correctness require domain expertise."
+    },
+    {
+      "id": "TOOL-FM-008",
+      "function": "Execute approved assurance tests",
+      "failure_mode": "Untrusted repository code affects the host or escapes its approved boundary.",
+      "trigger": "Container engine defect, unsafe image, mount/configuration error, excessive resources, credentials, or enabled network.",
+      "effects": ["Host, network, data, or credentials may be compromised."],
+      "controls": ["No execution during scan", "Explicit approval", "Disposable container", "Read-only repository", "Unprivileged user", "Dropped capabilities", "No-new-privileges", "Network/IPC disabled", "Resource/output/time bounds"],
+      "verification": ["shell-free execution-plan and policy tests"],
+      "residual_risk": "Container isolation is not a perfect security boundary; high-risk repositories need stronger external sandboxes."
+    },
+    {
+      "id": "TOOL-FM-009",
+      "function": "Render and exchange analysis results",
+      "failure_mode": "Repository-controlled content executes, corrupts a report, or produces unsafe spreadsheet/package behavior.",
+      "trigger": "HTML/script text, spreadsheet formula prefix, path traversal, symlink, ZIP bomb, or malformed diagram.",
+      "effects": ["Reviewer workstation compromise, misleading report, or unsafe package extraction."],
+      "controls": ["DOM text rendering", "Restrictive CSP", "Spreadsheet formula neutralization", "Validated diagrams", "Canonical package paths", "No general ZIP extraction", "Size/ratio limits"],
+      "verification": ["HTML injection/JavaScript syntax tests", "CSV safety tests", "package traversal/symlink/tamper/ZIP-bomb tests"],
+      "residual_risk": "Consumer software vulnerabilities and very large but permitted reports remain external risks."
+    },
+    {
+      "id": "TOOL-FM-010",
+      "function": "Preserve reproducible audit provenance",
+      "failure_mode": "Analysis or package bytes differ from recorded inputs while integrity checks still pass.",
+      "trigger": "Digest omission, mutable manifest field, migration error, partial write, or verifier defect.",
+      "effects": ["Reviewers cannot reproduce or trust the claimed analysis baseline."],
+      "controls": ["Canonical SHA-256 digests", "Atomic writes/publication", "Schema migrations", "Independent package verification", "Optional detached Ed25519 signature", "Adapter contribution ledger"],
+      "verification": ["manifest canonicalization, migration, atomicity, signing, and package-tamper tests"],
+      "residual_risk": "Hashes prove byte consistency, not authorship, authorization, semantic correctness, or long-term algorithm suitability."
+    }
+  ]
+}

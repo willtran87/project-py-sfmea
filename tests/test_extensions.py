@@ -16,22 +16,22 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from pysfmea.cli import main
+from pysfmea.config import write_config_template
 from pysfmea.discovery import (
     OpenAICompatibleProvider,
     deterministic_summary,
     discover_suggestions,
-    evidence_packets,
     evaluate_candidates,
+    evidence_packets,
     review_suggestion,
 )
-from pysfmea.cli import main
+from pysfmea.readiness import repository_readiness
 from pysfmea.report import (
     export_review_archive,
     export_review_package,
     verify_review_package,
 )
-from pysfmea.readiness import repository_readiness
-from pysfmea.config import write_config_template
 from pysfmea.runtime import import_runtime_trace
 from pysfmea.scanner import scan_repository
 from pysfmea.signing import sign_review_package, verify_review_signature
@@ -245,6 +245,7 @@ class ExtensionTests(unittest.TestCase):
             source_analysis=self.root / "analysis.json",
         )
         manifest = json.loads((result / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(manifest["analysis_state_sha256"]), 64)
         names = {value["path"] for value in manifest["files"]}
         self.assertTrue(
             {
@@ -312,7 +313,13 @@ class ExtensionTests(unittest.TestCase):
         )
         verified = verify_review_package(destination)
         self.assertTrue(verified["valid"])
-        self.assertEqual(verified["checked_files"], 23)
+        self.assertEqual(verified["checked_files"], 26)
+        self.assertEqual(
+            verified["binding"]["analysis_state_sha256"],
+            json.loads(
+                (destination / "manifest.json").read_text(encoding="utf-8")
+            )["analysis_state_sha256"],
+        )
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["verify-package", str(destination), "--json"]), 0)
 
@@ -372,10 +379,9 @@ class ExtensionTests(unittest.TestCase):
             encoding="utf-8",
         )
         provenance = verify_review_package(destination)
-        self.assertIn(
-            "package.provenance_mismatch",
-            {value["rule_id"] for value in provenance["findings"]},
-        )
+        provenance_rules = {value["rule_id"] for value in provenance["findings"]}
+        self.assertIn("package.provenance_mismatch", provenance_rules)
+        self.assertIn("package.analysis_state_digest_mismatch", provenance_rules)
 
     def test_review_archive_is_atomic_and_safely_verified(self) -> None:
         archive = export_review_archive(
@@ -387,7 +393,7 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_package(archive)
         self.assertTrue(verified["valid"])
         self.assertEqual(verified["container"], "zip")
-        self.assertEqual(verified["checked_files"], 23)
+        self.assertEqual(verified["checked_files"], 26)
         self.assertEqual(len(verified["archive_sha256"]), 64)
         with zipfile.ZipFile(archive) as bundle:
             self.assertEqual(
@@ -407,6 +413,9 @@ class ExtensionTests(unittest.TestCase):
                     "findings.sarif",
                     "components.cdx.json",
                     "run-manifest.json",
+                    "system-context.json",
+                    "repository-inventory.json",
+                    "adapter-runs.json",
                     "guidance-traceability.csv",
                     "guidance-traceability.json",
                     "inventory.md",

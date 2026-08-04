@@ -16,12 +16,11 @@ from typing import Any, Protocol
 from .guidance import (
     analysis_guidance_profiles,
     guidance_bundle,
-    selected_guidance_sources,
+    selected_sources_from_bundle,
 )
 from .model import stable_id, utc_now
 from .store import add_manual_item, refresh_summary, update_item_review
 from .visuals import coverage_metrics
-
 
 PROMPT_VERSION = "sfmea-grounded-discovery-2"
 MAX_PROVIDER_RESPONSE_BYTES = 10_000_000
@@ -215,10 +214,15 @@ def evidence_packets(
     }
     runtime_edges = analysis.get("runtime_evidence", {}).get("edges", [])
     active_profiles = analysis_guidance_profiles(analysis)
-    guidance = guidance_bundle(active_profiles)
+    embedded_guidance = analysis.get("guidance")
+    guidance = (
+        embedded_guidance
+        if isinstance(embedded_guidance, dict) and embedded_guidance.get("catalog_sha256")
+        else guidance_bundle(active_profiles)
+    )
     guidance_sources = {value["id"]: value for value in guidance["sources"]}
     selected_source_ids = {
-        value["id"] for value in selected_guidance_sources(active_profiles)
+        value["id"] for value in selected_sources_from_bundle(guidance)
     }
     guidance_citations = [
         {
@@ -293,6 +297,12 @@ def evidence_packets(
                 "boundary": analysis.get("context", {}).get("project", {}).get("boundary", ""),
                 "operating_context": analysis.get("context", {}).get("project", {}).get("operating_context", ""),
                 "ground_rules": analysis.get("context", {}).get("analysis", {}).get("ground_rules", []),
+                "resolved_system_context": analysis.get("system_context", {}).get(
+                    "resolved", {}
+                ),
+                "unresolved_questions": analysis.get("system_context", {}).get(
+                    "unresolved_questions", []
+                ),
             },
             "guidance_catalog": guidance_citations,
             "allowed_citation_ids": allowed_citation_ids,
@@ -528,9 +538,15 @@ def review_suggestion(
             }
         )
         active_profiles = analysis_guidance_profiles(analysis)
-        guidance = guidance_bundle(active_profiles)
+        embedded_guidance = analysis.get("guidance")
+        guidance = (
+            embedded_guidance
+            if isinstance(embedded_guidance, dict)
+            and embedded_guidance.get("catalog_sha256")
+            else guidance_bundle(active_profiles)
+        )
         selected_source_ids = {
-            value["id"] for value in selected_guidance_sources(active_profiles)
+            value["id"] for value in selected_sources_from_bundle(guidance)
         }
         citations = {value["id"]: value for value in guidance["citations"]}
         item["scanner"]["citations"] = [
@@ -693,15 +709,17 @@ def evaluate_candidates(analysis: dict[str, Any], expected: dict[str, Any]) -> d
     if len(expected_specs) != len(cases):
         raise ValueError("evaluation cases must not contain duplicate source/component/rule keys")
 
-    all_actual = {
+    all_actual_records = [
         (
             item.get("source", {}).get("path", ""),
             item.get("component", {}).get("qualname", ""),
             item.get("scanner", {}).get("rule_id", ""),
+            item,
         )
         for item in analysis.get("items", [])
         if item.get("source_status", "active") == "active"
-    }
+    ]
+    all_actual = {value[:3] for value in all_actual_records}
     for source, component, rule_id in expected_specs:
         if source:
             continue
@@ -734,6 +752,11 @@ def evaluate_candidates(analysis: dict[str, Any], expected: dict[str, Any]) -> d
             )
         )
     }
+    scoped_items = [
+        item
+        for source, component, rule_id, item in all_actual_records
+        if (source, component, rule_id) in actual
+    ]
     matched_actual: set[tuple[str, str, str]] = set()
     missing: set[tuple[str, str, str]] = set()
     for source, component, rule_id in expected_specs:
@@ -752,6 +775,52 @@ def evaluate_candidates(analysis: dict[str, Any], expected: dict[str, Any]) -> d
     matched_count = len(expected_specs) - len(missing)
     recall = round(matched_count / len(expected_specs), 4) if expected_specs else None
     precision = round(len(matched_actual) / len(actual), 4) if actual else None
+    duplicate_count = len(scoped_items) - len(actual)
+    known_citations = {
+        value.get("id") for value in analysis.get("guidance", {}).get("citations", [])
+    }
+    citation_links = [
+        (item, link)
+        for item in scoped_items
+        for link in item.get("scanner", {}).get("citations", [])
+        if isinstance(link, dict)
+    ]
+    valid_citation_links = [
+        (item, link)
+        for item, link in citation_links
+        if link.get("citation_id") in known_citations
+        and link.get("via_rule_id") == item.get("scanner", {}).get("rule_id")
+    ]
+    component_ids = {value.get("id") for value in analysis.get("components", [])}
+    localized = [
+        item
+        for item in scoped_items
+        if item.get("source", {}).get("path")
+        and int(item.get("source", {}).get("line", 0) or 0) > 0
+    ]
+    traceable = [
+        item for item in scoped_items if item.get("component_id") in component_ids
+    ]
+    adapter_traced = [
+        item
+        for item in scoped_items
+        if item.get("scanner", {}).get("adapter_ids")
+    ]
+    unsupported_verification_claims = [
+        value.get("id", "")
+        for value in analysis.get("assurance", {}).get("obligations", [])
+        if value.get("source_status", "active") == "active"
+        and (
+            value.get("evidence_status") == "sufficient"
+            or value.get("assurance_status") in {"verified", "closed"}
+        )
+        and not value.get("executions")
+    ]
+    analyzed_paths = {
+        value.get("path")
+        for value in analysis.get("repository_inventory", {}).get("entries", [])
+        if value.get("status") == "analyzed"
+    }
 
     def finding(value: tuple[str, str, str]) -> dict[str, str]:
         source, component, rule_id = value
@@ -770,5 +839,35 @@ def evaluate_candidates(analysis: dict[str, Any], expected: dict[str, Any]) -> d
         "precision": precision,
         "missing": [finding(value) for value in sorted(missing)],
         "unexpected": [finding(value) for value in sorted(unexpected)],
+        "metrics": {
+            "duplicate_count": duplicate_count,
+            "duplicate_rate": round(duplicate_count / len(scoped_items), 4)
+            if scoped_items
+            else 0.0,
+            "source_localization_accuracy": round(len(localized) / len(scoped_items), 4)
+            if scoped_items
+            else None,
+            "citation_link_accuracy": round(
+                len(valid_citation_links) / len(citation_links), 4
+            )
+            if citation_links
+            else None,
+            "traceability_integrity": round(len(traceable) / len(scoped_items), 4)
+            if scoped_items
+            else None,
+            "adapter_provenance_coverage": round(
+                len(adapter_traced) / len(scoped_items), 4
+            )
+            if scoped_items
+            else None,
+            "repository_source_accounting": round(
+                sum(item.get("source", {}).get("path") in analyzed_paths for item in scoped_items)
+                / len(scoped_items),
+                4,
+            )
+            if scoped_items
+            else None,
+            "unsupported_verification_claims": unsupported_verification_claims,
+        },
         "notice": "Candidates are evaluated only for explicit scope globs or components named by the corpus. Exact-key metrics do not measure semantic correctness of effects or ratings.",
     }

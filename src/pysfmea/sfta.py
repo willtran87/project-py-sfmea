@@ -10,7 +10,6 @@ from typing import Any
 
 from .model import stable_id, utc_now
 
-
 SFTA_SCHEMA_VERSION = "1.0"
 SFTA_NOTICE = (
     "Software Fault Trees are top-down engineering models. PySFMEA preserves explicit "

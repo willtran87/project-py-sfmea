@@ -9,7 +9,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from pysfmea.interchange import cyclonedx_document, differential_analysis, sarif_document
+from pysfmea.interchange import (
+    cyclonedx_document,
+    differential_analysis,
+    sarif_document,
+)
 from pysfmea.scanner import scan_repository
 
 

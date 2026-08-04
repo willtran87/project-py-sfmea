@@ -5,6 +5,8 @@ import csv
 import hashlib
 import io
 import json
+import os
+import runpy
 import sys
 import tempfile
 import unittest
@@ -15,11 +17,16 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.assurance import (
+    archive_pytest_scaffold,
+    assurance_progress,
     export_assurance_register,
     export_pytest_scaffold,
     refresh_assurance_register,
+    refresh_pytest_scaffold,
     review_obligation,
+    verify_pytest_scaffold,
 )
+from pysfmea.cli import main
 from pysfmea.execution import (
     import_execution_evidence,
     register_test_implementation,
@@ -27,11 +34,14 @@ from pysfmea.execution import (
     run_sandbox_execution,
     sandbox_command,
 )
-from pysfmea.cli import main
 from pysfmea.html_report import build_html_report_data, export_html_report
-from pysfmea.report import export_review_package, verify_review_package
+from pysfmea.report import (
+    analysis_state_sha256,
+    export_review_package,
+    verify_review_package,
+)
 from pysfmea.scanner import scan_repository
-from pysfmea.store import load_analysis, merge_rescan, save_analysis
+from pysfmea.store import load_analysis, merge_rescan, save_analysis, update_item_review
 from pysfmea.validation import validate_analysis
 
 
@@ -89,13 +99,16 @@ class AssuranceRegisterTests(unittest.TestCase):
         markdown_path = export_assurance_register(
             self.analysis, self.root / "assurance.md", format="markdown"
         )
-        self.assertTrue(json.loads(json_path.read_text(encoding="utf-8"))["obligations"])
+        json_payload = json.loads(json_path.read_text(encoding="utf-8"))
+        self.assertTrue(json_payload["obligations"])
+        self.assertIn("planning_percent", json_payload["progress"])
         with csv_path.open(encoding="utf-8-sig", newline="") as handle:
             self.assertTrue(list(csv.DictReader(handle)))
         self.assertIn(
             "Executable assurance checklist",
             markdown_path.read_text(encoding="utf-8"),
         )
+        self.assertIn("Planning:", markdown_path.read_text(encoding="utf-8"))
 
         analysis_path = self.root / "analysis.json"
         save_analysis(analysis_path, self.analysis)
@@ -114,17 +127,153 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertTrue((self.root / "analysis.assurance.json").is_file())
 
         scaffold = export_pytest_scaffold(
-            self.analysis, self.root / "assurance-tests", limit=2
+            self.analysis,
+            self.root / "assurance-tests",
+            limit=2,
+            disposition="all",
         )
-        manifest = json.loads(
-            (scaffold / "assurance-manifest.json").read_text(encoding="utf-8")
+        manifest_path = scaffold / "assurance-manifest.json"
+        original_manifest_text = manifest_path.read_text(encoding="utf-8")
+        manifest = json.loads(original_manifest_text)
+        canonical_manifest = dict(manifest)
+        manifest_sha256 = canonical_manifest.pop("manifest_sha256")
+        self.assertEqual(manifest["format"], "pysfmea-pytest-assurance-scaffold-6")
+        self.assertEqual(
+            manifest_sha256,
+            hashlib.sha256(
+                json.dumps(
+                    canonical_manifest,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest(),
+        )
+        self.assertEqual(
+            manifest["binding"]["analysis_state_sha256"],
+            analysis_state_sha256(self.analysis),
+        )
+        self.assertEqual(
+            manifest["binding"]["analysis_schema_version"],
+            self.analysis["schema_version"],
+        )
+        self.assertEqual(
+            manifest["binding"]["scaffold_contracts_sha256"],
+            hashlib.sha256(
+                json.dumps(
+                    manifest["contract_snapshot"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest(),
         )
         self.assertEqual(len(manifest["obligations"]), 2)
-        generated_test = (scaffold / "test_sfmea_assurance.py").read_text(
-            encoding="utf-8"
-        )
+        self.assertEqual(manifest["selection"]["limit"], 2)
+        self.assertRegex(manifest["queue"]["id"], r"^QUEUE-[A-F0-9]{12}$")
+        test_path = scaffold / "test_sfmea_assurance.py"
+        generated_test = test_path.read_text(encoding="utf-8")
         self.assertIn("pytest.fail", generated_test)
         self.assertNotIn("pytest.skip", generated_test)
+        self.assertIn("failed its SHA-256 integrity check", generated_test)
+        for name in ("README.md", "test_sfmea_assurance.py"):
+            self.assertEqual(
+                manifest["generated_files"][name]["sha256"],
+                hashlib.sha256((scaffold / name).read_bytes()).hexdigest(),
+            )
+        self.assertFalse(
+            any(
+                value.name.startswith(scaffold.name + ".")
+                and value.name.endswith(".tmp")
+                for value in scaffold.parent.iterdir()
+            )
+        )
+        verification = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue(verification["valid"])
+        self.assertEqual(verification["status"], "matched")
+        self.assertEqual(
+            verification["format"], "pysfmea-assurance-scaffold-verification-5"
+        )
+        self.assertEqual(
+            verification["obligation_ids"],
+            [value["id"] for value in manifest["obligations"]],
+        )
+        self.assertEqual(verification["queue"], manifest["queue"])
+        with contextlib.redirect_stdout(io.StringIO()) as verification_output:
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-scaffold-verify",
+                        str(analysis_path),
+                        str(scaffold),
+                        "--json",
+                    ]
+                ),
+                0,
+            )
+        self.assertTrue(json.loads(verification_output.getvalue())["valid"])
+        manifest["selection"]["scope"] = "tampered"
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "integrity check"):
+            runpy.run_path(str(test_path))
+        tampered = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertFalse(tampered["valid"])
+        self.assertEqual(tampered["status"], "invalid")
+        self.assertFalse(tampered["checks"]["manifest_integrity"])
+        malformed = json.loads(original_manifest_text)
+        malformed["obligations"] = None
+        malformed.pop("manifest_sha256")
+        malformed["manifest_sha256"] = hashlib.sha256(
+            json.dumps(
+                malformed,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        manifest_path.write_text(json.dumps(malformed), encoding="utf-8")
+        malformed_result = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertFalse(malformed_result["valid"])
+        self.assertFalse(malformed_result["checks"]["obligations"])
+        manifest_path.write_text(original_manifest_text, encoding="utf-8")
+
+        cli_scaffold = self.root / "owned-assurance-tests"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-scaffold",
+                        str(analysis_path),
+                        "-o",
+                        str(cli_scaffold),
+                        "--disposition",
+                        "all",
+                        "--limit",
+                        "1",
+                        "--queue-id",
+                        "payments-critical",
+                        "--owner",
+                        "Payments Assurance",
+                        "--purpose",
+                        "Critical payment failure hardening",
+                    ]
+                ),
+                0,
+            )
+        cli_manifest = json.loads(
+            (cli_scaffold / "assurance-manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            cli_manifest["queue"],
+            {
+                "id": "payments-critical",
+                "owner": "Payments Assurance",
+                "purpose": "Critical payment failure hardening",
+            },
+        )
 
         payload = build_html_report_data(self.analysis)
         self.assertEqual(
@@ -139,6 +288,392 @@ class AssuranceRegisterTests(unittest.TestCase):
         package = export_review_package(self.analysis, self.root / "package")
         self.assertTrue((package / "assurance-register.json").is_file())
         self.assertTrue(verify_review_package(package)["valid"])
+
+    def test_scaffold_publication_cleans_staging_after_failure(self) -> None:
+        destination = self.root / "assurance-tests"
+        with mock.patch(
+            "pysfmea.assurance.os.replace", side_effect=OSError("publish failed")
+        ):
+            with self.assertRaisesRegex(OSError, "publish failed"):
+                export_pytest_scaffold(
+                    self.analysis,
+                    destination,
+                    limit=1,
+                    disposition="all",
+                )
+
+        self.assertFalse(destination.exists())
+        self.assertFalse(
+            any(
+                value.name.startswith(destination.name + ".")
+                and value.name.endswith(".tmp")
+                for value in destination.parent.iterdir()
+            )
+        )
+
+    def test_scaffold_queue_metadata_is_bounded(self) -> None:
+        with self.assertRaisesRegex(ValueError, "queue ID"):
+            export_pytest_scaffold(
+                self.analysis,
+                self.root / "invalid-id",
+                disposition="all",
+                queue_id="invalid queue id",
+            )
+        with self.assertRaisesRegex(ValueError, "owner"):
+            export_pytest_scaffold(
+                self.analysis,
+                self.root / "invalid-owner",
+                disposition="all",
+                owner="line one\nline two",
+            )
+
+    def test_scaffold_refresh_preserves_identity_edits_and_previous_publication(
+        self,
+    ) -> None:
+        scaffold = export_pytest_scaffold(
+            self.analysis,
+            self.root / "assurance-tests",
+            disposition="all",
+            limit=1,
+            queue_id="core-hardening",
+            owner="Core Assurance",
+            purpose="Core failure hardening",
+        )
+        self.analysis["items"][0]["review"]["notes"] = "Unrelated review update."
+        refresh_pytest_scaffold(self.analysis, scaffold)
+        refreshed = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue(refreshed["valid"])
+        self.assertEqual(refreshed["status"], "matched")
+        self.assertEqual(
+            refreshed["queue"],
+            {
+                "id": "core-hardening",
+                "owner": "Core Assurance",
+                "purpose": "Core failure hardening",
+            },
+        )
+
+        self.analysis["items"][0]["review"]["notes"] = "Another review update."
+        original_replace = os.replace
+        replace_calls = 0
+
+        def fail_new_publication(source: str | os.PathLike, destination: str | os.PathLike) -> None:
+            nonlocal replace_calls
+            replace_calls += 1
+            if replace_calls == 2:
+                raise OSError("publish failed")
+            original_replace(source, destination)
+
+        with mock.patch(
+            "pysfmea.assurance.os.replace", side_effect=fail_new_publication
+        ):
+            with self.assertRaisesRegex(OSError, "publish failed"):
+                refresh_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue((scaffold / "assurance-manifest.json").is_file())
+        self.assertTrue(verify_pytest_scaffold(self.analysis, scaffold)["checks"]["manifest_integrity"])
+        self.assertFalse(
+            any(value.name.endswith(".backup") for value in scaffold.parent.iterdir())
+        )
+
+        generated_test = scaffold / "test_sfmea_assurance.py"
+        generated_test.write_text(
+            generated_test.read_text(encoding="utf-8") + "\n# implementation work\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "edited or removed"):
+            refresh_pytest_scaffold(self.analysis, scaffold)
+        self.assertIn("implementation work", generated_test.read_text(encoding="utf-8"))
+
+    def test_scaffold_archive_preserves_a_retirement_record_atomically(self) -> None:
+        finding = self.analysis["items"][0]
+        update_item_review(
+            self.analysis,
+            finding["id"],
+            {"disposition": "accepted", "reviewer": "Finding Reviewer"},
+        )
+        scaffold = export_pytest_scaffold(
+            self.analysis,
+            self.root / "assurance-tests",
+            limit=1,
+            queue_id="completed-queue",
+            owner="Assurance Team",
+        )
+        with self.assertRaisesRegex(ValueError, "retirement candidate"):
+            archive_pytest_scaffold(self.analysis, scaffold)
+
+        update_item_review(
+            self.analysis,
+            finding["id"],
+            {"disposition": "rejected", "reviewer": "Finding Reviewer"},
+        )
+        with mock.patch(
+            "pysfmea.assurance.os.replace", side_effect=OSError("archive failed")
+        ):
+            with self.assertRaisesRegex(OSError, "archive failed"):
+                archive_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue(scaffold.is_dir())
+        self.assertFalse((scaffold / "retirement-record.json").exists())
+
+        archived = archive_pytest_scaffold(self.analysis, scaffold)
+        self.assertFalse(scaffold.exists())
+        self.assertEqual(archived.parent.name, ".sfmea-archive")
+        record = json.loads(
+            (archived / "retirement-record.json").read_text(encoding="utf-8")
+        )
+        supplied_digest = record.pop("record_sha256")
+        actual_digest = hashlib.sha256(
+            json.dumps(
+                record,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(supplied_digest, actual_digest)
+        self.assertEqual(record["queue"]["id"], "completed-queue")
+        self.assertEqual(record["reason"], "selection_no_longer_matches_pending_obligations")
+        archived_verification = verify_pytest_scaffold(self.analysis, archived)
+        self.assertEqual(archived_verification["lifecycle"], "archived")
+        self.assertTrue(archived_verification["checks"]["manifest_integrity"])
+        self.assertTrue(archived_verification["checks"]["retirement_record"])
+        self.assertTrue(archived_verification["retirement"]["valid"])
+        with self.assertRaisesRegex(ValueError, "archived queues are immutable"):
+            refresh_pytest_scaffold(self.analysis, archived)
+
+        retirement_path = archived / "retirement-record.json"
+        retirement_path.write_text(
+            retirement_path.read_text(encoding="utf-8").replace(
+                "selection_no_longer_matches_pending_obligations",
+                "tampered_retirement_reason",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        tampered = verify_pytest_scaffold(self.analysis, archived)
+        self.assertFalse(tampered["checks"]["retirement_record"])
+        self.assertEqual(tampered["status"], "invalid")
+
+    def test_scaffold_verifier_distinguishes_implementation_edits_from_staleness(
+        self,
+    ) -> None:
+        scaffold = export_pytest_scaffold(
+            self.analysis,
+            self.root / "assurance-tests",
+            limit=1,
+            disposition="all",
+        )
+        test_path = scaffold / "test_sfmea_assurance.py"
+        test_path.write_text(
+            test_path.read_text(encoding="utf-8") + "\n# implementation draft\n",
+            encoding="utf-8",
+        )
+        edited = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue(edited["valid"])
+        self.assertEqual(edited["status"], "matched")
+        self.assertIn(
+            "scaffold.generated_file_changed",
+            {value["rule_id"] for value in edited["findings"]},
+        )
+
+        self.analysis["items"][0]["review"]["notes"] = "Governed state changed."
+        advanced = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue(advanced["valid"])
+        self.assertEqual(advanced["status"], "contracts_current")
+        self.assertFalse(advanced["checks"]["analysis_state_sha256"])
+        self.assertTrue(advanced["checks"]["scaffold_contracts_sha256"])
+        self.assertIn(
+            "scaffold.analysis_state_advanced",
+            {value["rule_id"] for value in advanced["findings"]},
+        )
+
+        update_item_review(
+            self.analysis,
+            self.analysis["items"][0]["id"],
+            {"end_effect": "The verification contract has materially changed."},
+        )
+        stale = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertFalse(stale["valid"])
+        self.assertEqual(stale["status"], "mismatched")
+        self.assertFalse(stale["checks"]["scaffold_contracts_sha256"])
+        self.assertEqual(stale["contract_change_summary"]["changed"], 1)
+        self.assertIn("contract_sha256", stale["contract_changes"][0]["changed_fields"])
+
+    def test_progress_and_scaffolds_follow_accepted_engineering_decisions(self) -> None:
+        initial = assurance_progress(self.analysis)
+        self.assertEqual(initial["applicable_findings"], 0)
+        self.assertIsNone(initial["planning_percent"])
+        self.assertTrue(initial["gates"]["plan_ready"])
+        with self.assertRaisesRegex(ValueError, "disposition='accepted'"):
+            export_pytest_scaffold(self.analysis, self.root / "premature-tests")
+
+        item = self.analysis["items"][0]
+        update_item_review(
+            self.analysis,
+            item["id"],
+            {
+                "disposition": "accepted",
+                "reviewer": "Finding Reviewer",
+                "next_higher_effect": "The containing service rejects the operation.",
+                "end_effect": "The system remains within its approved boundary.",
+                "prevention_controls": ["Input invariant enforcement"],
+                "required_safe_state": "Operation rejected with no committed side effect.",
+            },
+        )
+        obligation = next(
+            value
+            for value in self.analysis["assurance"]["obligations"]
+            if value["finding_id"] == item["id"]
+        )
+        self.assertEqual(obligation["planning_gaps"], [])
+        pending = assurance_progress(self.analysis)
+        self.assertEqual(pending["applicable_findings"], 1)
+        self.assertEqual(pending["planning_pending"], 1)
+        self.assertFalse(pending["gates"]["plan_ready"])
+
+        review_obligation(
+            self.analysis,
+            obligation["id"],
+            status="verification_planned",
+            reviewer="Assurance Planner",
+            rationale="The accepted finding requires the recorded off-nominal test.",
+        )
+        planned = assurance_progress(self.analysis)
+        self.assertTrue(planned["gates"]["plan_ready"])
+        self.assertEqual(planned["implementation_pending"], 1)
+
+        scaffold = export_pytest_scaffold(
+            self.analysis, self.root / "accepted-tests", limit=10
+        )
+        manifest = json.loads(
+            (scaffold / "assurance-manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["selection"]["disposition"], "accepted")
+        self.assertEqual(
+            [value["id"] for value in manifest["obligations"]], [obligation["id"]]
+        )
+        obligation["automation"]["implementation_status"] = "implemented"
+        with self.assertRaisesRegex(ValueError, "no pending"):
+            export_pytest_scaffold(self.analysis, self.root / "no-pending-tests")
+        included = export_pytest_scaffold(
+            self.analysis,
+            self.root / "implemented-tests",
+            include_implemented=True,
+        )
+        self.assertTrue((included / "assurance-manifest.json").is_file())
+
+    def test_scaffold_verifier_detects_newly_selected_obligations(self) -> None:
+        first, second = self.analysis["items"][:2]
+        update_item_review(
+            self.analysis,
+            first["id"],
+            {"disposition": "accepted", "reviewer": "Finding Reviewer"},
+        )
+        scaffold = export_pytest_scaffold(
+            self.analysis,
+            self.root / "accepted-tests",
+        )
+        initial = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue(initial["valid"])
+        self.assertEqual(initial["contract_change_summary"]["current"], 1)
+        self.assertEqual(initial["current_selection"]["obligation_count"], 1)
+        self.assertEqual(initial["lifecycle"], "active")
+
+        update_item_review(
+            self.analysis,
+            second["id"],
+            {"disposition": "accepted", "reviewer": "Finding Reviewer"},
+        )
+        expanded = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertFalse(expanded["valid"])
+        self.assertEqual(expanded["status"], "mismatched")
+        self.assertEqual(expanded["contract_change_summary"]["added"], 1)
+        self.assertEqual(expanded["contract_changes"][0]["status"], "added")
+        analysis_path = self.root / "analysis.json"
+        save_analysis(analysis_path, self.analysis)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-scaffold-verify",
+                        str(analysis_path),
+                        str(scaffold),
+                    ]
+                ),
+                1,
+            )
+        self.assertIn("added=1", output.getvalue())
+        self.assertIn(expanded["contract_changes"][0]["obligation_id"], output.getvalue())
+
+        for item in (first, second):
+            update_item_review(
+                self.analysis,
+                item["id"],
+                {"disposition": "rejected", "reviewer": "Finding Reviewer"},
+            )
+        empty = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertFalse(empty["valid"])
+        self.assertEqual(empty["current_selection"]["obligation_count"], 0)
+        self.assertEqual(empty["lifecycle"], "retirement_candidate")
+        self.assertEqual(empty["contract_change_summary"]["removed"], 1)
+
+    def test_finding_contract_change_reopens_assurance_evidence(self) -> None:
+        item = self.analysis["items"][0]
+        obligation = next(
+            value
+            for value in self.analysis["assurance"]["obligations"]
+            if value["finding_id"] == item["id"]
+        )
+        obligation["planning_gaps"] = []
+        review_obligation(
+            self.analysis,
+            obligation["id"],
+            status="verification_planned",
+            reviewer="Assurance Planner",
+            rationale="The verification contract is ready.",
+        )
+        obligation["evidence_status"] = "sufficient"
+        previous_digest = obligation["provenance"]["contract_sha256"]
+
+        update_item_review(
+            self.analysis,
+            item["id"],
+            {
+                "end_effect": "A newly reviewed system consequence.",
+                "reviewer": "Finding Reviewer",
+            },
+        )
+        refreshed = next(
+            value
+            for value in self.analysis["assurance"]["obligations"]
+            if value["finding_id"] == item["id"]
+        )
+        self.assertNotEqual(
+            refreshed["provenance"]["contract_sha256"], previous_digest
+        )
+        self.assertEqual(refreshed["assurance_status"], "reopened")
+        self.assertEqual(refreshed["evidence_status"], "stale")
+        self.assertIn(
+            "verification contract changed", refreshed["history"][-1]["reason"]
+        )
+
+    def test_closed_obligation_always_requires_named_approval(self) -> None:
+        obligation = self.analysis["assurance"]["obligations"][0]
+        obligation["assurance_status"] = "closed"
+        obligation["evidence_status"] = "sufficient"
+        obligation["review"].update(
+            {
+                "reviewer": "Evidence Reviewer",
+                "rationale": "Evidence was reviewed.",
+                "acceptance_approved_by": "",
+            }
+        )
+        self.analysis["assurance"]["obligations"][-1][
+            "assurance_status"
+        ] = "candidate"
+        rules = {
+            value["rule_id"] for value in validate_analysis(self.analysis)["findings"]
+        }
+        self.assertIn("assurance.unapproved_closure", rules)
 
     def test_review_is_preserved_and_privileged_states_are_guarded(self) -> None:
         obligation = self.analysis["assurance"]["obligations"][0]
@@ -192,6 +727,37 @@ class AssuranceRegisterTests(unittest.TestCase):
             "assurance.unsupported_verification",
             {value["rule_id"] for value in findings},
         )
+
+    def test_planning_review_cannot_overwrite_evidence_controlled_states(self) -> None:
+        obligation = self.analysis["assurance"]["obligations"][0]
+        obligation["assurance_status"] = "verified"
+        obligation["evidence_status"] = "sufficient"
+        with self.assertRaisesRegex(ValueError, "evidence-controlled"):
+            review_obligation(
+                self.analysis,
+                obligation["id"],
+                status="candidate",
+                reviewer="Planner",
+                rationale="Attempt to downgrade verified evidence.",
+            )
+        review_obligation(
+            self.analysis,
+            obligation["id"],
+            status="residual_risk_review",
+            reviewer="Planner",
+            rationale="Verification is sufficient; evaluate the residual risk.",
+        )
+        self.assertEqual(obligation["assurance_status"], "residual_risk_review")
+
+        obligation["assurance_status"] = "partially_verified"
+        with self.assertRaisesRegex(ValueError, "evidence- or approval-controlled"):
+            review_obligation(
+                self.analysis,
+                obligation["id"],
+                status="verification_planned",
+                reviewer="Planner",
+                rationale="Attempt to overwrite evidence-derived progress.",
+            )
 
     def test_sandbox_command_has_mandatory_isolation_controls(self) -> None:
         command = sandbox_command(

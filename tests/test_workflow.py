@@ -1,0 +1,660 @@
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import os
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from pysfmea.assurance import export_pytest_scaffold
+from pysfmea.cli import main
+from pysfmea.config import load_config, write_config_template
+from pysfmea.html_report import export_html_report
+from pysfmea.report import export_review_archive
+from pysfmea.scanner import scan_repository
+from pysfmea.store import save_analysis, update_item_review
+from pysfmea.workflow import WORKFLOW_STATUS_FORMAT, workflow_status
+
+
+class WorkflowStatusTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        (self.root / "app.py").write_text(
+            "def authorize(actor, request):\n"
+            "    return bool(actor and request)\n",
+            encoding="utf-8",
+        )
+        self.config_path = self.root / "sfmea.toml"
+        write_config_template(self.config_path)
+        source = self.config_path.read_text(encoding="utf-8")
+        source = source.replace("Example Python System", "Authorization Service")
+        source = source.replace(
+            "Example unacceptable system condition", "Unauthorized operation"
+        )
+        source = source.replace("Example reviewer", "Safety Reviewer")
+        source = source.replace("Example team", "Assurance Team")
+        source = source.replace("src/example/payment.py", "app.py")
+        source = source.replace("src/example/refund.py", "app.py")
+        self.config_path.write_text(source, encoding="utf-8")
+        self.analysis_path = self.root / "sfmea-analysis.json"
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def _scan(self) -> dict:
+        config, _ = load_config(self.config_path)
+        analysis = scan_repository(self.root, config=config)
+        save_analysis(self.analysis_path, analysis)
+        return analysis
+
+    def test_status_moves_from_ready_to_scan_to_engineering_review(self) -> None:
+        before = workflow_status(self.root)
+        self.assertEqual(before["format"], WORKFLOW_STATUS_FORMAT)
+        self.assertEqual(before["stage"], "ready_to_scan")
+        self.assertTrue(before["readiness"]["ready"])
+        self.assertFalse(before["analysis"]["exists"])
+        self.assertEqual(before["next_actions"][0]["id"], "scan_repository")
+
+        analysis = self._scan()
+        after = workflow_status(self.root)
+        self.assertEqual(after["stage"], "engineering_review")
+        self.assertEqual(
+            after["analysis"]["baseline_id"],
+            analysis["project"]["baseline"]["id"],
+        )
+        self.assertGreater(after["analysis"]["counts"]["unreviewed"], 0)
+        self.assertEqual(after["artifacts"]["html_report"]["status"], "missing")
+        self.assertIn(
+            "review_findings", [value["id"] for value in after["next_actions"]]
+        )
+
+    def test_artifact_freshness_integrity_and_exact_binding(self) -> None:
+        analysis = self._scan()
+        report = self.root / "sfmea-report.html"
+        package = self.root / "authorization-review-package.zip"
+        export_html_report(analysis, report)
+        export_review_archive(
+            analysis,
+            package,
+            source_analysis=self.analysis_path,
+            portable=True,
+        )
+        older_than_analysis = self.analysis_path.stat().st_mtime - 10
+        os.utime(report, (older_than_analysis, older_than_analysis))
+        os.utime(package, (older_than_analysis, older_than_analysis))
+        current = workflow_status(self.root)
+        self.assertEqual(current["artifacts"]["html_report"]["status"], "current")
+        self.assertEqual(
+            current["artifacts"]["html_report"]["binding"]["status"], "matched"
+        )
+        self.assertTrue(
+            current["artifacts"]["html_report"]["binding"]["checks"][
+                "payload_integrity"
+            ]
+        )
+        self.assertEqual(current["artifacts"]["review_package"]["status"], "current")
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"]["valid"]
+        )
+        self.assertTrue(current["artifacts"]["review_package"]["binding"]["valid"])
+        self.assertEqual(
+            current["artifacts"]["review_package"]["binding"]["status"],
+            "matched",
+        )
+        self.assertFalse(
+            current["artifacts"]["review_package"]["timestamp_current"]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"]["checked_files"],
+            26,
+        )
+        self.assertIn("does not establish", current["notice"])
+
+        report_text = report.read_text(encoding="utf-8")
+        report.write_text(
+            report_text.replace(
+                '"name":"Authorization Service"',
+                '"name":"Authorization Servicf"',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        report_tampered = workflow_status(self.root)
+        self.assertEqual(
+            report_tampered["artifacts"]["html_report"]["status"], "invalid"
+        )
+        self.assertFalse(
+            report_tampered["artifacts"]["html_report"]["binding"]["checks"][
+                "payload_integrity"
+            ]
+        )
+        export_html_report(analysis, report)
+
+        analysis["items"][0]["review"]["notes"] = "Current governed review changed."
+        save_analysis(self.analysis_path, analysis)
+        newer = self.analysis_path.stat().st_mtime + 2
+        os.utime(package, (newer, newer))
+        os.utime(report, (newer, newer))
+        mismatched = workflow_status(self.root)
+        self.assertEqual(
+            mismatched["artifacts"]["html_report"]["status"], "mismatched"
+        )
+        self.assertFalse(
+            mismatched["artifacts"]["html_report"]["binding"]["checks"][
+                "analysis_state"
+            ]
+        )
+        report_action = next(
+            value
+            for value in mismatched["next_actions"]
+            if value["id"] == "refresh_report"
+        )
+        self.assertIn(f'-o "{report}"', report_action["command"])
+        self.assertEqual(
+            mismatched["artifacts"]["review_package"]["status"], "mismatched"
+        )
+        self.assertTrue(
+            mismatched["artifacts"]["review_package"]["integrity"]["valid"]
+        )
+        self.assertFalse(
+            mismatched["artifacts"]["review_package"]["binding"]["valid"]
+        )
+        self.assertFalse(
+            mismatched["artifacts"]["review_package"]["binding"]["checks"][
+                "analysis_state"
+            ]
+        )
+
+        with zipfile.ZipFile(package) as archive:
+            contents = {name: archive.read(name) for name in archive.namelist()}
+        contents["summary.json"] += b"tampered\n"
+        with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, raw in contents.items():
+                archive.writestr(name, raw)
+        invalid = workflow_status(self.root)
+        self.assertEqual(invalid["artifacts"]["review_package"]["status"], "invalid")
+        self.assertFalse(
+            invalid["artifacts"]["review_package"]["integrity"]["valid"]
+        )
+        self.assertIn(
+            "refresh_package", [value["id"] for value in invalid["next_actions"]]
+        )
+        package_action = next(
+            value for value in invalid["next_actions"] if value["id"] == "refresh_package"
+        )
+        self.assertIn(f'-o "{package}"', package_action["command"])
+        self.assertIn("--force", package_action["command"])
+
+        export_html_report(analysis, report)
+        older = self.analysis_path.stat().st_mtime - 10
+        os.utime(report, (older, older))
+        exact = workflow_status(self.root)
+        self.assertEqual(exact["artifacts"]["html_report"]["status"], "current")
+        self.assertFalse(
+            exact["artifacts"]["html_report"]["timestamp_current"]
+        )
+        self.assertNotIn(
+            "refresh_report", [value["id"] for value in exact["next_actions"]]
+        )
+
+    def test_cli_text_and_json_outputs_are_actionable(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()) as text_output:
+            result = main(["status", str(self.root)])
+        self.assertEqual(result, 0)
+        self.assertIn("Workflow stage: ready to scan", text_output.getvalue())
+        self.assertIn("Next actions:", text_output.getvalue())
+        self.assertIn("sfmea scan", text_output.getvalue())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = main(
+                ["status", str(self.root), "--require-handoff-ready"]
+            )
+        self.assertEqual(result, 1)
+
+        with contextlib.redirect_stdout(io.StringIO()) as json_output:
+            result = main(["status", str(self.root), "--json"])
+        self.assertEqual(result, 0)
+        payload = json.loads(json_output.getvalue())
+        self.assertEqual(payload["format"], WORKFLOW_STATUS_FORMAT)
+        self.assertEqual(payload["stage"], "ready_to_scan")
+
+    def test_status_exposes_assurance_planning_progress_and_action(self) -> None:
+        analysis = self._scan()
+        item = analysis["items"][0]
+        item["review"]["disposition"] = "accepted"
+        save_analysis(self.analysis_path, analysis)
+
+        result = workflow_status(self.root)
+        assurance = result["analysis"]["counts"]["assurance"]
+        self.assertEqual(assurance["active_obligations"], len(analysis["items"]))
+        self.assertEqual(assurance["applicable_findings"], 1)
+        self.assertEqual(assurance["planning_pending"], 1)
+        self.assertFalse(assurance["gates"]["plan_ready"])
+        action = next(
+            value
+            for value in result["next_actions"]
+            if value["id"] == "review_assurance_plan"
+        )
+        self.assertIn("--format markdown", action["command"])
+        self.assertIn("sfmea-analysis-assurance.md", action["command"])
+
+    def test_status_discovers_and_verifies_optional_assurance_scaffold(self) -> None:
+        analysis = self._scan()
+        scaffold = export_pytest_scaffold(
+            analysis,
+            self.root / "assurance-tests",
+            limit=1,
+            disposition="all",
+        )
+
+        current = workflow_status(self.root)
+        artifact = current["artifacts"]["assurance_scaffold"]
+        self.assertEqual(artifact["status"], "current")
+        self.assertTrue(artifact["integrity"]["valid"])
+        self.assertTrue(artifact["binding"]["valid"])
+        self.assertEqual(artifact["generated_files_changed"], 0)
+        self.assertNotIn(
+            "verify_assurance_scaffold",
+            {value["id"] for value in current["next_actions"]},
+        )
+
+        generated_test = scaffold / "test_sfmea_assurance.py"
+        generated_test.write_text(
+            generated_test.read_text(encoding="utf-8") + "\n# implementation draft\n",
+            encoding="utf-8",
+        )
+        implemented = workflow_status(self.root)
+        self.assertEqual(
+            implemented["artifacts"]["assurance_scaffold"]["status"], "current"
+        )
+        self.assertEqual(
+            implemented["artifacts"]["assurance_scaffold"][
+                "generated_files_changed"
+            ],
+            1,
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as status_output:
+            self.assertEqual(main(["status", str(self.root)]), 0)
+        self.assertIn("assurance scaffold: current", status_output.getvalue())
+        self.assertIn("generated changes=1", status_output.getvalue())
+        self.assertIn("contract changes=0", status_output.getvalue())
+
+        analysis["items"][0]["review"]["notes"] = "Current analysis changed."
+        save_analysis(self.analysis_path, analysis)
+        advanced = workflow_status(self.root)
+        advanced_artifact = advanced["artifacts"]["assurance_scaffold"]
+        self.assertEqual(advanced_artifact["status"], "current")
+        self.assertTrue(advanced_artifact["binding"]["valid"])
+        self.assertEqual(
+            advanced_artifact["binding"]["status"], "contracts_current"
+        )
+        self.assertNotIn(
+            "verify_assurance_scaffold",
+            {value["id"] for value in advanced["next_actions"]},
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as advanced_output:
+            self.assertEqual(main(["status", str(self.root)]), 0)
+        self.assertIn("binding=contracts_current", advanced_output.getvalue())
+
+        update_item_review(
+            analysis,
+            analysis["items"][0]["id"],
+            {"end_effect": "The selected verification contract changed."},
+        )
+        save_analysis(self.analysis_path, analysis)
+        stale = workflow_status(self.root)
+        stale_artifact = stale["artifacts"]["assurance_scaffold"]
+        self.assertEqual(stale_artifact["status"], "mismatched")
+        self.assertFalse(stale_artifact["binding"]["valid"])
+        self.assertEqual(stale_artifact["contract_change_summary"]["changed"], 1)
+        action = next(
+            value
+            for value in stale["next_actions"]
+            if value["id"] == "verify_assurance_scaffold"
+        )
+        self.assertIn("assurance-scaffold-verify", action["command"])
+        self.assertIn(str(scaffold), action["command"])
+
+        manifest_path = scaffold / "assurance-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["selection"]["scope"] = "tampered"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        invalid = workflow_status(self.root)
+        invalid_artifact = invalid["artifacts"]["assurance_scaffold"]
+        self.assertEqual(invalid_artifact["status"], "invalid")
+        self.assertFalse(invalid_artifact["integrity"]["valid"])
+
+    def test_status_offers_and_executes_safe_scaffold_refresh(self) -> None:
+        analysis = self._scan()
+        scaffold = export_pytest_scaffold(
+            analysis,
+            self.root / "assurance-tests",
+            limit=1,
+            disposition="all",
+            queue_id="refreshable-queue",
+            owner="Assurance Team",
+        )
+        update_item_review(
+            analysis,
+            analysis["items"][0]["id"],
+            {"end_effect": "The selected verification contract changed."},
+        )
+        save_analysis(self.analysis_path, analysis)
+
+        stale = workflow_status(self.root)
+        action = next(
+            value
+            for value in stale["next_actions"]
+            if value["id"] == "refresh_assurance_scaffold"
+        )
+        self.assertIn("assurance-scaffold-refresh", action["command"])
+        self.assertIn(str(scaffold), action["command"])
+
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-scaffold-refresh",
+                        str(self.analysis_path),
+                        str(scaffold),
+                    ]
+                ),
+                0,
+            )
+        self.assertIn("refreshable-queue", output.getvalue())
+        refreshed = workflow_status(self.root)
+        self.assertEqual(
+            refreshed["artifacts"]["assurance_scaffold"]["status"], "current"
+        )
+        self.assertNotIn(
+            "refresh_assurance_scaffold",
+            {value["id"] for value in refreshed["next_actions"]},
+        )
+
+    def test_status_routes_an_empty_selection_to_retirement_review(self) -> None:
+        analysis = self._scan()
+        finding = analysis["items"][0]
+        update_item_review(
+            analysis,
+            finding["id"],
+            {"disposition": "accepted", "reviewer": "Finding Reviewer"},
+        )
+        save_analysis(self.analysis_path, analysis)
+        scaffold = export_pytest_scaffold(
+            analysis,
+            self.root / "assurance-tests",
+            limit=1,
+            queue_id="completed-queue",
+        )
+        update_item_review(
+            analysis,
+            finding["id"],
+            {"disposition": "rejected", "reviewer": "Finding Reviewer"},
+        )
+        save_analysis(self.analysis_path, analysis)
+
+        status = workflow_status(self.root)
+        artifact = status["artifacts"]["assurance_scaffold"]
+        self.assertEqual(artifact["lifecycle"], "retirement_candidate")
+        self.assertEqual(artifact["current_selection"]["obligation_count"], 0)
+        actions = {value["id"]: value for value in status["next_actions"]}
+        self.assertNotIn("refresh_assurance_scaffold", actions)
+        action = actions["archive_empty_assurance_scaffold"]
+        self.assertIn("assurance-scaffold-archive", action["command"])
+        self.assertIn(str(scaffold), action["command"])
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(main(["status", str(self.root)]), 0)
+        self.assertIn("selected now=0", output.getvalue())
+        self.assertIn("lifecycle=retirement candidate", output.getvalue())
+
+        with contextlib.redirect_stdout(io.StringIO()) as archive_output:
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-scaffold-archive",
+                        str(self.analysis_path),
+                        str(scaffold),
+                    ]
+                ),
+                0,
+            )
+        self.assertIn("completed-queue", archive_output.getvalue())
+        self.assertFalse(scaffold.exists())
+        after_archive = workflow_status(self.root)
+        self.assertNotIn("assurance_scaffold", after_archive["artifacts"])
+
+    def test_assurance_plan_is_an_explicit_handoff_gate(self) -> None:
+        self._scan()
+        synthetic_counts = {
+            "components": 1,
+            "active_findings": 1,
+            "unreviewed": 0,
+            "accepted": 1,
+            "rejected": 0,
+            "revalidation_required": 0,
+            "by_disposition": {"accepted": 1},
+            "by_status": {"in_review": 1},
+            "review_percent": 100.0,
+            "validation": {"error": 0, "warning": 0, "information": 0},
+            "assurance": {
+                "active_obligations": 1,
+                "applicable_findings": 1,
+                "planning_pending": 1,
+                "planning_percent": 0.0,
+                "implemented_tests": 0,
+                "recorded_executions": 0,
+                "verified_obligations": 0,
+                "gates": {"plan_ready": False},
+            },
+        }
+        with (
+            mock.patch(
+                "pysfmea.workflow.repository_readiness",
+                return_value={
+                    "ready": True,
+                    "counts": {
+                        "error": 0,
+                        "warning": 0,
+                        "information": 0,
+                        "pass": 1,
+                    },
+                },
+            ),
+            mock.patch(
+                "pysfmea.workflow._analysis_counts", return_value=synthetic_counts
+            ),
+        ):
+            result = workflow_status(self.root)
+        self.assertEqual(result["stage"], "assurance_planning")
+        self.assertFalse(result["ready_for_handoff"])
+        self.assertIn(
+            "review_assurance_plan", [value["id"] for value in result["next_actions"]]
+        )
+
+    def test_status_accepts_an_explicit_nonstandard_scaffold_path(self) -> None:
+        analysis = self._scan()
+        update_item_review(
+            analysis,
+            analysis["items"][0]["id"],
+            {"disposition": "accepted", "reviewer": "Finding Reviewer"},
+        )
+        save_analysis(self.analysis_path, analysis)
+        custom_scaffold = self.root / "review-queues" / "payments"
+
+        missing = workflow_status(
+            self.root,
+            assurance_scaffold_path=custom_scaffold,
+        )
+        self.assertEqual(
+            missing["paths"]["assurance_scaffold"], str(custom_scaffold)
+        )
+        self.assertEqual(
+            missing["artifacts"]["assurance_scaffold"]["status"], "missing"
+        )
+        create_action = next(
+            value
+            for value in missing["next_actions"]
+            if value["id"] == "create_assurance_scaffold"
+        )
+        self.assertIn(str(custom_scaffold), create_action["command"])
+
+        export_pytest_scaffold(
+            analysis,
+            custom_scaffold,
+            queue_id="payments",
+            owner="Payments Assurance",
+            purpose="Payment subsystem hardening",
+        )
+        explicit = workflow_status(
+            self.root,
+            assurance_scaffold_path=custom_scaffold,
+        )
+        self.assertEqual(
+            explicit["artifacts"]["assurance_scaffold"]["status"], "current"
+        )
+        second_scaffold = self.root / "review-queues" / "platform"
+        multiple = workflow_status(
+            self.root,
+            assurance_scaffold_path=[
+                custom_scaffold,
+                second_scaffold,
+                custom_scaffold,
+            ],
+        )
+        self.assertEqual(len(multiple["assurance_scaffolds"]), 2)
+        self.assertEqual(
+            multiple["artifacts"]["assurance_scaffold"]["path"],
+            str(custom_scaffold),
+        )
+        self.assertEqual(multiple["assurance_scaffolds"][1]["status"], "missing")
+        second_action = next(
+            value
+            for value in multiple["next_actions"]
+            if value["id"] == "create_assurance_scaffold_2"
+        )
+        self.assertIn(str(second_scaffold), second_action["command"])
+        with contextlib.redirect_stdout(io.StringIO()) as json_output:
+            self.assertEqual(
+                main(
+                    [
+                        "status",
+                        str(self.root),
+                        "--assurance-scaffold",
+                        str(custom_scaffold),
+                        "--assurance-scaffold",
+                        str(second_scaffold),
+                        "--json",
+                    ]
+                ),
+                0,
+            )
+        payload = json.loads(json_output.getvalue())
+        self.assertEqual(
+            payload["artifacts"]["assurance_scaffold"]["path"],
+            str(custom_scaffold),
+        )
+        self.assertEqual(len(payload["assurance_scaffolds"]), 2)
+        self.assertEqual(
+            payload["paths"]["assurance_scaffolds"],
+            [str(custom_scaffold), str(second_scaffold)],
+        )
+
+        export_pytest_scaffold(
+            analysis,
+            second_scaffold,
+            queue_id="platform",
+            owner="Platform Assurance",
+            purpose="Platform integration hardening",
+        )
+        overlapping = workflow_status(
+            self.root,
+            assurance_scaffold_path=[custom_scaffold, second_scaffold],
+        )
+        portfolio = overlapping["assurance_scaffold_portfolio"]
+        self.assertEqual(
+            portfolio["format"], "pysfmea-assurance-scaffold-portfolio-1"
+        )
+        self.assertEqual(portfolio["queue_count"], 2)
+        self.assertEqual(portfolio["current_queues"], 2)
+        self.assertEqual(portfolio["coverage_percent"], 100.0)
+        self.assertEqual(portfolio["uncovered_accepted_obligations"], 0)
+        self.assertEqual(portfolio["duplicate_assignment_count"], 1)
+        self.assertEqual(portfolio["unowned_current_queues"], 0)
+        self.assertEqual(portfolio["duplicate_queue_id_count"], 0)
+        self.assertEqual(
+            portfolio["duplicate_assignments"][0]["scaffold_paths"],
+            [str(custom_scaffold), str(second_scaffold)],
+        )
+        self.assertEqual(
+            [
+                value["owner"]
+                for value in portfolio["duplicate_assignments"][0]["queues"]
+            ],
+            ["Payments Assurance", "Platform Assurance"],
+        )
+        overlap_action = next(
+            value
+            for value in overlapping["next_actions"]
+            if value["id"] == "review_assurance_scaffold_overlap"
+        )
+        self.assertIn("--json", overlap_action["command"])
+        with contextlib.redirect_stdout(io.StringIO()) as text_output:
+            self.assertEqual(
+                main(
+                    [
+                        "status",
+                        str(self.root),
+                        "--assurance-scaffold",
+                        str(custom_scaffold),
+                        "--assurance-scaffold",
+                        str(second_scaffold),
+                    ]
+                ),
+                0,
+            )
+        self.assertIn("accepted coverage=100.0%", text_output.getvalue())
+        self.assertIn("overlaps=1", text_output.getvalue())
+        self.assertIn("unowned=0", text_output.getvalue())
+        self.assertIn("duplicate queue IDs=0", text_output.getvalue())
+
+        update_item_review(
+            analysis,
+            analysis["items"][1]["id"],
+            {"disposition": "accepted", "reviewer": "Finding Reviewer"},
+        )
+        save_analysis(self.analysis_path, analysis)
+        uncovered = workflow_status(
+            self.root,
+            assurance_scaffold_path=[custom_scaffold, second_scaffold],
+        )["assurance_scaffold_portfolio"]
+        self.assertEqual(uncovered["current_queues"], 0)
+        self.assertEqual(uncovered["accepted_pending_obligations"], 2)
+        self.assertEqual(uncovered["uncovered_accepted_obligations"], 2)
+        self.assertEqual(uncovered["coverage_percent"], 0.0)
+
+    def test_root_and_artifacts_layout_is_auto_discovered(self) -> None:
+        artifacts = self.root / ".artifacts"
+        artifacts.mkdir()
+        relocated_config = artifacts / "sfmea.toml"
+        self.config_path.replace(relocated_config)
+        self.config_path = relocated_config
+        relocated_analysis = artifacts / "sfmea-analysis.json"
+        self.analysis_path = relocated_analysis
+        self._scan()
+
+        result = workflow_status(self.root)
+        self.assertEqual(result["paths"]["configuration"], str(relocated_config))
+        self.assertEqual(result["paths"]["analysis"], str(relocated_analysis))
+        self.assertTrue(result["analysis"]["exists"])
+
+
+if __name__ == "__main__":
+    unittest.main()

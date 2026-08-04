@@ -7,10 +7,18 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 ## What it produces
 
 - Stable components linked to file and line locations
+- A hashed system-context manifest covering mission, modes, states, must-work and
+  prohibited functions, safe/degraded states, humans, timing/resources, deployment,
+  criticality, assumptions, and exclusions—with unresolved questions kept explicit
+- A bounded repository artifact inventory that distinguishes analyzed, indexed,
+  excluded, unresolved, and opaque files/regions without executing repository code
 - Candidate software failure modes derived from public NASA and FAA guidance
 - Versioned, applicability-profiled guidance-to-finding citations with typed relationship metadata and source/artifact integrity hashes
+- Governed organizational guidance packs for licensed/internal source metadata,
+  exact locators, quote policies, applicability, tailoring, and rule mappings
 - Separate scanner-priority and engineering-risk fields
-- Editable functions, requirements, causes, local effects, next-higher effects, and end effects
+- Editable functions, requirements, modes/states, causes, local/next-higher/end
+  effects, safe/degraded/recovery behavior, and residual risk
 - Optional severity, occurrence, detection, and RPN fields
 - Prevention controls, detection controls, actions, owners, verification evidence, and status
 - Persistent decisions across rescans, including removed-source traceability
@@ -36,7 +44,7 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 - A baseline-aware Verification Obligation Register generated from every active finding
 - Automation-ready pytest scaffolds that fail until meaningful assurance tests are implemented
 - CSV and Markdown exports
-- Immutable scan manifests with source/configuration/guidance/adapter/dependency/contract digests and a typed, health-reporting adapter registry
+- Immutable scan manifests with source/configuration/guidance/adapter/dependency/contract digests, a typed health-reporting adapter registry, and a hashed per-adapter contribution ledger
 - A local browser reviewer with no hosted service or repository upload
 
 ## Install
@@ -65,6 +73,7 @@ critical functions, and domain rules:
 ```powershell
 sfmea init C:\path\to\python-repo
 sfmea doctor C:\path\to\python-repo
+sfmea status C:\path\to\python-repo
 ```
 
 `sfmea doctor` is a read-only preflight. It checks the repository, configuration,
@@ -72,6 +81,58 @@ system context, analysis revision and ground rules, review team, catalogs, mappi
 and optional coverage evidence before a governed scan. It rejects an untouched
 generated example template rather than presenting placeholder inputs as ready. Use
 `--json` in automation.
+
+`sfmea status` is the read-only workflow cockpit. It auto-discovers configuration and
+analysis files in the repository root or `.artifacts`, classifies the current lifecycle
+stage, reports review and validation counts, identifies missing or stale HTML/PDF/package
+artifacts, verifies discovered review-package checksums and provenance, and prints ordered
+next commands. It separately reports assurance-plan, test-implementation, execution,
+evidence-review, and verification progress for accepted findings. If an assurance scaffold
+exists beside the analysis, status also verifies its manifest and governed-analysis binding,
+reports expected implementation edits separately, distinguishes unrelated analysis changes
+from changed verification contracts, and recommends a guarded in-place refresh only when
+the scaffold manifest is intact and its generated starting files remain untouched. Invalid
+queues and queues containing implementation edits are directed to inspection and a new
+destination so work is preserved. A scaffold remains optional and does not become a handoff
+gate merely because it exists. New packages carry a
+canonical governed-analysis digest; status compares
+that digest, baseline, and schema with the current analysis so a copied or timestamp-touched
+package cannot appear current. Handoff readiness requires a fresh, valid, exactly matched
+package. Its JSON form is stable for automation:
+
+```powershell
+sfmea status C:\path\to\python-repo --json
+sfmea status C:\path\to\python-repo --require-handoff-ready
+sfmea status C:\path\to\python-repo --assurance-scaffold D:\review-queues\payments
+sfmea status C:\path\to\python-repo `
+  --assurance-scaffold D:\review-queues\payments `
+  --assurance-scaffold D:\review-queues\platform
+```
+
+HTML reports carry a canonical analysis-state declaration and an embedded-data digest.
+Status verifies both before treating a report as current, so copying or touching an old
+report does not satisfy the handoff gate. The declaration detects accidental staleness
+and payload changes; unlike an optional detached package signature, it is not an
+authentication mechanism. Suggested refresh commands use the discovered output paths
+and replacement flags so they can be run directly. `--require-handoff-ready` returns a
+nonzero exit code until every readiness, review, validation, report, and package gate is
+satisfied, making the cockpit usable in CI without changing normal interactive behavior.
+Conventional `assurance-tests` directories are discovered automatically; use
+`--assurance-scaffold PATH` when a queue is stored elsewhere, repeating the option for
+subsystem- or team-specific queues. Paths are normalized and deduplicated in request order.
+Workflow-status v2 exposes the complete list under `assurance_scaffolds` and
+`paths.assurance_scaffolds`, while the original singular artifact/path fields continue to
+reference the first queue for consumers migrating from v1. For each explicitly requested
+path that is missing while accepted obligations still need tests, status prints a distinct
+generation command and continues to treat every queue as optional.
+
+When one or more queues are present, status also emits an
+`assurance_scaffold_portfolio`. It measures accepted pending-obligation coverage using only
+currently bound queues, identifies obligations assigned to more than one queue, lists
+uncovered accepted obligations, reports unowned current queues and duplicate stable queue
+IDs, and provides a JSON inspection action for overlaps. Duplicate assignments name each
+queue ID, owner, and path. This is an ownership and workload-coordination aid—not evidence,
+approval, risk acceptance, or a handoff gate.
 
 Scan a repository:
 
@@ -110,6 +171,9 @@ sfmea citations C:\path\to\python-repo\sfmea-analysis.json --format csv
 sfmea assurance C:\path\to\python-repo\sfmea-analysis.json --format json
 sfmea assurance C:\path\to\python-repo\sfmea-analysis.json --format csv
 sfmea assurance-scaffold C:\path\to\python-repo\sfmea-analysis.json -o assurance-tests --limit 25
+sfmea assurance-scaffold-refresh C:\path\to\python-repo\sfmea-analysis.json assurance-tests
+sfmea assurance-scaffold-archive C:\path\to\python-repo\sfmea-analysis.json assurance-tests
+sfmea assurance-scaffold-verify C:\path\to\python-repo\sfmea-analysis.json assurance-tests
 sfmea package C:\path\to\python-repo\sfmea-analysis.json
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable --zip
@@ -123,8 +187,13 @@ modern browser without a web server or network connection. The report includes a
 executive overview, validation and coverage charts, a searchable and filterable
 failure-mode explorer, record evidence drill-down, configured interface flows,
 subsystem summaries, requirement/hazard traceability, automatically selected bounded
-sequence views, and methodology limitations. It also supports a printer-friendly
-layout and filtered CSV download.
+sequence views, system-context completeness, repository coverage/opaque-region
+accounting, stable record deep links, column controls, and methodology limitations.
+Finding details support previous/next traversal across the current filtered result set,
+Alt+Left/Alt+Right keyboard navigation, and copyable stable deep links. The report also
+offers deterministic review-order, priority, RPN, severity, source, component, and
+disposition sorting plus one-click view reset. It supports a printer-friendly layout
+and filtered CSV download.
 
 Include a separate engineering-notes file and choose an explicit output path when
 preparing a review handoff:
@@ -140,6 +209,11 @@ inserted as data and rendered through safe DOM text operations; a restrictive co
 security policy prevents the report from loading remote scripts, styles, fonts, or
 objects. Reports embed up to 10,000 records by default. Use `--max-records` to set a
 different bound, up to 50,000; the report states when its record set is truncated.
+To keep large standalone reports responsive, the assurance workspace embeds at most
+250 full obligations and 100 recent executions, while each SFTA reconciliation class
+embeds at most 250 gaps. Every bounded view states its embedded and total counts and
+points to the complete governed JSON register in the portable review package. Finding
+details still retain their obligation IDs and lifecycle summaries.
 The HTML is a review aid and is not included in the checksum-manifested review package.
 
 The report includes a guidance-citation workspace with source status, exact section/page
@@ -166,8 +240,19 @@ Use `sfmea diagram --type TYPE` to export generated models for reuse by other
 renderers or engineering tools. The complete schema, limits, import formats, and
 example state diagram are documented in [Canonical diagrams](docs/DIAGRAMS.md).
 
+To add an organization-controlled or licensed standard without modifying PySFMEA,
+configure a governed JSON guidance pack. The schema, integrity behavior, licensing
+boundary, and complete example are documented in
+[Organizational guidance packs](docs/GUIDANCE_PACKS.md).
+
+The implementation-to-acceptance audit is maintained in
+[Workbench requirements traceability](docs/REQUIREMENTS_TRACEABILITY.md); it identifies
+the executable evidence for each capability and keeps the remaining authority boundary
+explicit.
+
 `sfmea package` creates a complete review directory containing the governed analysis
-snapshot, CSV and Markdown worksheets, inventory, architecture, traceability,
+snapshot, resolved context, repository coverage, adapter-run provenance, CSV and
+Markdown worksheets, inventory, architecture, traceability,
 coverage, validation, summary, audit history, and a SHA-256 manifest. A non-empty
 destination is protected unless `--force` is supplied.
 Packages are generated in a staging directory and published only after every report
@@ -359,14 +444,132 @@ sfmea assurance sfmea-analysis.json --format csv -o assurance-register.csv
 sfmea assurance sfmea-analysis.json --format markdown -o assurance-register.md
 ```
 
+The local browser reviewer also exposes an **Assurance plan** workspace for accepted
+findings. It presents the derived stimulus, acceptance criteria, definition gaps,
+implementation/evidence state, and lifecycle progress without requiring users to copy
+obligation IDs into CLI commands. A named reviewer and rationale are mandatory for every
+planning decision. Evidence-derived and approval-controlled states remain read-only, and
+every mutation carries the loaded analysis ETag as an `If-Match` precondition. External
+file edits and saves from another browser tab therefore produce a conflict and offer to
+reload the latest revision instead of silently overwriting newer work. The reviewer may
+keep the unsaved form visible for comparison or copy-out before choosing to reload; unsaved
+assurance-plan fields also warn on dialog dismissal and page exit.
+
+For large analyses, the browser loads a purpose-built reviewer projection rather than
+transferring report- and package-only collections it cannot display. The complete
+governed analysis remains unchanged on disk and is still available from the full API.
+JSON responses are gzip-compressed when the browser advertises support, keeping local
+review startup responsive without creating a second source of truth.
+Reviewer data, validation results, and assurance planning are delivered as one
+revision-consistent workspace snapshot. Serialization occurs while the state is locked,
+but network transfer does not hold that lock, so a slow browser cannot block unrelated
+review operations. A failed load produces an explicit retry screen and never mutates the
+analysis.
+
+Validation findings are indexed once when the workspace loads, so gate filtering and
+sorting scale with the records being reviewed instead of repeatedly scanning the complete
+validation register for every item. Selecting a finding also adds
+its stable ID to the local reviewer URL, providing a bookmarkable deep link without
+changing the governed analysis.
+
+After an item or assurance-plan save, the reviewer now retains the unchanged local
+inventory and refreshes only validation and assurance state. Both responses must match
+the mutation ETag; any missing or divergent revision automatically falls back to a full
+workspace reload. This reduces routine save traffic without allowing a mixed-revision UI.
+Finding, assurance-plan, suggestion, and manual-item mutations are single-flight: their
+buttons remain disabled until the request and cleanup finish. Network and validation
+failures leave the draft state intact and surface explicit retryable feedback instead of
+creating duplicate self-conflicts or unhandled browser errors.
+
+The review server binds to loopback and rejects non-loopback `Host` headers to limit
+DNS-rebinding exposure. Mutations are revision-checked again immediately before their
+atomic save; if persistence fails, the server reloads the governed disk record and
+discards the unpersisted in-memory mutation instead of exposing a phantom review state.
+The local-only bind restriction is enforced by the Python entry point as well as the CLI.
+If the governed JSON becomes unreadable while review is open, reads and mutations return
+a retryable service-unavailable response instead of serving stale state or dropping the
+connection.
+
 Create a bounded pytest implementation queue for a component or finding glob:
 
 ```powershell
 sfmea assurance-scaffold sfmea-analysis.json `
   --scope "src/payments/**" `
   --limit 25 `
+  --queue-id payments-critical `
+  --owner "Payments Assurance" `
+  --purpose "Critical payment failure hardening" `
   -o assurance-tests
 ```
+
+The scaffold defaults to findings whose engineering disposition is `accepted` and skips
+obligations already bound to implemented tests. This prevents unreviewed scanner prompts
+or rejected candidates from silently becoming a hardening backlog. Use
+`--disposition unreviewed` or `--disposition all` only when deliberately prototyping from
+planning drafts, and `--include-implemented` only when reproducing an existing queue.
+`--queue-id` supplies a stable organizational identity; when omitted, a deterministic ID is
+derived from the selection and metadata. Optional `--owner` and `--purpose` values are
+bounded, stored inside the integrity-protected manifest, displayed by verification/status,
+and carried into portfolio overlap records.
+
+Scaffold directories are assembled in a sibling staging directory and published with one
+atomic rename, so an interrupted generation does not present a partial checklist as
+complete. The manifest binds the source baseline, schema, and canonical governed-analysis
+state, and records starting hashes for the generated pytest module and operator README.
+It also records a minimal digest of the selected verification contracts, dispositions,
+source status, and implementation state, together with the scope, disposition, limit, and
+implemented-test inclusion policy that produced the queue. During collection, the pytest
+module verifies the immutable manifest; editing placeholders into substantive tests remains
+possible and expected. Register implemented source with
+`sfmea assurance-test-register` to content-hash bind it to its obligation. These digests
+detect accidental manifest drift and stale provenance; they are not approval signatures or
+substitutes for the governed analysis.
+
+Verify integrity and freshness before consuming or continuing work from a scaffold:
+
+```powershell
+sfmea assurance-scaffold-verify sfmea-analysis.json assurance-tests
+sfmea assurance-scaffold-verify sfmea-analysis.json assurance-tests --json
+```
+
+If an untouched queue becomes stale, refresh it without reconstructing its selection or
+identity:
+
+```powershell
+sfmea assurance-scaffold-refresh sfmea-analysis.json assurance-tests
+```
+
+Refresh preserves the recorded scope, disposition, limit, implemented-test policy, queue
+ID, owner, and purpose. It proceeds only when the current-format manifest is intact and
+every declared generated file still matches its starting hash. Publication moves the old
+queue to a temporary sibling backup, atomically installs the regenerated queue, and restores
+the prior queue if installation fails. Any edited or removed generated file causes a closed
+failure; verify the queue and generate into a new destination instead of risking test work.
+If replaying the selection finds no pending obligations, verification labels the queue a
+`retirement_candidate`. Workflow status recommends the guarded archive command rather than
+a refresh that must fail:
+
+```powershell
+sfmea assurance-scaffold-archive sfmea-analysis.json assurance-tests
+```
+
+Archival proceeds only for an intact retirement candidate whose generated files still match
+their starting hashes. It writes an integrity-protected retirement record containing the
+queue identity, prior manifest digest, current analysis binding, and full contract-removal
+diff, then atomically moves the entire directory under the sibling `.sfmea-archive` folder.
+An explicit `--output` may select another location on the same filesystem volume. Existing
+destinations are never overwritten, active queues are refused, and a failed move removes the
+provisional retirement record so the active path remains unchanged. The operation preserves
+the manifest and generated files rather than deleting the audit record. Scaffold verification
+checks the retirement-record digest and its queue, prior-manifest, and archive-path bindings;
+archived queues are immutable and cannot later be refreshed or replaced in place.
+
+Verification distinguishes an invalid manifest, materially changed verification contracts,
+and an analysis whose unrelated state advanced while every selected contract remained
+current. It replays the saved selection and emits an obligation-level diff for added,
+removed, and changed contracts, including the exact fields responsible. Placeholder edits
+are reported as informational because test implementation is expected; they become governed
+when registered against an obligation.
 
 The generated pytest cases fail intentionally until an engineer implements the recorded
 stimulus, oracles, and acceptance criteria. Empty, skipped, or assertion-free tests cannot
@@ -375,6 +578,12 @@ not evidence by itself. Verification and closure require current execution artif
 proof that the failure was triggered, acceptance-criterion evaluation, independent review,
 and any required approval. `assurance-review` can govern planning states but cannot directly
 set `verified`, `accepted_risk`, or `closed`.
+
+Each derived obligation carries a canonical verification-contract digest. Editing the
+governed failure condition, operating context, effects, controls, safe/degraded/recovery
+expectations, stimulus, or acceptance contract regenerates the obligation and automatically
+reopens previously planned or verified work with stale evidence. JSON and Markdown assurance
+exports include explicit planning, implementation, execution, and verification progress.
 
 Register a completed test, preview its exact container contract, and execute it only after
 explicit approval:
@@ -469,7 +678,15 @@ The browser warns before discarding edited fields, constrains numeric ratings to
 and focuses the search box with `/`. Large result sets render in bounded 200-record
 batches so searching and review remain responsive. The **Analysis health** dialog
 summarizes review coverage, trace linkage, runtime mapping, contracts, and project-level
-quality-gate findings without presenting them as correctness claims.
+quality-gate findings without presenting them as correctness claims. The **Assurance
+plan** dialog is limited to accepted findings and governed planning transitions; test
+execution, evidence sufficiency, verification, closure, and risk acceptance continue
+through their dedicated auditable workflows.
+
+The reviewer includes a keyboard-visible skip link, associated form labels, explicit
+dialog names, announced result/save status, and selected-record semantics for assistive
+technology. These semantics complement the keyboard shortcuts; they do not replace the
+organization's accessibility acceptance testing in its supported browser and platform.
 
 Generate a deterministic index summary or a grounded narrative:
 
@@ -656,7 +873,7 @@ relevance; they do not prove a defect, regulatory applicability, or compliance.
 - Suggested causes and actions are prompts, not findings proven to exist.
 - Rule output can be repetitive. Scope and review disposition are expected to reduce the working set.
 - Project-defined common causes and explicit SFTA are supported, but the tool does not infer or approve arbitrary fault-tree logic, prove independence, perform STPA, or automatically execute runtime fault injection or mutation analysis.
-- The local reviewer detects external file changes and refuses stale writes, but it has no identity provider, electronic-signature control, role enforcement, or enterprise approval workflow.
+- The local reviewer uses strong ETag/`If-Match` revision checks to refuse stale writes from external edits or concurrent browser sessions, but it has no identity provider, electronic-signature control, role enforcement, or enterprise approval workflow.
 - Hosted-model use is opt-in and requires an explicit endpoint. Organizations remain responsible for provider approval, retention policy, regional processing, and sensitive-data controls.
 - CSV exports neutralize formula-like reviewer text for safer spreadsheet opening, but exported files still need the recipient organization's document controls.
 - No safety certification, compliance determination, probabilistic failure estimate, or tool qualification is provided.

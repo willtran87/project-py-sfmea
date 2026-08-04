@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import load_config
 from .guidance import DEFAULT_EXCLUDES
+from .system_context import build_system_context
 
 
 def repository_readiness(
@@ -86,6 +87,19 @@ def repository_readiness(
             add(f"project.{field}", "pass", f"Project {field.replace('_', ' ')} is configured.")
         else:
             add(f"project.{field}", "error", f"Project {field.replace('_', ' ')} is blank.")
+    resolved_context = build_system_context(config)
+    add(
+        "project.context_completeness",
+        "pass" if resolved_context["status"] == "complete" else "warning",
+        f"System context is {resolved_context['status']} "
+        f"({resolved_context['completeness_percent']}% of governed fields supplied).",
+    )
+    for field in resolved_context["missing_recommended"]:
+        add(
+            f"project.context.{field}",
+            "information",
+            f"Recommended context is unresolved: {field.replace('_', ' ')}.",
+        )
     analysis = config["analysis"]
     add(
         "analysis.revision",

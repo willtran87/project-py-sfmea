@@ -14,7 +14,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.cli import main
-from pysfmea.html_report import build_html_report_data, export_html_report
+from pysfmea.html_report import (
+    HTML_REPORT_FORMAT,
+    MAX_REPORT_ASSURANCE_OBLIGATIONS,
+    MAX_REPORT_SFTA_GAPS_PER_CLASS,
+    _report_sfta_projection,
+    build_html_report_data,
+    export_html_report,
+)
+from pysfmea.report import analysis_state_sha256
 from pysfmea.scanner import scan_repository
 from pysfmea.store import save_analysis
 
@@ -90,12 +98,38 @@ class HtmlReportTests(unittest.TestCase):
         document = output.read_text(encoding="utf-8")
         self.assertTrue(document.startswith("<!doctype html>"))
         self.assertIn("Content-Security-Policy", document)
+        self.assertIn(
+            f'<meta name="pysfmea-report-format" content="{HTML_REPORT_FORMAT}">',
+            document,
+        )
+        self.assertIn(
+            f'<meta name="pysfmea-analysis-state-sha256" content="{analysis_state_sha256(self.analysis)}">',
+            document,
+        )
+        self.assertRegex(
+            document,
+            r'<meta name="pysfmea-report-data-sha256" content="[0-9a-f]{64}">',
+        )
         self.assertIn('data-view="failure-modes"', document)
+        self.assertIn('data-view="coverage"', document)
         self.assertIn('data-view="architecture"', document)
         self.assertIn('data-view="traceability"', document)
         self.assertIn('data-view="sequences"', document)
         self.assertIn('data-view="diagrams"', document)
         self.assertIn("Export filtered CSV", document)
+        self.assertIn("System context and analysis coverage", document)
+        self.assertIn('id="sftaGapCount"', document)
+        self.assertIn("bounded_interactive_view", document)
+        self.assertIn('id="detailPrevious"', document)
+        self.assertIn('id="detailNext"', document)
+        self.assertIn('id="detailCopy"', document)
+        self.assertIn("function moveDetailRecord", document)
+        self.assertIn("function copyDetailLink", document)
+        self.assertIn('id="sortFilter"', document)
+        self.assertIn('id="resetFilters"', document)
+        self.assertIn("function compareRecords", document)
+        self.assertIn("function resetFailureModeView", document)
+        self.assertIn("function renderAssuranceProgress", document)
         self.assertNotIn("<script>bad()</script>", document)
         self.assertNotIn("<script>alert(1)</script>", document)
         self.assertIn(r"\u003c/script\u003e", document)
@@ -115,6 +149,12 @@ class HtmlReportTests(unittest.TestCase):
         self.assertEqual(payload["interfaces"][0]["id"], "IF-API")
         self.assertTrue(payload["sequences"])
         self.assertTrue(payload["diagrams"])
+        self.assertIn("planning_percent", payload["assurance"]["progress"])
+        self.assertEqual(payload["report"]["binding"]["format"], HTML_REPORT_FORMAT)
+        self.assertEqual(
+            payload["report"]["binding"]["analysis_state_sha256"],
+            analysis_state_sha256(self.analysis),
+        )
 
     def test_report_data_is_bounded_and_reports_truncation(self) -> None:
         payload = build_html_report_data(self.analysis, max_records=1)
@@ -126,6 +166,49 @@ class HtmlReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "max_records"):
             build_html_report_data(self.analysis, max_records=0)
 
+    def test_large_registers_use_truthful_bounded_report_projections(self) -> None:
+        payload = build_html_report_data(self.analysis)
+        assurance = payload["assurance"]
+        projection = assurance["report_projection"]
+        self.assertLessEqual(
+            len(assurance["obligations"]), MAX_REPORT_ASSURANCE_OBLIGATIONS
+        )
+        self.assertEqual(
+            projection["obligations"]["embedded"],
+            len(assurance["obligations"]),
+        )
+        self.assertGreaterEqual(
+            projection["obligations"]["total"],
+            projection["obligations"]["embedded"],
+        )
+        self.assertIn("portable review package", projection["complete_source"])
+
+        gaps = [
+            {"finding_id": f"SFMEA-{index}", "hazard_id": "HZ-1"}
+            for index in range(MAX_REPORT_SFTA_GAPS_PER_CLASS + 3)
+        ]
+        sfta = _report_sfta_projection(
+            {
+                "schema_version": "1.0",
+                "trees": [],
+                "reconciliation": {
+                    "summary": {"bottom_up_unmapped_findings": len(gaps)},
+                    "finding_to_events": [],
+                    "top_down_uncovered_events": [],
+                    "bottom_up_unmapped_findings": gaps,
+                    "hazard_link_mismatches": [],
+                },
+            }
+        )
+        embedded = sfta["reconciliation"]["bottom_up_unmapped_findings"]
+        gap_projection = sfta["report_projection"]["collections"][
+            "bottom_up_unmapped_findings"
+        ]
+        self.assertEqual(len(embedded), MAX_REPORT_SFTA_GAPS_PER_CLASS)
+        self.assertEqual(gap_projection["total"], len(gaps))
+        self.assertTrue(gap_projection["truncated"])
+        self.assertTrue(sfta["report_projection"]["truncated"])
+
     def test_cli_creates_default_html_report(self) -> None:
         analysis_path = self.root / "analysis.json"
         save_analysis(analysis_path, self.analysis)
@@ -135,6 +218,7 @@ class HtmlReportTests(unittest.TestCase):
         report_path = self.root / "analysis-report.html"
         self.assertTrue(report_path.is_file())
         self.assertIn("Created self-contained SFMEA report", output.getvalue())
+        self.assertRegex(output.getvalue(), r"\([\d,]+ records; \d+\.\d MiB\)")
         self.assertIn("<title>Review report</title>", report_path.read_text(encoding="utf-8"))
 
     def test_embedded_javascript_parses_when_node_is_available(self) -> None:

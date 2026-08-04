@@ -11,7 +11,6 @@ from typing import Any, Iterable
 
 from .html_report import MAX_REPORT_RECORDS, export_html_report
 
-
 _BROWSER_COMMANDS = (
     "msedge",
     "microsoft-edge",
