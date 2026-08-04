@@ -20,6 +20,7 @@ from .visuals import sequence_model
 
 DIAGRAM_SCHEMA = "pysfmea-diagram-1"
 DIAGRAM_BUNDLE_SCHEMA = "pysfmea-diagram-bundle-1"
+DIAGRAM_BUNDLE_VERIFICATION_FORMAT = "pysfmea-diagram-bundle-verification-1"
 DIAGRAM_TYPES = (
     "directed_graph",
     "flow",
@@ -52,6 +53,7 @@ DEFAULT_PROPAGATION_DEPTH = 6
 MAX_PROPAGATION_RECORD_LIMIT = 250
 MAX_PROPAGATION_PATH_LIMIT = 25
 MAX_PROPAGATION_DEPTH = 12
+INTEGRITY_REQUIRED_GENERATOR_VERSION = (0, 31, 0)
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
 
 
@@ -2060,10 +2062,10 @@ def load_diagram_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError(f"diagram file is not valid UTF-8 JSON: {path}: {exc}") from exc
-        if (
-            isinstance(payload, dict)
-            and payload.get("schema_version") == DIAGRAM_BUNDLE_SCHEMA
-            and "integrity" in payload
+        if isinstance(payload, dict) and payload.get(
+            "schema_version"
+        ) == DIAGRAM_BUNDLE_SCHEMA and (
+            "integrity" in payload or _bundle_requires_integrity(payload)
         ):
             try:
                 verify_diagram_bundle_integrity(payload)
@@ -2148,6 +2150,18 @@ def _diagram_bundle_content_sha256(bundle: dict[str, Any]) -> str:
     return canonical_json_sha256(unsigned)
 
 
+def _bundle_requires_integrity(bundle: dict[str, Any]) -> bool:
+    generator = bundle.get("generator")
+    if not isinstance(generator, dict) or generator.get("name") != "PySFMEA":
+        return False
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", str(generator.get("version", "")))
+    if not match:
+        return False
+    return tuple(int(value) for value in match.groups()) >= (
+        INTEGRITY_REQUIRED_GENERATOR_VERSION
+    )
+
+
 def verify_diagram_bundle_integrity(
     bundle: dict[str, Any], *, analysis: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -2160,6 +2174,8 @@ def verify_diagram_bundle_integrity(
         raise ValueError("diagram bundle integrity record is missing")
     if integrity.get("algorithm") != "sha256":
         raise ValueError("diagram bundle integrity algorithm must be sha256")
+    if integrity.get("canonicalization") != "json-sort-keys-compact-utf8":
+        raise ValueError("diagram bundle canonicalization is not supported")
     expected = str(integrity.get("content_sha256", "")).lower()
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise ValueError("diagram bundle content digest is malformed")
@@ -2176,18 +2192,83 @@ def verify_diagram_bundle_integrity(
         raise ValueError("diagram bundle analysis-state digest is malformed")
     binding_matches: bool | None = None
     if analysis is not None:
-        binding_matches = bound_state == canonical_json_sha256(analysis)
-        if not binding_matches:
-            raise ValueError("diagram bundle analysis-state binding does not match")
         if str(binding.get("analysis_schema_version", "")) != str(
             analysis.get("schema_version", "")
         ):
             raise ValueError("diagram bundle analysis schema binding does not match")
+        if str(binding.get("baseline_id", "")) != str(
+            analysis.get("project", {}).get("baseline", {}).get("id", "")
+        ):
+            raise ValueError("diagram bundle baseline binding does not match")
+        binding_matches = bound_state == canonical_json_sha256(analysis)
+        if not binding_matches:
+            raise ValueError("diagram bundle analysis-state binding does not match")
     return {
         "algorithm": "sha256",
         "content_sha256": actual,
         "analysis_state_sha256": bound_state,
         "analysis_binding_matches": binding_matches,
+    }
+
+
+def verify_diagram_bundle_file(
+    source: str | Path, *, analysis: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Verify a bounded bundle file, its diagram schemas, and optional analysis binding."""
+
+    candidate = Path(source).expanduser()
+    if candidate.is_symlink():
+        raise ValueError(f"diagram bundle must not be a symbolic link: {candidate}")
+    path = candidate.resolve()
+    if not path.is_file():
+        raise ValueError(f"diagram bundle must be a regular file: {path}")
+    size = path.stat().st_size
+    if size > MAX_DIAGRAM_FILE_BYTES:
+        raise ValueError(f"diagram bundle exceeds {MAX_DIAGRAM_FILE_BYTES} bytes: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"diagram bundle is not valid UTF-8 JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("diagram bundle root must be an object")
+    verification = verify_diagram_bundle_integrity(payload, analysis=analysis)
+    raw_diagrams = payload.get("diagrams")
+    if not isinstance(raw_diagrams, list):
+        raise ValueError("diagram bundle diagrams must be an array")
+    if len(raw_diagrams) > MAX_DIAGRAMS:
+        raise ValueError(f"diagram bundle exceeds {MAX_DIAGRAMS} diagrams")
+    diagram_ids = [normalize_diagram_model(value)["id"] for value in raw_diagrams]
+    if len(diagram_ids) != len(set(diagram_ids)):
+        raise ValueError("diagram bundle contains duplicate diagram IDs")
+    return {
+        "format": DIAGRAM_BUNDLE_VERIFICATION_FORMAT,
+        "path": str(path),
+        "bytes": size,
+        "valid": True,
+        "status": "matched" if analysis is not None else "valid_binding_not_checked",
+        "binding_requested": analysis is not None,
+        "binding_checked": analysis is not None,
+        "schema_version": payload.get("schema_version", ""),
+        "generator": payload.get("generator", {}),
+        "generated_at": payload.get("generated_at", ""),
+        "project": payload.get("project", {}),
+        "binding": payload.get("binding", {}),
+        "generation": payload.get("generation", {}),
+        "diagram_count": len(diagram_ids),
+        "diagram_ids": diagram_ids,
+        "checks": {
+            "content_integrity": True,
+            "diagram_schema": True,
+            "analysis_binding": verification["analysis_binding_matches"],
+        },
+        "failed_checks": [],
+        "unchecked_checks": [] if analysis is not None else ["analysis_binding"],
+        "errors": [],
+        "content_sha256": verification["content_sha256"],
+        "notice": (
+            "Integrity and binding checks detect unreconciled changes and staleness; "
+            "they do not authenticate an author, approve the analysis, or accept risk."
+        ),
     }
 
 

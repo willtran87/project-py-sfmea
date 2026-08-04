@@ -19,11 +19,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from pysfmea.assurance import (
     archive_pytest_scaffold,
     assurance_progress,
+    assurance_work_queue,
     export_assurance_register,
     export_pytest_scaffold,
     refresh_assurance_register,
     refresh_pytest_scaffold,
     review_obligation,
+    verify_assurance_work_queue,
+    verify_assurance_work_queue_file,
     verify_pytest_scaffold,
 )
 from pysfmea.cli import main
@@ -89,6 +92,121 @@ class AssuranceRegisterTests(unittest.TestCase):
             [value["id"] for value in self.analysis["assurance"]["obligations"]],
         )
 
+    def test_work_queue_verifies_integrity_binding_projection_and_cli(self) -> None:
+        self.analysis["items"][0]["review"]["disposition"] = "accepted"
+        save_analysis(self.root / "analysis.json", self.analysis)
+        self.analysis = load_analysis(self.root / "analysis.json")
+        queue = assurance_work_queue(self.analysis)
+        queue_path = self.root / "assurance-work.json"
+        queue_path.write_text(json.dumps(queue), encoding="utf-8")
+
+        standalone = verify_assurance_work_queue_file(queue_path)
+        self.assertTrue(standalone["valid"])
+        self.assertEqual(standalone["status"], "valid_binding_not_checked")
+        self.assertIsNone(standalone["checks"]["analysis_state"])
+
+        matched = verify_assurance_work_queue_file(
+            queue_path, analysis=self.analysis
+        )
+        self.assertTrue(matched["valid"])
+        self.assertEqual(matched["status"], "matched")
+        self.assertTrue(all(matched["checks"].values()))
+
+        older_producer = json.loads(json.dumps(queue))
+        older_producer["generator"]["version"] = "0.46.0"
+        older_content = dict(older_producer)
+        older_content.pop("integrity")
+        older_producer["integrity"]["content_sha256"] = hashlib.sha256(
+            json.dumps(
+                older_content,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        cross_version = verify_assurance_work_queue(
+            older_producer, analysis=self.analysis
+        )
+        self.assertTrue(cross_version["valid"])
+        self.assertTrue(cross_version["checks"]["semantic_projection"])
+
+        tampered = json.loads(json.dumps(queue))
+        tampered["items"][0]["component"] = "forged.component"
+        rejected = verify_assurance_work_queue(tampered, analysis=self.analysis)
+        self.assertFalse(rejected["valid"])
+        self.assertIn("content_integrity", rejected["failed_checks"])
+
+        content = dict(tampered)
+        content.pop("integrity")
+        tampered["integrity"]["content_sha256"] = hashlib.sha256(
+            json.dumps(
+                content,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        forged = verify_assurance_work_queue(tampered, analysis=self.analysis)
+        self.assertTrue(forged["checks"]["content_integrity"])
+        self.assertTrue(forged["checks"]["structure"])
+        self.assertFalse(forged["checks"]["semantic_projection"])
+        self.assertFalse(forged["valid"])
+
+        invalid_lifecycle = json.loads(json.dumps(queue))
+        invalid_lifecycle["items"][0]["next_action_id"] = "none"
+        content = dict(invalid_lifecycle)
+        content.pop("integrity")
+        invalid_lifecycle["integrity"]["content_sha256"] = hashlib.sha256(
+            json.dumps(
+                content,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        invalid = verify_assurance_work_queue(invalid_lifecycle)
+        self.assertTrue(invalid["checks"]["content_integrity"])
+        self.assertFalse(invalid["checks"]["structure"])
+        self.assertEqual(invalid["status"], "invalid")
+
+        stale_analysis = json.loads(json.dumps(self.analysis))
+        stale_analysis["project"]["baseline"]["id"] = "new-baseline"
+        stale = verify_assurance_work_queue(queue, analysis=stale_analysis)
+        self.assertFalse(stale["checks"]["baseline"])
+        self.assertFalse(stale["checks"]["analysis_state"])
+        self.assertEqual(stale["status"], "mismatched")
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = main(
+                [
+                    "assurance-work-verify",
+                    str(queue_path),
+                    "--analysis",
+                    str(self.root / "missing-analysis.json"),
+                    "--json",
+                ]
+            )
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(
+            json.loads(stdout.getvalue())["errors"][0]["code"],
+            "analysis.load_failed",
+        )
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = main(
+                [
+                    "assurance-work-verify",
+                    str(queue_path),
+                    "--analysis",
+                    str(self.root / "analysis.json"),
+                    "--json",
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(json.loads(stdout.getvalue())["valid"])
+
     def test_register_exports_cli_scaffold_html_and_package(self) -> None:
         json_path = export_assurance_register(
             self.analysis, self.root / "assurance.json", format="json"
@@ -99,9 +217,24 @@ class AssuranceRegisterTests(unittest.TestCase):
         markdown_path = export_assurance_register(
             self.analysis, self.root / "assurance.md", format="markdown"
         )
+        work_path = export_assurance_register(
+            self.analysis, self.root / "assurance-work.json", format="work-json"
+        )
         json_payload = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertTrue(json_payload["obligations"])
         self.assertIn("planning_percent", json_payload["progress"])
+        self.assertEqual(
+            json_payload["work_queue"]["format"],
+            "pysfmea-assurance-work-queue-2",
+        )
+        work_payload = json.loads(work_path.read_text(encoding="utf-8"))
+        self.assertEqual(work_payload, json_payload["work_queue"])
+        self.assertNotIn("obligations", work_payload)
+        self.assertEqual(
+            work_payload["binding"]["analysis_state_sha256"],
+            analysis_state_sha256(self.analysis),
+        )
+        self.assertEqual(work_payload["integrity"]["algorithm"], "sha256")
         with csv_path.open(encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
             self.assertTrue(
@@ -113,6 +246,10 @@ class AssuranceRegisterTests(unittest.TestCase):
                     "cascade_path_inventory_emitted",
                     "cascade_path_inventory_limitations",
                     "cascade_notice",
+                    "work_state",
+                    "automation_eligible",
+                    "next_action_id",
+                    "work_blockers",
                 }
                 <= set(reader.fieldnames or [])
             )
@@ -122,6 +259,7 @@ class AssuranceRegisterTests(unittest.TestCase):
             markdown_path.read_text(encoding="utf-8"),
         )
         self.assertIn("Planning:", markdown_path.read_text(encoding="utf-8"))
+        self.assertIn("Work state", markdown_path.read_text(encoding="utf-8"))
 
         analysis_path = self.root / "analysis.json"
         save_analysis(analysis_path, self.analysis)
@@ -138,6 +276,19 @@ class AssuranceRegisterTests(unittest.TestCase):
                 0,
             )
         self.assertTrue((self.root / "analysis.assurance.json").is_file())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "assurance",
+                        str(analysis_path),
+                        "--format",
+                        "work-json",
+                    ]
+                ),
+                0,
+            )
+        self.assertTrue((self.root / "analysis.assurance-work.json").is_file())
 
         scaffold = export_pytest_scaffold(
             self.analysis,
@@ -300,7 +451,12 @@ class AssuranceRegisterTests(unittest.TestCase):
 
         package = export_review_package(self.analysis, self.root / "package")
         self.assertTrue((package / "assurance-register.json").is_file())
-        self.assertTrue(verify_review_package(package)["valid"])
+        self.assertTrue((package / "assurance-work.json").is_file())
+        package_verification = verify_review_package(package)
+        self.assertTrue(package_verification["valid"])
+        self.assertEqual(
+            package_verification["assurance_work_queue"]["status"], "matched"
+        )
 
     def test_scaffold_publication_cleans_staging_after_failure(self) -> None:
         destination = self.root / "assurance-tests"
@@ -516,6 +672,7 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertEqual(initial["applicable_findings"], 0)
         self.assertIsNone(initial["planning_percent"])
         self.assertTrue(initial["gates"]["plan_ready"])
+        self.assertEqual(assurance_work_queue(self.analysis)["summary"]["total"], 0)
         with self.assertRaisesRegex(ValueError, "disposition='accepted'"):
             export_pytest_scaffold(self.analysis, self.root / "premature-tests")
 
@@ -542,6 +699,15 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertEqual(pending["applicable_findings"], 1)
         self.assertEqual(pending["planning_pending"], 1)
         self.assertFalse(pending["gates"]["plan_ready"])
+        pending_work = assurance_work_queue(self.analysis)
+        self.assertEqual(
+            pending_work["items"][0]["state"], "plan_review_required"
+        )
+        self.assertFalse(pending_work["items"][0]["automation_eligible"])
+        self.assertIn(
+            "named assurance-plan reviewer is missing",
+            pending_work["items"][0]["blockers"],
+        )
 
         review_obligation(
             self.analysis,
@@ -553,6 +719,12 @@ class AssuranceRegisterTests(unittest.TestCase):
         planned = assurance_progress(self.analysis)
         self.assertTrue(planned["gates"]["plan_ready"])
         self.assertEqual(planned["implementation_pending"], 1)
+        planned_work = assurance_work_queue(self.analysis)
+        self.assertEqual(
+            planned_work["items"][0]["state"], "ready_for_implementation"
+        )
+        self.assertTrue(planned_work["items"][0]["automation_eligible"])
+        self.assertEqual(planned["work_queue"]["implementation_ready"], 1)
 
         scaffold = export_pytest_scaffold(
             self.analysis, self.root / "accepted-tests", limit=10
@@ -565,6 +737,11 @@ class AssuranceRegisterTests(unittest.TestCase):
             [value["id"] for value in manifest["obligations"]], [obligation["id"]]
         )
         obligation["automation"]["implementation_status"] = "implemented"
+        execution_work = assurance_work_queue(self.analysis)
+        self.assertEqual(execution_work["items"][0]["state"], "ready_for_execution")
+        self.assertEqual(
+            assurance_progress(self.analysis)["work_queue"]["execution_ready"], 1
+        )
         with self.assertRaisesRegex(ValueError, "no pending"):
             export_pytest_scaffold(self.analysis, self.root / "no-pending-tests")
         included = export_pytest_scaffold(
@@ -573,6 +750,34 @@ class AssuranceRegisterTests(unittest.TestCase):
             include_implemented=True,
         )
         self.assertTrue((included / "assurance-manifest.json").is_file())
+
+        execution = {
+            "id": "EXEC-WORK-QUEUE",
+            "obligation_id": obligation["id"],
+            "status": "failed",
+            "reviews": [],
+        }
+        self.analysis["assurance"]["executions"].append(execution)
+        self.assertEqual(
+            assurance_work_queue(self.analysis)["items"][0]["state"],
+            "execution_remediation_required",
+        )
+        execution["status"] = "passed"
+        self.assertEqual(
+            assurance_work_queue(self.analysis)["items"][0]["state"],
+            "evidence_review_required",
+        )
+        obligation["evidence_status"] = "partial"
+        self.assertEqual(
+            assurance_work_queue(self.analysis)["items"][0]["state"],
+            "evidence_remediation_required",
+        )
+        obligation["evidence_status"] = "sufficient"
+        obligation["assurance_status"] = "verified"
+        resolved = assurance_work_queue(self.analysis)["items"][0]
+        self.assertEqual(resolved["state"], "resolved")
+        self.assertFalse(resolved["actionable"])
+        self.assertEqual(resolved["next_action_id"], "none")
 
     def test_scaffold_verifier_detects_newly_selected_obligations(self) -> None:
         first, second = self.analysis["items"][:2]

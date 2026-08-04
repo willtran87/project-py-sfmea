@@ -33,6 +33,7 @@ class RunManifestTests(unittest.TestCase):
         self.assertEqual(len(registry["registry_sha256"]), 64)
         identifiers = {value["id"] for value in registry["adapters"]}
         self.assertIn("assurance.container_runner", identifiers)
+        self.assertIn("export.json_schema_catalog", identifiers)
         runner = next(
             value
             for value in registry["adapters"]
@@ -44,6 +45,13 @@ class RunManifestTests(unittest.TestCase):
             value for value in registry["adapters"] if value["id"] == "coverage.py_json"
         )
         self.assertEqual(coverage["health"]["status"], "not_configured")
+        schema_exporter = next(
+            value
+            for value in registry["adapters"]
+            if value["id"] == "export.json_schema_catalog"
+        )
+        self.assertEqual(schema_exporter["trust_level"], "deterministic")
+        self.assertEqual(schema_exporter["output_schema"], "json-schema-draft-2020-12")
 
     def test_scan_manifest_is_canonical_and_package_audit_is_separate(self) -> None:
         manifest = self.analysis["run_manifest"]

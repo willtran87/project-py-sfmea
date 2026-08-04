@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import re
 from collections import Counter
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -11,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .assurance import assurance_progress, verify_pytest_scaffold
-from .html_report import HTML_REPORT_FORMAT
+from .html_report import verify_html_report_file
 from .model import utc_now
 from .readiness import repository_readiness
 from .report import analysis_state_sha256, verify_review_package
@@ -20,11 +18,10 @@ from .validation import validate_analysis
 from .visuals import coverage_metrics
 
 WORKFLOW_STATUS_FORMAT = "pysfmea-workflow-status-2"
-MAX_STATUS_HTML_BYTES = 256 * 1024 * 1024
 WORKFLOW_NOTICE = (
     "Workflow status reports file presence, freshness, review progress, and quality-gate "
     "state. Valid package integrity proves the recorded bytes and provenance checks only; "
-    "HTML report binding detects accidental staleness and embedded-payload changes only; "
+    "HTML report binding detects accidental staleness and document/payload changes only; "
     "an assurance scaffold is optional and its reported state is not a handoff gate; "
     "it does not establish analytical sufficiency, engineering approval, risk acceptance, "
     "or certification."
@@ -97,6 +94,7 @@ def _verify_package_artifact(
     verification = verify_review_package(artifact["path"])
     artifact["integrity"] = {
         "valid": bool(verification.get("valid")),
+        "capabilities": list(verification.get("capabilities", [])),
         "checked_files": int(verification.get("checked_files", 0) or 0),
         "counts": dict(verification.get("counts", {})),
         "findings": [
@@ -111,6 +109,81 @@ def _verify_package_artifact(
         ],
         "findings_truncated": len(verification.get("findings", [])) > 50,
         "archive_sha256": str(verification.get("archive_sha256", "")),
+        "schema_catalog": {
+            "present": bool(verification.get("schema_catalog")),
+            "valid": (
+                bool(verification.get("schema_catalog", {}).get("valid"))
+                if verification.get("schema_catalog")
+                else None
+            ),
+            "checks": dict(
+                verification.get("schema_catalog", {}).get("checks", {})
+            ),
+            "schema_count": int(
+                verification.get("schema_catalog", {}).get("schema_count", 0)
+                or 0
+            ),
+            "errors": list(
+                verification.get("schema_catalog", {}).get("errors", [])
+            )[:20],
+        },
+        "analysis_diagnostics": {
+            "present": bool(verification.get("analysis_diagnostics")),
+            "valid": (
+                bool(verification.get("analysis_diagnostics", {}).get("valid"))
+                if verification.get("analysis_diagnostics")
+                else None
+            ),
+            "checks": dict(
+                verification.get("analysis_diagnostics", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("analysis_diagnostics", {}).get("errors", [])
+            )[:20],
+            "artifact_count": int(
+                verification.get("analysis_diagnostics", {}).get(
+                    "artifact_count", 0
+                )
+                or 0
+            ),
+        },
+        "assurance_work_queue": {
+            "present": bool(verification.get("assurance_work_queue")),
+            "valid": (
+                bool(verification.get("assurance_work_queue", {}).get("valid"))
+                if verification.get("assurance_work_queue")
+                else None
+            ),
+            "status": str(
+                verification.get("assurance_work_queue", {}).get("status", "")
+            ),
+            "checks": dict(
+                verification.get("assurance_work_queue", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("assurance_work_queue", {}).get("errors", [])
+            )[:20],
+        },
+        "assurance_register": {
+            "present": bool(verification.get("assurance_register")),
+            "valid": (
+                bool(verification.get("assurance_register", {}).get("valid"))
+                if verification.get("assurance_register")
+                else None
+            ),
+            "checks": dict(
+                verification.get("assurance_register", {}).get("checks", {})
+            ),
+            "errors": list(
+                verification.get("assurance_register", {}).get("errors", [])
+            )[:20],
+            "obligation_count": int(
+                verification.get("assurance_register", {}).get(
+                    "obligation_count", 0
+                )
+                or 0
+            ),
+        },
         "notice": str(verification.get("notice", "")),
     }
     package_binding = verification.get("binding", {})
@@ -163,14 +236,6 @@ def _verify_package_artifact(
     return artifact
 
 
-def _html_report_meta(document: str, name: str) -> str:
-    match = re.search(
-        rf'<meta name="{re.escape(name)}" content="([^"]*)">',
-        document,
-    )
-    return match.group(1) if match else ""
-
-
 def _verify_html_report_artifact(
     artifact: dict[str, Any], analysis: dict[str, Any]
 ) -> dict[str, Any]:
@@ -178,111 +243,38 @@ def _verify_html_report_artifact(
 
     if not artifact.get("exists"):
         return artifact
-    report_path = Path(artifact["path"])
-    declared: dict[str, str] = {}
-    payload_present = False
-    payload_digest = ""
-    read_error = ""
     try:
-        if not report_path.is_file():
-            raise ValueError("report path is not a regular file")
-        if report_path.stat().st_size > MAX_STATUS_HTML_BYTES:
-            raise ValueError(
-                f"report exceeds the {MAX_STATUS_HTML_BYTES}-byte status verification limit"
-            )
-        document = report_path.read_text(encoding="utf-8")
-        declared = {
-            "format": _html_report_meta(document, "pysfmea-report-format"),
-            "baseline_id": _html_report_meta(
-                document, "pysfmea-analysis-baseline"
-            ),
-            "analysis_schema_version": _html_report_meta(
-                document, "pysfmea-analysis-schema"
-            ),
-            "analysis_state_sha256": _html_report_meta(
-                document, "pysfmea-analysis-state-sha256"
-            ),
-            "report_data_sha256": _html_report_meta(
-                document, "pysfmea-report-data-sha256"
+        verification = verify_html_report_file(
+            artifact["path"], analysis=analysis
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        artifact["binding"] = {
+            "valid": False,
+            "status": "invalid",
+            "checks": {"readable": False},
+            "current": {},
+            "report": {},
+            "error": str(exc),
+            "notice": (
+                "Report verification failed before bounded content checks completed."
             ),
         }
-        payload_match = re.search(
-            r'<script id="report-data" type="application/json">(.*?)</script>',
-            document,
-            re.DOTALL,
-        )
-        payload_present = payload_match is not None
-        if payload_match:
-            payload_digest = hashlib.sha256(
-                payload_match.group(1).encode("utf-8")
-            ).hexdigest()
-    except (OSError, UnicodeError, ValueError) as exc:
-        read_error = str(exc)
-
-    metadata_present = any(declared.values())
-    metadata_complete = bool(declared) and all(declared.values())
-    declared_data_digest = declared.get("report_data_sha256", "")
-    digest_shape_valid = all(
-        len(value) == 64
-        and all(character in "0123456789abcdefABCDEF" for character in value)
-        for value in (
-            declared.get("analysis_state_sha256", ""),
-            declared_data_digest,
-        )
-    )
-    internal_checks = {
-        "readable": not read_error,
-        "metadata_complete": metadata_complete,
-        "report_format": declared.get("format") == HTML_REPORT_FORMAT,
-        "payload_present": payload_present,
-        "payload_integrity": bool(
-            digest_shape_valid
-            and payload_present
-            and payload_digest == declared_data_digest.lower()
-        ),
-    }
-    current_baseline = str(
-        analysis.get("project", {}).get("baseline", {}).get("id", "")
-    )
-    current_schema = str(analysis.get("schema_version", ""))
-    current_digest = analysis_state_sha256(analysis)
-    source_checks = {
-        "baseline": current_baseline == declared.get("baseline_id", ""),
-        "schema": current_schema == declared.get("analysis_schema_version", ""),
-        "analysis_state": current_digest
-        == declared.get("analysis_state_sha256", "").lower(),
-    }
-    internal_valid = all(internal_checks.values())
-    binding_valid = internal_valid and all(source_checks.values())
-    if not metadata_present and not read_error:
-        status = "unbound"
-    elif not internal_valid:
-        status = "invalid"
-    elif not binding_valid:
-        status = "mismatched"
-    else:
-        status = "matched"
+        artifact["status"] = "invalid"
+        artifact["current"] = False
+        return artifact
+    status = verification["status"]
     artifact["binding"] = {
-        "valid": binding_valid,
+        "valid": verification["valid"],
         "status": status,
-        "checks": {**internal_checks, **source_checks},
-        "current": {
-            "baseline_id": current_baseline,
-            "analysis_schema_version": current_schema,
-            "analysis_state_sha256": current_digest,
-        },
-        "report": declared,
-        "error": read_error,
-        "notice": (
-            "Report binding detects accidental staleness and payload changes; it is not "
-            "an authenticated signature or engineering approval."
-        ),
+        "checks": verification["checks"],
+        "current": verification["current"],
+        "report": verification["declared"],
+        "integrity_scope": verification["integrity_scope"],
+        "error": "",
+        "notice": verification["notice"],
     }
-    if status != "matched":
-        artifact["status"] = status
-    else:
-        artifact["status"] = "current"
-    artifact["current"] = binding_valid
+    artifact["status"] = "current" if status == "matched" else status
+    artifact["current"] = verification["valid"] and status == "matched"
     return artifact
 
 
@@ -588,16 +580,172 @@ def workflow_status(
         and package_integrity_valid
         and package_binding_valid
     )
-    ready_for_handoff = bool(
-        analysis
-        and readiness["ready"]
-        and validation_errors == 0
-        and unreviewed == 0
-        and revalidation == 0
-        and assurance_plan_ready
-        and report_current
-        and package_current
+
+    def handoff_gate(
+        gate_id: str,
+        label: str,
+        passed: bool,
+        detail: str,
+        remediation_action_id: str,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "id": gate_id,
+            "label": label,
+            "required": True,
+            "passed": passed,
+            "status": "passed" if passed else "blocked",
+            "detail": detail,
+            "remediation_action_id": remediation_action_id,
+            "evidence": evidence,
+        }
+
+    analysis_available = analysis is not None
+    analysis_remediation_action = (
+        "scan_repository" if readiness["ready"] else "resolve_readiness"
     )
+    handoff_gates = [
+        handoff_gate(
+            "repository_ready",
+            "Repository and system context ready",
+            bool(readiness["ready"]),
+            (
+                "Pre-scan readiness has no errors."
+                if readiness["ready"]
+                else f"Resolve {readiness['counts']['error']} readiness error(s)."
+            ),
+            "resolve_readiness",
+            {"ready": bool(readiness["ready"]), "counts": dict(readiness["counts"])},
+        ),
+        handoff_gate(
+            "analysis_available",
+            "Governed analysis available",
+            analysis_available,
+            (
+                "A governed analysis is loaded."
+                if analysis_available
+                else "Scan the repository to create the governed analysis."
+            ),
+            analysis_remediation_action,
+            {"exists": analysis_available, "path": str(analysis_file)},
+        ),
+        handoff_gate(
+            "validation_clear",
+            "Validation errors cleared",
+            analysis_available and validation_errors == 0,
+            (
+                "No validation errors are recorded."
+                if analysis_available and validation_errors == 0
+                else f"Resolve {validation_errors} validation error(s)."
+                if analysis_available
+                else "Validation requires a governed analysis."
+            ),
+            "validate_analysis" if analysis_available else analysis_remediation_action,
+            {"analysis_exists": analysis_available, "error_count": validation_errors},
+        ),
+        handoff_gate(
+            "findings_reviewed",
+            "Findings dispositioned",
+            analysis_available and unreviewed == 0,
+            (
+                "Every active finding has a governed disposition."
+                if analysis_available and unreviewed == 0
+                else f"Review {unreviewed} undispositioned finding(s)."
+                if analysis_available
+                else "Finding review requires a governed analysis."
+            ),
+            "review_findings" if analysis_available else analysis_remediation_action,
+            {"analysis_exists": analysis_available, "unreviewed_count": unreviewed},
+        ),
+        handoff_gate(
+            "revalidation_clear",
+            "Revalidation completed",
+            analysis_available and revalidation == 0,
+            (
+                "No finding requires revalidation."
+                if analysis_available and revalidation == 0
+                else f"Revalidate {revalidation} finding(s) affected by change."
+                if analysis_available
+                else "Revalidation status requires a governed analysis."
+            ),
+            "review_findings" if analysis_available else analysis_remediation_action,
+            {
+                "analysis_exists": analysis_available,
+                "revalidation_required_count": revalidation,
+            },
+        ),
+        handoff_gate(
+            "assurance_plan_ready",
+            "Assurance plans reviewed",
+            analysis_available and assurance_plan_ready,
+            (
+                "Applicable assurance plans satisfy the planning gate."
+                if analysis_available and assurance_plan_ready
+                else "Review the remaining applicable assurance plans."
+                if analysis_available
+                else "Assurance planning requires a governed analysis."
+            ),
+            (
+                "review_assurance_plan"
+                if analysis_available
+                else analysis_remediation_action
+            ),
+            {
+                "analysis_exists": analysis_available,
+                "plan_ready": assurance_plan_ready,
+                "planning_pending": int(assurance.get("planning_pending", 0) or 0),
+                "applicable_findings": int(
+                    assurance.get("applicable_findings", 0) or 0
+                ),
+            },
+        ),
+        handoff_gate(
+            "report_current",
+            "Reviewer report current and bound",
+            analysis_available and report_current,
+            (
+                "The report is valid and bound to the governed analysis."
+                if analysis_available and report_current
+                else "Create or refresh the report against the governed analysis."
+                if analysis_available
+                else "Report binding requires a governed analysis."
+            ),
+            "refresh_report" if analysis_available else analysis_remediation_action,
+            {
+                "analysis_exists": analysis_available,
+                "exists": bool(report_artifact.get("exists")),
+                "status": str(report_artifact.get("status", "missing")),
+                "binding_valid": report_binding_valid,
+            },
+        ),
+        handoff_gate(
+            "package_current",
+            "Review package current and verified",
+            analysis_available and package_current,
+            (
+                "The package is valid and bound to the governed analysis."
+                if analysis_available and package_current
+                else "Create or refresh the verified review package."
+                if analysis_available
+                else "Package verification requires a governed analysis."
+            ),
+            "refresh_package" if analysis_available else analysis_remediation_action,
+            {
+                "analysis_exists": analysis_available,
+                "exists": bool(package_artifact.get("exists")),
+                "status": str(package_artifact.get("status", "missing")),
+                "integrity_valid": package_integrity_valid,
+                "binding_valid": package_binding_valid,
+            },
+        ),
+    ]
+    passed_handoff_gates = sum(gate["passed"] for gate in handoff_gates)
+    handoff_gate_summary = {
+        "total": len(handoff_gates),
+        "passed": passed_handoff_gates,
+        "blocked": len(handoff_gates) - passed_handoff_gates,
+    }
+    ready_for_handoff = handoff_gate_summary["blocked"] == 0
     if not analysis and not readiness["ready"]:
         stage = "configuration_required"
     elif not analysis:
@@ -802,6 +950,8 @@ def workflow_status(
         "repository": str(root),
         "stage": stage,
         "ready_for_handoff": ready_for_handoff,
+        "handoff_gates": handoff_gates,
+        "handoff_gate_summary": handoff_gate_summary,
         "paths": {
             "configuration": str(config),
             "analysis": str(analysis_file),

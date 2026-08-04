@@ -8,6 +8,7 @@ import hashlib
 import html
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -17,7 +18,11 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .architecture import export_architecture
-from .assurance import export_assurance_register
+from .assurance import (
+    export_assurance_register,
+    verify_assurance_register,
+    verify_assurance_work_queue_file,
+)
 from .guidance import guidance_traceability
 from .integrity import canonical_json_sha256
 from .interchange import cyclonedx_document, sarif_document
@@ -118,6 +123,7 @@ REVIEW_PACKAGE_FILES = {
     "guidance-traceability.json",
     "guidance-traceability.csv",
     "assurance-register.json",
+    "assurance-work.json",
     "assurance-register.csv",
     "assurance-register.md",
     "evidence-catalog.json",
@@ -131,10 +137,131 @@ REVIEW_PACKAGE_FILES = {
     "adapter-runs.json",
     "README.md",
 }
-REVIEW_PACKAGE_ALL_FILES = REVIEW_PACKAGE_FILES | {"manifest.json"}
+LEGACY_REVIEW_PACKAGE_FILES = REVIEW_PACKAGE_FILES - {"assurance-work.json"}
+REVIEW_PACKAGE_SCHEMA_FILES = {
+    "schema-catalog.json",
+    "pysfmea-assurance-work-queue.schema.json",
+    "pysfmea-assurance-work-queue-verification.schema.json",
+    "pysfmea-detached-signature.schema.json",
+    "pysfmea-diagram.schema.json",
+    "pysfmea-diagram-bundle.schema.json",
+    "pysfmea-diagram-bundle-verification.schema.json",
+    "pysfmea-html-report-verification.schema.json",
+    "pysfmea-schema-bundle-verification.schema.json",
+    "pysfmea-schema-catalog.schema.json",
+    "pysfmea-review-package-manifest.schema.json",
+    "pysfmea-review-package-verification.schema.json",
+    "pysfmea-workflow-status.schema.json",
+}
+REVIEW_PACKAGE_ALLOWED_FILES = REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES
+REVIEW_PACKAGE_ALL_FILES = REVIEW_PACKAGE_ALLOWED_FILES | {"manifest.json"}
 MAX_ARCHIVE_ENTRIES = 100
 MAX_ARCHIVE_FILE_BYTES = 100_000_000
 MAX_ARCHIVE_TOTAL_BYTES = 500_000_000
+REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
+REVIEW_PACKAGE_VERIFICATION_FORMAT = "pysfmea-review-package-verification-1"
+ANALYSIS_DIAGNOSTICS_VERIFICATION_FORMAT = (
+    "pysfmea-analysis-diagnostics-verification-1"
+)
+ASSURANCE_WORK_QUEUE_PACKAGE_VERSION = (0, 47, 0)
+CAPABILITY_DECLARATION_PACKAGE_VERSION = (0, 48, 0)
+ASSURANCE_REGISTER_PACKAGE_VERSION = (0, 49, 0)
+ANALYSIS_DIAGNOSTICS_PACKAGE_VERSION = (0, 50, 0)
+REVIEW_PACKAGE_CAPABILITIES = (
+    "analysis_diagnostics_projection_v1",
+    "assurance_register_projection",
+    "assurance_work_queue_projection",
+)
+ANALYSIS_DIAGNOSTIC_FILES = {
+    "summary": "summary.json",
+    "validation": "validation.json",
+    "system_context": "system-context.json",
+    "repository_inventory": "repository-inventory.json",
+    "adapter_runs": "adapter-runs.json",
+}
+
+
+def _package_version_at_least(value: Any, minimum: tuple[int, int, int]) -> bool:
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", str(value or ""))
+    return bool(match and tuple(int(part) for part in match.groups()) >= minimum)
+
+
+def _package_requires_assurance_work_queue(manifest: dict[str, Any]) -> bool:
+    capabilities = manifest.get("capabilities", [])
+    if (
+        isinstance(capabilities, list)
+        and "assurance_work_queue_projection" in capabilities
+    ):
+        return True
+    versions = (
+        manifest.get("exporter", {}).get("version", ""),
+        manifest.get("analysis_generator", {}).get("version", ""),
+    )
+    return any(
+        _package_version_at_least(value, ASSURANCE_WORK_QUEUE_PACKAGE_VERSION)
+        for value in versions
+    )
+
+
+def _package_requires_assurance_register_projection(
+    manifest: dict[str, Any],
+) -> bool:
+    capabilities = manifest.get("capabilities", [])
+    if isinstance(capabilities, list) and "assurance_register_projection" in capabilities:
+        return True
+    versions = (
+        manifest.get("exporter", {}).get("version", ""),
+        manifest.get("analysis_generator", {}).get("version", ""),
+    )
+    return any(
+        _package_version_at_least(value, ASSURANCE_REGISTER_PACKAGE_VERSION)
+        for value in versions
+    )
+
+
+def _package_requires_analysis_diagnostics_projection(
+    manifest: dict[str, Any],
+) -> bool:
+    capabilities = manifest.get("capabilities", [])
+    if (
+        isinstance(capabilities, list)
+        and "analysis_diagnostics_projection_v1" in capabilities
+    ):
+        return True
+    versions = (
+        manifest.get("exporter", {}).get("version", ""),
+        manifest.get("analysis_generator", {}).get("version", ""),
+    )
+    return any(
+        _package_version_at_least(value, ANALYSIS_DIAGNOSTICS_PACKAGE_VERSION)
+        for value in versions
+    )
+
+
+def _required_package_capabilities(manifest: dict[str, Any]) -> set[str]:
+    """Return capabilities required by the package's declared producer generation."""
+
+    versions = (
+        manifest.get("exporter", {}).get("version", ""),
+        manifest.get("analysis_generator", {}).get("version", ""),
+    )
+    required: set[str] = set()
+    if any(
+        _package_version_at_least(value, CAPABILITY_DECLARATION_PACKAGE_VERSION)
+        for value in versions
+    ):
+        required.add("assurance_work_queue_projection")
+    if any(
+        _package_version_at_least(value, ASSURANCE_REGISTER_PACKAGE_VERSION)
+        for value in versions
+    ):
+        required.add("assurance_register_projection")
+    if any(
+        _package_version_at_least(value, ANALYSIS_DIAGNOSTICS_PACKAGE_VERSION)
+        for value in versions
+    ):
+        required.add("analysis_diagnostics_projection_v1")
+    return required
 
 
 def _join(value: Any) -> str:
@@ -609,8 +736,13 @@ def export_review_package(
 ) -> Path:
     """Create a checksum-manifested, human- and machine-readable review package."""
 
+    from .schemas import SCHEMA_CATALOG_FORMAT, schema_bundle_documents
+
     package = Path(destination).expanduser().resolve()
     package_analysis = _portable_analysis_snapshot(analysis) if portable else analysis
+    schema_documents = schema_bundle_documents()
+    if set(schema_documents) != REVIEW_PACKAGE_SCHEMA_FILES:
+        raise RuntimeError("public schema bundle does not match review-package contract")
     if package.exists() and not package.is_dir():
         raise ValueError(f"review package destination is not a directory: {package}")
     output_names = REVIEW_PACKAGE_ALL_FILES
@@ -675,6 +807,9 @@ def export_review_package(
             ),
             "assurance-register.json": lambda path: export_assurance_register(
                 package_analysis, path, format="json"
+            ),
+            "assurance-work.json": lambda path: export_assurance_register(
+                package_analysis, path, format="work-json"
             ),
             "assurance-register.csv": lambda path: export_assurance_register(
                 package_analysis, path, format="csv"
@@ -761,6 +896,11 @@ def export_review_package(
         }
         for filename, writer in outputs.items():
             writer(staging / filename)
+        for filename, document in schema_documents.items():
+            (staging / filename).write_text(
+                json.dumps(document, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
 
         readme = staging / "README.md"
         readme.write_text(
@@ -772,17 +912,27 @@ def export_review_package(
             f"- Generated: {utc_now()}\n\n"
             "This package contains the governed JSON analysis, resolved system context, "
             "repository coverage and adapter-run provenance, worksheets, inventory, "
-            "architecture and traceability views, executable assurance contracts, guidance citations, coverage metrics, "
-            "validation findings, and audit history. Checksums are recorded in `manifest.json`.\n\n"
+            "architecture and traceability views, executable assurance contracts, a "
+            "standalone integrity-bound hardening queue, guidance citations, coverage metrics, "
+            "validation findings, audit history, and the exact offline JSON Schema contracts "
+            "for diagrams, package manifests, and verifier verdicts. Checksums are recorded "
+            "in `manifest.json`.\n\n"
             "After transfer or storage, run `sfmea verify-package .` from this directory "
-            "to check the complete file set, checksums, and analysis provenance.\n\n"
+            "to check the complete file set, checksums, analysis provenance, and exact "
+            "diagnostic, assurance-register, and assurance-work projections.\n\n"
             "> Scanner output, diagrams, coverage, and machine suggestions are review aids. "
             "They do not establish correctness, risk acceptance, or hazard-analysis completeness.\n",
             encoding="utf-8",
         )
 
         files = []
-        for path in sorted([*(staging / name for name in outputs), readme]):
+        for path in sorted(
+            [
+                *(staging / name for name in outputs),
+                *(staging / name for name in schema_documents),
+                readme,
+            ]
+        ):
             raw = path.read_bytes()
             files.append(
                 {
@@ -792,7 +942,7 @@ def export_review_package(
                 }
             )
         manifest = {
-            "format": "pysfmea-review-package-1",
+            "format": REVIEW_PACKAGE_FORMAT,
             "generated_at": utc_now(),
             "exporter": {"name": "PySFMEA", "version": __version__},
             "analysis_generator": package_analysis.get("generator", {}),
@@ -802,6 +952,15 @@ def export_review_package(
             .get("baseline", {})
             .get("id", ""),
             "analysis_state_sha256": analysis_state_sha256(package_analysis),
+            "capabilities": list(REVIEW_PACKAGE_CAPABILITIES),
+            "schema_catalog": {
+                "format": SCHEMA_CATALOG_FORMAT,
+                "path": "schema-catalog.json",
+                "canonical_sha256": canonical_json_sha256(
+                    schema_documents["schema-catalog.json"]
+                ),
+                "schema_count": len(schema_documents) - 1,
+            },
             "portable": portable,
             "source_analysis": (
                 Path(source_analysis).name
@@ -1058,7 +1217,9 @@ def _verify_review_archive(source: Path) -> dict[str, Any]:
                         "package.archive_total_limit",
                         f"Archive expands beyond the {MAX_ARCHIVE_TOTAL_BYTES}-byte limit.",
                     )
-                for name in sorted(REVIEW_PACKAGE_ALL_FILES - names):
+                for name in sorted(
+                    (LEGACY_REVIEW_PACKAGE_FILES | {"manifest.json"}) - names
+                ):
                     add(
                         "package.archive_entry_missing",
                         "Required review-package entry is missing from the archive.",
@@ -1109,6 +1270,10 @@ def _verify_review_archive(source: Path) -> dict[str, Any]:
         result["package"] = str(archive)
         result["container"] = "zip"
         result["archive_sha256"] = _sha256_file(archive)
+        if result.get("assurance_work_queue"):
+            result["assurance_work_queue"]["path"] = (
+                f"{archive}!/assurance-work.json"
+            )
         return result
     finally:
         shutil.rmtree(staging)
@@ -1120,6 +1285,113 @@ def _sha256_file(path: Path) -> str:
         while chunk := source.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256_file_bounded(path: Path, *, limit: int) -> tuple[str, int]:
+    """Hash a regular file without buffering or reading beyond the package limit."""
+
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            size += len(chunk)
+            if size > limit:
+                raise ValueError(f"file exceeds the {limit}-byte verification limit")
+            digest.update(chunk)
+    return digest.hexdigest(), size
+
+
+def _read_bounded_json_object(path: Path, *, limit: int) -> dict[str, Any]:
+    """Read a UTF-8 JSON object while enforcing the byte limit during I/O."""
+
+    raw = bytearray()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            raw.extend(chunk)
+            if len(raw) > limit:
+                raise ValueError(f"file exceeds the {limit}-byte verification limit")
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"file is not valid UTF-8 JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError("JSON root is not an object")
+    return document
+
+
+def _verify_analysis_diagnostics(
+    package: Path,
+    listed: set[str],
+    analysis: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Reconcile deterministic diagnostic views with packaged analysis."""
+
+    checks = {name: False for name in ANALYSIS_DIAGNOSTIC_FILES}
+    errors: list[dict[str, str]] = []
+    if analysis is None:
+        errors.append(
+            {
+                "code": "analysis_diagnostics.analysis_unavailable",
+                "message": (
+                    "Diagnostic projections cannot be reconciled because analysis.json "
+                    "is unavailable or invalid."
+                ),
+                "path": "analysis.json",
+            }
+        )
+    else:
+        expected = {
+            "summary": analysis.get("summary", {}),
+            "validation": validate_analysis(analysis),
+            "system_context": analysis.get("system_context", {}),
+            "repository_inventory": analysis.get("repository_inventory", {}),
+            "adapter_runs": analysis.get("adapter_runs", {}),
+        }
+        for name, filename in ANALYSIS_DIAGNOSTIC_FILES.items():
+            path = package / filename
+            try:
+                if filename not in listed:
+                    raise ValueError("artifact is not recorded in the manifest")
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("artifact is not a regular file")
+                if path.stat().st_size > MAX_ARCHIVE_FILE_BYTES:
+                    raise ValueError("artifact exceeds the 100 MB verification limit")
+                actual = _read_bounded_json_object(
+                    path, limit=MAX_ARCHIVE_FILE_BYTES
+                )
+                if name == "validation":
+                    actual_generated_at = actual.pop("generated_at", None)
+                    expected[name].pop("generated_at", None)
+                    checks[name] = bool(
+                        isinstance(actual_generated_at, str)
+                        and actual_generated_at
+                        and actual == expected[name]
+                    )
+                else:
+                    checks[name] = actual == expected[name]
+                if not checks[name]:
+                    raise ValueError(
+                        "content is not the deterministic projection of analysis.json"
+                    )
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                errors.append(
+                    {
+                        "code": f"analysis_diagnostics.{name}",
+                        "message": f"Diagnostic projection failed reconciliation: {exc}.",
+                        "path": filename,
+                    }
+                )
+    return {
+        "format": ANALYSIS_DIAGNOSTICS_VERIFICATION_FORMAT,
+        "valid": all(checks.values()),
+        "checks": checks,
+        "errors": errors,
+        "artifact_count": len(checks),
+        "notice": (
+            "Diagnostic reconciliation establishes exact derivation from packaged analysis; "
+            "it does not establish analysis completeness, correctness, or approval."
+        ),
+    }
 
 
 def verify_review_package(source: str | Path) -> dict[str, Any]:
@@ -1146,7 +1418,7 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
     try:
         if manifest_path.stat().st_size > 5_000_000:
             raise ValueError("manifest exceeds the 5 MB limit")
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = _read_bounded_json_object(manifest_path, limit=5_000_000)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         add("package.manifest_invalid", "error", f"Manifest cannot be read: {exc}")
         return _package_verification_result(package, findings, 0, "")
@@ -1154,20 +1426,28 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
         add("package.manifest_invalid", "error", "Manifest root must be a JSON object.")
         return _package_verification_result(package, findings, 0, "")
     package_format = str(manifest.get("format", ""))
-    if package_format != "pysfmea-review-package-1":
+    if package_format != REVIEW_PACKAGE_FORMAT:
         add(
             "package.format_unsupported",
             "error",
             f"Unsupported or missing package format: {package_format or '<blank>'}",
         )
     entries = manifest.get("files", [])
-    if not isinstance(entries, list) or len(entries) > 10_000:
+    if not isinstance(entries, list) or len(entries) > MAX_ARCHIVE_ENTRIES:
         add(
             "package.file_list_invalid",
             "error",
-            "Manifest files must be a list with at most 10,000 entries.",
+            f"Manifest files must be a list with at most {MAX_ARCHIVE_ENTRIES} entries.",
         )
         return _package_verification_result(package, findings, 0, package_format)
+
+    schema_catalog_declaration = manifest.get("schema_catalog")
+    schema_bundle_declared = schema_catalog_declaration is not None
+    required_files = (
+        REVIEW_PACKAGE_FILES
+        if _package_requires_assurance_work_queue(manifest)
+        else LEGACY_REVIEW_PACKAGE_FILES
+    )
 
     exporter = manifest.get("exporter")
     metadata_valid = (
@@ -1189,6 +1469,38 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
             "package.manifest_metadata_invalid",
             "error",
             "Manifest provenance, project, baseline, portability, or source metadata is malformed.",
+        )
+    raw_capabilities = manifest.get("capabilities")
+    required_capabilities = _required_package_capabilities(manifest)
+    declaration_required = bool(required_capabilities)
+    capabilities_valid = bool(
+        isinstance(raw_capabilities, list)
+        and all(
+            isinstance(value, str) and value in REVIEW_PACKAGE_CAPABILITIES
+            for value in raw_capabilities
+        )
+        and len(raw_capabilities) == len(set(raw_capabilities))
+    )
+    if raw_capabilities is None and declaration_required:
+        add(
+            "package.capabilities_missing",
+            "error",
+            "Current package provenance requires an explicit capability declaration.",
+            "manifest.json",
+        )
+    elif raw_capabilities is not None and not capabilities_valid:
+        add(
+            "package.capabilities_invalid",
+            "error",
+            "Manifest capabilities must be unique supported identifiers.",
+            "manifest.json",
+        )
+    elif declaration_required and set(raw_capabilities or []) != required_capabilities:
+        add(
+            "package.capabilities_incomplete",
+            "error",
+            "Current package provenance does not declare every required capability.",
+            "manifest.json",
         )
     state_digest = manifest.get("analysis_state_sha256", "")
     state_digest_valid = (
@@ -1213,6 +1525,9 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
 
     listed: set[str] = set()
     checked = 0
+    observed_total = 0
+    declared_total = 0
+    total_limit_reported = False
     for index, entry in enumerate(entries, start=1):
         if not isinstance(entry, dict):
             add(
@@ -1298,9 +1613,45 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
                 relative_name,
             )
             continue
+        declared_total += expected_size
+        if expected_size > MAX_ARCHIVE_FILE_BYTES:
+            add(
+                "package.file_limit",
+                "error",
+                f"Manifested file exceeds the {MAX_ARCHIVE_FILE_BYTES}-byte limit.",
+                relative_name,
+            )
+            continue
+        if declared_total > MAX_ARCHIVE_TOTAL_BYTES and not total_limit_reported:
+            add(
+                "package.total_limit",
+                "error",
+                f"Manifested files exceed the {MAX_ARCHIVE_TOTAL_BYTES}-byte total limit.",
+            )
+            total_limit_reported = True
         try:
-            raw = target.read_bytes()
-        except OSError as exc:
+            observed_size = target.stat().st_size
+            if observed_size > MAX_ARCHIVE_FILE_BYTES:
+                add(
+                    "package.file_limit",
+                    "error",
+                    f"Package file exceeds the {MAX_ARCHIVE_FILE_BYTES}-byte limit.",
+                    relative_name,
+                )
+                continue
+            if observed_total + observed_size > MAX_ARCHIVE_TOTAL_BYTES:
+                if not total_limit_reported:
+                    add(
+                        "package.total_limit",
+                        "error",
+                        f"Package files exceed the {MAX_ARCHIVE_TOTAL_BYTES}-byte total limit.",
+                    )
+                    total_limit_reported = True
+                continue
+            actual_hash, actual_size = _sha256_file_bounded(
+                target, limit=MAX_ARCHIVE_FILE_BYTES
+            )
+        except (OSError, ValueError) as exc:
             add(
                 "package.file_unreadable",
                 "error",
@@ -1308,15 +1659,24 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
                 relative_name,
             )
             continue
+        if observed_total + actual_size > MAX_ARCHIVE_TOTAL_BYTES:
+            if not total_limit_reported:
+                add(
+                    "package.total_limit",
+                    "error",
+                    f"Package files exceed the {MAX_ARCHIVE_TOTAL_BYTES}-byte total limit.",
+                )
+                total_limit_reported = True
+            continue
+        observed_total += actual_size
         checked += 1
-        if len(raw) != expected_size:
+        if actual_size != expected_size:
             add(
                 "package.size_mismatch",
                 "error",
-                f"Expected {expected_size} bytes but found {len(raw)}.",
+                f"Expected {expected_size} bytes but found {actual_size}.",
                 relative_name,
             )
-        actual_hash = hashlib.sha256(raw).hexdigest()
         if actual_hash.lower() != expected_hash.lower():
             add(
                 "package.checksum_mismatch",
@@ -1325,14 +1685,14 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
                 relative_name,
             )
 
-    for relative_name in sorted(REVIEW_PACKAGE_FILES - listed):
+    for relative_name in sorted(required_files - listed):
         add(
             "package.required_file_missing",
             "error",
             "Required review artifact is not recorded in the manifest.",
             relative_name,
         )
-    for relative_name in sorted(listed - REVIEW_PACKAGE_FILES):
+    for relative_name in sorted(listed - REVIEW_PACKAGE_ALLOWED_FILES):
         add(
             "package.file_unrecognized",
             "error",
@@ -1342,8 +1702,15 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
 
     actual_files: set[str] = set()
     try:
-        for path in package.rglob("*"):
-            relative_name = path.relative_to(package).as_posix()
+        for index, path in enumerate(package.iterdir(), start=1):
+            relative_name = path.name
+            if index > MAX_ARCHIVE_ENTRIES + 1:
+                add(
+                    "package.entry_limit",
+                    "error",
+                    f"Package directory contains more than {MAX_ARCHIVE_ENTRIES + 1} root entries.",
+                )
+                break
             if path.is_symlink():
                 add(
                     "package.symlink",
@@ -1353,6 +1720,20 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
                 )
             elif path.is_file() and relative_name != "manifest.json":
                 actual_files.add(relative_name)
+            elif path.is_dir():
+                add(
+                    "package.entry_type",
+                    "error",
+                    "Review-package entries must be root-level regular files.",
+                    relative_name,
+                )
+            elif relative_name != "manifest.json":
+                add(
+                    "package.entry_type",
+                    "error",
+                    "Review-package entry is not a regular file.",
+                    relative_name,
+                )
     except OSError as exc:
         add(
             "package.directory_unreadable",
@@ -1367,12 +1748,85 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
             relative_name,
         )
 
+    schema_verification: dict[str, Any] = {}
+    schema_files_listed = REVIEW_PACKAGE_SCHEMA_FILES & listed
+    if schema_bundle_declared or schema_files_listed:
+        if "schema-catalog.json" not in schema_files_listed:
+            add(
+                "package.schema_bundle_incomplete",
+                "error",
+                "The offline schema bundle must include schema-catalog.json.",
+                "schema-catalog.json",
+            )
+        else:
+            try:
+                from .schemas import (
+                    SCHEMA_CATALOG_FILENAME,
+                    SCHEMA_CATALOG_FORMAT,
+                    verify_schema_bundle_documents,
+                )
+
+                schema_documents: dict[str, Any] = {}
+                for filename in sorted(schema_files_listed):
+                    schema_path = package / filename
+                    if schema_path.stat().st_size > 2_000_000:
+                        raise ValueError(f"schema file exceeds 2 MB: {filename}")
+                    document = _read_bounded_json_object(
+                        schema_path, limit=2_000_000
+                    )
+                    schema_documents[filename] = document
+                schema_verification = verify_schema_bundle_documents(
+                    schema_documents
+                )
+                for error in schema_verification["errors"]:
+                    add(
+                        f"package.{error['code']}",
+                        "error",
+                        error["message"],
+                        error["path"],
+                    )
+                if not isinstance(schema_catalog_declaration, dict):
+                    add(
+                        "package.schema_catalog_declaration_missing",
+                        "warning",
+                        "Schema files are present without manifest catalog metadata.",
+                        SCHEMA_CATALOG_FILENAME,
+                    )
+                else:
+                    catalog_document = schema_documents[SCHEMA_CATALOG_FILENAME]
+                    declaration_valid = (
+                        schema_catalog_declaration.get("format")
+                        == SCHEMA_CATALOG_FORMAT
+                        and schema_catalog_declaration.get("path")
+                        == SCHEMA_CATALOG_FILENAME
+                        and schema_catalog_declaration.get("schema_count")
+                        == schema_verification["schema_count"]
+                        and schema_catalog_declaration.get("canonical_sha256")
+                        == canonical_json_sha256(catalog_document)
+                    )
+                    if not declaration_valid:
+                        add(
+                            "package.schema_catalog_declaration_invalid",
+                            "error",
+                            "Manifest schema-catalog metadata does not match the packaged catalog.",
+                            SCHEMA_CATALOG_FILENAME,
+                        )
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                add(
+                    "package.schema_bundle_invalid",
+                    "error",
+                    f"Offline schema bundle cannot be verified: {exc}",
+                    "schema-catalog.json",
+                )
+
+    packaged_analysis: dict[str, Any] | None = None
     analysis_path = package / "analysis.json"
     if "analysis.json" in listed and analysis_path.is_file() and not analysis_path.is_symlink():
         try:
-            analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
-            if not isinstance(analysis, dict):
-                raise ValueError("analysis root is not an object")
+            analysis = _read_bounded_json_object(
+                analysis_path, limit=MAX_ARCHIVE_FILE_BYTES
+            )
+            packaged_analysis = analysis
             analysis_baseline = (
                 analysis.get("project", {}).get("baseline", {}).get("id", "")
             )
@@ -1420,7 +1874,116 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
                 f"Packaged analysis cannot be read: {exc}",
                 "analysis.json",
             )
+    queue_verification: dict[str, Any] = {}
+    packaged_work_queue: dict[str, Any] | None = None
+    queue_path = package / "assurance-work.json"
+    if (
+        "assurance-work.json" in listed
+        and queue_path.is_file()
+        and not queue_path.is_symlink()
+    ):
+        try:
+            queue_verification = verify_assurance_work_queue_file(
+                queue_path, analysis=packaged_analysis
+            )
+            packaged_work_queue = _read_bounded_json_object(
+                queue_path, limit=MAX_ARCHIVE_FILE_BYTES
+            )
+            if packaged_analysis is None:
+                add(
+                    "package.assurance_work_queue_binding_unchecked",
+                    "error",
+                    "Packaged work queue cannot be reconciled because analysis.json is invalid.",
+                    "assurance-work.json",
+                )
+            elif not queue_verification["valid"]:
+                failed = ", ".join(queue_verification["failed_checks"]) or "unknown"
+                add(
+                    "package.assurance_work_queue_invalid",
+                    "error",
+                    "Packaged work queue failed exact analysis reconciliation: "
+                    f"{failed}.",
+                    "assurance-work.json",
+                )
+        except (OSError, UnicodeError, ValueError) as exc:
+            add(
+                "package.assurance_work_queue_invalid",
+                "error",
+                f"Packaged work queue cannot be verified: {exc}",
+                "assurance-work.json",
+            )
+    register_verification: dict[str, Any] = {}
+    if _package_requires_assurance_register_projection(manifest):
+        register_path = package / "assurance-register.json"
+        if (
+            "assurance-register.json" in listed
+            and register_path.is_file()
+            and not register_path.is_symlink()
+            and packaged_analysis is not None
+            and packaged_work_queue is not None
+        ):
+            try:
+                register_document = _read_bounded_json_object(
+                    register_path, limit=MAX_ARCHIVE_FILE_BYTES
+                )
+                register_verification = verify_assurance_register(
+                    register_document,
+                    analysis=packaged_analysis,
+                    standalone_work_queue=packaged_work_queue,
+                )
+                if not register_verification["valid"]:
+                    failed = ", ".join(
+                        name
+                        for name, passed in register_verification["checks"].items()
+                        if not passed
+                    )
+                    add(
+                        "package.assurance_register_invalid",
+                        "error",
+                        "Packaged assurance register failed exact reconciliation: "
+                        f"{failed or 'unknown'}.",
+                        "assurance-register.json",
+                    )
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                add(
+                    "package.assurance_register_invalid",
+                    "error",
+                    f"Packaged assurance register cannot be verified: {exc}",
+                    "assurance-register.json",
+                )
+        else:
+            add(
+                "package.assurance_register_unchecked",
+                "error",
+                "Assurance register reconciliation requires intact analysis and work-queue artifacts.",
+                "assurance-register.json",
+            )
+    diagnostics_verification: dict[str, Any] = {}
+    if _package_requires_analysis_diagnostics_projection(manifest):
+        diagnostics_verification = _verify_analysis_diagnostics(
+            package, listed, packaged_analysis
+        )
+        if not diagnostics_verification["valid"]:
+            failed = ", ".join(
+                name
+                for name, passed in diagnostics_verification["checks"].items()
+                if not passed
+            )
+            add(
+                "package.analysis_diagnostics_invalid",
+                "error",
+                "Packaged analysis diagnostics failed exact reconciliation: "
+                f"{failed or 'unknown'}.",
+                "analysis.json",
+            )
     result = _package_verification_result(package, findings, checked, package_format)
+    result["capabilities"] = (
+        list(raw_capabilities) if capabilities_valid else []
+    )
+    result["schema_catalog"] = schema_verification
+    result["assurance_work_queue"] = queue_verification
+    result["assurance_register"] = register_verification
+    result["analysis_diagnostics"] = diagnostics_verification
     result["binding"] = {
         "baseline_id": str(manifest.get("baseline_id", "")),
         "analysis_schema_version": str(manifest.get("analysis_schema_version", "")),
@@ -1442,6 +2005,7 @@ def _package_verification_result(
     errors = sum(value["level"] == "error" for value in findings)
     warnings = sum(value["level"] == "warning" for value in findings)
     return {
+        "verification_format": REVIEW_PACKAGE_VERIFICATION_FORMAT,
         "package": str(package),
         "container": container,
         "format": package_format,

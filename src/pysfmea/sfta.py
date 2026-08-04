@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .model import stable_id, utc_now
+from .model import preserve_unchanged_generated_at, stable_id, utc_now
 
 SFTA_SCHEMA_VERSION = "1.0"
 SFTA_NOTICE = (
@@ -259,7 +259,7 @@ def build_sfta(analysis: dict[str, Any]) -> dict[str, Any]:
         for value in findings
         if any(hazard in hazard_by_id for hazard in value.get("review", {}).get("linked_hazards", []))
     }
-    return {
+    model = {
         "schema_version": SFTA_SCHEMA_VERSION,
         "generated_at": utc_now(),
         "baseline_id": analysis.get("project", {}).get("baseline", {}).get("id", ""),
@@ -289,6 +289,8 @@ def build_sfta(analysis: dict[str, Any]) -> dict[str, Any]:
             "hazard_link_mismatches": hazard_link_mismatches,
         },
     }
+    preserve_unchanged_generated_at(analysis.get("sfta"), model)
+    return model
 
 
 def export_sfta(

@@ -17,6 +17,7 @@ AdapterCategory = Literal[
     "planner",
     "execution_provider",
     "diagram_renderer",
+    "verifier",
     "exporter",
     "llm_provider",
 ]
@@ -60,6 +61,9 @@ BUILTIN_ADAPTERS = (
     AdapterDescriptor("assurance.container_runner", "execution_provider", "1", ("docker", "podman", "bounded_capture", "artifact_hashing"), "assurance-obligation-1", "execution-evidence-1", "observed", isolation="approved_disposable_container", deterministic=False),
     AdapterDescriptor("hazard.sfta", "analyzer", "1", ("fault_tree_validation", "sfmea_correlation", "coverage_gaps"), "fault-tree-config-1", "sfta-1", "deterministic"),
     AdapterDescriptor("diagram.inline_svg", "diagram_renderer", "10", ("directed_graph", "flow", "sequence", "traceability", "cause_effect", "state", "evidence_labeled_cascade", "deduplicated_component_cascades", "component_diverse_projection", "pinned_finding_projection", "configurable_bounded_projection", "combined_node_budget", "path_omission_accounting", "bidirectional_trace_navigation", "stable_node_links", "projection_status", "projection_reason_codes", "projection_scope_inspector", "copyable_projection_recipe", "state_bound_diagram_bundle", "digest_verified_import", "atomic_publication"), "pysfmea-diagram-1", "self-contained-svg", "deterministic"),
+    AdapterDescriptor("diagram.bundle_verifier", "verifier", "2", ("bounded_file_verification", "content_integrity", "canonical_diagram_validation", "analysis_state_binding", "integrity_downgrade_protection", "machine_readable_result", "structured_failure_result", "explicit_unchecked_state"), "pysfmea-diagram-bundle-1", "pysfmea-diagram-bundle-verification-1", "deterministic"),
+    AdapterDescriptor("report.html_verifier", "verifier", "2", ("bounded_file_verification", "payload_integrity", "document_integrity", "internal_binding_consistency", "analysis_state_binding", "legacy_scope_labeling", "machine_readable_result", "structured_failure_result", "explicit_unchecked_state"), "pysfmea-html-report-1", "pysfmea-html-report-verification-1", "deterministic"),
+    AdapterDescriptor("export.json_schema_catalog", "exporter", "1", ("json_schema_2020_12", "content_addressed_catalog", "offline_contract_discovery", "atomic_publication"), "schema-name-1", "json-schema-draft-2020-12", "deterministic"),
     AdapterDescriptor("export.sarif", "exporter", "1", ("sarif_2_1_0",), "sfmea-analysis-0.6", "sarif-2.1.0", "deterministic"),
     AdapterDescriptor("export.cyclonedx", "exporter", "1", ("cyclonedx_1_6", "declared_inventory"), "dependency-inventory-1", "cyclonedx-1.6", "deterministic"),
     AdapterDescriptor("llm.openai_compatible", "llm_provider", "1", ("grounded_discovery", "grounded_summary", "schema_constrained_output"), "evidence-packet-2", "model-suggestion-2", "model_generated", lifecycle="optional", isolation="remote_explicit_opt_in", deterministic=False),

@@ -45,6 +45,30 @@ and unresolved questions. Missing context does not stop deterministic discovery,
 remains visible and constrains claims about effect, hazard, safe-state, and residual-risk
 coverage.
 
+## Workflow and handoff gates
+
+`sfmea status` is a read-only lifecycle view. Its `stage` identifies the primary next phase,
+but does not imply that only one issue can block delivery. The accompanying handoff checklist
+evaluates eight independent conditions: repository readiness, analysis availability, zero
+validation errors, complete finding review, cleared revalidation, complete accepted-finding
+assurance planning, a current integrity-valid HTML report, and a current integrity-valid
+review package exactly bound to the governed analysis.
+
+Overall handoff readiness is derived from the checklist: every required gate must pass. Each
+gate records a stable ID, status, explanatory detail, supporting counts or binding evidence,
+and the ID of an ordered remediation action. This makes the human display useful as an
+engineering checklist and the JSON result suitable for CI policy. Passing these tool gates
+means the declared work products are internally consistent and complete under configured
+rules; it is not engineering approval, risk acceptance, or certification evidence.
+
+Accepted findings also receive a derived assurance work-queue state. The projection evaluates
+obligation cardinality, unresolved definition gaps, attributed plan review, implementation
+binding, the latest recorded execution, evidence status/review, and terminal assurance state in
+that order. It distinguishes work that is eligible for test implementation or controlled
+execution from work that first requires engineering definition, review, or remediation. The
+projection is reproducible and export-only: it does not modify the governed obligation, approve
+execution, infer evidence sufficiency, or close a finding.
+
 ## Analysis structure
 
 The default implementation-level elements are public and private functions, methods, constructors, selected lifecycle methods, nested functions, closures, named lambdas, declarative data models, and executable module initialization. The inventory also contains the declared dependency environment, project-defined common causes, and local OpenAPI, Swagger, JSON Schema, and protobuf interface contracts. Dependency evidence includes parsed declarations, recursively included requirement files, and hashes of common lock/build manifests. Contract evidence includes extracted operations/data types and a content hash. Tests are evidence sources but are not analyzed as production components unless explicitly included.
@@ -270,8 +294,32 @@ report presents the same scope, selection, and budget facts beside the visual mo
 It also exposes a copyable regeneration recipe beside the exact report analysis-state
 digest. Canonical JSON diagram bundles carry the same state binding plus an internal content
 digest, are verified when re-imported, and are atomically published. These mechanisms detect
-accidental or unauthorized byte-level change after generation; they do not authenticate an
+accidental or unreconciled byte-level change after generation; they do not authenticate an
 author, establish approval, or replace detached signatures for governed review packages.
+The standalone verifier additionally validates every embedded canonical diagram and can
+require an exact schema, baseline, and governed-state match. An omitted analysis argument is
+recorded as not checked. Current generated bundles cannot silently downgrade to legacy import
+behavior by removing their integrity declaration; genuinely older undeclared bundles retain
+import compatibility but are not represented as verified.
+
+Self-contained HTML reports independently protect their exact embedded JSON payload and the
+normalized complete document, including local HTML, CSS, and JavaScript. The report verifier
+also cross-checks the binding inside the payload against the document metadata and can require
+an exact current analysis. Workflow status uses this same verifier. Reports from before the
+document-digest requirement may pass at the explicitly labeled payload-only legacy scope;
+current reports with a removed document digest fail closed. Neither scope authenticates the
+author or establishes approval.
+Both standalone verifier commands emit the same versioned human/JSON verdict shape on success
+and structured JSON on rejection. Completed negative checks are not conflated with checks that
+could not execute, which keeps CI policy decisions deterministic even for malformed or unsafe
+inputs.
+
+Public diagram, generated-bundle, and verification-verdict structures are available as
+self-contained JSON Schema Draft 2020-12 documents through the deterministic schema catalog.
+Each catalog entry carries a canonical content digest so an integration can pin the exact
+contract it consumed. Structural schema validation complements but does not replace semantic
+verification of content digests, unique identifiers, edge references, or current analysis
+bindings.
 
 Traceability graph identities are namespaced by element kind. Human catalog IDs remain
 visible as `reference_id`, while a requirement and hazard that happen to share the same
@@ -293,7 +341,10 @@ The independent package verifier treats the manifest as untrusted input. It acce
 only canonical package-relative POSIX paths and regular files, requires the complete
 artifact set, and rejects traversal, aliases, symbolic links, missing or unexpected
 files, malformed metadata, byte/checksum changes, and baseline, schema, or generator
-provenance mismatches. A successful result proves internal package consistency only;
+provenance mismatches. Current packages also carry the content-addressed public schema
+catalog and all diagram/verifier contracts; verification reconciles their file set,
+identities, canonical digests, and manifest declaration while retaining compatibility
+with older schema-less format-1 packages. A successful result proves internal package consistency only;
 it does not authenticate the manifest owner or approve the engineering content.
 
 Single-file review archives use the same package manifest and content rules. Archive

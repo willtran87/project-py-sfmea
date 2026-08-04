@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -50,6 +51,7 @@ class StoreTests(unittest.TestCase):
             )
             path = root / "analysis.json"
             save_analysis(path, scan_repository(root))
+            first_bytes = path.read_bytes()
 
             first = load_analysis(path)
             second = load_analysis(path)
@@ -59,6 +61,16 @@ class StoreTests(unittest.TestCase):
                 analysis_state_sha256(first),
                 analysis_state_sha256(second),
             )
+            with (
+                mock.patch(
+                    "pysfmea.assurance.utc_now", return_value="2099-01-01T00:00:00+00:00"
+                ),
+                mock.patch(
+                    "pysfmea.sfta.utc_now", return_value="2099-01-01T00:00:00+00:00"
+                ),
+            ):
+                save_analysis(path, first)
+            self.assertEqual(path.read_bytes(), first_bytes)
 
     def test_atomic_round_trip_and_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

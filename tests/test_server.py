@@ -150,6 +150,8 @@ class ServerTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Assurance plan", REVIEW_HTML)
+        self.assertIn("progress.work_queue?.implementation_ready", REVIEW_HTML)
+        self.assertIn("work: ${work.state", REVIEW_HTML)
         self.assertIn("Control model questions", REVIEW_HTML)
         self.assertIn("Cascade observation paths", REVIEW_HTML)
         self.assertIn("saveAssurancePlan", REVIEW_HTML)

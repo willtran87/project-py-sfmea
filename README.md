@@ -1,5 +1,9 @@
 # PySFMEA
 
+[![CI](https://github.com/willtran87/project-py-sfmea/actions/workflows/ci.yml/badge.svg)](https://github.com/willtran87/project-py-sfmea/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 PySFMEA scans a Python repository and creates a local, reviewable Software Failure Modes and Effects Analysis starter. It inventories functions and methods, recognizes risk-relevant code signals, proposes software-specific failure modes, and opens a browser workspace for engineering review.
 
 It is designed to help begin and maintain an SFMEA. It does not claim that static analysis can determine system consequences or replace a cross-functional review.
@@ -82,6 +86,24 @@ Detached package signing is optional and uses the maintained `cryptography` libr
 python -m pip install -e ".[signing]"
 ```
 
+Public interchange contracts are discoverable without network access or optional packages:
+
+```powershell
+sfmea schema --list
+sfmea schema --list --json
+sfmea schema diagram-bundle -o diagram-bundle.schema.json
+sfmea schema html-report-verification -o report-verdict.schema.json
+sfmea schema workflow-status -o workflow-status.schema.json
+sfmea schema assurance-work-queue -o assurance-work-queue.schema.json
+sfmea schema --bundle offline-contracts
+sfmea schema --verify-bundle offline-contracts
+sfmea schema --verify-bundle offline-contracts --json
+```
+
+The catalog publishes deterministic SHA-256 identifiers for self-contained JSON Schema
+Draft 2020-12 documents. See [docs/SCHEMAS.md](docs/SCHEMAS.md) for compatibility and
+semantic-validation boundaries.
+
 ## Quick start
 
 Create a project configuration and edit its system boundary, hazards, rating policy,
@@ -103,7 +125,11 @@ generated example template rather than presenting placeholder inputs as ready. U
 analysis files in the repository root or `.artifacts`, classifies the current lifecycle
 stage, reports review and validation counts, identifies missing or stale HTML/PDF/package
 artifacts, verifies discovered review-package checksums and provenance, and prints ordered
-next commands. It separately reports assurance-plan, test-implementation, execution,
+next commands. The stage names the primary phase; a separate eight-gate checklist exposes
+all simultaneous handoff blockers for repository readiness, analysis availability,
+validation, finding review, revalidation, assurance planning, report currency, and package
+currency. Every blocked gate includes concrete evidence and a remediation action ID that
+maps to the ordered command list. It separately reports assurance-plan, test-implementation, execution,
 evidence-review, and verification progress for accepted findings. If an assurance scaffold
 exists beside the analysis, status also verifies its manifest and governed-analysis binding,
 reports expected implementation edits separately, distinguishes unrelated analysis changes
@@ -126,14 +152,17 @@ sfmea status C:\path\to\python-repo `
   --assurance-scaffold D:\review-queues\platform
 ```
 
-HTML reports carry a canonical analysis-state declaration and an embedded-data digest.
-Status verifies both before treating a report as current, so copying or touching an old
-report does not satisfy the handoff gate. The declaration detects accidental staleness
-and payload changes; unlike an optional detached package signature, it is not an
-authentication mechanism. Suggested refresh commands use the discovered output paths
+Validate that payload offline with the published `workflow-status` JSON Schema; gate-count,
+readiness, and remediation relationships remain semantic checks supplied by PySFMEA.
+
+HTML reports carry a canonical analysis-state declaration plus independent embedded-data
+and whole-document digests. Status verifies them before treating a report as current, so
+copying, touching, or modifying an old report does not satisfy the handoff gate. These
+checks detect staleness and unreconciled content changes; unlike an optional detached
+package signature, they are not an authentication mechanism. Suggested refresh commands use the discovered output paths
 and replacement flags so they can be run directly. `--require-handoff-ready` returns a
-nonzero exit code until every readiness, review, validation, report, and package gate is
-satisfied, making the cockpit usable in CI without changing normal interactive behavior.
+nonzero exit code until all eight gates pass, making the cockpit usable in CI without
+changing normal interactive behavior.
 Conventional `assurance-tests` directories are discovered automatically; use
 `--assurance-scaffold PATH` when a queue is stored elsewhere, repeating the option for
 subsystem- or team-specific queues. Paths are normalized and deduplicated in request order.
@@ -225,6 +254,27 @@ sfmea report sfmea-analysis.json `
   -o .artifacts\sfmea-report.html
 ```
 
+Verify the complete standalone document and optionally require an exact analysis match:
+
+```powershell
+sfmea report-verify .artifacts\sfmea-report.html `
+  --analysis sfmea-analysis.json
+sfmea report-verify .artifacts\sfmea-report.html `
+  --analysis sfmea-analysis.json `
+  --json
+```
+
+Without `--analysis`, integrity is checked but the binding is explicitly reported as not
+checked. Reports generated before whole-document protection remain identifiable as legacy
+payload-only artifacts rather than being represented as fully protected.
+
+JSON mode always emits a versioned verdict, including when the report is missing, malformed,
+unsafe to follow, or fails verification. `failed_checks` identifies completed negative checks,
+`unchecked_checks` distinguishes checks that could not run, and `errors` carries stable codes
+plus diagnostic messages. `binding_requested` and `binding_checked` preserve whether an exact
+analysis comparison was requested and whether it actually ran. Exit status is `0` for a valid verdict, `1` when the artifact or
+binding is rejected, and `2` when a requested analysis input cannot be loaded.
+
 Failure-propagation coverage can be expanded or simplified without changing code:
 
 ```powershell
@@ -276,6 +326,22 @@ Exported JSON diagram bundles bind the exact governed analysis-state digest and 
 carry a canonical content digest, verify that digest when re-imported, and publish
 atomically so a failed write cannot replace the previous artifact.
 
+Verify a standalone bundle before consuming it, optionally requiring an exact match to
+the current governed analysis:
+
+```powershell
+sfmea diagram-verify diagrams.json --analysis sfmea-analysis.json
+sfmea diagram-verify diagrams.json --analysis sfmea-analysis.json --json
+```
+
+Verification checks the bundle digest, every embedded canonical diagram schema, unique
+diagram IDs, and—when `--analysis` is supplied—the schema, baseline, and complete analysis
+state binding. Omitting `--analysis` is reported as “not checked,” never as a match.
+Human and JSON output use the same versioned verdict contract. JSON remains parseable for
+rejected, malformed, missing, oversized, and symbolic-link inputs, with completed failures
+kept distinct from checks that could not run. Exit statuses follow the report verifier's
+`0` valid, `1` rejected artifact/binding, and `2` analysis-input error convention.
+
 Project-specific diagrams can represent state machines, deployment flows,
 cause/effect chains, data flow, or another directed relationship model. Include one
 or more validated JSON files with repeatable `--diagram` arguments:
@@ -304,8 +370,13 @@ explicit.
 `sfmea package` creates a complete review directory containing the governed analysis
 snapshot, resolved context, repository coverage, adapter-run provenance, CSV and
 Markdown worksheets, inventory, architecture, traceability,
-coverage, validation, summary, audit history, and a SHA-256 manifest. A non-empty
-destination is protected unless `--force` is supplied.
+coverage, validation, summary, audit history, the exact offline public-schema catalog,
+twelve self-contained assurance, diagram, workflow, package, catalog, signature, and verifier
+schema documents, a standalone `assurance-work.json` hardening queue,
+and a SHA-256 manifest. A non-empty destination is protected unless `--force` is supplied.
+The manifest explicitly declares `analysis_diagnostics_projection_v1`,
+`assurance_register_projection`, and `assurance_work_queue_projection` capabilities so offline
+consumers can discover these contracts without guessing from filenames or tool versions.
 Packages are generated in a staging directory and published only after every report
 and checksum succeeds. `--force` refreshes recognized package files but refuses a
 directory containing unrecognized files, protecting reviewer-added material.
@@ -315,10 +386,33 @@ the packaged snapshot. The governed working analysis is not modified.
 
 `sfmea verify-package` independently checks the package format, complete artifact
 set, path safety, regular-file boundaries, byte sizes, SHA-256 checksums, baseline,
-schema, and generator provenance. It rejects traversal paths, symbolic links,
+analysis schema, generator provenance, schema-catalog completeness, schema identities,
+canonical schema digests, and the manifest/verdict contract boundary. It also verifies the
+work queue's own digest and recomputes its exact projection from packaged `analysis.json`, so
+rewriting the queue and updating the manifest checksum is still rejected. The verifier also
+regenerates the full `assurance-register.json`, verifies its embedded queue,
+and requires that embedded and standalone queues agree exactly. It also regenerates the
+summary, validation findings, resolved system context, repository inventory, and adapter-run
+ledger from packaged analysis. A changed diagnostic artifact remains invalid even if its
+manifest checksum is recomputed; the validation generation timestamp is treated as provenance
+while counts and findings match exactly. Producer version is verified as
+provenance but excluded from semantic queue matching, so compatible format-2 artifacts remain
+valid across verifier upgrades. JSON verdicts carry a dedicated
+`pysfmea-review-package-verification-1` discriminator independently of the artifact
+format they observe. The verifier rejects traversal paths, symbolic links,
 missing or extra files, malformed metadata, and content tampering, and returns a
 nonzero exit code when the package is invalid. This establishes consistency with the
-manifest; it is not a digital signature, engineering approval, or semantic review.
+manifest and the declared deterministic projections; it is not a digital signature, engineering
+approval, or proof that planned controls and tests are sufficient.
+Directory verification is flat and bounded: it does not recursively traverse unexpected trees,
+hashes manifested files as streams, and reapplies byte limits before every semantic JSON parse.
+Pre-0.37 format-1 packages without the additive schema bundle remain supported; a package
+that declares or contains schema files must carry a complete internally consistent set. The
+complete 0.37 four-contract, 0.38 six-contract, 0.39 eight-contract, 0.40–0.42
+nine-contract, 0.43–0.44 ten-contract, and 0.45 eleven-contract profiles remain verifiable;
+mixed, partial, duplicated, and unknown profiles are rejected.
+ZIP verifier output identifies embedded artifacts with stable logical references such as
+`package.zip!/assurance-work.json`; it never exposes a deleted temporary extraction path.
 
 `--zip` atomically publishes the same complete package as a single ZIP file. The
 verifier reads ZIP packages through a guarded temporary staging area: entry names
@@ -326,8 +420,8 @@ must be unique, canonical root-level paths; directories, symbolic links, encrypt
 members, unknown files, oversized entries, excessive expanded size, and suspicious
 decompression ratios are rejected before content verification. It does not use
 general-purpose archive extraction. A successful ZIP result also reports the SHA-256
-of the archive itself for transfer-log comparison. The current safety limits are 100
-entries, 100 MB per expanded member, and 500 MB total expanded content.
+of the archive itself for transfer-log comparison. Directory and ZIP verification share a
+100-entry boundary, a 100 MB per-file limit, and a 500 MB total-content limit.
 
 Optionally authenticate a verified package with an organization-controlled Ed25519
 PEM key. Keep the detached signature beside—not inside—the package:
@@ -352,6 +446,16 @@ explicitly trusted `--public-key`; it reports the SHA-256 fingerprint of that ke
 Use your approved key-generation, storage, rotation, revocation, and release process.
 This proves possession of the matching private key, not that the signer was authorized
 or that the SFMEA was technically approved.
+
+The `detached-signature` public schema defines the complete envelope and can be exported with
+`sfmea schema detached-signature`. Structural validity does not replace cryptographic
+verification against the exact package and a separately trusted public key.
+
+For offline CI integrations, `sfmea schema --bundle DIRECTORY` atomically exports the catalog
+and every contract in one operation. `sfmea schema --verify-bundle DIRECTORY` independently
+checks the complete known profile, root-level regular-file boundary, JSON structure, identities,
+and catalog digests. Use `--json` for the stable machine verdict. Refreshing a non-empty bundle
+requires `--force` and is refused if the directory contains unrecognized or non-file entries.
 
 Check whether the review meets the configured completeness gates:
 
@@ -491,13 +595,38 @@ Export the complete Failure Mode Assurance Matrix:
 
 ```powershell
 sfmea assurance sfmea-analysis.json --format json -o assurance-register.json
+sfmea assurance sfmea-analysis.json --format work-json -o assurance-work.json
 sfmea assurance sfmea-analysis.json --format csv -o assurance-register.csv
 sfmea assurance sfmea-analysis.json --format markdown -o assurance-register.md
 ```
 
+Every export also carries a deterministic work-queue projection for accepted findings. It
+separates definition and plan-review blockers from implementation-ready tests,
+execution-ready tests, failed execution remediation, evidence review/remediation, final
+verification review, and resolved obligations. Each entry includes stable finding/obligation
+IDs, priority, component, blockers, automation eligibility, the latest execution state, and a
+next-action ID. JSON contains the complete `pysfmea-assurance-work-queue-2` object; CSV and
+Markdown expose the same state alongside each obligation. These are lifecycle directions—not
+approval to execute repository code and not evidence that a test is effective.
+
+Use `--format work-json` when CI, an issue importer, or a portfolio dashboard needs only the
+queue. It carries generator provenance, exact baseline/schema/analysis-state binding, and a
+canonical content digest. Validate its structure offline with
+`sfmea schema assurance-work-queue`, then verify integrity and freshness before consuming it:
+
+```powershell
+sfmea assurance-work-verify assurance-work.json
+sfmea assurance-work-verify assurance-work.json --analysis sfmea-analysis.json --json
+```
+
+The first command detects content drift. Supplying the analysis additionally recomputes the
+entire deterministic projection, so a stale queue or an edited queue with a recomputed digest
+is rejected. Verification establishes consistency, not authorship, approval, or authorization
+to execute tests.
+
 The local browser reviewer also exposes an **Assurance plan** workspace for accepted
 findings. It presents the derived stimulus, acceptance criteria, definition gaps,
-implementation/evidence state, and lifecycle progress without requiring users to copy
+implementation/evidence state, explicit work state and next action, and lifecycle progress without requiring users to copy
 obligation IDs into CLI commands. A named reviewer and rationale are mandatory for every
 planning decision. Evidence-derived and approval-controlled states remain read-only, and
 every mutation carries the loaded analysis ETag as an `If-Match` precondition. External
@@ -931,9 +1060,20 @@ relevance; they do not prove a defect, regulatory applicability, or compliance.
 
 ## Development
 
-Run the tests without installing:
+Install the development tools and run the same core checks as CI:
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m unittest discover -s tests -v
+python -m pip install -e ".[dev,signing]"
+python -m compileall -q src
+python -m ruff check src tests
+python -m pytest -q
+python -m build
 ```
+
+Project policies and maintenance references:
+
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Release checklist](docs/RELEASE.md)
+- [Changelog](CHANGELOG.md)
+- [Requirements traceability](docs/REQUIREMENTS_TRACEABILITY.md)

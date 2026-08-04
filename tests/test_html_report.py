@@ -21,9 +21,11 @@ from pysfmea.html_report import (
     _report_sfta_projection,
     build_html_report_data,
     export_html_report,
+    verify_html_report_file,
 )
 from pysfmea.report import analysis_state_sha256
 from pysfmea.scanner import scan_repository
+from pysfmea.schemas import schema_document
 from pysfmea.store import save_analysis
 
 
@@ -114,6 +116,10 @@ class HtmlReportTests(unittest.TestCase):
         self.assertRegex(
             document,
             r'<meta name="pysfmea-report-data-sha256" content="[0-9a-f]{64}">',
+        )
+        self.assertRegex(
+            document,
+            r'<meta name="pysfmea-document-sha256" content="[0-9a-f]{64}">',
         )
         self.assertIn('data-view="failure-modes"', document)
         self.assertIn('data-view="coverage"', document)
@@ -214,11 +220,47 @@ class HtmlReportTests(unittest.TestCase):
             {node["id"] for node in propagation["nodes"]},
         )
         self.assertIn("planning_percent", payload["assurance"]["progress"])
+        self.assertIn("work_queue", payload["assurance"]["progress"])
+        self.assertTrue(
+            all("work" in value for value in payload["assurance"]["obligations"])
+        )
+        self.assertIn("pysfmea-assurance-work-queue-2", document)
+        self.assertIn("work: ${work.state}", document)
         self.assertEqual(payload["report"]["binding"]["format"], HTML_REPORT_FORMAT)
         self.assertEqual(
             payload["report"]["binding"]["analysis_state_sha256"],
             analysis_state_sha256(self.analysis),
         )
+        verification = verify_html_report_file(output, analysis=self.analysis)
+        self.assertTrue(verification["valid"])
+        self.assertEqual(verification["status"], "matched")
+        self.assertEqual(verification["integrity_scope"], "document_and_payload")
+        self.assertTrue(verification["checks"]["document_integrity"])
+        self.assertTrue(verification["checks"]["payload_binding"])
+
+        output.write_text(
+            document.replace("--radius:16px", "--radius:17px", 1),
+            encoding="utf-8",
+        )
+        changed_shell = verify_html_report_file(output, analysis=self.analysis)
+        self.assertFalse(changed_shell["valid"])
+        self.assertEqual(changed_shell["integrity_scope"], "invalid")
+        self.assertFalse(changed_shell["checks"]["document_integrity"])
+        self.assertIn("document_integrity", changed_shell["failed_checks"])
+        self.assertTrue(changed_shell["checks"]["payload_integrity"])
+
+        output.write_text(
+            re.sub(
+                r'\n<meta name="pysfmea-document-sha256" content="[0-9a-f]{64}">',
+                "",
+                document,
+                count=1,
+            ),
+            encoding="utf-8",
+        )
+        downgraded = verify_html_report_file(output, analysis=self.analysis)
+        self.assertFalse(downgraded["valid"])
+        self.assertFalse(downgraded["checks"]["document_integrity"])
 
     def test_report_data_is_bounded_and_reports_truncation(self) -> None:
         payload = build_html_report_data(self.analysis, max_records=1)
@@ -312,6 +354,83 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn("Created self-contained SFMEA report", output.getvalue())
         self.assertRegex(output.getvalue(), r"\([\d,]+ records; \d+\.\d MiB\)")
         self.assertIn("<title>Review report</title>", report_path.read_text(encoding="utf-8"))
+
+        verification_output = io.StringIO()
+        with contextlib.redirect_stdout(verification_output):
+            result = main(
+                [
+                    "report-verify",
+                    str(report_path),
+                    "--analysis",
+                    str(analysis_path),
+                    "--json",
+                ]
+            )
+        self.assertEqual(result, 0)
+        verification = json.loads(verification_output.getvalue())
+        self.assertTrue(verification["valid"])
+        self.assertTrue(verification["checks"]["analysis_state"])
+        self.assertEqual(verification["integrity_scope"], "document_and_payload")
+        verification_schema = schema_document("html-report-verification")
+        self.assertLessEqual(set(verification_schema["required"]), set(verification))
+        self.assertEqual(
+            set(verification_schema["properties"]["checks"]["required"]),
+            set(verification["checks"]),
+        )
+
+        human_output = io.StringIO()
+        with contextlib.redirect_stdout(human_output):
+            result = main(["report-verify", str(report_path)])
+        self.assertEqual(result, 0)
+        self.assertIn("analysis binding=not checked", human_output.getvalue())
+        self.assertIn("Unchecked checks:", human_output.getvalue())
+        self.assertIn("do not authenticate", human_output.getvalue())
+
+        tampered_document = report_path.read_text(encoding="utf-8").replace(
+            "--radius:16px", "--radius:17px", 1
+        )
+        report_path.write_text(tampered_document, encoding="utf-8")
+        invalid_output = io.StringIO()
+        with contextlib.redirect_stdout(invalid_output):
+            result = main(["report-verify", str(report_path), "--json"])
+        self.assertEqual(result, 1)
+        invalid_verification = json.loads(invalid_output.getvalue())
+        self.assertFalse(invalid_verification["valid"])
+        self.assertEqual(invalid_verification["status"], "invalid")
+        self.assertEqual(invalid_verification["integrity_scope"], "invalid")
+        self.assertIn("document_integrity", invalid_verification["failed_checks"])
+
+        missing_output = io.StringIO()
+        with contextlib.redirect_stdout(missing_output):
+            result = main(
+                ["report-verify", str(self.root / "missing-report.html"), "--json"]
+            )
+        self.assertEqual(result, 1)
+        missing_verification = json.loads(missing_output.getvalue())
+        self.assertFalse(missing_verification["valid"])
+        self.assertFalse(missing_verification["binding_requested"])
+        self.assertFalse(missing_verification["binding_checked"])
+        self.assertEqual(
+            missing_verification["errors"][0]["code"],
+            "report.verification_failed",
+        )
+
+        input_error_output = io.StringIO()
+        with contextlib.redirect_stdout(input_error_output):
+            result = main(
+                [
+                    "report-verify",
+                    str(report_path),
+                    "--analysis",
+                    str(self.root / "missing-analysis.json"),
+                    "--json",
+                ]
+            )
+        self.assertEqual(result, 2)
+        input_error = json.loads(input_error_output.getvalue())
+        self.assertTrue(input_error["binding_requested"])
+        self.assertFalse(input_error["binding_checked"])
+        self.assertEqual(input_error["errors"][0]["code"], "analysis.load_failed")
 
     def test_embedded_javascript_parses_when_node_is_available(self) -> None:
         node = shutil.which("node")

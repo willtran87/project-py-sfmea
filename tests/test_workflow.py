@@ -11,6 +11,8 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+from jsonschema import Draft202012Validator
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.assurance import export_pytest_scaffold
@@ -19,6 +21,7 @@ from pysfmea.config import load_config, write_config_template
 from pysfmea.html_report import export_html_report
 from pysfmea.report import export_review_archive
 from pysfmea.scanner import scan_repository
+from pysfmea.schemas import schema_document
 from pysfmea.store import save_analysis, update_item_review
 from pysfmea.workflow import WORKFLOW_STATUS_FORMAT, workflow_status
 
@@ -62,6 +65,38 @@ class WorkflowStatusTests(unittest.TestCase):
         self.assertTrue(before["readiness"]["ready"])
         self.assertFalse(before["analysis"]["exists"])
         self.assertEqual(before["next_actions"][0]["id"], "scan_repository")
+        self.assertEqual(
+            [gate["id"] for gate in before["handoff_gates"]],
+            [
+                "repository_ready",
+                "analysis_available",
+                "validation_clear",
+                "findings_reviewed",
+                "revalidation_clear",
+                "assurance_plan_ready",
+                "report_current",
+                "package_current",
+            ],
+        )
+        before_gates = {gate["id"]: gate for gate in before["handoff_gates"]}
+        self.assertTrue(before_gates["repository_ready"]["passed"])
+        self.assertFalse(before_gates["analysis_available"]["passed"])
+        self.assertEqual(
+            before_gates["analysis_available"]["remediation_action_id"],
+            "scan_repository",
+        )
+        self.assertEqual(
+            before["handoff_gate_summary"],
+            {"total": 8, "passed": 1, "blocked": 7},
+        )
+        self.assertEqual(
+            before["ready_for_handoff"],
+            before["handoff_gate_summary"]["blocked"] == 0,
+        )
+        available_actions = {action["id"] for action in before["next_actions"]}
+        for gate in before["handoff_gates"]:
+            if not gate["passed"]:
+                self.assertIn(gate["remediation_action_id"], available_actions)
 
         analysis = self._scan()
         after = workflow_status(self.root)
@@ -75,6 +110,10 @@ class WorkflowStatusTests(unittest.TestCase):
         self.assertIn(
             "review_findings", [value["id"] for value in after["next_actions"]]
         )
+        available_actions = {action["id"] for action in after["next_actions"]}
+        for gate in after["handoff_gates"]:
+            if not gate["passed"]:
+                self.assertIn(gate["remediation_action_id"], available_actions)
 
     def test_artifact_freshness_integrity_and_exact_binding(self) -> None:
         analysis = self._scan()
@@ -100,9 +139,29 @@ class WorkflowStatusTests(unittest.TestCase):
                 "payload_integrity"
             ]
         )
+        self.assertTrue(
+            current["artifacts"]["html_report"]["binding"]["checks"][
+                "document_integrity"
+            ]
+        )
+        self.assertEqual(
+            current["artifacts"]["html_report"]["binding"]["integrity_scope"],
+            "document_and_payload",
+        )
         self.assertEqual(current["artifacts"]["review_package"]["status"], "current")
+        current_gates = {gate["id"]: gate for gate in current["handoff_gates"]}
+        self.assertTrue(current_gates["report_current"]["passed"])
+        self.assertTrue(current_gates["package_current"]["passed"])
         self.assertTrue(
             current["artifacts"]["review_package"]["integrity"]["valid"]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"]["capabilities"],
+            [
+                "analysis_diagnostics_projection_v1",
+                "assurance_register_projection",
+                "assurance_work_queue_projection",
+            ],
         )
         self.assertTrue(current["artifacts"]["review_package"]["binding"]["valid"])
         self.assertEqual(
@@ -114,9 +173,49 @@ class WorkflowStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             current["artifacts"]["review_package"]["integrity"]["checked_files"],
-            26,
+            40,
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"]["schema_catalog"][
+                "valid"
+            ]
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"][
+                "analysis_diagnostics"
+            ]["valid"]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"][
+                "analysis_diagnostics"
+            ]["artifact_count"],
+            5,
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"][
+                "assurance_work_queue"
+            ]["valid"]
+        )
+        self.assertEqual(
+            current["artifacts"]["review_package"]["integrity"][
+                "assurance_work_queue"
+            ]["status"],
+            "matched",
+        )
+        self.assertTrue(
+            current["artifacts"]["review_package"]["integrity"][
+                "assurance_register"
+            ]["valid"]
+        )
+        self.assertTrue(
+            all(
+                current["artifacts"]["review_package"]["integrity"][
+                    "assurance_register"
+                ]["checks"].values()
+            )
         )
         self.assertIn("does not establish", current["notice"])
+        Draft202012Validator(schema_document("workflow-status")).validate(current)
 
         report_text = report.read_text(encoding="utf-8")
         report.write_text(
@@ -134,6 +233,11 @@ class WorkflowStatusTests(unittest.TestCase):
         self.assertFalse(
             report_tampered["artifacts"]["html_report"]["binding"]["checks"][
                 "payload_integrity"
+            ]
+        )
+        self.assertFalse(
+            report_tampered["artifacts"]["html_report"]["binding"]["checks"][
+                "document_integrity"
             ]
         )
         export_html_report(analysis, report)
@@ -210,6 +314,10 @@ class WorkflowStatusTests(unittest.TestCase):
             result = main(["status", str(self.root)])
         self.assertEqual(result, 0)
         self.assertIn("Workflow stage: ready to scan", text_output.getvalue())
+        self.assertIn(
+            "Handoff gates: passed=1/8, blocked=7", text_output.getvalue()
+        )
+        self.assertIn("[BLOCKED] Governed analysis available", text_output.getvalue())
         self.assertIn("Next actions:", text_output.getvalue())
         self.assertIn("sfmea scan", text_output.getvalue())
 
@@ -225,6 +333,8 @@ class WorkflowStatusTests(unittest.TestCase):
         payload = json.loads(json_output.getvalue())
         self.assertEqual(payload["format"], WORKFLOW_STATUS_FORMAT)
         self.assertEqual(payload["stage"], "ready_to_scan")
+        self.assertEqual(payload["handoff_gate_summary"]["total"], 8)
+        self.assertEqual(len(payload["handoff_gates"]), 8)
 
     def test_status_exposes_assurance_planning_progress_and_action(self) -> None:
         analysis = self._scan()
@@ -475,6 +585,16 @@ class WorkflowStatusTests(unittest.TestCase):
             result = workflow_status(self.root)
         self.assertEqual(result["stage"], "assurance_planning")
         self.assertFalse(result["ready_for_handoff"])
+        assurance_gate = next(
+            gate
+            for gate in result["handoff_gates"]
+            if gate["id"] == "assurance_plan_ready"
+        )
+        self.assertFalse(assurance_gate["passed"])
+        self.assertEqual(assurance_gate["evidence"]["planning_pending"], 1)
+        self.assertEqual(
+            assurance_gate["remediation_action_id"], "review_assurance_plan"
+        )
         self.assertIn(
             "review_assurance_plan", [value["id"] for value in result["next_actions"]]
         )

@@ -14,17 +14,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from pysfmea.cli import main
 from pysfmea.diagrams import (
     DIAGRAM_BUNDLE_SCHEMA,
+    DIAGRAM_BUNDLE_VERIFICATION_FORMAT,
     DIAGRAM_SCHEMA,
     build_diagram_models,
     export_diagram_bundle,
     failure_propagation_diagram,
     load_diagram_files,
     normalize_diagram_model,
+    verify_diagram_bundle_file,
     verify_diagram_bundle_integrity,
 )
 from pysfmea.html_report import export_html_report
 from pysfmea.report import analysis_state_sha256
 from pysfmea.scanner import scan_repository
+from pysfmea.schemas import schema_document
 from pysfmea.store import save_analysis
 
 
@@ -201,6 +204,21 @@ class DiagramTests(unittest.TestCase):
         tampered_path.write_text(json.dumps(tampered), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "integrity failed"):
             load_diagram_files([tampered_path])
+        with self.assertRaisesRegex(ValueError, "content digest"):
+            verify_diagram_bundle_file(tampered_path)
+
+        downgraded = json.loads(json.dumps(bundle))
+        downgraded.pop("integrity")
+        downgraded_path = self.root / "downgraded-bundle.json"
+        downgraded_path.write_text(json.dumps(downgraded), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "integrity record is missing"):
+            load_diagram_files([downgraded_path])
+
+        legacy = json.loads(json.dumps(downgraded))
+        legacy["generator"]["version"] = "0.30.0"
+        legacy_path = self.root / "legacy-bundle.json"
+        legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
+        self.assertEqual(len(load_diagram_files([legacy_path])), 1)
         changed_analysis = json.loads(json.dumps(self.analysis))
         changed_analysis["project"]["name"] = "Different governed state"
         with self.assertRaisesRegex(ValueError, "state binding does not match"):
@@ -233,6 +251,80 @@ class DiagramTests(unittest.TestCase):
         generated = self.root / "analysis-failure_propagation-diagrams.json"
         self.assertTrue(generated.is_file())
         generated_bundle = json.loads(generated.read_text(encoding="utf-8"))
+        verification_output = io.StringIO()
+        with contextlib.redirect_stdout(verification_output):
+            result = main(
+                [
+                    "diagram-verify",
+                    str(generated),
+                    "--analysis",
+                    str(analysis_path),
+                    "--json",
+                ]
+            )
+        self.assertEqual(result, 0)
+        cli_verification = json.loads(verification_output.getvalue())
+        self.assertEqual(
+            cli_verification["format"], DIAGRAM_BUNDLE_VERIFICATION_FORMAT
+        )
+        self.assertTrue(cli_verification["valid"])
+        self.assertEqual(cli_verification["status"], "matched")
+        self.assertTrue(cli_verification["binding_requested"])
+        self.assertTrue(cli_verification["binding_checked"])
+        verification_schema = schema_document("diagram-bundle-verification")
+        self.assertLessEqual(
+            set(verification_schema["required"]), set(cli_verification)
+        )
+        self.assertEqual(
+            set(verification_schema["properties"]["checks"]["required"]),
+            set(cli_verification["checks"]),
+        )
+        self.assertTrue(cli_verification["checks"]["content_integrity"])
+        self.assertTrue(cli_verification["checks"]["diagram_schema"])
+        self.assertTrue(cli_verification["checks"]["analysis_binding"])
+        self.assertEqual(len(cli_verification["diagram_ids"]), 1)
+        human_output = io.StringIO()
+        with contextlib.redirect_stdout(human_output):
+            result = main(["diagram-verify", str(generated)])
+        self.assertEqual(result, 0)
+        self.assertIn("analysis binding: not checked", human_output.getvalue())
+        self.assertIn("Content SHA-256:", human_output.getvalue())
+
+        tampered_bundle = json.loads(generated.read_text(encoding="utf-8"))
+        tampered_bundle["generation"]["kind"] = "tampered"
+        generated.write_text(json.dumps(tampered_bundle), encoding="utf-8")
+        invalid_output = io.StringIO()
+        with contextlib.redirect_stdout(invalid_output):
+            result = main(["diagram-verify", str(generated), "--json"])
+        self.assertEqual(result, 1)
+        invalid_verification = json.loads(invalid_output.getvalue())
+        self.assertFalse(invalid_verification["valid"])
+        self.assertEqual(invalid_verification["status"], "invalid")
+        self.assertEqual(
+            invalid_verification["errors"][0]["code"],
+            "diagram.verification_failed",
+        )
+        self.assertEqual(
+            set(invalid_verification["unchecked_checks"]),
+            {"content_integrity", "diagram_schema", "analysis_binding"},
+        )
+
+        input_error_output = io.StringIO()
+        with contextlib.redirect_stdout(input_error_output):
+            result = main(
+                [
+                    "diagram-verify",
+                    str(generated),
+                    "--analysis",
+                    str(self.root / "missing-analysis.json"),
+                    "--json",
+                ]
+            )
+        self.assertEqual(result, 2)
+        input_error = json.loads(input_error_output.getvalue())
+        self.assertTrue(input_error["binding_requested"])
+        self.assertFalse(input_error["binding_checked"])
+        self.assertEqual(input_error["errors"][0]["code"], "analysis.load_failed")
         self.assertEqual(
             generated_bundle["generation"]["failure_propagation"],
             {

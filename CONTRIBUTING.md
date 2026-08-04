@@ -1,0 +1,66 @@
+# Contributing to PySFMEA
+
+PySFMEA welcomes focused changes that improve evidence quality, reviewability, interoperability,
+or truthful handling of uncertainty. It is an assurance workbench, so a change is expected to
+preserve claim boundaries as carefully as behavior.
+
+## Development setup
+
+Python 3.11 or newer is supported.
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install -e ".[dev,signing]"
+.venv\Scripts\Activate.ps1
+```
+
+Run the same core checks as CI:
+
+```powershell
+python -m compileall -q src
+python -m ruff check src tests
+python -m pytest -q
+python -m build
+```
+
+The CI matrix repeats compilation, linting, tests, and public-schema validation on Linux and
+Windows across supported Python versions. It separately builds and installs the wheel.
+
+## Engineering invariants
+
+Changes must preserve these boundaries:
+
+- Scanning and reporting do not import or execute the repository being analyzed.
+- Heuristic, observed, human-supplied, and model-generated evidence remain distinguishable.
+- Missing context, truncation, opaque regions, and checks that did not run remain explicit.
+- Generated artifacts are bounded and published atomically where replacement is supported.
+- Integrity and binding checks do not claim authorship, engineering approval, or risk acceptance.
+- LLM output remains optional, grounded, reviewable suggestion data rather than an accepted finding.
+- Public format changes retain stable identifiers or introduce a new compatibility boundary.
+
+## Tests and fixtures
+
+Place deterministic unit or integration tests under `tests/`. Prefer temporary repositories and
+small purpose-built fixtures. Tests must not depend on network access, external model providers,
+or execution of untrusted repositories. Optional browser, signing, and standards validators may
+be skipped when their dependencies are unavailable, but deterministic core behavior must remain
+covered without third-party runtime packages.
+
+If a public diagram, bundle, report-verdict, or verifier-verdict structure changes, update the
+schema catalog, documentation, adapter provenance, and compatibility tests in the same change.
+Breaking required-field, meaning, type, or closed-vocabulary changes require a new schema/format
+major identifier.
+
+## Pull requests
+
+Keep pull requests scoped and include:
+
+- the failure or assurance gap being addressed;
+- user-visible behavior and compatibility impact;
+- tests and commands run;
+- new limitations or unresolved questions;
+- documentation and schema changes where applicable.
+
+Do not include generated analyses, review packages, credentials, proprietary guidance, customer
+repositories, or assurance evidence unless they are intentionally synthetic and safe to publish.

@@ -10,12 +10,14 @@ from typing import Any
 
 from .architecture import export_architecture
 from .assurance import (
+    ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
     PLANNING_REVIEW_STATUSES,
     archive_pytest_scaffold,
     export_assurance_register,
     export_pytest_scaffold,
     refresh_pytest_scaffold,
     review_obligation,
+    verify_assurance_work_queue_file,
     verify_pytest_scaffold,
 )
 from .config import load_config, write_config_template
@@ -23,11 +25,13 @@ from .diagrams import (
     DEFAULT_PROPAGATION_DEPTH,
     DEFAULT_PROPAGATION_PATH_LIMIT,
     DEFAULT_PROPAGATION_RECORD_LIMIT,
+    DIAGRAM_BUNDLE_VERIFICATION_FORMAT,
     GENERATED_DIAGRAM_KINDS,
     MAX_PROPAGATION_DEPTH,
     MAX_PROPAGATION_PATH_LIMIT,
     MAX_PROPAGATION_RECORD_LIMIT,
     export_diagram_bundle,
+    verify_diagram_bundle_file,
     verify_diagram_bundle_integrity,
 )
 from .discovery import (
@@ -49,7 +53,12 @@ from .execution import (
     run_sandbox_execution,
 )
 from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
-from .html_report import MAX_REPORT_RECORDS, export_html_report
+from .html_report import (
+    HTML_REPORT_VERIFICATION_FORMAT,
+    MAX_REPORT_RECORDS,
+    export_html_report,
+    verify_html_report_file,
+)
 from .interchange import (
     cyclonedx_document,
     differential_analysis,
@@ -70,6 +79,13 @@ from .report import (
 )
 from .runtime import import_runtime_trace
 from .scanner import scan_repository
+from .schemas import (
+    export_schema,
+    export_schema_bundle,
+    schema_catalog,
+    schema_document,
+    verify_schema_bundle_path,
+)
 from .server import serve_review
 from .sfta import export_sfta
 from .signing import (
@@ -82,6 +98,68 @@ from .validation import review_queue, validate_analysis
 from .version import __version__
 from .visuals import export_coverage, export_sequence, export_traceability
 from .workflow import workflow_status
+
+VERIFICATION_NOTICE = (
+    "Integrity and binding checks detect unreconciled changes and staleness; "
+    "they do not authenticate an author, approve the analysis, or accept risk."
+)
+HTML_REPORT_VERIFICATION_CHECKS = (
+    "metadata_complete",
+    "report_format",
+    "payload_present",
+    "payload_json",
+    "payload_integrity",
+    "payload_binding",
+    "document_integrity",
+    "baseline",
+    "schema",
+    "analysis_state",
+)
+DIAGRAM_BUNDLE_VERIFICATION_CHECKS = (
+    "content_integrity",
+    "diagram_schema",
+    "analysis_binding",
+)
+ASSURANCE_WORK_QUEUE_VERIFICATION_CHECKS = (
+    "format",
+    "structure",
+    "content_integrity",
+    "baseline",
+    "schema",
+    "analysis_state",
+    "semantic_projection",
+)
+VERIFICATION_EXCEPTIONS = (OSError, RuntimeError, ValueError)
+
+
+def _verification_error_result(
+    *,
+    format_name: str,
+    source: str,
+    check_names: tuple[str, ...],
+    binding_requested: bool,
+    code: str,
+    error: Exception,
+) -> dict[str, Any]:
+    """Create a stable machine-readable result when verification cannot complete."""
+
+    try:
+        display_path = str(Path(source).expanduser().absolute())
+    except (OSError, RuntimeError, ValueError):
+        display_path = str(source)
+    return {
+        "format": format_name,
+        "path": display_path,
+        "valid": False,
+        "status": "invalid",
+        "binding_requested": binding_requested,
+        "binding_checked": False,
+        "checks": {name: None for name in check_names},
+        "failed_checks": [],
+        "unchecked_checks": list(check_names),
+        "errors": [{"code": code, "message": str(error)}],
+        "notice": VERIFICATION_NOTICE,
+    }
 
 
 def _add_propagation_arguments(parser: argparse.ArgumentParser) -> None:
@@ -153,6 +231,35 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("path", nargs="?", default="sfmea.toml", help="file or directory path")
     init.add_argument("--force", action="store_true", help="replace an existing template")
     init.set_defaults(handler=_init)
+
+    schema_command = subparsers.add_parser(
+        "schema", help="discover or export public JSON Schema contracts"
+    )
+    schema_command.add_argument("name", nargs="?", help="stable schema catalog name")
+    schema_mode = schema_command.add_mutually_exclusive_group()
+    schema_mode.add_argument(
+        "--list", action="store_true", help="list available schema contracts"
+    )
+    schema_mode.add_argument(
+        "--bundle",
+        metavar="DIRECTORY",
+        help="atomically export the complete offline schema bundle",
+    )
+    schema_mode.add_argument(
+        "--verify-bundle",
+        metavar="DIRECTORY",
+        help="verify a standalone offline schema-bundle directory",
+    )
+    schema_command.add_argument(
+        "--json", action="store_true", help="emit machine-readable JSON output"
+    )
+    schema_command.add_argument("-o", "--output", help="schema JSON destination")
+    schema_command.add_argument(
+        "--force",
+        action="store_true",
+        help="replace a recognized schema bundle; valid only with --bundle",
+    )
+    schema_command.set_defaults(handler=_schema)
 
     doctor = subparsers.add_parser(
         "doctor", help="check repository and SFMEA configuration readiness"
@@ -269,6 +376,20 @@ def _parser() -> argparse.ArgumentParser:
     _add_propagation_arguments(report)
     report.set_defaults(handler=_html_report)
 
+    report_verify = subparsers.add_parser(
+        "report-verify",
+        help="verify a self-contained HTML report and optional analysis-state binding",
+    )
+    report_verify.add_argument("report", help="self-contained HTML report path")
+    report_verify.add_argument(
+        "--analysis",
+        help="current analysis JSON; when supplied, require an exact state binding",
+    )
+    report_verify.add_argument(
+        "--json", action="store_true", help="emit machine-readable verification JSON"
+    )
+    report_verify.set_defaults(handler=_html_report_verify)
+
     pdf = subparsers.add_parser(
         "pdf", help="render the complete analysis report as a paginated PDF"
     )
@@ -309,6 +430,20 @@ def _parser() -> argparse.ArgumentParser:
     diagram.add_argument("-o", "--output", help="destination JSON path")
     _add_propagation_arguments(diagram)
     diagram.set_defaults(handler=_diagram)
+
+    diagram_verify = subparsers.add_parser(
+        "diagram-verify",
+        help="verify a canonical diagram bundle and optional analysis-state binding",
+    )
+    diagram_verify.add_argument("bundle", help="diagram bundle JSON path")
+    diagram_verify.add_argument(
+        "--analysis",
+        help="current analysis JSON; when supplied, require an exact state binding",
+    )
+    diagram_verify.add_argument(
+        "--json", action="store_true", help="emit machine-readable verification JSON"
+    )
+    diagram_verify.set_defaults(handler=_diagram_verify)
 
     sfta = subparsers.add_parser(
         "sfta", help="export Software Fault Trees and bottom-up/top-down reconciliation gaps"
@@ -375,7 +510,8 @@ def _parser() -> argparse.ArgumentParser:
     sign_package.set_defaults(handler=_sign_package)
 
     verify_package = subparsers.add_parser(
-        "verify-package", help="verify checksums, contents, and provenance of a review package"
+        "verify-package",
+        help="verify checksums, contents, contracts, and provenance of a review package",
     )
     verify_package.add_argument("package", help="review package directory or ZIP")
     verify_package.add_argument(
@@ -513,10 +649,24 @@ def _parser() -> argparse.ArgumentParser:
     )
     assurance.add_argument("analysis", help="analysis JSON path")
     assurance.add_argument(
-        "--format", choices=("json", "csv", "markdown"), default="json"
+        "--format", choices=("json", "work-json", "csv", "markdown"), default="json"
     )
     assurance.add_argument("-o", "--output", help="destination path")
     assurance.set_defaults(handler=_assurance)
+
+    assurance_work_verify = subparsers.add_parser(
+        "assurance-work-verify",
+        help="verify a work queue and optional exact analysis-state projection",
+    )
+    assurance_work_verify.add_argument("queue", help="assurance work-queue JSON path")
+    assurance_work_verify.add_argument(
+        "--analysis",
+        help="current analysis JSON; when supplied, require exact binding and content",
+    )
+    assurance_work_verify.add_argument(
+        "--json", action="store_true", help="emit machine-readable verification JSON"
+    )
+    assurance_work_verify.set_defaults(handler=_assurance_work_verify)
 
     assurance_review = subparsers.add_parser(
         "assurance-review", help="record a governed verification-planning decision"
@@ -752,6 +902,62 @@ def _init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _schema(args: argparse.Namespace) -> int:
+    if args.bundle:
+        if args.name or args.output or args.json:
+            raise ValueError(
+                "--bundle cannot be combined with a schema name, --output, or --json"
+            )
+        result = export_schema_bundle(args.bundle, overwrite=args.force)
+        print(f"Exported complete JSON Schema bundle: {result}")
+        print(f'Next: sfmea schema --verify-bundle "{result}"')
+        return 0
+    if args.verify_bundle:
+        if args.name or args.output or args.force:
+            raise ValueError(
+                "--verify-bundle cannot be combined with a schema name, --output, or --force"
+            )
+        verification = verify_schema_bundle_path(args.verify_bundle)
+        if args.json:
+            print(json.dumps(verification, indent=2, ensure_ascii=False))
+        else:
+            print(
+                f"Schema bundle integrity: valid={verification['valid']}, "
+                f"schemas={verification['schema_count']}, "
+                f"errors={len(verification['errors'])}"
+            )
+            for error in verification["errors"]:
+                location = f" ({error['path']})" if error.get("path") else ""
+                print(f"[ERROR] {error['code']}{location}: {error['message']}")
+            print(verification["notice"])
+        return int(not verification["valid"])
+    if args.list:
+        if args.name or args.output or args.force:
+            raise ValueError(
+                "--list cannot be combined with a schema name, --output, or --force"
+            )
+        catalog = schema_catalog()
+        if args.json:
+            print(json.dumps(catalog, indent=2, ensure_ascii=False))
+        else:
+            print("Available PySFMEA JSON Schemas:")
+            for entry in catalog["schemas"]:
+                print(f"  {entry['name']}: {entry['description']}")
+        return 0
+    if not args.name:
+        if args.force:
+            raise ValueError("--force is valid only with --bundle")
+        raise ValueError("provide a schema name or use --list, --bundle, or --verify-bundle")
+    if args.force:
+        raise ValueError("--force is valid only with --bundle")
+    if args.output:
+        result = export_schema(args.name, args.output)
+        print(f"Exported JSON Schema: {result}")
+        return 0
+    print(json.dumps(schema_document(args.name), indent=2, ensure_ascii=False))
+    return 0
+
+
 def _doctor(args: argparse.Namespace) -> int:
     result = repository_readiness(args.repository, config_path=args.config)
     if args.json:
@@ -834,6 +1040,15 @@ def _status(args: argparse.Namespace) -> int:
                 if integrity
                 else ""
             )
+            schema_catalog = integrity.get("schema_catalog", {}) if integrity else {}
+            schema_text = (
+                f", schemas={'valid' if schema_catalog.get('valid') else 'invalid'}"
+                f"({schema_catalog.get('schema_count', 0)})"
+                if schema_catalog.get("present")
+                else ", schemas=legacy/not embedded"
+                if integrity and "schema_catalog" in integrity
+                else ""
+            )
             binding = artifact.get("binding")
             binding_text = f", binding={binding['status']}" if binding else ""
             generated_changes = artifact.get("generated_files_changed")
@@ -873,7 +1088,7 @@ def _status(args: argparse.Namespace) -> int:
             )
             print(
                 f"  - {name}: {artifact['status']}"
-                f"{integrity_text}{binding_text}{generated_text}{contract_text}"
+                f"{integrity_text}{schema_text}{binding_text}{generated_text}{contract_text}"
                 f"{queue_text}{selection_text} "
                 f"({artifact['path']})"
             )
@@ -917,6 +1132,20 @@ def _status(args: argparse.Namespace) -> int:
                 )
     else:
         print(f"Analysis: not found ({result['paths']['analysis']})")
+    gate_summary = result["handoff_gate_summary"]
+    print(
+        "Handoff gates: "
+        f"passed={gate_summary['passed']}/{gate_summary['total']}, "
+        f"blocked={gate_summary['blocked']}"
+    )
+    for gate in result["handoff_gates"]:
+        remediation = (
+            f"; action={gate['remediation_action_id']}" if not gate["passed"] else ""
+        )
+        print(
+            f"  [{gate['status'].upper()}] {gate['label']}: "
+            f"{gate['detail']}{remediation}"
+        )
     if result["next_actions"]:
         print("Next actions:")
         for index, action in enumerate(result["next_actions"], start=1):
@@ -989,6 +1218,72 @@ def _html_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _html_report_verify(args: argparse.Namespace) -> int:
+    try:
+        analysis = load_analysis(args.analysis) if args.analysis else None
+    except VERIFICATION_EXCEPTIONS as exc:
+        if not args.json:
+            raise
+        verification = _verification_error_result(
+            format_name=HTML_REPORT_VERIFICATION_FORMAT,
+            source=args.report,
+            check_names=HTML_REPORT_VERIFICATION_CHECKS,
+            binding_requested=bool(args.analysis),
+            code="analysis.load_failed",
+            error=exc,
+        )
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+        return 2
+    try:
+        verification = verify_html_report_file(args.report, analysis=analysis)
+    except VERIFICATION_EXCEPTIONS as exc:
+        verification = _verification_error_result(
+            format_name=HTML_REPORT_VERIFICATION_FORMAT,
+            source=args.report,
+            check_names=HTML_REPORT_VERIFICATION_CHECKS,
+            binding_requested=bool(args.analysis),
+            code="report.verification_failed",
+            error=exc,
+        )
+        if args.json:
+            print(json.dumps(verification, indent=2, ensure_ascii=False))
+        else:
+            print("HTML report integrity: valid=False, analysis binding=not completed")
+            print(f"Error: {exc}")
+            print(verification["notice"])
+        return 1
+    if args.json:
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+        return int(not verification["valid"])
+    binding_status = (
+        "matched"
+        if verification["checks"]["analysis_state"] is True
+        else "mismatched"
+        if verification["checks"]["analysis_state"] is False
+        else "not checked"
+    )
+    print(
+        f"HTML report integrity: valid={verification['valid']}, "
+        f"scope={verification['integrity_scope']}, "
+        f"analysis binding={binding_status}"
+    )
+    print(
+        "Report data SHA-256: "
+        f"{verification['declared']['report_data_sha256']}"
+    )
+    if verification["declared"]["document_sha256"]:
+        print(
+            "Document SHA-256: "
+            f"{verification['declared']['document_sha256']}"
+        )
+    if verification["failed_checks"]:
+        print(f"Failed checks: {', '.join(verification['failed_checks'])}")
+    if verification["unchecked_checks"]:
+        print(f"Unchecked checks: {', '.join(verification['unchecked_checks'])}")
+    print(verification["notice"])
+    return int(not verification["valid"])
+
+
 def _pdf_report(args: argparse.Namespace) -> int:
     source = Path(args.analysis).expanduser().resolve()
     analysis = load_analysis(source)
@@ -1040,6 +1335,64 @@ def _diagram(args: argparse.Namespace) -> int:
         f"analysis-state={verification['analysis_state_sha256'][:12]}..., "
         f"content={verification['content_sha256'][:12]}..."
     )
+    return 0
+
+
+def _diagram_verify(args: argparse.Namespace) -> int:
+    try:
+        analysis = load_analysis(args.analysis) if args.analysis else None
+    except VERIFICATION_EXCEPTIONS as exc:
+        if not args.json:
+            raise
+        verification = _verification_error_result(
+            format_name=DIAGRAM_BUNDLE_VERIFICATION_FORMAT,
+            source=args.bundle,
+            check_names=DIAGRAM_BUNDLE_VERIFICATION_CHECKS,
+            binding_requested=bool(args.analysis),
+            code="analysis.load_failed",
+            error=exc,
+        )
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+        return 2
+    try:
+        verification = verify_diagram_bundle_file(args.bundle, analysis=analysis)
+    except VERIFICATION_EXCEPTIONS as exc:
+        verification = _verification_error_result(
+            format_name=DIAGRAM_BUNDLE_VERIFICATION_FORMAT,
+            source=args.bundle,
+            check_names=DIAGRAM_BUNDLE_VERIFICATION_CHECKS,
+            binding_requested=bool(args.analysis),
+            code="diagram.verification_failed",
+            error=exc,
+        )
+        if args.json:
+            print(json.dumps(verification, indent=2, ensure_ascii=False))
+        else:
+            print("Diagram bundle integrity: valid=False, analysis binding=not completed")
+            print(f"Error: {exc}")
+            print(verification["notice"])
+        return 1
+    if args.json:
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+        return 0
+    binding = verification["checks"]["analysis_binding"]
+    binding_status = "matched" if binding is True else "not checked"
+    print(
+        f"Diagram bundle integrity: valid=True, analysis binding={binding_status}"
+    )
+    print(f"Verified canonical diagram bundle: {verification['path']}")
+    print(
+        f"Diagrams: {verification['diagram_count']}; "
+        f"analysis binding: {binding_status}"
+    )
+    print(f"Content SHA-256: {verification['content_sha256']}")
+    print(
+        "Bound analysis-state SHA-256: "
+        f"{verification['binding']['analysis_state_sha256']}"
+    )
+    if verification["unchecked_checks"]:
+        print(f"Unchecked checks: {', '.join(verification['unchecked_checks'])}")
+    print(verification["notice"])
     return 0
 
 
@@ -1139,6 +1492,34 @@ def _verify_package(args: argparse.Namespace) -> int:
         )
         if result.get("archive_sha256"):
             print(f"Archive SHA-256: {result['archive_sha256']}")
+        if result.get("capabilities"):
+            print(f"Capabilities: {', '.join(result['capabilities'])}")
+        if result.get("schema_catalog"):
+            schema_catalog = result["schema_catalog"]
+            print(
+                f"Schema catalog: valid={schema_catalog['valid']}, "
+                f"schemas={schema_catalog['schema_count']}"
+            )
+        if result.get("analysis_diagnostics"):
+            diagnostics = result["analysis_diagnostics"]
+            print(
+                "Analysis diagnostics: "
+                f"valid={diagnostics['valid']}, "
+                f"artifacts={diagnostics['artifact_count']}"
+            )
+        if result.get("assurance_work_queue"):
+            work_queue = result["assurance_work_queue"]
+            print(
+                "Assurance work queue: "
+                f"valid={work_queue['valid']}, status={work_queue['status']}"
+            )
+        if result.get("assurance_register"):
+            assurance_register = result["assurance_register"]
+            print(
+                "Assurance register: "
+                f"valid={assurance_register['valid']}, "
+                f"obligations={assurance_register['obligation_count']}"
+            )
         if result.get("signature"):
             signature = result["signature"]
             print(
@@ -1514,13 +1895,73 @@ def _citations(args: argparse.Namespace) -> int:
 def _assurance(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     source = Path(args.analysis).expanduser().resolve()
-    suffix = {"json": ".assurance.json", "csv": ".assurance.csv", "markdown": ".assurance.md"}[
+    suffix = {"json": ".assurance.json", "work-json": ".assurance-work.json", "csv": ".assurance.csv", "markdown": ".assurance.md"}[
         args.format
     ]
     output = Path(args.output) if args.output else source.with_name(source.stem + suffix)
     result = export_assurance_register(analysis, output, format=args.format)
     print(f"Exported executable assurance checklist {args.format}: {result}")
     return 0
+
+
+def _assurance_work_verify(args: argparse.Namespace) -> int:
+    try:
+        analysis = load_analysis(args.analysis) if args.analysis else None
+    except VERIFICATION_EXCEPTIONS as exc:
+        if not args.json:
+            raise
+        verification = _verification_error_result(
+            format_name=ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
+            source=args.queue,
+            check_names=ASSURANCE_WORK_QUEUE_VERIFICATION_CHECKS,
+            binding_requested=bool(args.analysis),
+            code="analysis.load_failed",
+            error=exc,
+        )
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+        return 2
+    try:
+        verification = verify_assurance_work_queue_file(
+            args.queue, analysis=analysis
+        )
+    except VERIFICATION_EXCEPTIONS as exc:
+        verification = _verification_error_result(
+            format_name=ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
+            source=args.queue,
+            check_names=ASSURANCE_WORK_QUEUE_VERIFICATION_CHECKS,
+            binding_requested=bool(args.analysis),
+            code="assurance_work_queue.verification_failed",
+            error=exc,
+        )
+        if args.json:
+            print(json.dumps(verification, indent=2, ensure_ascii=False))
+        else:
+            print("Assurance work queue: valid=False, analysis binding=not completed")
+            print(f"Error: {exc}")
+            print(verification["notice"])
+        return 1
+    if args.json:
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+    else:
+        binding_status = (
+            "matched"
+            if verification["status"] == "matched"
+            else "not checked"
+            if verification["status"] == "valid_binding_not_checked"
+            else "mismatched"
+        )
+        print(
+            f"Assurance work queue: valid={verification['valid']}, "
+            f"analysis binding={binding_status}"
+        )
+        print(f"Verified queue: {verification['path']}")
+        print(f"Content SHA-256: {verification['content_sha256']}")
+        if verification["failed_checks"]:
+            print(f"Failed checks: {', '.join(verification['failed_checks'])}")
+        if verification["unchecked_checks"]:
+            print(f"Unchecked checks: {', '.join(verification['unchecked_checks'])}")
+        print(verification["notice"])
+    return 0 if verification["valid"] else 1
 
 
 def _assurance_review(args: argparse.Namespace) -> int:

@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
-from .assurance import assurance_progress, review_obligation
+from .assurance import assurance_progress, assurance_work_queue, review_obligation
 from .discovery import review_suggestion
 from .store import (
     AnalysisRevisionConflictError,
@@ -203,10 +203,10 @@ function renderAssurancePlan(){
   const view=state.assurance||{},progress=view.progress||{},values=view.obligations||[];
   $('assuranceBtn').textContent=`Assurance plan (${progress.planning_pending??0})`;
   $('assuranceNotice').textContent=(view.notice||'Each accepted finding has a deterministic assurance obligation.')+' Planning decisions made here cannot record test execution, verify evidence, close a finding, or accept risk.';
-  $('assuranceMetrics').innerHTML=assuranceMetric(progress.applicable_findings??0,'accepted findings')+assuranceMetric(progress.planning_ready??0,'plans ready')+assuranceMetric(progress.planning_pending??0,'plans pending')+assuranceMetric(progress.planning_gaps??0,'with definition gaps')+assuranceMetric(progress.implemented_tests??0,'tests implemented')+assuranceMetric(progress.recorded_executions??0,'executions recorded')+assuranceMetric(progress.verified_obligations??0,'verified / resolved');
+  $('assuranceMetrics').innerHTML=assuranceMetric(progress.applicable_findings??0,'accepted findings')+assuranceMetric(progress.planning_ready??0,'plans ready')+assuranceMetric(progress.planning_pending??0,'plans pending')+assuranceMetric(progress.planning_gaps??0,'with definition gaps')+assuranceMetric(progress.work_queue?.implementation_ready??0,'ready to implement')+assuranceMetric(progress.work_queue?.execution_ready??0,'ready to execute')+assuranceMetric(progress.recorded_executions??0,'executions recorded')+assuranceMetric(progress.verified_obligations??0,'verified / resolved');
   const configured=(state.analysis?.context?.reviewers||[]).map(value=>value.name).filter(Boolean);
   $('assuranceList').innerHTML=values.map((value,index)=>{
-    const status=value.assurance_status||'candidate',evidence=value.evidence_status||'missing',implementation=value.automation?.implementation_status||'not_implemented';
+    const status=value.assurance_status||'candidate',evidence=value.evidence_status||'missing',work=value.work||{},implementation=`${value.automation?.implementation_status||'not_implemented'} · work: ${work.state||'not applicable'} · next: ${work.next_action_id||'none'}`;
     const locked=['partially_verified','accepted_risk','closed','retired'].includes(status);
     const statuses=status==='verified'?[['residual_risk_review','Advance to residual-risk review']]:assurancePlanningStatuses;
     const statusOptions=status==='residual_risk_review'?[['residual_risk_review','Residual-risk review'],...statuses]:statuses;
@@ -416,6 +416,11 @@ def _assurance_view(analysis: dict[str, Any], *, limit: int = 500) -> dict[str, 
     """Return a bounded browser projection for accepted-finding plan review."""
 
     progress = assurance_progress(analysis)
+    work_by_obligation = {
+        str(value.get("obligation_id", "")): value
+        for value in assurance_work_queue(analysis)["items"]
+        if value.get("obligation_id")
+    }
     accepted_ids = {
         str(item.get("id", ""))
         for item in analysis.get("items", [])
@@ -424,7 +429,7 @@ def _assurance_view(analysis: dict[str, Any], *, limit: int = 500) -> dict[str, 
         and item.get("review", {}).get("disposition") == "accepted"
     }
     obligations = [
-        value
+        {**value, "work": work_by_obligation.get(str(value.get("id", "")), {})}
         for value in analysis.get("assurance", {}).get("obligations", [])
         if isinstance(value, dict)
         and value.get("source_status", "active") == "active"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import importlib.util
 import io
@@ -14,6 +15,8 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.cli import main
@@ -26,14 +29,17 @@ from pysfmea.discovery import (
     evidence_packets,
     review_suggestion,
 )
+from pysfmea.integrity import canonical_json_sha256
 from pysfmea.readiness import repository_readiness
 from pysfmea.report import (
+    REVIEW_PACKAGE_SCHEMA_FILES,
     export_review_archive,
     export_review_package,
     verify_review_package,
 )
 from pysfmea.runtime import import_runtime_trace
 from pysfmea.scanner import scan_repository
+from pysfmea.schemas import REVIEW_PACKAGE_VERIFICATION_FORMAT, schema_document
 from pysfmea.signing import sign_review_package, verify_review_signature
 from pysfmea.store import load_analysis, merge_rescan, save_analysis
 from pysfmea.visuals import (
@@ -262,6 +268,20 @@ class ExtensionTests(unittest.TestCase):
                 "README.md",
             }.issubset(names)
         )
+        self.assertTrue(REVIEW_PACKAGE_SCHEMA_FILES.issubset(names))
+        self.assertEqual(manifest["schema_catalog"]["schema_count"], 12)
+        self.assertEqual(
+            manifest["capabilities"],
+            [
+                "analysis_diagnostics_projection_v1",
+                "assurance_register_projection",
+                "assurance_work_queue_projection",
+            ],
+        )
+        self.assertIn("assurance-work.json", names)
+        Draft202012Validator(schema_document("review-package-manifest")).validate(
+            manifest
+        )
         with self.assertRaisesRegex(ValueError, "not empty"):
             export_review_package(self.analysis, destination)
         unexpected = destination / "reviewer-notes.txt"
@@ -275,6 +295,234 @@ class ExtensionTests(unittest.TestCase):
         self.assertFalse(
             any(path.name.startswith(f".{destination.name}.tmp-") for path in self.root.iterdir())
         )
+
+        historical_profiles = (
+            (
+                {
+                    "diagram",
+                    "diagram-bundle",
+                    "diagram-bundle-verification",
+                    "html-report-verification",
+                },
+                32,
+            ),
+            (
+                {
+                    "diagram",
+                    "diagram-bundle",
+                    "diagram-bundle-verification",
+                    "html-report-verification",
+                    "review-package-manifest",
+                    "review-package-verification",
+                },
+                34,
+            ),
+            (
+                {
+                    "diagram",
+                    "diagram-bundle",
+                    "diagram-bundle-verification",
+                    "html-report-verification",
+                    "review-package-manifest",
+                    "review-package-verification",
+                    "schema-bundle-verification",
+                    "schema-catalog",
+                },
+                36,
+            ),
+            (
+                {
+                    "detached-signature",
+                    "diagram",
+                    "diagram-bundle",
+                    "diagram-bundle-verification",
+                    "html-report-verification",
+                    "review-package-manifest",
+                    "review-package-verification",
+                    "schema-bundle-verification",
+                    "schema-catalog",
+                },
+                37,
+            ),
+            (
+                {
+                    "detached-signature",
+                    "diagram",
+                    "diagram-bundle",
+                    "diagram-bundle-verification",
+                    "html-report-verification",
+                    "review-package-manifest",
+                    "review-package-verification",
+                    "schema-bundle-verification",
+                    "schema-catalog",
+                    "workflow-status",
+                },
+                38,
+            ),
+            (
+                {
+                    "assurance-work-queue",
+                    "detached-signature",
+                    "diagram",
+                    "diagram-bundle",
+                    "diagram-bundle-verification",
+                    "html-report-verification",
+                    "review-package-manifest",
+                    "review-package-verification",
+                    "schema-bundle-verification",
+                    "schema-catalog",
+                    "workflow-status",
+                },
+                39,
+            ),
+        )
+        for index, (retained_names, expected_files) in enumerate(
+            historical_profiles, start=1
+        ):
+            compatible = export_review_package(
+                self.analysis,
+                self.root / f"compatible-package-{index}",
+                source_analysis=self.root / "analysis.json",
+            )
+            catalog_path = compatible / "schema-catalog.json"
+            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+            catalog["schemas"] = [
+                entry
+                for entry in catalog["schemas"]
+                if entry["name"] in retained_names
+            ]
+            retained_files = {
+                "schema-catalog.json",
+                *(entry["filename"] for entry in catalog["schemas"]),
+            }
+            for filename in REVIEW_PACKAGE_SCHEMA_FILES - retained_files:
+                (compatible / filename).unlink()
+            catalog_path.write_text(
+                json.dumps(catalog, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            manifest_path = compatible / "manifest.json"
+            compatible_manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+            compatible_manifest["files"] = [
+                entry
+                for entry in compatible_manifest["files"]
+                if entry["path"] not in REVIEW_PACKAGE_SCHEMA_FILES
+                or entry["path"] in retained_files
+            ]
+            catalog_raw = catalog_path.read_bytes()
+            catalog_entry = next(
+                entry
+                for entry in compatible_manifest["files"]
+                if entry["path"] == "schema-catalog.json"
+            )
+            catalog_entry["bytes"] = len(catalog_raw)
+            catalog_entry["sha256"] = hashlib.sha256(catalog_raw).hexdigest()
+            compatible_manifest["schema_catalog"].update(
+                {
+                    "canonical_sha256": canonical_json_sha256(catalog),
+                    "schema_count": len(retained_names),
+                }
+            )
+            manifest_path.write_text(
+                json.dumps(compatible_manifest, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            compatible_verification = verify_review_package(compatible)
+            self.assertTrue(compatible_verification["valid"])
+            self.assertEqual(
+                compatible_verification["checked_files"], expected_files
+            )
+
+        pre_diagnostics_analysis = copy.deepcopy(self.analysis)
+        pre_diagnostics_analysis["generator"]["version"] = "0.49.0"
+        pre_diagnostics = export_review_package(
+            pre_diagnostics_analysis,
+            self.root / "pre-diagnostics-package",
+            source_analysis=self.root / "analysis.json",
+        )
+        pre_diagnostics_manifest_path = pre_diagnostics / "manifest.json"
+        pre_diagnostics_manifest = json.loads(
+            pre_diagnostics_manifest_path.read_text(encoding="utf-8")
+        )
+        pre_diagnostics_manifest["exporter"]["version"] = "0.49.0"
+        pre_diagnostics_manifest["capabilities"].remove(
+            "analysis_diagnostics_projection_v1"
+        )
+        pre_diagnostics_manifest_path.write_text(
+            json.dumps(pre_diagnostics_manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        pre_diagnostics_verification = verify_review_package(pre_diagnostics)
+        self.assertTrue(pre_diagnostics_verification["valid"])
+        self.assertEqual(
+            pre_diagnostics_verification["capabilities"],
+            ["assurance_register_projection", "assurance_work_queue_projection"],
+        )
+        self.assertEqual(pre_diagnostics_verification["analysis_diagnostics"], {})
+
+        legacy = export_review_package(
+            self.analysis,
+            self.root / "legacy-package",
+            source_analysis=self.root / "analysis.json",
+        )
+        legacy_manifest_path = legacy / "manifest.json"
+        legacy_manifest = json.loads(legacy_manifest_path.read_text(encoding="utf-8"))
+        legacy_manifest.pop("schema_catalog")
+        legacy_manifest.pop("capabilities")
+        legacy_analysis_path = legacy / "analysis.json"
+        legacy_analysis = json.loads(
+            legacy_analysis_path.read_text(encoding="utf-8")
+        )
+        legacy_analysis["generator"]["version"] = "0.46.0"
+        legacy_analysis_path.write_text(
+            json.dumps(legacy_analysis, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        legacy_manifest["exporter"]["version"] = "0.46.0"
+        legacy_manifest["analysis_generator"] = legacy_analysis["generator"]
+        legacy_manifest["analysis_state_sha256"] = canonical_json_sha256(
+            legacy_analysis
+        )
+        legacy_manifest["files"] = [
+            value
+            for value in legacy_manifest["files"]
+            if value["path"] not in REVIEW_PACKAGE_SCHEMA_FILES
+            and value["path"] != "assurance-work.json"
+        ]
+        legacy_analysis_raw = legacy_analysis_path.read_bytes()
+        legacy_analysis_entry = next(
+            value
+            for value in legacy_manifest["files"]
+            if value["path"] == "analysis.json"
+        )
+        legacy_analysis_entry["bytes"] = len(legacy_analysis_raw)
+        legacy_analysis_entry["sha256"] = hashlib.sha256(
+            legacy_analysis_raw
+        ).hexdigest()
+        legacy_manifest_path.write_text(
+            json.dumps(legacy_manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        for filename in REVIEW_PACKAGE_SCHEMA_FILES:
+            (legacy / filename).unlink()
+        (legacy / "assurance-work.json").unlink()
+        legacy_verification = verify_review_package(legacy)
+        self.assertTrue(legacy_verification["valid"])
+        self.assertEqual(legacy_verification["checked_files"], 26)
+        self.assertEqual(legacy_verification["schema_catalog"], {})
+        self.assertEqual(legacy_verification["assurance_work_queue"], {})
+
+        legacy_archive = self.root / "legacy-package.zip"
+        with zipfile.ZipFile(
+            legacy_archive, "w", compression=zipfile.ZIP_DEFLATED
+        ) as bundle:
+            for path in legacy.iterdir():
+                bundle.write(path, path.name)
+        legacy_archive_verification = verify_review_package(legacy_archive)
+        self.assertTrue(legacy_archive_verification["valid"])
+        self.assertEqual(legacy_archive_verification["checked_files"], 26)
 
         self.analysis["project"]["settings"]["config_file"] = str(
             self.root / "sfmea.toml"
@@ -313,7 +561,33 @@ class ExtensionTests(unittest.TestCase):
         )
         verified = verify_review_package(destination)
         self.assertTrue(verified["valid"])
-        self.assertEqual(verified["checked_files"], 26)
+        self.assertEqual(verified["checked_files"], 40)
+        self.assertEqual(
+            verified["verification_format"], REVIEW_PACKAGE_VERIFICATION_FORMAT
+        )
+        Draft202012Validator(schema_document("review-package-verification")).validate(
+            verified
+        )
+        self.assertTrue(verified["schema_catalog"]["valid"])
+        self.assertEqual(
+            verified["capabilities"],
+            [
+                "analysis_diagnostics_projection_v1",
+                "assurance_register_projection",
+                "assurance_work_queue_projection",
+            ],
+        )
+        self.assertTrue(all(verified["schema_catalog"]["checks"].values()))
+        self.assertTrue(verified["analysis_diagnostics"]["valid"])
+        self.assertEqual(verified["analysis_diagnostics"]["artifact_count"], 5)
+        self.assertTrue(all(verified["analysis_diagnostics"]["checks"].values()))
+        self.assertTrue(verified["assurance_work_queue"]["valid"])
+        self.assertEqual(verified["assurance_work_queue"]["status"], "matched")
+        self.assertTrue(
+            all(verified["assurance_work_queue"]["checks"].values())
+        )
+        self.assertTrue(verified["assurance_register"]["valid"])
+        self.assertTrue(all(verified["assurance_register"]["checks"].values()))
         self.assertEqual(
             verified["binding"]["analysis_state_sha256"],
             json.loads(
@@ -322,6 +596,177 @@ class ExtensionTests(unittest.TestCase):
         )
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["verify-package", str(destination), "--json"]), 0)
+        human_output = io.StringIO()
+        with contextlib.redirect_stdout(human_output):
+            self.assertEqual(main(["verify-package", str(destination)]), 0)
+        self.assertIn(
+            "Schema catalog: valid=True, schemas=12", human_output.getvalue()
+        )
+        self.assertIn(
+            "Assurance work queue: valid=True, status=matched",
+            human_output.getvalue(),
+        )
+        self.assertIn(
+            "Assurance register: valid=True, obligations=",
+            human_output.getvalue(),
+        )
+        self.assertIn(
+            "Analysis diagnostics: valid=True, artifacts=5",
+            human_output.getvalue(),
+        )
+        self.assertIn(
+            "Capabilities: analysis_diagnostics_projection_v1, "
+            "assurance_register_projection, assurance_work_queue_projection",
+            human_output.getvalue(),
+        )
+
+        queue_path = destination / "assurance-work.json"
+        queue = json.loads(queue_path.read_text(encoding="utf-8"))
+        queue["notice"] += " Rewritten after packaging."
+        queue_content = dict(queue)
+        queue_content.pop("integrity")
+        queue["integrity"]["content_sha256"] = canonical_json_sha256(
+            queue_content
+        )
+        queue_path.write_text(
+            json.dumps(queue, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        manifest_path = destination / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        queue_raw = queue_path.read_bytes()
+        queue_entry = next(
+            value
+            for value in manifest["files"]
+            if value["path"] == "assurance-work.json"
+        )
+        queue_entry["bytes"] = len(queue_raw)
+        queue_entry["sha256"] = hashlib.sha256(queue_raw).hexdigest()
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        queue_tampered = verify_review_package(destination)
+        queue_rules = {value["rule_id"] for value in queue_tampered["findings"]}
+        self.assertFalse(queue_tampered["valid"])
+        self.assertIn("package.assurance_work_queue_invalid", queue_rules)
+        self.assertNotIn("package.checksum_mismatch", queue_rules)
+        self.assertTrue(
+            queue_tampered["assurance_work_queue"]["checks"]["content_integrity"]
+        )
+        self.assertFalse(
+            queue_tampered["assurance_work_queue"]["checks"]["semantic_projection"]
+        )
+
+        export_review_package(self.analysis, destination, overwrite=True)
+
+        register_path = destination / "assurance-register.json"
+        register = json.loads(register_path.read_text(encoding="utf-8"))
+        register["notice"] += " Rewritten after packaging."
+        register_path.write_text(
+            json.dumps(register, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        manifest_path = destination / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        register_raw = register_path.read_bytes()
+        register_entry = next(
+            value
+            for value in manifest["files"]
+            if value["path"] == "assurance-register.json"
+        )
+        register_entry["bytes"] = len(register_raw)
+        register_entry["sha256"] = hashlib.sha256(register_raw).hexdigest()
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        register_tampered = verify_review_package(destination)
+        register_rules = {
+            value["rule_id"] for value in register_tampered["findings"]
+        }
+        self.assertFalse(register_tampered["valid"])
+        self.assertIn("package.assurance_register_invalid", register_rules)
+        self.assertNotIn("package.checksum_mismatch", register_rules)
+        self.assertFalse(
+            register_tampered["assurance_register"]["checks"][
+                "semantic_projection"
+            ]
+        )
+        self.assertTrue(register_tampered["assurance_work_queue"]["valid"])
+
+        export_review_package(self.analysis, destination, overwrite=True)
+
+        validation_path = destination / "validation.json"
+        validation = json.loads(validation_path.read_text(encoding="utf-8"))
+        validation["counts"]["warning"] += 1
+        validation_path.write_text(
+            json.dumps(validation, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        manifest_path = destination / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        validation_raw = validation_path.read_bytes()
+        validation_entry = next(
+            value
+            for value in manifest["files"]
+            if value["path"] == "validation.json"
+        )
+        validation_entry["bytes"] = len(validation_raw)
+        validation_entry["sha256"] = hashlib.sha256(validation_raw).hexdigest()
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        diagnostics_tampered = verify_review_package(destination)
+        diagnostics_rules = {
+            value["rule_id"] for value in diagnostics_tampered["findings"]
+        }
+        self.assertFalse(diagnostics_tampered["valid"])
+        self.assertIn("package.analysis_diagnostics_invalid", diagnostics_rules)
+        self.assertNotIn("package.checksum_mismatch", diagnostics_rules)
+        self.assertFalse(
+            diagnostics_tampered["analysis_diagnostics"]["checks"]["validation"]
+        )
+        self.assertTrue(
+            diagnostics_tampered["analysis_diagnostics"]["checks"]["summary"]
+        )
+
+        export_review_package(self.analysis, destination, overwrite=True)
+
+        manifest_path = destination / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.pop("capabilities")
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        undeclared = verify_review_package(destination)
+        self.assertFalse(undeclared["valid"])
+        self.assertIn(
+            "package.capabilities_missing",
+            {value["rule_id"] for value in undeclared["findings"]},
+        )
+        self.assertTrue(undeclared["assurance_work_queue"]["valid"])
+
+        export_review_package(self.analysis, destination, overwrite=True)
+
+        schema_path = destination / "pysfmea-diagram.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        schema["title"] = "Tampered schema title"
+        schema_path.write_text(
+            json.dumps(schema, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        schema_tampered = verify_review_package(destination)
+        Draft202012Validator(schema_document("review-package-verification")).validate(
+            schema_tampered
+        )
+        schema_rules = {value["rule_id"] for value in schema_tampered["findings"]}
+        self.assertIn("package.checksum_mismatch", schema_rules)
+        self.assertIn("package.schema.digest", schema_rules)
+
+        export_review_package(self.analysis, destination, overwrite=True)
 
         summary_path = destination / "summary.json"
         summary_path.write_text(
@@ -336,6 +781,12 @@ class ExtensionTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["verify-package", str(destination)]), 1)
 
+        missing = verify_review_package(self.root / "missing-review-package.zip")
+        self.assertFalse(missing["valid"])
+        Draft202012Validator(schema_document("review-package-verification")).validate(
+            missing
+        )
+
         export_review_package(self.analysis, destination, overwrite=True)
         unexpected = destination / "reviewer-notes.txt"
         unexpected.write_text("not manifested\n", encoding="utf-8")
@@ -346,6 +797,60 @@ class ExtensionTests(unittest.TestCase):
         )
         unexpected.unlink()
 
+        unexpected_directory = destination / "nested-content"
+        unexpected_directory.mkdir()
+        nested_file = unexpected_directory / "do-not-traverse.txt"
+        nested_file.write_text("unexpected\n", encoding="utf-8")
+        nested = verify_review_package(destination)
+        self.assertIn(
+            "package.entry_type",
+            {value["rule_id"] for value in nested["findings"]},
+        )
+        nested_file.unlink()
+        unexpected_directory.rmdir()
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["files"][0]["bytes"] = 100_000_001
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        oversized = verify_review_package(destination)
+        self.assertIn(
+            "package.file_limit",
+            {value["rule_id"] for value in oversized["findings"]},
+        )
+
+        export_review_package(self.analysis, destination, overwrite=True)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for entry in manifest["files"][:6]:
+            entry["bytes"] = 90_000_000
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        excessive_total = verify_review_package(destination)
+        self.assertIn(
+            "package.total_limit",
+            {value["rule_id"] for value in excessive_total["findings"]},
+        )
+
+        export_review_package(self.analysis, destination, overwrite=True)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["files"].extend(
+            dict(manifest["files"][0]) for _ in range(61)
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        excessive_entries = verify_review_package(destination)
+        self.assertIn(
+            "package.file_list_invalid",
+            {value["rule_id"] for value in excessive_entries["findings"]},
+        )
+
+        export_review_package(self.analysis, destination, overwrite=True)
         manifest_path = destination / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["files"][0]["path"] = "../escape.txt"
@@ -393,7 +898,28 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_package(archive)
         self.assertTrue(verified["valid"])
         self.assertEqual(verified["container"], "zip")
-        self.assertEqual(verified["checked_files"], 26)
+        self.assertEqual(verified["checked_files"], 40)
+        self.assertTrue(verified["schema_catalog"]["valid"])
+        self.assertEqual(
+            verified["capabilities"],
+            [
+                "analysis_diagnostics_projection_v1",
+                "assurance_register_projection",
+                "assurance_work_queue_projection",
+            ],
+        )
+        self.assertTrue(verified["assurance_work_queue"]["valid"])
+        self.assertTrue(verified["analysis_diagnostics"]["valid"])
+        self.assertTrue(verified["assurance_register"]["valid"])
+        self.assertTrue(
+            verified["assurance_work_queue"]["path"].endswith(
+                "review-package.zip!/assurance-work.json"
+            )
+        )
+        self.assertNotIn(
+            ".pysfmea-verify-",
+            verified["assurance_work_queue"]["path"],
+        )
         self.assertEqual(len(verified["archive_sha256"]), 64)
         with zipfile.ZipFile(archive) as bundle:
             self.assertEqual(
@@ -402,6 +928,7 @@ class ExtensionTests(unittest.TestCase):
                     "analysis.json",
                     "assurance-register.csv",
                     "assurance-register.json",
+                    "assurance-work.json",
                     "assurance-register.md",
                     "architecture.md",
                     "audit.csv",
@@ -421,6 +948,19 @@ class ExtensionTests(unittest.TestCase):
                     "inventory.md",
                     "manifest.json",
                     "README.md",
+                    "schema-catalog.json",
+                    "pysfmea-detached-signature.schema.json",
+                    "pysfmea-diagram.schema.json",
+                    "pysfmea-diagram-bundle.schema.json",
+                    "pysfmea-diagram-bundle-verification.schema.json",
+                    "pysfmea-html-report-verification.schema.json",
+                    "pysfmea-schema-bundle-verification.schema.json",
+                    "pysfmea-schema-catalog.schema.json",
+                    "pysfmea-review-package-manifest.schema.json",
+                    "pysfmea-review-package-verification.schema.json",
+                    "pysfmea-workflow-status.schema.json",
+                    "pysfmea-assurance-work-queue.schema.json",
+                    "pysfmea-assurance-work-queue-verification.schema.json",
                     "summary.json",
                     "traceability.md",
                     "validation.json",
@@ -585,6 +1125,7 @@ class ExtensionTests(unittest.TestCase):
         )
 
         envelope = json.loads(signature_path.read_text(encoding="utf-8"))
+        Draft202012Validator(schema_document("detached-signature")).validate(envelope)
         original = json.dumps(envelope, indent=2) + "\n"
         envelope["statement"]["signer"] = "Impersonated signer"
         signature_path.write_text(

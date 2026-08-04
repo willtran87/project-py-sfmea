@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install development environment
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,signing]"
+
+      - name: Compile package
+        run: python -m compileall -q src
+
+      - name: Lint
+        run: python -m ruff check src tests
+
+      - name: Test
+        run: python -m pytest -q
+
+      - name: Validate published JSON Schemas
+        shell: python
+        run: |
+          from jsonschema import Draft202012Validator
+          from pysfmea.schemas import schema_catalog, schema_document
+
+          for entry in schema_catalog()["schemas"]:
+              Draft202012Validator.check_schema(schema_document(entry["name"]))
+
+      - name: Smoke-test CLI
+        run: sfmea --version && sfmea schema --list
+
+  package:
+    name: Build and smoke-test distributions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Build source and wheel distributions
+        run: python -m pip install --upgrade pip build && python -m build
+
+      - name: Install and smoke-test wheel
+        run: |
+          python -m venv .package-smoke
+          .package-smoke/bin/python -m pip install dist/*.whl
+          .package-smoke/bin/sfmea --version
+          .package-smoke/bin/sfmea schema --list
+
+      - name: Publish workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pysfmea-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

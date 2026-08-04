@@ -6,6 +6,7 @@ import hashlib
 import html
 import json
 import os
+import re
 import uuid
 from collections import Counter, defaultdict
 from collections.abc import Iterable
@@ -13,7 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from .architecture import architecture_graph
-from .assurance import assurance_progress, ensure_assurance_register
+from .assurance import (
+    assurance_progress,
+    assurance_work_queue,
+    ensure_assurance_register,
+)
 from .diagrams import (
     DEFAULT_PROPAGATION_DEPTH,
     DEFAULT_PROPAGATION_PATH_LIMIT,
@@ -37,6 +42,9 @@ MAX_REPORT_ASSURANCE_EXECUTIONS = 100
 MAX_REPORT_SFTA_GAPS_PER_CLASS = 250
 MAX_REPORT_SFTA_FINDING_LINKS = 250
 HTML_REPORT_FORMAT = "pysfmea-html-report-1"
+HTML_REPORT_VERIFICATION_FORMAT = "pysfmea-html-report-verification-1"
+MAX_HTML_REPORT_VERIFY_BYTES = 256 * 1024 * 1024
+DOCUMENT_INTEGRITY_REQUIRED_VERSION = (0, 33, 0)
 
 
 def _active_items(analysis: dict[str, Any]) -> list[dict[str, Any]]:
@@ -422,6 +430,12 @@ def build_html_report_data(
     coverage = coverage_metrics(analysis)
     guidance_trace = guidance_traceability(analysis)
     assurance = ensure_assurance_register(analysis)
+    assurance_queue = assurance_work_queue(analysis)
+    work_by_obligation = {
+        str(value.get("obligation_id", "")): value
+        for value in assurance_queue["items"]
+        if value.get("obligation_id")
+    }
     sfta = _report_sfta_projection(build_sfta(analysis))
     obligations_by_finding: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for obligation in assurance.get("obligations", []):
@@ -430,7 +444,10 @@ def build_html_report_data(
                 obligation
             )
     selected_obligations = [
-        obligation
+        {
+            **obligation,
+            "work": work_by_obligation.get(str(obligation.get("id", "")), {}),
+        }
         for item in selected
         for obligation in obligations_by_finding[str(item.get("id", ""))]
         if obligation.get("source_status", "active") == "active"
@@ -529,6 +546,7 @@ def build_html_report_data(
         "assurance": {
             "schema_version": assurance.get("schema_version", ""),
             "planner_version": assurance.get("planner_version", ""),
+            "work_queue_format": assurance_queue["format"],
             "notice": assurance.get("notice", ""),
             "summary": assurance.get("summary", {}),
             "progress": assurance_progress(analysis),
@@ -670,6 +688,10 @@ def export_html_report(
         .replace("__REPORT_DATA_SHA256__", report_data_sha256)
         .replace("__REPORT_DATA__", safe_data)
     )
+    document_sha256 = hashlib.sha256(
+        document.replace("__REPORT_DOCUMENT_SHA256__", "").encode("utf-8")
+    ).hexdigest()
+    document = document.replace("__REPORT_DOCUMENT_SHA256__", document_sha256)
     path = Path(destination).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -679,6 +701,231 @@ def export_html_report(
     finally:
         temporary.unlink(missing_ok=True)
     return path
+
+
+def _html_report_meta(document: str, name: str) -> str:
+    match = re.search(
+        rf'<meta name="{re.escape(name)}" content="([^"]*)">', document
+    )
+    return match.group(1) if match else ""
+
+
+def _report_requires_document_integrity(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    generator = str(payload.get("report", {}).get("generator", ""))
+    match = re.match(r"^PySFMEA (\d+)\.(\d+)\.(\d+)", generator)
+    if not match:
+        return False
+    return tuple(int(value) for value in match.groups()) >= (
+        DOCUMENT_INTEGRITY_REQUIRED_VERSION
+    )
+
+
+def verify_html_report_file(
+    source: str | Path, *, analysis: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Verify standalone report content and optionally its exact analysis binding."""
+
+    candidate = Path(source).expanduser()
+    if candidate.is_symlink():
+        raise ValueError(f"HTML report must not be a symbolic link: {candidate}")
+    path = candidate.resolve()
+    if not path.is_file():
+        raise ValueError(f"HTML report must be a regular file: {path}")
+    size = path.stat().st_size
+    if size > MAX_HTML_REPORT_VERIFY_BYTES:
+        raise ValueError(
+            f"HTML report exceeds the {MAX_HTML_REPORT_VERIFY_BYTES}-byte verification limit"
+        )
+    try:
+        document = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"HTML report is not valid UTF-8: {path}: {exc}") from exc
+
+    declared = {
+        "format": _html_report_meta(document, "pysfmea-report-format"),
+        "baseline_id": _html_report_meta(document, "pysfmea-analysis-baseline"),
+        "analysis_schema_version": _html_report_meta(
+            document, "pysfmea-analysis-schema"
+        ),
+        "analysis_state_sha256": _html_report_meta(
+            document, "pysfmea-analysis-state-sha256"
+        ),
+        "report_data_sha256": _html_report_meta(
+            document, "pysfmea-report-data-sha256"
+        ),
+        "document_sha256": _html_report_meta(
+            document, "pysfmea-document-sha256"
+        ),
+    }
+    payload_match = re.search(
+        r'<script id="report-data" type="application/json">(.*?)</script>',
+        document,
+        re.DOTALL,
+    )
+    payload_text = payload_match.group(1) if payload_match else ""
+    payload: Any = None
+    payload_json_valid = False
+    if payload_match:
+        try:
+            payload = json.loads(payload_text)
+            payload_json_valid = isinstance(payload, dict)
+        except json.JSONDecodeError:
+            pass
+    requires_document_integrity = _report_requires_document_integrity(payload)
+    hex_digest = re.compile(r"^[0-9a-fA-F]{64}$")
+    payload_digest = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
+    declared_payload_digest = declared["report_data_sha256"].lower()
+    document_digest = ""
+    if declared["document_sha256"]:
+        marker = (
+            '<meta name="pysfmea-document-sha256" content="'
+            + declared["document_sha256"]
+            + '">'
+        )
+        normalized = document.replace(
+            marker, '<meta name="pysfmea-document-sha256" content="">', 1
+        )
+        document_digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    embedded_binding = (
+        payload.get("report", {}).get("binding", {})
+        if isinstance(payload, dict)
+        else {}
+    )
+    binding_consistent = isinstance(embedded_binding, dict) and all(
+        str(embedded_binding.get(key, "")) == declared[key]
+        for key in (
+            "format",
+            "baseline_id",
+            "analysis_schema_version",
+            "analysis_state_sha256",
+        )
+    )
+    document_check: bool | None
+    if declared["document_sha256"]:
+        document_check = bool(
+            hex_digest.fullmatch(declared["document_sha256"])
+            and document_digest == declared["document_sha256"].lower()
+        )
+    else:
+        document_check = False if requires_document_integrity else None
+    checks: dict[str, bool | None] = {
+        "metadata_complete": all(
+            declared[key]
+            for key in (
+                "format",
+                "baseline_id",
+                "analysis_schema_version",
+                "analysis_state_sha256",
+                "report_data_sha256",
+            )
+        ),
+        "report_format": declared["format"] == HTML_REPORT_FORMAT,
+        "payload_present": payload_match is not None,
+        "payload_json": payload_json_valid,
+        "payload_integrity": bool(
+            hex_digest.fullmatch(declared["analysis_state_sha256"])
+            and hex_digest.fullmatch(declared["report_data_sha256"])
+            and payload_match
+            and payload_digest == declared_payload_digest
+        ),
+        "payload_binding": binding_consistent,
+        "document_integrity": document_check,
+        "baseline": None,
+        "schema": None,
+        "analysis_state": None,
+    }
+    required_internal = (
+        "metadata_complete",
+        "report_format",
+        "payload_present",
+        "payload_json",
+        "payload_integrity",
+        "payload_binding",
+    )
+    internal_valid = all(checks[key] is True for key in required_internal) and (
+        checks["document_integrity"] is not False
+    )
+    current: dict[str, str] = {}
+    binding_matches: bool | None = None
+    if analysis is not None:
+        current = {
+            "baseline_id": str(
+                analysis.get("project", {}).get("baseline", {}).get("id", "")
+            ),
+            "analysis_schema_version": str(analysis.get("schema_version", "")),
+            "analysis_state_sha256": analysis_state_sha256(analysis),
+        }
+        checks["baseline"] = current["baseline_id"] == declared["baseline_id"]
+        checks["schema"] = (
+            current["analysis_schema_version"]
+            == declared["analysis_schema_version"]
+        )
+        checks["analysis_state"] = (
+            current["analysis_state_sha256"]
+            == declared["analysis_state_sha256"].lower()
+        )
+        binding_matches = all(
+            checks[key] is True for key in ("baseline", "schema", "analysis_state")
+        )
+    valid = internal_valid and binding_matches is not False
+    status = (
+        "invalid"
+        if not internal_valid
+        else "mismatched"
+        if binding_matches is False
+        else "matched"
+        if binding_matches is True
+        else "valid_binding_not_checked"
+    )
+    failed_checks = sorted(key for key, value in checks.items() if value is False)
+    unchecked_checks = sorted(key for key, value in checks.items() if value is None)
+    return {
+        "format": HTML_REPORT_VERIFICATION_FORMAT,
+        "path": str(path),
+        "bytes": size,
+        "valid": valid,
+        "status": status,
+        "integrity_scope": (
+            "invalid"
+            if not internal_valid
+            else "document_and_payload"
+            if checks["document_integrity"] is True
+            else "payload_only_legacy"
+            if checks["document_integrity"] is None
+            else "invalid"
+        ),
+        "checks": checks,
+        "declared": declared,
+        "current": current,
+        "binding_requested": analysis is not None,
+        "binding_checked": analysis is not None,
+        "failed_checks": failed_checks,
+        "unchecked_checks": unchecked_checks,
+        "errors": [],
+        "payload": {
+            "generator": (
+                payload.get("report", {}).get("generator", "")
+                if isinstance(payload, dict)
+                else ""
+            ),
+            "project": (
+                payload.get("project", {}).get("name", "")
+                if isinstance(payload, dict)
+                else ""
+            ),
+            "embedded_records": (
+                payload.get("report", {}).get("embedded_records", 0)
+                if isinstance(payload, dict)
+                else 0
+            ),
+        },
+        "notice": (
+            "Integrity and binding checks detect unreconciled changes and staleness; "
+            "they do not authenticate an author, approve the analysis, or accept risk."
+        ),
+    }
 
 
 _REPORT_TEMPLATE = r'''<!doctype html>
@@ -692,6 +939,7 @@ _REPORT_TEMPLATE = r'''<!doctype html>
 <meta name="pysfmea-analysis-schema" content="__REPORT_SCHEMA__">
 <meta name="pysfmea-analysis-state-sha256" content="__REPORT_ANALYSIS_SHA256__">
 <meta name="pysfmea-report-data-sha256" content="__REPORT_DATA_SHA256__">
+<meta name="pysfmea-document-sha256" content="__REPORT_DOCUMENT_SHA256__">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>__REPORT_TITLE__</title>
 <style>
@@ -848,6 +1096,7 @@ async function copyDetailLink(){return copyText($("detailCopy"),location.href,"L
 function initDetailNavigation(){const dialog=$("detailDialog");$("detailPropagation").addEventListener("click",()=>{const record=currentDetailRecord();if(record)openPropagationForFinding(record.id)});$("detailAssurance").addEventListener("click",()=>{const record=currentDetailRecord();if(record)openAssuranceForFinding(record.id)});$("detailPrevious").addEventListener("click",()=>moveDetailRecord(-1));$("detailNext").addEventListener("click",()=>moveDetailRecord(1));$("detailCopy").addEventListener("click",copyDetailLink);dialog.addEventListener("cancel",()=>history.replaceState(null,"","#failure-modes"));new MutationObserver(()=>{if(dialog.open)refreshDetailNavigation()}).observe(dialog,{attributes:true,attributeFilter:["open"]});document.addEventListener("keydown",event=>{if(!dialog.open||!event.altKey)return;if(event.key==="ArrowLeft"){event.preventDefault();moveDetailRecord(-1)}else if(event.key==="ArrowRight"){event.preventDefault();moveDetailRecord(1)}});if(dialog.open)refreshDetailNavigation()}
 function renderAssuranceProgress(){renderAssurance();const a=data.assurance||{},p=a.progress||{},projection=a.report_projection||{},obligationProjection=projection.obligations||{},executionProjection=projection.executions||{},values=(a.obligations||[]).filter(v=>v.source_status==="active"),executions=a.executions||[],metrics=$("assuranceMetrics");clear(metrics);metrics.append(metric(fmt(p.applicable_findings),"accepted findings"),metric(pct(p.planning_percent),"plan ready",p.gates?.plan_ready?"good":"danger"),metric(fmt(p.implemented_tests),"implemented tests",p.implementation_pending?"":"good"),metric(fmt(p.recorded_executions),"recorded executions"),metric(fmt(p.verified_obligations),"verified / resolved",p.gates?.verification_complete?"good":""),metric(fmt(p.planning_gaps),"planning gaps",p.planning_gaps?"danger":"good"));$("assuranceCount").textContent=`Showing ${fmt(values.length)} of ${fmt(obligationProjection.total??values.length)} obligations in this bounded view; ${fmt(p.excluded_by_finding_disposition)} belong to findings not accepted for assurance implementation${executionProjection.truncated?` and ${fmt(executions.length)} of ${fmt(executionProjection.total)} executions are embedded`:""}. Use ${projection.complete_source||"the JSON/CSV register"} for the complete machine-readable checklist.`}
 initHeader();renderOverview();renderCoverage();renderFindings();initTable();renderAssuranceProgress();renderSfta();renderProjectionNotices();renderRunManifest();renderArchitecture();renderTraceability();renderSequences();initDiagrams();renderGuidance();renderMethodology();initNavigation();initDetailNavigation();
+(()=>{const values=(data.assurance?.obligations||[]).filter(value=>value.source_status==="active"),cards=[...document.querySelectorAll("#assuranceRows .citation-entry")];cards.forEach((card,index)=>{const work=values[index]?.work||{},meta=card.querySelector(".citation-meta");if(!work.state||!meta)return;meta.prepend(tag(`next: ${work.next_action_id||"none"}`,"info"));meta.prepend(tag(`work: ${work.state}`,work.automation_eligible?"accepted":"warning"));if((work.blockers||[]).length)card.append(text("h4","Work blockers"),list(work.blockers))})})();
 </script>
 </body>
 </html>

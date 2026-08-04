@@ -31,6 +31,29 @@ re-import and rejects content changed after publication; older and organization-
 bundles without an integrity declaration remain supported. Publication uses a temporary
 sibling plus atomic replacement, preserving any prior artifact if publication fails.
 
+## Verify a generated bundle
+
+```powershell
+sfmea diagram-verify diagrams.json
+sfmea diagram-verify diagrams.json --analysis sfmea-analysis.json
+sfmea diagram-verify diagrams.json --analysis sfmea-analysis.json --json
+```
+
+The verifier applies the five-megabyte input bound, rejects symbolic links and malformed
+UTF-8 JSON, checks canonical content integrity, validates every embedded diagram and unique
+diagram ID, and optionally requires the exact analysis schema, baseline, and state digest.
+Human output distinguishes a matched binding from one that was not checked; `--json` emits
+the complete versioned verification record for automation. JSON remains valid when the
+artifact is missing, unsafe, malformed, integrity-invalid, or binding-mismatched. Completed
+negative checks, checks that could not run, and diagnostic errors are separate fields. Exit
+status is `0` for a valid verdict, `1` when the artifact or binding is rejected, and `2` when
+the requested analysis input cannot be loaded.
+
+PySFMEA 0.31 and newer generated bundles declare integrity as required. Removing that record
+is treated as a downgrade attempt and rejected during report import. Pre-0.31 or
+organization-authored legacy bundles may still be imported without a declaration, but they
+cannot pass the explicit `diagram-verify` workflow until regenerated or governed externally.
+
 Generated architecture, propagation, control, and sequence views are explicitly
 bounded and record their limits or truncation state in the diagram notice and
 metadata.
@@ -125,6 +148,21 @@ top-level `diagrams` array. Custom diagram IDs must not collide with generated o
 other imported diagram IDs.
 
 ## Diagram schema
+
+Export the authoritative structural contracts for external editors, CI, or integration tools:
+
+```powershell
+sfmea schema diagram -o pysfmea-diagram.schema.json
+sfmea schema diagram-bundle -o pysfmea-diagram-bundle.schema.json
+sfmea schema diagram-bundle-verification -o diagram-verdict.schema.json
+```
+
+These self-contained JSON Schema Draft 2020-12 documents enforce field types, identifiers,
+bounds, required properties, format constants, and closed canonical diagram objects. JSON
+Schema cannot establish that IDs are unique, edges reference existing nodes, a digest matches
+the bytes, or an analysis binding is current; `sfmea diagram-verify` remains authoritative for
+those semantic checks. The complete catalog and compatibility policy are documented in
+[SCHEMAS.md](SCHEMAS.md).
 
 ```json
 {

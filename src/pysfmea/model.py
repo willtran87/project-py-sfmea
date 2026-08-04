@@ -13,6 +13,27 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def preserve_unchanged_generated_at(
+    previous: object, current: dict[str, object]
+) -> dict[str, object]:
+    """Keep derived-artifact provenance stable when its governed content is unchanged."""
+
+    if not isinstance(previous, dict):
+        return current
+    previous_generated_at = previous.get("generated_at")
+    if not isinstance(previous_generated_at, str) or not previous_generated_at:
+        return current
+    previous_content = {
+        key: value for key, value in previous.items() if key != "generated_at"
+    }
+    current_content = {
+        key: value for key, value in current.items() if key != "generated_at"
+    }
+    if previous_content == current_content:
+        current["generated_at"] = previous_generated_at
+    return current
+
+
 def stable_id(prefix: str, *parts: str, size: int = 12) -> str:
     material = "\x1f".join(parts).encode("utf-8")
     digest = hashlib.sha256(material).hexdigest()[:size].upper()

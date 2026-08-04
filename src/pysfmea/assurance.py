@@ -15,9 +15,42 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .model import stable_id, utc_now
+from .integrity import canonical_json_sha256
+from .model import preserve_unchanged_generated_at, stable_id, utc_now
+from .version import __version__
 
 ASSURANCE_SCHEMA_VERSION = "1.0"
+ASSURANCE_WORK_QUEUE_FORMAT = "pysfmea-assurance-work-queue-2"
+ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT = (
+    "pysfmea-assurance-work-queue-verification-1"
+)
+ASSURANCE_REGISTER_VERIFICATION_FORMAT = "pysfmea-assurance-register-verification-1"
+MAX_ASSURANCE_WORK_QUEUE_BYTES = 100 * 1024 * 1024
+ASSURANCE_WORK_STATES = (
+    "contract_gap",
+    "definition_required",
+    "plan_review_required",
+    "ready_for_implementation",
+    "ready_for_execution",
+    "execution_remediation_required",
+    "evidence_remediation_required",
+    "evidence_review_required",
+    "verification_review_required",
+    "resolved",
+)
+ASSURANCE_WORK_NEXT_ACTIONS = (
+    "repair_assurance_register",
+    "define_assurance_contract",
+    "review_assurance_plan",
+    "implement_test",
+    "execute_test",
+    "remediate_execution",
+    "remediate_evidence",
+    "review_execution_evidence",
+    "complete_verification_review",
+    "none",
+)
+_WORK_STATE_ACTION = dict(zip(ASSURANCE_WORK_STATES, ASSURANCE_WORK_NEXT_ACTIONS))
 PLANNER_VERSION = "deterministic-verification-planner-6"
 ASSURANCE_SCAFFOLD_FORMAT = "pysfmea-pytest-assurance-scaffold-6"
 ASSURANCE_SCAFFOLD_VERIFICATION_FORMAT = (
@@ -57,6 +90,25 @@ PLANNING_REVIEW_STATUSES = {
     "test_proposed",
     "residual_risk_review",
     "reopened",
+    "not_applicable",
+}
+PLANNING_READY_STATUSES = {
+    "confirmed",
+    "control_implemented",
+    "verification_planned",
+    "test_proposed",
+    "evidence_collected",
+    "partially_verified",
+    "verified",
+    "residual_risk_review",
+    "accepted_risk",
+    "closed",
+    "not_applicable",
+}
+TERMINAL_ASSURANCE_STATUSES = {
+    "verified",
+    "accepted_risk",
+    "closed",
     "not_applicable",
 }
 IMPLEMENTATION_STATUSES = {"not_implemented", "proposed", "implemented"}
@@ -689,6 +741,12 @@ def refresh_assurance_register(
             )
             if old_contract_sha256 != new_contract_sha256:
                 change_reasons.append("verification contract changed")
+            else:
+                previous_generated_at = old.get("provenance", {}).get(
+                    "generated_at"
+                )
+                if isinstance(previous_generated_at, str) and previous_generated_at:
+                    obligation["provenance"]["generated_at"] = previous_generated_at
             if change_reasons and obligation.get("assurance_status") not in {
                 "candidate",
                 "not_applicable",
@@ -719,6 +777,7 @@ def refresh_assurance_register(
         ),
     }
     register["summary"] = assurance_summary(register)
+    preserve_unchanged_generated_at(previous, register)
     analysis["assurance"] = register
     analysis.setdefault("summary", {})["assurance"] = copy.deepcopy(
         register["summary"]
@@ -761,6 +820,506 @@ def assurance_summary(register: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _planning_ready(obligation: dict[str, Any]) -> bool:
+    review = obligation.get("review", {})
+    return bool(
+        obligation.get("assurance_status") in PLANNING_READY_STATUSES
+        and review.get("reviewer")
+        and review.get("rationale")
+        and not obligation.get("planning_gaps")
+    )
+
+
+def assurance_work_queue(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Project accepted findings into explicit, evidence-backed engineering work states."""
+
+    analysis_state_sha256 = canonical_json_sha256(analysis)
+    register = ensure_assurance_register(analysis)
+    accepted_items = {
+        str(item.get("id", "")): item
+        for item in analysis.get("items", [])
+        if isinstance(item, dict)
+        and item.get("source_status", "active") == "active"
+        and item.get("review", {}).get("disposition") == "accepted"
+        and item.get("id")
+    }
+    by_finding: dict[str, list[dict[str, Any]]] = {}
+    for obligation in register.get("obligations", []):
+        if (
+            isinstance(obligation, dict)
+            and obligation.get("source_status", "active") == "active"
+        ):
+            by_finding.setdefault(
+                str(obligation.get("finding_id", "")), []
+            ).append(obligation)
+    executions_by_obligation: dict[str, list[dict[str, Any]]] = {}
+    for execution in register.get("executions", []):
+        if isinstance(execution, dict):
+            executions_by_obligation.setdefault(
+                str(execution.get("obligation_id", "")), []
+            ).append(execution)
+
+    items = []
+    for finding_id, finding in accepted_items.items():
+        obligations = by_finding.get(finding_id, [])
+        if len(obligations) != 1:
+            count = len(obligations)
+            items.append(
+                {
+                    "finding_id": finding_id,
+                    "obligation_id": "",
+                    "priority": str(
+                        finding.get("scanner", {}).get("screening_priority", "")
+                    ),
+                    "component": str(
+                        finding.get("component", {}).get("qualname", "")
+                    ),
+                    "state": "contract_gap",
+                    "actionable": True,
+                    "automation_eligible": False,
+                    "next_action_id": "repair_assurance_register",
+                    "blockers": [
+                        (
+                            "accepted finding has no verification obligation"
+                            if count == 0
+                            else f"accepted finding has {count} verification obligations"
+                        )
+                    ],
+                    "latest_execution_id": "",
+                    "latest_execution_status": "",
+                }
+            )
+            continue
+
+        obligation = obligations[0]
+        obligation_id = str(obligation.get("id", ""))
+        assurance_status = str(obligation.get("assurance_status", "candidate"))
+        evidence_status = str(obligation.get("evidence_status", "missing"))
+        implementation_status = str(
+            obligation.get("automation", {}).get(
+                "implementation_status", "not_implemented"
+            )
+        )
+        executions = executions_by_obligation.get(obligation_id, [])
+        latest = executions[-1] if executions else {}
+        latest_status = str(latest.get("status", ""))
+        blockers: list[str] = []
+
+        if assurance_status in TERMINAL_ASSURANCE_STATUSES:
+            state = "resolved"
+            next_action = "none"
+        elif obligation.get("planning_gaps"):
+            state = "definition_required"
+            next_action = "define_assurance_contract"
+            blockers.extend(_text_list(obligation.get("planning_gaps", [])))
+        elif not _planning_ready(obligation):
+            state = "plan_review_required"
+            next_action = "review_assurance_plan"
+            review = obligation.get("review", {})
+            if assurance_status not in PLANNING_READY_STATUSES:
+                blockers.append(
+                    f"assurance status {assurance_status!r} is not planning-ready"
+                )
+            if not str(review.get("reviewer", "")).strip():
+                blockers.append("named assurance-plan reviewer is missing")
+            if not str(review.get("rationale", "")).strip():
+                blockers.append("assurance-plan rationale is missing")
+        elif implementation_status != "implemented":
+            state = "ready_for_implementation"
+            next_action = "implement_test"
+        elif not executions:
+            state = "ready_for_execution"
+            next_action = "execute_test"
+        elif latest_status in {"failed", "timeout", "error"}:
+            state = "execution_remediation_required"
+            next_action = "remediate_execution"
+            blockers.append(f"latest execution status is {latest_status}")
+        elif evidence_status in {"insufficient", "partial", "stale"}:
+            state = "evidence_remediation_required"
+            next_action = "remediate_evidence"
+            blockers.append(f"evidence status is {evidence_status}")
+        elif not latest.get("reviews") or evidence_status in {
+            "missing",
+            "collected_unreviewed",
+        }:
+            state = "evidence_review_required"
+            next_action = "review_execution_evidence"
+        else:
+            state = "verification_review_required"
+            next_action = "complete_verification_review"
+
+        items.append(
+            {
+                "finding_id": finding_id,
+                "obligation_id": obligation_id,
+                "priority": str(obligation.get("priority", "")),
+                "component": str(obligation.get("component", "")),
+                "state": state,
+                "actionable": state != "resolved",
+                "automation_eligible": state
+                in {"ready_for_implementation", "ready_for_execution"},
+                "next_action_id": next_action,
+                "blockers": blockers,
+                "latest_execution_id": str(latest.get("id", "")),
+                "latest_execution_status": latest_status,
+            }
+        )
+
+    state_order = {
+        "contract_gap": 0,
+        "definition_required": 1,
+        "plan_review_required": 2,
+        "execution_remediation_required": 3,
+        "evidence_remediation_required": 4,
+        "ready_for_implementation": 5,
+        "ready_for_execution": 6,
+        "evidence_review_required": 7,
+        "verification_review_required": 8,
+        "resolved": 9,
+    }
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    items.sort(
+        key=lambda value: (
+            state_order.get(value["state"], 99),
+            priority_order.get(value["priority"], 3),
+            value["component"],
+            value["finding_id"],
+        )
+    )
+    by_state = dict(
+        sorted(Counter(value["state"] for value in items).items())
+    )
+    payload = {
+        "format": ASSURANCE_WORK_QUEUE_FORMAT,
+        "generator": {"name": "PySFMEA", "version": __version__},
+        "binding": {
+            "format": ASSURANCE_WORK_QUEUE_FORMAT,
+            "baseline_id": str(
+                analysis.get("project", {}).get("baseline", {}).get("id", "")
+            ),
+            "analysis_schema_version": str(analysis.get("schema_version", "")),
+            "analysis_state_sha256": analysis_state_sha256,
+        },
+        "summary": {
+            "total": len(items),
+            "actionable": sum(value["actionable"] for value in items),
+            "automation_eligible": sum(
+                value["automation_eligible"] for value in items
+            ),
+            "implementation_ready": by_state.get("ready_for_implementation", 0),
+            "execution_ready": by_state.get("ready_for_execution", 0),
+            "by_state": by_state,
+        },
+        "items": items,
+        "notice": (
+            "Work states are deterministic lifecycle projections, not engineering "
+            "approval, execution evidence, or authorization to run repository code."
+        ),
+    }
+    payload["integrity"] = {
+        "algorithm": "sha256",
+        "canonicalization": "json-sort-keys-compact-utf8",
+        "content_sha256": canonical_json_sha256(payload),
+    }
+    return payload
+
+
+def _work_queue_content_sha256(queue: dict[str, Any]) -> str:
+    content = dict(queue)
+    content.pop("integrity", None)
+    return canonical_json_sha256(content)
+
+
+def _work_queue_structure_valid(queue: dict[str, Any]) -> bool:
+    """Apply the closed queue contract and local reconciliation without dependencies."""
+
+    top_fields = {
+        "format",
+        "generator",
+        "binding",
+        "summary",
+        "items",
+        "notice",
+        "integrity",
+    }
+    if set(queue) != top_fields:
+        return False
+    generator = queue.get("generator")
+    binding = queue.get("binding")
+    summary = queue.get("summary")
+    items = queue.get("items")
+    integrity = queue.get("integrity")
+    if not (
+        isinstance(generator, dict)
+        and set(generator) == {"name", "version"}
+        and generator.get("name") == "PySFMEA"
+        and isinstance(generator.get("version"), str)
+        and bool(generator.get("version"))
+        and isinstance(binding, dict)
+        and set(binding)
+        == {
+            "format",
+            "baseline_id",
+            "analysis_schema_version",
+            "analysis_state_sha256",
+        }
+        and binding.get("format") == ASSURANCE_WORK_QUEUE_FORMAT
+        and isinstance(binding.get("baseline_id"), str)
+        and bool(binding.get("baseline_id"))
+        and isinstance(binding.get("analysis_schema_version"), str)
+        and bool(binding.get("analysis_schema_version"))
+        and re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(binding.get("analysis_state_sha256", "")),
+        )
+        and isinstance(summary, dict)
+        and set(summary)
+        == {
+            "total",
+            "actionable",
+            "automation_eligible",
+            "implementation_ready",
+            "execution_ready",
+            "by_state",
+        }
+        and isinstance(items, list)
+        and len(items) <= 1_000_000
+        and isinstance(queue.get("notice"), str)
+        and bool(queue.get("notice"))
+        and isinstance(integrity, dict)
+        and set(integrity)
+        == {"algorithm", "canonicalization", "content_sha256"}
+    ):
+        return False
+
+    item_fields = {
+        "finding_id",
+        "obligation_id",
+        "priority",
+        "component",
+        "state",
+        "actionable",
+        "automation_eligible",
+        "next_action_id",
+        "blockers",
+        "latest_execution_id",
+        "latest_execution_status",
+    }
+    identifiers: list[str] = []
+    for item in items:
+        if not isinstance(item, dict) or set(item) != item_fields:
+            return False
+        state = item.get("state")
+        identifier = item.get("finding_id")
+        blockers = item.get("blockers")
+        if not (
+            isinstance(identifier, str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", identifier)
+            and all(
+                isinstance(item.get(name), str)
+                for name in (
+                    "obligation_id",
+                    "priority",
+                    "component",
+                    "latest_execution_id",
+                    "latest_execution_status",
+                )
+            )
+            and state in ASSURANCE_WORK_STATES
+            and type(item.get("actionable")) is bool
+            and item.get("actionable") == (state != "resolved")
+            and type(item.get("automation_eligible")) is bool
+            and item.get("automation_eligible")
+            == (state in {"ready_for_implementation", "ready_for_execution"})
+            and item.get("next_action_id") == _WORK_STATE_ACTION[state]
+            and isinstance(blockers, list)
+            and len(blockers) <= 100
+            and all(isinstance(value, str) and bool(value) for value in blockers)
+        ):
+            return False
+        identifiers.append(identifier)
+    if len(identifiers) != len(set(identifiers)):
+        return False
+
+    by_state = summary.get("by_state")
+    if not isinstance(by_state, dict) or not set(by_state) <= set(ASSURANCE_WORK_STATES):
+        return False
+    if not all(type(value) is int and value >= 0 for value in by_state.values()):
+        return False
+    actual_by_state = dict(sorted(Counter(item["state"] for item in items).items()))
+    expected_summary = {
+        "total": len(items),
+        "actionable": sum(item["actionable"] for item in items),
+        "automation_eligible": sum(item["automation_eligible"] for item in items),
+        "implementation_ready": actual_by_state.get("ready_for_implementation", 0),
+        "execution_ready": actual_by_state.get("ready_for_execution", 0),
+        "by_state": actual_by_state,
+    }
+    return summary == expected_summary
+
+
+def verify_assurance_work_queue(
+    queue: dict[str, Any], *, analysis: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Verify queue integrity and, when supplied, its exact analysis projection."""
+
+    check_names = (
+        "format",
+        "structure",
+        "content_integrity",
+        "baseline",
+        "schema",
+        "analysis_state",
+        "semantic_projection",
+    )
+    checks: dict[str, bool | None] = {name: None for name in check_names}
+    errors: list[dict[str, str]] = []
+
+    def reject(code: str, message: str, path: str) -> None:
+        errors.append({"code": code, "message": message, "path": path})
+
+    checks["format"] = queue.get("format") == ASSURANCE_WORK_QUEUE_FORMAT
+    if not checks["format"]:
+        reject(
+            "assurance_work_queue.format",
+            "Assurance work queue format is missing or unsupported.",
+            "format",
+        )
+
+    binding = queue.get("binding")
+    summary = queue.get("summary")
+    integrity = queue.get("integrity")
+    structure_valid = _work_queue_structure_valid(queue)
+    checks["structure"] = structure_valid
+    if not structure_valid:
+        reject(
+            "assurance_work_queue.structure",
+            "Assurance work queue is missing required provenance, binding, content, or integrity fields.",
+            "",
+        )
+
+    expected_digest = (
+        str(integrity.get("content_sha256", "")).lower()
+        if isinstance(integrity, dict)
+        else ""
+    )
+    integrity_valid = bool(
+        isinstance(integrity, dict)
+        and integrity.get("algorithm") == "sha256"
+        and integrity.get("canonicalization") == "json-sort-keys-compact-utf8"
+        and re.fullmatch(r"[0-9a-f]{64}", expected_digest)
+        and expected_digest == _work_queue_content_sha256(queue)
+    )
+    checks["content_integrity"] = integrity_valid
+    if not integrity_valid:
+        reject(
+            "assurance_work_queue.integrity",
+            "Assurance work queue content digest is missing, malformed, or does not match.",
+            "integrity.content_sha256",
+        )
+
+    if analysis is not None and isinstance(binding, dict):
+        checks["baseline"] = str(binding.get("baseline_id", "")) == str(
+            analysis.get("project", {}).get("baseline", {}).get("id", "")
+        )
+        checks["schema"] = str(binding.get("analysis_schema_version", "")) == str(
+            analysis.get("schema_version", "")
+        )
+        checks["analysis_state"] = str(
+            binding.get("analysis_state_sha256", "")
+        ).lower() == canonical_json_sha256(analysis)
+        expected = assurance_work_queue(copy.deepcopy(analysis))
+        semantic_fields = ("format", "binding", "summary", "items", "notice")
+        checks["semantic_projection"] = all(
+            queue.get(name) == expected.get(name) for name in semantic_fields
+        )
+        for name, message, path in (
+            ("baseline", "Queue baseline does not match the supplied analysis.", "binding.baseline_id"),
+            ("schema", "Queue schema version does not match the supplied analysis.", "binding.analysis_schema_version"),
+            ("analysis_state", "Queue analysis-state digest does not match the supplied analysis.", "binding.analysis_state_sha256"),
+            ("semantic_projection", "Queue content is not the deterministic projection of the supplied analysis.", "items"),
+        ):
+            if checks[name] is False:
+                reject(f"assurance_work_queue.{name}", message, path)
+
+    failed_checks = [name for name, value in checks.items() if value is False]
+    unchecked_checks = [name for name, value in checks.items() if value is None]
+    binding_requested = analysis is not None
+    binding_checked = binding_requested and all(
+        checks[name] is not None
+        for name in ("baseline", "schema", "analysis_state", "semantic_projection")
+    )
+    local_valid = all(
+        checks[name] is True for name in ("format", "structure", "content_integrity")
+    )
+    valid = not failed_checks and (not binding_requested or binding_checked)
+    if not local_valid:
+        status = "invalid"
+    elif valid:
+        status = "matched" if binding_requested else "valid_binding_not_checked"
+    else:
+        status = "mismatched" if binding_requested and binding_checked else "invalid"
+    return {
+        "format": ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
+        "path": "<memory>",
+        "valid": valid,
+        "status": status,
+        "binding_requested": binding_requested,
+        "binding_checked": binding_checked,
+        "checks": checks,
+        "failed_checks": failed_checks,
+        "unchecked_checks": unchecked_checks,
+        "errors": errors,
+        "queue_format": str(queue.get("format", "")),
+        "content_sha256": _work_queue_content_sha256(queue),
+        "binding": copy.deepcopy(binding) if isinstance(binding, dict) else {},
+        "summary": copy.deepcopy(summary) if isinstance(summary, dict) else {},
+        "notice": (
+            "Integrity and binding checks detect unreconciled queue changes and staleness; "
+            "they do not authenticate an author, approve work, or authorize test execution."
+        ),
+    }
+
+
+def verify_assurance_work_queue_file(
+    source: str | Path, *, analysis: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Load and verify a bounded, regular assurance work-queue JSON file."""
+
+    candidate = Path(source).expanduser()
+    if candidate.is_symlink():
+        raise ValueError(f"assurance work queue must not be a symbolic link: {candidate}")
+    path = candidate.resolve()
+    if not path.is_file():
+        raise ValueError(f"assurance work queue must be a regular file: {path}")
+    size = path.stat().st_size
+    if size > MAX_ASSURANCE_WORK_QUEUE_BYTES:
+        raise ValueError(
+            "assurance work queue exceeds "
+            f"{MAX_ASSURANCE_WORK_QUEUE_BYTES} bytes: {path}"
+        )
+    raw = bytearray()
+    try:
+        with path.open("rb") as source_file:
+            while chunk := source_file.read(1024 * 1024):
+                raw.extend(chunk)
+                if len(raw) > MAX_ASSURANCE_WORK_QUEUE_BYTES:
+                    raise ValueError(
+                        "assurance work queue exceeds "
+                        f"{MAX_ASSURANCE_WORK_QUEUE_BYTES} bytes: {path}"
+                    )
+        queue = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"assurance work queue is not valid UTF-8 JSON: {path}: {exc}"
+        ) from exc
+    if not isinstance(queue, dict):
+        raise ValueError("assurance work queue root must be an object")
+    verdict = verify_assurance_work_queue(queue, analysis=analysis)
+    verdict["path"] = str(path)
+    return verdict
+
+
 def assurance_progress(analysis: dict[str, Any]) -> dict[str, Any]:
     """Summarize planning, implementation, execution, and verification truthfully."""
 
@@ -793,41 +1352,18 @@ def assurance_progress(analysis: dict[str, Any]) -> dict[str, Any]:
         for obligation in active_obligations
         if str(obligation.get("finding_id", "")) in accepted_ids
     ]
-    planning_statuses = {
-        "confirmed",
-        "control_implemented",
-        "verification_planned",
-        "test_proposed",
-        "evidence_collected",
-        "partially_verified",
-        "verified",
-        "residual_risk_review",
-        "accepted_risk",
-        "closed",
-        "not_applicable",
-    }
-    terminal_statuses = {"verified", "accepted_risk", "closed", "not_applicable"}
-
-    def planning_ready(obligation: dict[str, Any]) -> bool:
-        review = obligation.get("review", {})
-        return bool(
-            obligation.get("assurance_status") in planning_statuses
-            and review.get("reviewer")
-            and review.get("rationale")
-            and not obligation.get("planning_gaps")
-        )
-
     cardinality_gaps = sum(
         len(by_finding.get(finding_id, [])) != 1 for finding_id in accepted_ids
     )
     ready_findings = sum(
         len(by_finding.get(finding_id, [])) == 1
-        and planning_ready(by_finding[finding_id][0])
+        and _planning_ready(by_finding[finding_id][0])
         for finding_id in accepted_ids
     )
     terminal_findings = sum(
         len(by_finding.get(finding_id, [])) == 1
-        and by_finding[finding_id][0].get("assurance_status") in terminal_statuses
+        and by_finding[finding_id][0].get("assurance_status")
+        in TERMINAL_ASSURANCE_STATUSES
         for finding_id in accepted_ids
     )
     test_required = [
@@ -858,6 +1394,7 @@ def assurance_progress(analysis: dict[str, Any]) -> dict[str, Any]:
         return round((numerator / denominator) * 100, 1) if denominator else None
 
     applicable_count = len(accepted_ids)
+    work_queue_summary = assurance_work_queue(analysis)["summary"]
     return {
         "active_obligations": len(active_obligations),
         "applicable_findings": applicable_count,
@@ -885,6 +1422,7 @@ def assurance_progress(analysis: dict[str, Any]) -> dict[str, Any]:
         "planning_percent": percent(ready_findings, applicable_count),
         "implementation_percent": percent(len(implemented), len(test_required)),
         "verification_percent": percent(terminal_findings, applicable_count),
+        "work_queue": work_queue_summary,
         "gates": {
             "register_complete": cardinality_gaps == 0,
             "plan_ready": cardinality_gaps == 0 and ready_findings == applicable_count,
@@ -993,6 +1531,10 @@ ASSURANCE_CSV_FIELDS = [
     "proposed_test_path",
     "command_argv",
     "implementation_status",
+    "work_state",
+    "automation_eligible",
+    "next_action_id",
+    "work_blockers",
     "assurance_status",
     "evidence_status",
     "planning_gaps",
@@ -1009,8 +1551,11 @@ ASSURANCE_CSV_FIELDS = [
 ]
 
 
-def _flat_row(value: dict[str, Any]) -> dict[str, Any]:
+def _flat_row(
+    value: dict[str, Any], work: dict[str, Any] | None = None
+) -> dict[str, Any]:
     automation = value.get("automation", {})
+    work = work or {}
     return {
         "id": value.get("id", ""),
         "finding_id": value.get("finding_id", ""),
@@ -1030,6 +1575,10 @@ def _flat_row(value: dict[str, Any]) -> dict[str, Any]:
         "proposed_test_path": automation.get("proposed_test_path", ""),
         "command_argv": " ".join(_text_list(automation.get("command_argv", []))),
         "implementation_status": automation.get("implementation_status", ""),
+        "work_state": work.get("state", ""),
+        "automation_eligible": work.get("automation_eligible", ""),
+        "next_action_id": work.get("next_action_id", ""),
+        "work_blockers": " | ".join(_text_list(work.get("blockers", []))),
         "assurance_status": value.get("assurance_status", ""),
         "evidence_status": value.get("evidence_status", ""),
         "planning_gaps": " | ".join(_text_list(value.get("planning_gaps", []))),
@@ -1064,18 +1613,114 @@ def _flat_row(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def assurance_register_document(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Build the deterministic machine-readable assurance register projection."""
+
+    register = ensure_assurance_register(analysis)
+    return {
+        **copy.deepcopy(register),
+        "progress": assurance_progress(analysis),
+        "work_queue": assurance_work_queue(analysis),
+    }
+
+
+def verify_assurance_register(
+    document: dict[str, Any],
+    *,
+    analysis: dict[str, Any],
+    standalone_work_queue: dict[str, Any],
+) -> dict[str, Any]:
+    """Reconcile the full register and its two queue representations with analysis."""
+
+    expected = assurance_register_document(copy.deepcopy(analysis))
+    actual_queue = document.get("work_queue")
+    structure_valid = bool(
+        set(document) == set(expected)
+        and isinstance(document.get("obligations"), list)
+        and isinstance(document.get("executions"), list)
+        and isinstance(document.get("evidence_artifacts"), list)
+        and isinstance(document.get("progress"), dict)
+        and isinstance(actual_queue, dict)
+    )
+    actual_without_queue = dict(document)
+    actual_without_queue.pop("work_queue", None)
+    expected_without_queue = dict(expected)
+    expected_without_queue.pop("work_queue", None)
+    semantic_projection = actual_without_queue == expected_without_queue
+    embedded_verification = (
+        verify_assurance_work_queue(actual_queue, analysis=analysis)
+        if isinstance(actual_queue, dict)
+        else None
+    )
+    embedded_work_queue = bool(
+        embedded_verification and embedded_verification["valid"]
+    )
+    standalone_consistency = bool(
+        isinstance(actual_queue, dict)
+        and actual_queue == standalone_work_queue
+    )
+    checks = {
+        "structure": structure_valid,
+        "semantic_projection": semantic_projection,
+        "embedded_work_queue": embedded_work_queue,
+        "standalone_work_queue_consistency": standalone_consistency,
+    }
+    messages = {
+        "structure": "Assurance register structure does not match the current projection contract.",
+        "semantic_projection": "Assurance register content is not the deterministic projection of packaged analysis.",
+        "embedded_work_queue": "Embedded work queue failed integrity or analysis reconciliation.",
+        "standalone_work_queue_consistency": "Embedded and standalone work queues differ.",
+    }
+    errors = [
+        {
+            "code": f"assurance_register.{name}",
+            "message": messages[name],
+            "path": "work_queue" if "work_queue" in name else "",
+        }
+        for name, passed in checks.items()
+        if not passed
+    ]
+    return {
+        "format": ASSURANCE_REGISTER_VERIFICATION_FORMAT,
+        "valid": all(checks.values()),
+        "checks": checks,
+        "errors": errors,
+        "obligation_count": len(document.get("obligations", []))
+        if isinstance(document.get("obligations"), list)
+        else 0,
+        "notice": (
+            "Register reconciliation establishes deterministic consistency with packaged "
+            "analysis, not verification sufficiency, approval, or risk acceptance."
+        ),
+    }
+
+
 def export_assurance_register(
     analysis: dict[str, Any], destination: str | Path, *, format: str = "json"
 ) -> Path:
-    """Export the executable assurance checklist as JSON, CSV, or Markdown."""
+    """Export the executable assurance checklist or focused work queue."""
 
-    if format not in {"json", "csv", "markdown"}:
-        raise ValueError("assurance format must be json, csv, or markdown")
+    if format not in {"json", "work-json", "csv", "markdown"}:
+        raise ValueError(
+            "assurance format must be json, work-json, csv, or markdown"
+        )
     path = Path(destination).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     register = ensure_assurance_register(analysis)
+    work_queue = assurance_work_queue(analysis)
+    work_by_obligation = {
+        str(value.get("obligation_id", "")): value
+        for value in work_queue["items"]
+        if value.get("obligation_id")
+    }
+    if format == "work-json":
+        path.write_text(
+            json.dumps(work_queue, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return path
     if format == "json":
-        payload = {**register, "progress": assurance_progress(analysis)}
+        payload = assurance_register_document(analysis)
         path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -1086,7 +1731,9 @@ def export_assurance_register(
             writer = csv.DictWriter(handle, fieldnames=ASSURANCE_CSV_FIELDS)
             writer.writeheader()
             for value in register.get("obligations", []):
-                writer.writerow(_flat_row(value))
+                writer.writerow(
+                    _flat_row(value, work_by_obligation.get(str(value.get("id", ""))))
+                )
         return path
     progress = assurance_progress(analysis)
     planning_percent = progress["planning_percent"]
@@ -1104,15 +1751,17 @@ def export_assurance_register(
             f"verified/resolved: {progress['verified_obligations']}."
         ),
         "",
-        "| Obligation | Finding | Component | Method | Status | Evidence | Proposed test |",
-        "|---|---|---|---|---|---|---|",
+        "| Obligation | Finding | Component | Work state | Next action | Method | Status | Evidence | Proposed test |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for value in register.get("obligations", []):
-        row = _flat_row(value)
+        row = _flat_row(value, work_by_obligation.get(str(value.get("id", ""))))
         cells = [
             row["id"],
             row["finding_id"],
             row["component"],
+            row["work_state"],
+            row["next_action_id"],
             row["verification_method"],
             row["assurance_status"],
             row["evidence_status"],
