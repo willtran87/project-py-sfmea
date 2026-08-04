@@ -4,6 +4,30 @@
 
 PySFMEA automates repository decomposition, evidence gathering, candidate generation, persistence, and reporting. It does not automate acceptance of failure modes, consequence analysis, risk acceptance, or approval.
 
+## Guidance traceability and citations
+
+PySFMEA carries a versioned, hashed guidance catalog in every newly saved analysis. The
+catalog separates documents, exact locators, and curated rule mappings. Scanner candidates
+inherit typed links such as `failure_taxonomy`, `process_expectation`,
+`hazard_traceability`, and `methodology_basis`; relationships also record mapping strength
+and applicability. The FAA 2006 software-safety guide is explicitly marked
+`legacy_methodological`, while NASA procedural and assurance requirements are marked
+`nasa_program_or_contract`.
+
+The mapping chain is document → section/page locator → scanner rule → candidate finding.
+`sfmea citations` exports it as normalized JSON or flat CSV, review packages include the
+catalog and both traceability formats, and the standalone report exposes source status,
+locators, usage counts, affected findings, and a bounded guidance-traceability diagram.
+Unknown citation IDs, relationship types, strengths, and applicability values are validation
+errors. Catalog hash drift is reported.
+
+Mappings are curated and deterministic. They explain why a rule is relevant to an SFMEA
+review; they are not declarations of a defect, a standards violation, regulatory
+applicability, or compliance. Machine discovery receives the same closed catalog and may
+propose only supplied citation IDs. Those links remain proposals until the suggestion is
+accepted by a named reviewer, after which they are recorded as `reviewer_accepted` rather
+than being represented as curated mappings.
+
 This boundary follows the central limitation in the public guidance: SFMEA depends on system knowledge, documentation, assumptions, and review by people with different perspectives. Source code can show that a function calls a remote service; it cannot determine whether the end effect of that service returning stale data is an inconvenience, financial loss, environmental release, or loss of life. The project configuration therefore records purpose, boundary, operating context, interfaces, assumptions, hazards, critical functions, and the project's risk policy alongside the scan.
 
 ## Analysis structure
@@ -60,7 +84,7 @@ the strength of the runtime-to-source correlation.
 
 Machine discovery consumes bounded evidence packets rather than unrestricted repository content. Each packet assigns citation IDs to the component, existing candidates, requirements, hazards, interfaces, and runtime relations. Repository-derived strings are explicitly treated as untrusted data, not prompt instructions.
 
-Generated suggestions are stored separately from SFMEA worksheet items. The response schema prohibits severity, occurrence, detection, disposition, workflow status, approval, and closure fields. Suggestions must cite supplied evidence IDs and record uncertainties and questions. Provider, model, prompt version, baseline, timestamp, response hash, and review history are retained. Duplicate failure-mode text for the same component is suppressed.
+Generated suggestions are stored separately from SFMEA worksheet items. The response schema prohibits severity, occurrence, detection, disposition, workflow status, approval, and closure fields. Suggestions must cite supplied evidence IDs, may cite only supplied guidance IDs, and record uncertainties and questions. Unknown evidence or guidance IDs reject the provider response instead of being silently retained. Provider, model, prompt version, baseline, timestamp, response hash, and review history are retained. Duplicate failure-mode text for the same component is suppressed.
 
 A reviewer may reject a suggestion or materialize it as a new unreviewed worksheet item. Materialization does not accept the failure mode into the governed analysis and never overwrites an existing item. Proposed suggestions and generated summaries are invalidated when the repository/configuration baseline changes.
 

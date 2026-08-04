@@ -16,7 +16,14 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import normalize_config
-from .guidance import DEFAULT_EXCLUDES, GUIDANCE_SOURCES, METHODOLOGY_NOTICE, REVIEW_CHECKLIST
+from .guidance import (
+    DEFAULT_EXCLUDES,
+    GUIDANCE_SOURCES,
+    METHODOLOGY_NOTICE,
+    REVIEW_CHECKLIST,
+    citations_for_rule,
+    guidance_bundle,
+)
 from .model import SCHEMA_VERSION, empty_review, stable_id, utc_now
 from .version import __version__
 
@@ -2334,6 +2341,7 @@ def _item_dict(
             "screening_priority": component["screening"]["priority"],
             "screening_reasons": component["screening"]["reasons"],
             "evidence": evidence,
+            "citations": citations_for_rule(rule["rule_id"]),
         },
         "review": review,
         "review_history": [],
@@ -2480,6 +2488,12 @@ def scan_repository(
         components.append(common_cause_component)
         items.append(common_cause_item)
 
+    for item in items:
+        scanner = item.setdefault("scanner", {})
+        scanner.setdefault(
+            "citations", citations_for_rule(str(scanner.get("rule_id", "")))
+        )
+
     priority_order = {"high": 0, "medium": 1, "low": 2, "manual": 3}
     items.sort(
         key=lambda item: (
@@ -2493,6 +2507,7 @@ def scan_repository(
     priority_counts = {priority: 0 for priority in ("high", "medium", "low")}
     for item in items:
         priority_counts[item["scanner"]["screening_priority"]] += 1
+    guidance = guidance_bundle()
     return {
         "schema_version": SCHEMA_VERSION,
         "generator": {
@@ -2536,6 +2551,7 @@ def scan_repository(
             "notice": METHODOLOGY_NOTICE,
             "review_checklist": REVIEW_CHECKLIST,
         },
+        "guidance": guidance,
         "summary": {
             "python_files": len(files),
             "components": len(components),

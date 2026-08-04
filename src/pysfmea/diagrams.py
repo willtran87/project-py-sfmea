@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .architecture import architecture_graph
+from .guidance import guidance_traceability
 from .model import stable_id, utc_now
 from .visuals import sequence_model
 from .version import __version__
@@ -28,6 +29,7 @@ GENERATED_DIAGRAM_KINDS = (
     "architecture",
     "interface_flow",
     "traceability",
+    "guidance_traceability",
     "failure_propagation",
     "control_coverage",
     "sequence",
@@ -558,6 +560,139 @@ def failure_propagation_diagram(
     )
 
 
+def guidance_traceability_diagram(
+    analysis: dict[str, Any], *, record_limit: int = 30
+) -> dict[str, Any]:
+    """Build a bounded document-to-citation-to-rule-to-finding graph."""
+
+    trace = guidance_traceability(analysis)
+    finding_links = [
+        value for value in trace["finding_links"] if value.get("citations")
+    ][:record_limit]
+    citation_ids = {
+        link["citation_id"]
+        for finding in finding_links
+        for link in finding["citations"]
+    }
+    source_ids = {
+        citation["source_id"]
+        for citation in trace["citations"]
+        if citation["id"] in citation_ids
+    }
+    citations = {value["id"]: value for value in trace["citations"]}
+    sources = {value["id"]: value for value in trace["sources"]}
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, Any]] = []
+    for index, source_id in enumerate(sorted(source_ids)):
+        source = sources[source_id]
+        nodes[f"guidance-source:{source_id}"] = _node(
+            f"guidance-source:{source_id}",
+            source["title"],
+            "guidance_source",
+            description=f"Version {source.get('version', '')}; status {source.get('status', '')}",
+            source=source.get("url", ""),
+            tags=[source.get("publisher", ""), source.get("status", "")],
+            layer=0,
+            order=index,
+        )
+    for index, citation_id in enumerate(sorted(citation_ids)):
+        citation = citations[citation_id]
+        locator = citation.get("locator", {})
+        citation_node = f"guidance-citation:{citation_id}"
+        nodes[citation_node] = _node(
+            citation_node,
+            f"{locator.get('section', '')} {locator.get('heading', '')}".strip(),
+            "guidance_citation",
+            description=citation.get("summary", ""),
+            source=citation_id,
+            tags=[citation.get("applicability", "")],
+            layer=1,
+            order=index,
+        )
+        edges.append(
+            _edge(
+                f"guidance-contains-{index}",
+                f"guidance-source:{citation['source_id']}",
+                citation_node,
+                "contains",
+                "contains_citation",
+                evidence=citation_id,
+            )
+        )
+    rule_ids = sorted({finding["rule_id"] for finding in finding_links})
+    for index, rule_id in enumerate(rule_ids):
+        nodes[f"guidance-rule:{rule_id}"] = _node(
+            f"guidance-rule:{rule_id}",
+            rule_id,
+            "scanner_rule",
+            layer=2,
+            order=index,
+        )
+    seen_mapping_edges: set[str] = set()
+    for finding_index, finding in enumerate(finding_links):
+        finding_id = str(finding["finding_id"])
+        finding_node = f"guidance-finding:{finding_id}"
+        nodes[finding_node] = _node(
+            finding_node,
+            f"{finding['component']} / {finding['rule_id']}",
+            "failure_mode",
+            description="Candidate finding; engineering confirmation required.",
+            source=f"{finding.get('source', {}).get('path', '')}:{finding.get('source', {}).get('line', '')}",
+            tags=[finding.get("failure_class", "")],
+            layer=3,
+            order=finding_index,
+        )
+        rule_node = f"guidance-rule:{finding['rule_id']}"
+        edges.append(
+            _edge(
+                f"guidance-finding-link-{finding_index}",
+                rule_node,
+                finding_node,
+                "generated candidate",
+                "generated_finding",
+                evidence=finding_id,
+            )
+        )
+        for link in finding["citations"]:
+            mapping_id = str(link["mapping_id"])
+            if mapping_id in seen_mapping_edges:
+                continue
+            seen_mapping_edges.add(mapping_id)
+            edges.append(
+                _edge(
+                    f"guidance-{mapping_id.lower()}",
+                    f"guidance-citation:{link['citation_id']}",
+                    rule_node,
+                    link["relationship"].replace("_", " "),
+                    link["relationship"],
+                    evidence=mapping_id,
+                    description=(
+                        f"{link['strength']} mapping; {link['applicability']} applicability"
+                    ),
+                )
+            )
+    return normalize_diagram_model(
+        {
+            "id": "guidance-traceability",
+            "title": "Guidance-to-finding traceability",
+            "type": "traceability",
+            "description": "Versioned documents and exact locators mapped through curated scanner rules to candidate findings.",
+            "notice": (
+                f"Bounded to {record_limit} cited active findings. Relationships express "
+                "methodology or review relevance, not noncompliance."
+            ),
+            "nodes": list(nodes.values()),
+            "edges": edges,
+            "metadata": {
+                "category": "guidance_traceability",
+                "record_limit": record_limit,
+                "catalog_version": trace["catalog_version"],
+                "catalog_sha256": trace["catalog_sha256"],
+            },
+        }
+    )
+
+
 def control_coverage_diagram(
     analysis: dict[str, Any], *, record_limit: int = 30
 ) -> dict[str, Any]:
@@ -730,6 +865,7 @@ def build_diagram_models(
         "architecture": lambda: [architecture_diagram(analysis)],
         "interface_flow": lambda: [interface_flow_diagram(analysis)],
         "traceability": lambda: [traceability_diagram(analysis)],
+        "guidance_traceability": lambda: [guidance_traceability_diagram(analysis)],
         "failure_propagation": lambda: [failure_propagation_diagram(analysis)],
         "control_coverage": lambda: [control_coverage_diagram(analysis)],
         "sequence": lambda: sequence_diagrams(analysis),

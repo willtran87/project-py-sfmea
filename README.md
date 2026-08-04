@@ -8,6 +8,7 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 
 - Stable components linked to file and line locations
 - Candidate software failure modes derived from public NASA and FAA guidance
+- Versioned guidance-to-finding citations with typed applicability and relationship metadata
 - Separate scanner-priority and engineering-risk fields
 - Editable functions, requirements, causes, local effects, next-higher effects, and end effects
 - Optional severity, occurrence, detection, and RPN fields
@@ -99,6 +100,8 @@ sfmea queue C:\path\to\python-repo\sfmea-analysis.json --limit 25
 sfmea sequence C:\path\to\python-repo\sfmea-analysis.json --entrypoint "src/api.py:create_payment"
 sfmea traceability C:\path\to\python-repo\sfmea-analysis.json
 sfmea coverage C:\path\to\python-repo\sfmea-analysis.json
+sfmea citations C:\path\to\python-repo\sfmea-analysis.json --format json
+sfmea citations C:\path\to\python-repo\sfmea-analysis.json --format csv
 sfmea package C:\path\to\python-repo\sfmea-analysis.json
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable --zip
@@ -131,7 +134,9 @@ objects. Reports embed up to 10,000 records by default. Use `--max-records` to s
 different bound, up to 50,000; the report states when its record set is truncated.
 The HTML is a review aid and is not included in the checksum-manifested review package.
 
-The report also contains a general inline-SVG diagram explorer. PySFMEA generates
+The report includes a guidance-citation workspace with source status, exact section/page
+locators, mapping applicability, usage counts, and one-click filtering to affected findings.
+It also contains a general inline-SVG diagram explorer. PySFMEA generates
 canonical architecture, interface-flow, requirement/hazard traceability,
 failure-propagation, control/action coverage, and bounded sequence models. The
 explorer provides deterministic layout, node/edge counts, element-type filtering,
@@ -283,7 +288,10 @@ sfmea discover sfmea-analysis.json --scope "src/payments/**" --limit 10 --dry-ru
 
 PySFMEA sends bounded scanner metadata, configured context, existing candidates, and
 runtime relationships. It does not read arbitrary source bodies for model discovery.
-Repository text is represented as untrusted evidence data.
+Repository text is represented as untrusted evidence data. Each packet also supplies a
+closed catalog of authoritative section/page locators. A model may propose only those
+citation IDs; invented IDs reject the response. Accepted links are labeled
+`reviewer_accepted` and remain distinct from deterministic, curated rule mappings.
 
 Use an explicitly selected OpenAI-compatible chat-completions endpoint:
 
@@ -445,7 +453,15 @@ Organizations using automotive, aerospace, medical, nuclear, or other regulated 
 ## Public guidance basis
 
 - [NASA Software Engineering Handbook — Software FMEA](https://swehb.nasa.gov/spaces/SWEHBVD/pages/102695706/8.05+-+SW+Failure+Modes+and+Effects+Analysis): bottom-up propagation; data, event, interface, timing, state, detection, corrective action, and change-impact guidance.
-- [FAA Guide to Reusable Launch and Reentry Vehicle Software and Computing System Safety](https://www.faa.gov/sites/faa.gov/files/regulations_policies/faa_regulations/commercial_space/Guide-Software-Comp-Sys-Safety-RLV-Reentry.pdf): software FMEA process, fault classifications, effects, controls, and example worksheet.
+- [NASA-STD-8739.8B](https://standards.nasa.gov/sites/default/files/standards/NASA/B/0/NASA-STD-87398-Revision-B_1.pdf): software hazard contributions, requirements traceability, assurance, and verification for applicable NASA work.
+- [NASA NPR 7150.2D](https://nodis3.gsfc.nasa.gov/displayDir.cfm?c=7150&s=2D&t=NPR): NASA software-engineering lifecycle and bidirectional-traceability requirements. Applicability is NASA- or contract-specific.
+- [FAA software and computing-system safety guide](https://www.faa.gov/sites/faa.gov/files/regulations_policies/faa_regulations/commercial_space/Guide-Software-Comp-Sys-Safety-RLV-Reentry.pdf): detailed SFMEA classifications and worksheet examples. FAA now lists this as [legacy licensing guidance](https://www.faa.gov/space/licenses/legacy-regulations), so PySFMEA labels its mappings `legacy_methodological` rather than current compliance.
+
+Every built-in locator and rule mapping is stored in the analysis under `guidance` with a
+catalog version and SHA-256 digest. Each scanner record contains typed citation links under
+`scanner.citations`. `sfmea citations` emits the complete source → locator → rule → finding
+graph as JSON or a flat review-ready CSV. These relationships explain methodology or review
+relevance; they do not prove a defect, regulatory applicability, or compliance.
 - [IEC 60812:2018](https://webstore.iec.ch/en/publication/26359): general FMEA/FMECA process applicable to software and interfaces. The standard is not included with this project.
 
 ## Known limitations

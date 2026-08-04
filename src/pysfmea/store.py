@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import DEFAULT_CONFIG, normalize_config
+from .guidance import ensure_guidance_traceability
 from .model import SCHEMA_VERSION, calculate_rpn, empty_review, utc_now, validate_rating
 from .version import __version__
 
@@ -102,6 +103,7 @@ def load_analysis(path: str | Path) -> dict[str, Any]:
             "loaded_by_version": __version__,
         },
     )
+    ensure_guidance_traceability(analysis)
     _validate_analysis_structure(analysis)
     return analysis
 
@@ -139,7 +141,13 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
             suggestion.get("provenance", {}), dict
         ):
             raise ValueError(f"analysis suggestion {index} content and provenance must be objects")
-        for field in ("evidence_ids", "uncertainties", "questions", "history"):
+        for field in (
+            "evidence_ids",
+            "proposed_citation_ids",
+            "uncertainties",
+            "questions",
+            "history",
+        ):
             if not isinstance(suggestion.get(field, []), list):
                 raise ValueError(f"analysis suggestion {index} {field} must be a list")
         if not isinstance(suggestion.get("id", ""), str) or not suggestion.get("id"):
@@ -170,6 +178,13 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
                 isinstance(entry, str) for entry in value
             ):
                 raise ValueError(f"analysis item {index} scanner.{field} must be a string list")
+        citations = item["scanner"].get("citations", [])
+        if not isinstance(citations, list) or not all(
+            isinstance(entry, dict) for entry in citations
+        ):
+            raise ValueError(
+                f"analysis item {index} scanner.citations must be a list of objects"
+            )
         if not isinstance(item.get("review_history", []), list):
             raise ValueError(f"analysis item {index} review_history must be a list")
         review = item["review"]
@@ -271,6 +286,7 @@ def save_analysis(path: str | Path, analysis: dict[str, Any]) -> None:
 
     destination = Path(path).expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
+    ensure_guidance_traceability(analysis, refresh=True)
     refresh_summary(analysis)
     _validate_analysis_structure(analysis)
     descriptor, temp_name = tempfile.mkstemp(

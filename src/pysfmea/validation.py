@@ -8,6 +8,12 @@ from datetime import date
 from typing import Any
 
 from .config import DEFAULT_CONFIG
+from .guidance import (
+    APPLICABILITY_TYPES,
+    MAPPING_STRENGTHS,
+    RELATIONSHIP_TYPES,
+    guidance_bundle,
+)
 from .model import calculate_rpn, utc_now
 
 
@@ -48,6 +54,26 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
         )
 
     project_context = analysis.get("context", {}).get("project", {})
+    expected_guidance = guidance_bundle()
+    supplied_guidance = analysis.get("guidance", {})
+    if not isinstance(supplied_guidance, dict):
+        add(
+            "guidance.invalid_catalog",
+            "error",
+            "The guidance catalog is not an object.",
+            field="guidance",
+        )
+        supplied_guidance = {}
+    elif supplied_guidance.get("catalog_sha256") != expected_guidance["catalog_sha256"]:
+        add(
+            "guidance.catalog_drift",
+            "warning",
+            "The embedded guidance catalog differs from the catalog supplied by this PySFMEA version.",
+            field="guidance.catalog_sha256",
+        )
+    known_citations = {
+        citation["id"] for citation in expected_guidance.get("citations", [])
+    }
     analysis_context = analysis.get("context", {}).get("analysis", {})
     if quality["require_project_context"]:
         for field in ("purpose", "boundary", "operating_context"):
@@ -183,6 +209,14 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
             field="items",
         )
     for suggestion in analysis.get("suggestions", []):
+        for citation_id in suggestion.get("proposed_citation_ids", []):
+            if citation_id not in known_citations:
+                add(
+                    "guidance.unknown_suggested_citation",
+                    "error",
+                    f"Machine suggestion {suggestion.get('id', '')} references an unknown guidance citation: {citation_id}.",
+                    field="suggestions.proposed_citation_ids",
+                )
         if suggestion.get("status") == "stale":
             add(
                 "discovery.stale_suggestion",
@@ -289,6 +323,59 @@ def validate_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
         if not item_id or item_id in seen_ids:
             add("analysis.duplicate_or_missing_id", "error", "Item ID is missing or duplicated.", item=item)
         seen_ids.add(item_id)
+        citation_links = item.get("scanner", {}).get("citations", [])
+        if not isinstance(citation_links, list):
+            add(
+                "guidance.invalid_finding_citations",
+                "error",
+                "Finding citations must be a list.",
+                item=item,
+                field="scanner.citations",
+            )
+            citation_links = []
+        for link in citation_links:
+            if not isinstance(link, dict):
+                add(
+                    "guidance.invalid_finding_citation",
+                    "error",
+                    "A finding citation is not an object.",
+                    item=item,
+                    field="scanner.citations",
+                )
+                continue
+            citation_id = str(link.get("citation_id", ""))
+            if citation_id not in known_citations:
+                add(
+                    "guidance.unknown_citation",
+                    "error",
+                    f"Finding references an unknown guidance citation: {citation_id or '<missing ID>'}.",
+                    item=item,
+                    field="scanner.citations",
+                )
+            if link.get("relationship") not in RELATIONSHIP_TYPES:
+                add(
+                    "guidance.invalid_relationship",
+                    "error",
+                    f"Finding citation {citation_id or '<missing ID>'} has an invalid relationship.",
+                    item=item,
+                    field="scanner.citations",
+                )
+            if link.get("strength") not in MAPPING_STRENGTHS:
+                add(
+                    "guidance.invalid_strength",
+                    "error",
+                    f"Finding citation {citation_id or '<missing ID>'} has an invalid mapping strength.",
+                    item=item,
+                    field="scanner.citations",
+                )
+            if link.get("applicability") not in APPLICABILITY_TYPES:
+                add(
+                    "guidance.invalid_applicability",
+                    "error",
+                    f"Finding citation {citation_id or '<missing ID>'} has invalid applicability metadata.",
+                    item=item,
+                    field="scanner.citations",
+                )
         review = item.get("review", {})
         disposition = review.get("disposition", "unreviewed")
         status = review.get("status", "draft")

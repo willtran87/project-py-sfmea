@@ -25,6 +25,7 @@ from .html_report import MAX_REPORT_RECORDS, export_html_report
 from .report import (
     export_audit,
     export_csv,
+    export_guidance_traceability,
     export_inventory,
     export_markdown,
     export_review_archive,
@@ -329,6 +330,13 @@ def _parser() -> argparse.ArgumentParser:
 
     guidance = subparsers.add_parser("guidance", help="show methodology sources and limitations")
     guidance.set_defaults(handler=_guidance)
+    citations = subparsers.add_parser(
+        "citations", help="export source-to-rule-to-finding guidance traceability"
+    )
+    citations.add_argument("analysis", help="analysis JSON path")
+    citations.add_argument("--format", choices=("json", "csv"), default="json")
+    citations.add_argument("-o", "--output", help="destination path")
+    citations.set_defaults(handler=_citations)
     return parser
 
 
@@ -874,7 +882,21 @@ def _guidance(args: argparse.Namespace) -> int:
     print(METHODOLOGY_NOTICE)
     print("\nPublic guidance basis:")
     for source in GUIDANCE_SOURCES:
-        print(f"- {source['title']}\n  {source['url']}\n  {source['use']}")
+        print(
+            f"- {source['title']} ({source.get('version', 'unversioned')}; "
+            f"{source.get('status', 'status unknown')})\n  {source['url']}\n  "
+            f"Applicability: {source.get('applicability', 'not recorded')}\n  {source['use']}"
+        )
+    return 0
+
+
+def _citations(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    source = Path(args.analysis).expanduser().resolve()
+    suffix = ".guidance.json" if args.format == "json" else ".guidance.csv"
+    output = Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    result = export_guidance_traceability(analysis, output, format=args.format)
+    print(f"Exported guidance traceability {args.format}: {result}")
     return 0
 
 

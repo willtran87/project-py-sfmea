@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .architecture import export_architecture
+from .guidance import guidance_traceability
 from .model import calculate_rpn, utc_now
 from .validation import validate_analysis
 from .visuals import export_coverage, export_traceability
@@ -40,6 +41,9 @@ CSV_FIELDS = [
     "reviewed_at",
     "validation_errors",
     "validation_warnings",
+    "citation_ids",
+    "citation_relationships",
+    "citation_applicability",
     "path",
     "line",
     "component",
@@ -99,6 +103,9 @@ REVIEW_PACKAGE_FILES = {
     "audit.csv",
     "validation.json",
     "summary.json",
+    "citations.json",
+    "guidance-traceability.json",
+    "guidance-traceability.csv",
     "README.md",
 }
 REVIEW_PACKAGE_ALL_FILES = REVIEW_PACKAGE_FILES | {"manifest.json"}
@@ -137,6 +144,11 @@ def item_row(
     component = item.get("component", {})
     scanner = item.get("scanner", {})
     review = item.get("review", {})
+    citation_links = [
+        link
+        for link in scanner.get("citations", [])
+        if isinstance(link, dict)
+    ]
     return {
         "id": item.get("id", ""),
         "baseline_id": baseline_id,
@@ -167,6 +179,15 @@ def item_row(
                 for finding in (validation_findings or [])
                 if finding["level"] == "warning"
             ]
+        ),
+        "citation_ids": _join(
+            [str(link.get("citation_id", "")) for link in citation_links]
+        ),
+        "citation_relationships": _join(
+            [str(link.get("relationship", "")) for link in citation_links]
+        ),
+        "citation_applicability": _join(
+            [str(link.get("applicability", "")) for link in citation_links]
         ),
         "path": source.get("path", ""),
         "line": source.get("line", ""),
@@ -269,8 +290,8 @@ def export_markdown(analysis: dict[str, Any], destination: str | Path) -> Path:
         "",
         "## Worksheet",
         "",
-        "| ID | Change | Revalidate | Component | Failure mode | End effect | S | O | D | RPN | Post RPN | Disposition | Status |",
-        "|---|---|---|---|---|---|---:|---:|---:|---:|---:|---|---|",
+        "| ID | Change | Revalidate | Component | Failure mode | End effect | Guidance | S | O | D | RPN | Post RPN | Disposition | Status |",
+        "|---|---|---|---|---|---|---|---:|---:|---:|---:|---:|---|---|",
     ]
     lines[0] = "# Software FMEA - " + _markdown_text(
         project.get("name", "Python project")
@@ -288,6 +309,13 @@ def export_markdown(analysis: dict[str, Any], destination: str | Path) -> Path:
                     _cell(item.get("component", {}).get("qualname")),
                     _cell(review.get("failure_mode") or scanner.get("failure_mode")),
                     _cell(review.get("end_effect")),
+                    _cell(
+                        [
+                            link.get("citation_id", "")
+                            for link in scanner.get("citations", [])
+                            if isinstance(link, dict)
+                        ]
+                    ),
                     _cell(review.get("severity") or review.get("severity_category")),
                     _cell(review.get("occurrence")),
                     _cell(review.get("detection")),
@@ -303,6 +331,89 @@ def export_markdown(analysis: dict[str, Any], destination: str | Path) -> Path:
     for source in analysis.get("methodology", {}).get("basis", []):
         lines.append(f"- [{source.get('title')}]({source.get('url')}) — {source.get('use')}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+GUIDANCE_TRACEABILITY_FIELDS = [
+    "finding_id",
+    "component_id",
+    "component",
+    "path",
+    "line",
+    "rule_id",
+    "failure_class",
+    "citation_id",
+    "source_id",
+    "document_title",
+    "document_version",
+    "document_status",
+    "relationship",
+    "strength",
+    "applicability",
+    "section",
+    "heading",
+    "page",
+    "summary",
+    "url",
+    "mapping_id",
+    "mapping_status",
+]
+
+
+def export_guidance_traceability(
+    analysis: dict[str, Any], destination: str | Path, *, format: str = "json"
+) -> Path:
+    """Export the versioned guidance catalog and source-to-finding relationships."""
+
+    if format not in {"json", "csv"}:
+        raise ValueError("guidance traceability format must be json or csv")
+    path = Path(destination).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    trace = guidance_traceability(analysis)
+    if format == "json":
+        path.write_text(
+            json.dumps(trace, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        return path
+
+    citations = {value["id"]: value for value in trace["citations"]}
+    sources = {value["id"]: value for value in trace["sources"]}
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=GUIDANCE_TRACEABILITY_FIELDS)
+        writer.writeheader()
+        for finding in trace["finding_links"]:
+            links = finding["citations"] or [{}]
+            for link in links:
+                citation = citations.get(link.get("citation_id", ""), {})
+                source = sources.get(citation.get("source_id", ""), {})
+                locator = citation.get("locator", {})
+                _write_csv_row(
+                    writer,
+                    {
+                        "finding_id": finding.get("finding_id", ""),
+                        "component_id": finding.get("component_id", ""),
+                        "component": finding.get("component", ""),
+                        "path": finding.get("source", {}).get("path", ""),
+                        "line": finding.get("source", {}).get("line", ""),
+                        "rule_id": finding.get("rule_id", ""),
+                        "failure_class": finding.get("failure_class", ""),
+                        "citation_id": citation.get("id", ""),
+                        "source_id": source.get("id", ""),
+                        "document_title": source.get("title", ""),
+                        "document_version": source.get("version", ""),
+                        "document_status": source.get("status", ""),
+                        "relationship": link.get("relationship", ""),
+                        "strength": link.get("strength", ""),
+                        "applicability": link.get("applicability", ""),
+                        "section": locator.get("section", ""),
+                        "heading": locator.get("heading", ""),
+                        "page": locator.get("page", ""),
+                        "summary": citation.get("summary", ""),
+                        "url": source.get("url", ""),
+                        "mapping_id": link.get("mapping_id", ""),
+                        "mapping_status": link.get("status", ""),
+                    },
+                )
     return path
 
 
@@ -517,6 +628,21 @@ def export_review_package(
                 + "\n",
                 encoding="utf-8",
             ),
+            "citations.json": lambda path: path.write_text(
+                json.dumps(
+                    guidance_traceability(package_analysis).get("citations", []),
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            ),
+            "guidance-traceability.json": lambda path: export_guidance_traceability(
+                package_analysis, path, format="json"
+            ),
+            "guidance-traceability.csv": lambda path: export_guidance_traceability(
+                package_analysis, path, format="csv"
+            ),
         }
         for filename, writer in outputs.items():
             writer(staging / filename)
@@ -530,8 +656,8 @@ def export_review_package(
             f"- Portable paths: {'yes' if portable else 'no'}\n"
             f"- Generated: {utc_now()}\n\n"
             "This package contains the governed JSON analysis, worksheets, inventory, "
-            "architecture and traceability views, coverage metrics, validation findings, "
-            "and audit history. Checksums are recorded in `manifest.json`.\n\n"
+            "architecture and traceability views, guidance citations, coverage metrics, "
+            "validation findings, and audit history. Checksums are recorded in `manifest.json`.\n\n"
             "After transfer or storage, run `sfmea verify-package .` from this directory "
             "to check the complete file set, checksums, and analysis provenance.\n\n"
             "> Scanner output, diagrams, coverage, and machine suggestions are review aids. "

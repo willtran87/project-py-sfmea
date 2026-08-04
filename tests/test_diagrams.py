@@ -150,6 +150,7 @@ class DiagramTests(unittest.TestCase):
                 "architecture",
                 "interface_flow",
                 "traceability",
+                "guidance_traceability",
                 "failure_propagation",
                 "control_coverage",
                 "sequence",

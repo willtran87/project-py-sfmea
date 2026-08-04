@@ -35,7 +35,7 @@ from pysfmea.config import write_config_template
 from pysfmea.runtime import import_runtime_trace
 from pysfmea.scanner import scan_repository
 from pysfmea.signing import sign_review_package, verify_review_signature
-from pysfmea.store import merge_rescan
+from pysfmea.store import load_analysis, merge_rescan, save_analysis
 from pysfmea.visuals import (
     coverage_metrics,
     export_coverage,
@@ -67,6 +67,7 @@ class StaticProvider:
                     "detection_controls": [],
                     "recommended_actions": ["Enforce authorization before side effects."],
                     "evidence_ids": [component_id],
+                    "citation_ids": ["NIST-SP-800-218-PW.7"],
                     "uncertainties": ["The external identity contract was not supplied."],
                     "questions": ["Where is authorization enforced?"],
                     "confidence": "medium",
@@ -79,6 +80,13 @@ class UnsafeProvider(StaticProvider):
     def generate(self, payload: dict[str, Any], *, task: str) -> dict[str, Any]:
         result = super().generate(payload, task=task)
         result["suggestions"][0]["severity"] = 10
+        return result
+
+
+class UnknownCitationProvider(StaticProvider):
+    def generate(self, payload: dict[str, Any], *, task: str) -> dict[str, Any]:
+        result = super().generate(payload, task=task)
+        result["suggestions"][0]["citation_ids"] = ["NASA-INVENTED-CLAUSE"]
         return result
 
 
@@ -304,7 +312,7 @@ class ExtensionTests(unittest.TestCase):
         )
         verified = verify_review_package(destination)
         self.assertTrue(verified["valid"])
-        self.assertEqual(verified["checked_files"], 11)
+        self.assertEqual(verified["checked_files"], 14)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["verify-package", str(destination), "--json"]), 0)
 
@@ -379,7 +387,7 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_package(archive)
         self.assertTrue(verified["valid"])
         self.assertEqual(verified["container"], "zip")
-        self.assertEqual(verified["checked_files"], 11)
+        self.assertEqual(verified["checked_files"], 14)
         self.assertEqual(len(verified["archive_sha256"]), 64)
         with zipfile.ZipFile(archive) as bundle:
             self.assertEqual(
@@ -389,6 +397,9 @@ class ExtensionTests(unittest.TestCase):
                     "architecture.md",
                     "audit.csv",
                     "coverage.md",
+                    "citations.json",
+                    "guidance-traceability.csv",
+                    "guidance-traceability.json",
                     "inventory.md",
                     "manifest.json",
                     "README.md",
@@ -614,6 +625,9 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(len(created), 1)
         self.assertEqual(self.analysis["summary"]["suggestions"]["proposed"], 1)
         self.assertNotIn("severity", created[0]["content"])
+        self.assertEqual(
+            created[0]["proposed_citation_ids"], ["NIST-SP-800-218-PW.7"]
+        )
         reviewed = review_suggestion(
             self.analysis,
             created[0]["id"],
@@ -629,6 +643,24 @@ class ExtensionTests(unittest.TestCase):
         )
         self.assertEqual(materialized["review"]["disposition"], "unreviewed")
         self.assertEqual(materialized["scanner"]["rule_id"], "machine_suggestion")
+        self.assertEqual(
+            materialized["scanner"]["citations"][0]["status"], "reviewer_accepted"
+        )
+        persisted_path = self.root / "accepted-citation.json"
+        save_analysis(persisted_path, self.analysis)
+        persisted = load_analysis(persisted_path)
+        persisted_item = next(
+            item
+            for item in persisted["items"]
+            if item["id"] == reviewed["materialized_item_id"]
+        )
+        self.assertTrue(
+            any(
+                citation["citation_id"] == "NIST-SP-800-218-PW.7"
+                and citation["status"] == "reviewer_accepted"
+                for citation in persisted_item["scanner"]["citations"]
+            )
+        )
 
         proposed = discover_suggestions(
             self.analysis,
@@ -648,6 +680,15 @@ class ExtensionTests(unittest.TestCase):
         )
         self.assertEqual(retained["source_change"], "manual")
         self.assertEqual(retained["source_status"], "active")
+
+    def test_machine_discovery_rejects_invented_guidance_citation(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown guidance IDs"):
+            discover_suggestions(
+                self.analysis,
+                UnknownCitationProvider(),
+                scope="service.py:checkout",
+                limit=1,
+            )
 
     def test_framework_metadata_summary_and_evaluation_hook(self) -> None:
         (self.root / "api.py").write_text(
