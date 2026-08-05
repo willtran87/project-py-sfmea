@@ -2017,7 +2017,222 @@ def _workflow_status_schema() -> dict[str, Any]:
     }
 
 
+def _assurance_program_schema() -> dict[str, Any]:
+    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    nonempty = {"type": "string", "minLength": 1, "maxLength": 2_000}
+    identifier = {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^\\S+$"}
+    string_ids = {"type": "array", "maxItems": 10_000, "items": identifier, "uniqueItems": True}
+    endpoint = {
+        "type": "object",
+        "required": ["repository_id", "component_id"],
+        "properties": {"repository_id": identifier, "component_id": identifier},
+        "additionalProperties": False,
+    }
+    return {
+        "$schema": JSON_SCHEMA_DRAFT,
+        "$id": _schema_id("assurance-program"),
+        "title": "PySFMEA system assurance program",
+        "type": "object",
+        "required": [
+            "format", "name", "purpose", "created_at", "repositories",
+            "relationships", "requirements_sources", "external_evidence",
+            "validation_cohorts", "llm_evaluations", "governance",
+            "quality_gates", "integrity",
+        ],
+        "properties": {
+            "format": {"const": "pysfmea-assurance-program-1"},
+            "name": {"type": "string", "minLength": 1, "maxLength": 500},
+            "purpose": nonempty,
+            "created_at": nonempty,
+            "repositories": {
+                "type": "array", "minItems": 1, "maxItems": 100,
+                "items": {
+                    "type": "object",
+                    "required": ["id", "analysis", "analysis_state_sha256", "baseline_id", "role"],
+                    "properties": {
+                        "id": identifier, "analysis": nonempty,
+                        "analysis_state_sha256": digest, "baseline_id": nonempty,
+                        "role": nonempty,
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "relationships": {
+                "type": "array", "maxItems": 10_000,
+                "items": {
+                    "type": "object",
+                    "required": ["id", "kind", "source", "target"],
+                    "properties": {
+                        "id": identifier,
+                        "kind": {"enum": ["calls", "publishes", "subscribes", "data_flow", "depends_on", "controls", "fallback"]},
+                        "source": endpoint, "target": endpoint,
+                        "temporal": {
+                            "type": "object",
+                            "properties": {
+                                "deadline_ms": {"type": "number", "exclusiveMinimum": 0},
+                                "timeout_ms": {"type": "number", "exclusiveMinimum": 0},
+                                "retry_limit": {"type": "integer", "minimum": 0},
+                                "backoff_ms": {"type": "number", "minimum": 0},
+                                "max_in_flight": {"type": "integer", "minimum": 1},
+                                "ordering": nonempty, "clock": nonempty,
+                            },
+                            "additionalProperties": False,
+                        },
+                        "circuit_breaker": {
+                            "type": "object",
+                            "required": [
+                                "failure_threshold",
+                                "open_state_timeout_ms",
+                                "half_open_max_calls",
+                                "recovery_deadline_ms",
+                            ],
+                            "properties": {
+                                "failure_threshold": {"type": "integer", "minimum": 1},
+                                "open_state_timeout_ms": {"type": "number", "exclusiveMinimum": 0},
+                                "half_open_max_calls": {"type": "integer", "minimum": 1},
+                                "recovery_deadline_ms": {"type": "number", "exclusiveMinimum": 0},
+                            },
+                            "additionalProperties": False,
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "requirements_sources": {
+                "type": "array", "maxItems": 50_000,
+                "items": {
+                    "type": "object",
+                    "required": ["id", "provider", "revision", "retrieved_at", "source_uri", "content_sha256", "requirements"],
+                    "properties": {
+                        "id": identifier, "provider": nonempty, "revision": nonempty,
+                        "retrieved_at": {"type": "string", "format": "date-time", "minLength": 1}, "source_uri": nonempty,
+                        "content_sha256": digest,
+                        "requirements": {
+                            "type": "array", "maxItems": 50_000,
+                            "items": {
+                                "type": "object",
+                                "required": ["id", "text", "repository_ids", "hazard_ids", "finding_ids"],
+                                "properties": {"id": identifier, "text": nonempty, "repository_ids": string_ids, "hazard_ids": string_ids, "finding_ids": string_ids},
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "external_evidence": {
+                "type": "array", "maxItems": 50_000,
+                "items": {
+                    "type": "object",
+                    "required": ["id", "technique", "status", "repository_ids", "relationship_ids", "finding_ids", "producer", "reviewer", "metrics", "artifact"],
+                    "properties": {
+                        "id": identifier,
+                        "technique": {"enum": ["coverage", "mutation", "property_based", "fault_injection", "concurrency", "load", "chaos", "sast", "dast", "runtime_trace", "formal_analysis", "manual_inspection"]},
+                        "status": {"enum": ["passed", "failed", "inconclusive", "not_run"]},
+                        "repository_ids": string_ids, "relationship_ids": string_ids, "finding_ids": string_ids,
+                        "producer": {"type": "string", "maxLength": 500},
+                        "reviewer": {"type": "string", "maxLength": 500},
+                        "metrics": {"type": "object", "maxProperties": 100, "additionalProperties": {"type": ["number", "integer", "string", "boolean", "null"]}},
+                        "artifact": {
+                            "type": "object",
+                            "properties": {"path": nonempty, "sha256": digest},
+                            "additionalProperties": False,
+                        },
+                    },
+                    "additionalProperties": False,
+                    "allOf": [
+                        {
+                            "if": {"properties": {"status": {"enum": ["passed", "failed"]}}},
+                            "then": {
+                                "properties": {
+                                    "artifact": {"required": ["path", "sha256"]}
+                                }
+                            },
+                        }
+                    ],
+                },
+            },
+            "validation_cohorts": {
+                "type": "array", "maxItems": 2_000,
+                "items": {
+                    "type": "object",
+                    "required": ["id", "repository", "framework", "corpus_sha256", "case_count", "recall", "precision", "independent_reviewed", "producer", "reviewer"],
+                    "properties": {"id": identifier, "repository": nonempty, "framework": nonempty, "corpus_sha256": digest, "case_count": {"type": "integer", "minimum": 1}, "recall": {"type": "number", "minimum": 0, "maximum": 1}, "precision": {"type": "number", "minimum": 0, "maximum": 1}, "independent_reviewed": {"type": "boolean"}, "producer": nonempty, "reviewer": nonempty},
+                    "additionalProperties": False,
+                },
+            },
+            "llm_evaluations": {
+                "type": "array", "maxItems": 10_000,
+                "items": {
+                    "type": "object",
+                    "required": ["id", "provider", "model", "prompt_version", "sample_count", "grounding", "citation_accuracy", "unsupported_claim_rate", "corpus_sha256", "independent_reviewed", "producer", "reviewer"],
+                    "properties": {"id": identifier, "provider": nonempty, "model": nonempty, "prompt_version": nonempty, "sample_count": {"type": "integer", "minimum": 1}, "grounding": {"type": "number", "minimum": 0, "maximum": 1}, "citation_accuracy": {"type": "number", "minimum": 0, "maximum": 1}, "unsupported_claim_rate": {"type": "number", "minimum": 0, "maximum": 1}, "corpus_sha256": digest, "independent_reviewed": {"type": "boolean"}, "producer": nonempty, "reviewer": nonempty},
+                    "additionalProperties": False,
+                },
+            },
+            "governance": {
+                "type": "object",
+                "required": ["required_roles", "independent_evidence_review", "require_program_approval", "approvals"],
+                "properties": {
+                    "required_roles": string_ids,
+                    "independent_evidence_review": {"type": "boolean"},
+                    "require_program_approval": {"type": "boolean"},
+                    "approvals": {
+                        "type": "array", "maxItems": 50_000,
+                        "items": {
+                            "type": "object",
+                            "required": ["subject_kind", "subject_id", "reviewer", "role", "decision", "at"],
+                            "properties": {"subject_kind": {"enum": ["program", "repository", "requirement", "relationship", "evidence"]}, "subject_id": nonempty, "reviewer": nonempty, "role": nonempty, "decision": {"enum": ["approved", "rejected"]}, "at": {"type": "string", "format": "date-time", "minLength": 1}},
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "quality_gates": {
+                "type": "object",
+                "required": ["min_validation_repositories", "require_independent_validation", "min_recall", "min_precision", "require_temporal_evidence", "require_resilience_evidence", "min_llm_samples", "require_independent_llm_evaluation", "min_llm_grounding", "min_llm_citation_accuracy", "max_llm_unsupported_claim_rate"],
+                "properties": {"min_validation_repositories": {"type": "integer", "minimum": 0}, "require_independent_validation": {"type": "boolean"}, "min_recall": {"type": "number", "minimum": 0, "maximum": 1}, "min_precision": {"type": "number", "minimum": 0, "maximum": 1}, "require_temporal_evidence": {"type": "boolean"}, "require_resilience_evidence": {"type": "boolean"}, "min_llm_samples": {"type": "integer", "minimum": 0}, "require_independent_llm_evaluation": {"type": "boolean"}, "min_llm_grounding": {"type": "number", "minimum": 0, "maximum": 1}, "min_llm_citation_accuracy": {"type": "number", "minimum": 0, "maximum": 1}, "max_llm_unsupported_claim_rate": {"type": "number", "minimum": 0, "maximum": 1}},
+                "additionalProperties": False,
+            },
+            "integrity": {
+                "type": "object",
+                "required": ["algorithm", "canonicalization", "content_sha256"],
+                "properties": {"algorithm": {"const": "sha256"}, "canonicalization": {"const": "json-sort-keys-compact-utf8"}, "content_sha256": digest},
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": False,
+    }
+
+
+def _assurance_program_verification_schema() -> dict[str, Any]:
+    digest = {"type": "string", "pattern": "^([0-9a-f]{64})?$"}
+    return {
+        "$schema": JSON_SCHEMA_DRAFT,
+        "$id": _schema_id("assurance-program-verification"),
+        "title": "PySFMEA system assurance program verification",
+        "type": "object",
+        "required": ["format", "verifier", "program", "valid", "checks", "counts", "summary", "relationships", "validation", "llm_quality", "findings", "notice"],
+        "properties": {
+            "format": {"const": "pysfmea-assurance-program-verification-1"},
+            "verifier": {"type": "object", "required": ["name", "version"], "properties": {"name": {"const": "PySFMEA"}, "version": {"type": "string", "minLength": 1}}, "additionalProperties": False},
+            "program": {"type": "object", "required": ["path", "content_sha256"], "properties": {"path": {"type": "string"}, "content_sha256": digest}, "additionalProperties": False},
+            "valid": {"type": "boolean"},
+            "checks": {"type": "object", "additionalProperties": {"type": ["boolean", "null"]}},
+            "counts": {"type": "object", "required": ["errors", "warnings", "information"], "properties": {"errors": {"type": "integer", "minimum": 0}, "warnings": {"type": "integer", "minimum": 0}, "information": {"type": "integer", "minimum": 0}}, "additionalProperties": False},
+            "summary": {"type": "object"}, "relationships": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
+            "validation": {"type": "object"}, "llm_quality": {"type": "object"},
+            "findings": {"type": "array", "maxItems": 200_000, "items": {"type": "object", "required": ["code", "level", "message", "location"], "properties": {"code": {"type": "string", "minLength": 1}, "level": {"enum": ["error", "warning", "information"]}, "message": {"type": "string", "minLength": 1}, "location": {"type": "string"}}, "additionalProperties": False}},
+            "notice": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+
+
 _SCHEMA_BUILDERS = {
+    "assurance-program": _assurance_program_schema,
+    "assurance-program-verification": _assurance_program_verification_schema,
     "assurance-work-queue": _assurance_work_queue_schema,
     "assurance-work-queue-verification": _assurance_work_queue_verification_schema,
     "detached-signature": _detached_signature_schema,
@@ -2036,6 +2251,8 @@ _SCHEMA_BUILDERS = {
     "workflow-status": _workflow_status_schema,
 }
 _SCHEMA_DESCRIPTIONS = {
+    "assurance-program": "Multi-repository bindings, external requirements and trusted evidence, temporal and circuit-breaker relationships, independent validation/model quality, and governance policy.",
+    "assurance-program-verification": "System assurance program integrity, binding, trusted-evidence, timing/resilience, quality-gate, and governance verdicts.",
     "assurance-work-queue": "Accepted-finding hardening states, blockers, eligibility, and next actions.",
     "assurance-work-queue-verification": "Work-queue integrity, analysis binding, and semantic-projection verdicts.",
     "detached-signature": "Detached Ed25519 package-signature envelope and subject binding.",
@@ -2052,6 +2269,8 @@ _SCHEMA_DESCRIPTIONS = {
     "workflow-status": "Read-only lifecycle, handoff-gate, evidence, and remediation status.",
 }
 SCHEMA_FILENAMES = {
+    "assurance-program": "pysfmea-assurance-program.schema.json",
+    "assurance-program-verification": "pysfmea-assurance-program-verification.schema.json",
     "assurance-work-queue": "pysfmea-assurance-work-queue.schema.json",
     "assurance-work-queue-verification": "pysfmea-assurance-work-queue-verification.schema.json",
     "detached-signature": "pysfmea-detached-signature.schema.json",
@@ -2166,6 +2385,10 @@ def verify_schema_bundle_documents(
     publication_catalog_names = work_queue_verification_names | {
         "publication-failure-catalog"
     }
+    assurance_program_names = publication_catalog_names | {"assurance-program"}
+    assurance_program_verification_names = assurance_program_names | {
+        "assurance-program-verification"
+    }
     supported_name_sets = {
         base_names,
         frozenset(package_names),
@@ -2175,6 +2398,8 @@ def verify_schema_bundle_documents(
         frozenset(work_queue_names),
         frozenset(work_queue_verification_names),
         frozenset(publication_catalog_names),
+        frozenset(assurance_program_names),
+        frozenset(assurance_program_verification_names),
         frozenset(_SCHEMA_BUILDERS),
     }
     catalog_names = frozenset(by_name)

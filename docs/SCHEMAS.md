@@ -51,6 +51,8 @@ Available names:
 
 | Name | Contract |
 |---|---|
+| `assurance-program` | Multi-repository analysis bindings, external requirements/evidence, temporal and circuit-breaker relationships, independent validation/model metrics, and governance policy |
+| `assurance-program-verification` | Program integrity, binding, trusted-evidence, timing/resilience, quality-gate, relationship, and governance verdicts |
 | `assurance-work-queue` | Accepted-finding work states, blockers, automation eligibility, and next actions |
 | `assurance-work-queue-verification` | Queue integrity, analysis binding, and deterministic-projection verdicts |
 | `detached-signature` | Ed25519 signature envelope, signed statement, and package subject |
@@ -97,9 +99,31 @@ repository accounting is programmatic output rather than a cataloged public sche
 must branch on `reconciliation_status`/`status`, accept `null` totals when unavailable, and avoid
 interpreting semantic accounting coverage as behavioral or test adequacy.
 
+### System assurance program contracts
+
+`pysfmea-assurance-program-1` is a separate system-level artifact. It references one or more
+governed analysis files by path, exact canonical state SHA-256, and baseline ID; it does not merge
+or mutate those analyses. Closed, bounded collections represent cross-repository component
+relationships and temporal/circuit-breaker policies, requirements-source snapshots, external
+evidence artifacts, validation cohorts, LLM quality evaluations, governance approvals, and
+configurable quality gates. Completed evidence requires an artifact path and digest. Cohort and LLM
+records include corpus digests plus distinct producer/reviewer identities; finding and hazard
+references are semantically resolved as `REPOSITORY_ID:RECORD_ID`.
+Program integrity hashes every field outside the integrity declaration using canonical sorted-key
+compact UTF-8 JSON. Run `sfmea program-seal` only after intentional edits.
+
+`pysfmea-assurance-program-verification-1` is emitted for success and rejection. It separates
+individual checks for input, format, program contract, integrity, repository binding,
+relationships, requirements, external evidence, validation, LLM quality, and governance. JSON,
+Markdown, and self-contained HTML views are projections of that same verdict. Timing and
+circuit-breaker support use only completed content-addressed evidence; failed results block a valid
+verdict, while unrun and inconclusive records receive no claim credit. A valid verdict confirms
+that configured references, digests, thresholds, roles, and independence constraints reconcile;
+it does not authenticate an identity, approve risk, or establish certification.
+
 ## Offline review-package use
 
-Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all fourteen
+Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all sixteen
 documents under their stable catalog filenames. The package manifest checksums every file and
 binds the catalog format, path, canonical digest, and schema count. `sfmea verify-package`
 additionally cross-checks catalog completeness, schema identities, and each canonical digest.
@@ -205,7 +229,8 @@ The verifier also recognizes the complete four-contract 0.37, six-contract 0.38,
 eight-contract 0.39, nine-contract 0.40–0.42, ten-contract 0.43–0.44, and eleven-contract
 0.45 catalog profiles.
 Their catalog identities and declared content digests are verified using the same rules as the
-the former twelve-contract, former thirteen-contract, and current fourteen-contract profiles.
+former twelve-, thirteen-, fourteen-, and fifteen-contract profiles plus the current
+sixteen-contract profile.
 Mixing profile generations,
 dropping one contract, duplicating a catalog name, or introducing an unknown contract remains
 invalid.

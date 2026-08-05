@@ -123,6 +123,16 @@
       "controls": ["Candidate evidence semantics", "Exact-byte strict identity-stable JSON ingestion", "Byte/depth/node/span/attribute limits", "Unambiguous component mapping", "Explicit unmapped counts", "Content-addressed idempotence", "Transactional analysis commit", "Incompleteness notice"],
       "verification": ["runtime ambiguity, numeric-overflow, structure, link, identity-race, mapping, idempotence, and rollback tests", "installed-wheel trace-import smoke"],
       "residual_risk": "A valid trace proves only what the selected instrumentation captured in that execution; coverage, clock quality, causality, and operational representativeness require independent review."
+    },
+    {
+      "id": "TOOL-FM-013",
+      "function": "Federate system assurance across repositories and external evidence",
+      "failure_mode": "A stale analysis, wrong cross-service endpoint, weak validation corpus, unsupported timing or circuit-breaker claim, forged evidence artifact, or inappropriate approval is presented as a system-level assurance conclusion.",
+      "trigger": "Analysis or evidence replacement, malformed/ambiguous program JSON, cross-repository ID collision, unrun/failed/digest-invalid evidence receiving claim credit, incomplete temporal/resilience contract, unrepresentative cohort, weak model evaluation, same-person evidence/validation/model review, unrelated-subject role approval, or missing approval authority.",
+      "effects": ["Cross-repository cascade and timing conclusions may be wrong.", "A program may appear ready without independently reviewed evidence or the required organizational roles."],
+      "controls": ["Exact analysis-state and baseline binding", "Strict bounded identity-stable program ingestion and findings", "Content-addressed trusted-evidence gate", "Failed/incomplete evidence semantics", "Repository-qualified finding/hazard subjects", "Known repository/component/relationship/requirement/evidence subjects", "Explicit deadline/timeout/retry/backoff/ordering/clock policy", "Circuit-breaker opening/half-open/recovery contract", "Observed timing and fault-evidence gates", "Independent validation repository and recall/precision thresholds", "Provider/model/prompt/corpus-specific LLM quality thresholds", "Distinct validation and model producer/reviewer identities", "Exact program-subject role approvals with distinct authorities", "Public schemas", "Accessible self-contained topology and bounded reports"],
+      "verification": ["assurance-program valid and adversarial lifecycle tests", "deadline, circuit-breaker, stale analysis, and trusted-evidence tests", "evidence digest/status and qualified subject-reference tests", "validation/LLM/governance identity and unrelated-approval tests", "HTML topology/navigation and Markdown-safety tests", "public schema and historical package compatibility tests", "installed-wheel program workflow smoke"],
+      "residual_risk": "Program records cannot authenticate identities, establish corpus representativeness, prove cross-service causality or schedulability, qualify the tool, or replace an approved enterprise records and authorization system."
     }
   ]
 }

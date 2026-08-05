@@ -3,6 +3,12 @@
 This checklist produces a reviewable source distribution and wheel. Publishing, tagging, and
 signing remain explicit maintainer actions.
 
+Before a release branch that changes GitHub Actions workflows is pushed, run `gh auth status` and
+confirm that the active GitHub CLI authorization includes both `repo` and `workflow`. If
+`workflow` is absent, authorize it interactively with
+`gh auth refresh -h github.com -s workflow`. Do not embed personal access tokens in Git remotes or
+release scripts.
+
 ## 1. Establish the release state
 
 - Work from an approved release branch with intended changes reviewed.
@@ -76,8 +82,28 @@ signing remain explicit maintainer actions.
   refreshes only recognized catalogs with `--force`, and preserves prior bytes on failure.
 - Confirm JSON export emits a schema-valid path-bound verification receipt and forced refresh
   rejects format-only spoofing or malformed failure-entry structures without altering the target.
-- Confirm current packages contain 14 public schemas and 42 checked artifacts while genuine
-  twelve- and thirteen-schema packages remain compatible under the current verifier.
+- Confirm current packages contain 16 public schemas and 44 checked artifacts while genuine
+  twelve- through fifteen-schema packages remain compatible under the current verifier.
+- Confirm assurance-program input and verdict schemas validate current success and structured
+  rejection examples, are present in offline bundles/packages, and retain historical 14-schema
+  package compatibility. Confirm `program-init` binds every exact analysis state/baseline,
+  `program-seal` refuses non-program files and concurrent destination replacement, and
+  `program-verify` emits equivalent human/JSON/Markdown/HTML decisions.
+- Confirm program ingestion rejects links/non-files, duplicate keys, non-finite values, malformed
+  UTF-8, and byte/depth/node overflow. Confirm completed external evidence uses bounded
+  identity-stable artifact reads with per-file/aggregate limits and exact SHA-256 checks.
+- Confirm unknown repository/component/relationship/requirement/qualified-hazard/qualified-finding
+  or approval subjects, invalid temporal/circuit-breaker values, unobserved or violated deadlines,
+  breaker opening/recovery failures, stale analysis bindings, weak or non-independent validation
+  cohorts, insufficient or non-independent LLM quality samples/metrics, missing program-level
+  approval roles, shared role authorities, unresolved required-role rejections, and same-person
+  evidence review block the program verdict without changing inputs.
+- Confirm unrun, inconclusive, failed, missing-artifact, and digest-invalid evidence cannot support
+  timing or resilience; failed evidence independently blocks readiness. Confirm nested unknown
+  fields, offset-free timestamps, non-boolean policy flags, and finding-output overflow fail closed.
+- Confirm the self-contained program HTML includes accessible topology semantics, trusted-evidence
+  accounting, timing/resilience states, navigation, search/severity filters, restrictive CSP, no
+  remote assets, and safe escaped program text; confirm Markdown table delimiters are escaped.
 - Confirm offline schema-bundle verification rejects linked, non-file, malformed UTF-8, and
   oversized entries through schema-valid verdicts and enforces its two-megabyte limit on bytes
   consumed from each open stream rather than a pre-read size observation. Confirm every allowed

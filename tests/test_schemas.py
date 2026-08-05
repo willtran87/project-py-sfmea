@@ -77,6 +77,8 @@ class SchemaCatalogTests(unittest.TestCase):
         self.assertEqual(
             [entry["name"] for entry in first["schemas"]],
             [
+                "assurance-program",
+                "assurance-program-verification",
                 "assurance-work-queue",
                 "assurance-work-queue-verification",
                 "detached-signature",

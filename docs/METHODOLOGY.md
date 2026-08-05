@@ -518,6 +518,69 @@ Portable-package mode operates on a copy and removes machine-local absolute path
 prefixes from the package snapshot and manifest. Relative source locations, hashes,
 baseline IDs, audit decisions, and analysis content remain unchanged.
 
+## System assurance program boundary
+
+An assurance program is intentionally separate from every repository analysis. Its repository
+records bind a stable program ID to the exact canonical analysis-state digest and repository
+baseline. Verification reloads each analysis through the governed 100 MB analysis boundary and
+rejects stale bindings; it does not copy findings between repositories or let one service approve
+another service's review state.
+
+Relationships connect exact component IDs across repository IDs. Supported relationship kinds
+cover calls, publish/subscribe flows, data flow, dependencies, controls, and fallbacks. A temporal
+contract can declare deadline, timeout, retry, backoff, concurrency, ordering, and clock semantics.
+A deadline is not credited merely because it is configured: the verifier requires an observed
+maximum from runtime trace, load, fault-injection, concurrency, or chaos evidence when the policy
+enables temporal-evidence gating. Only a completed, semantically valid, digest-verified evidence
+artifact can contribute an observation; `not_run`, inconclusive, missing, or digest-mismatched
+evidence remains uncredited. Failed evidence blocks readiness and can still expose an observed
+contract violation. Timeout values cannot exceed deadlines. A circuit-breaker contract separately
+declares its failure threshold, open-state timeout, half-open concurrency, and recovery deadline.
+Passing fault-injection, concurrency, or chaos evidence must demonstrate breaker opening,
+half-open recovery, and recovery within that deadline before resilience becomes supported. The
+result reports
+`supported`, `violated`, `unverified`, or `not_configured`; none is a whole-system schedulability or
+causal-completeness proof.
+
+Provider-neutral requirement snapshots retain source system, revision, timezone-qualified
+retrieval metadata, exact record digest, and links to known repository, hazard, and finding IDs.
+Hazard and finding references are repository-qualified as `REPOSITORY_ID:RECORD_ID`, preventing
+the same repository-local ID from being silently conflated across analyses. This is the governed
+interchange boundary for DOORS, Jama, Polarion, Jira, GitHub, or organization-specific connectors;
+PySFMEA does not receive credentials or claim that an external API is authoritative. Completed
+external evidence requires a bounded regular non-link artifact, exact SHA-256, technique, subject
+links, result state, producer, and independent reviewer where configured. Supported technique
+labels include coverage, mutation, property-based, fault-injection, concurrency, load, chaos,
+SAST/DAST, runtime trace, formal analysis, and manual inspection. The label does not establish that
+the named technique was performed correctly.
+
+Validation cohorts aggregate independently reviewed repository labels, content-addressed corpus
+identity, case count, recall, and precision, with distinct named producer/reviewer identities.
+Macro metrics and minimum repository counts prevent a perfect synthetic corpus from silently
+representing external validation. Optional LLM evaluations are separately grouped by recorded
+provider/model/prompt and corpus provenance, retain independent producer/reviewer claims, and are
+weighted by sample count; grounding, citation accuracy, unsupported-claim rate, sample, and
+independence thresholds are explicit policy gates. These metrics measure only the supplied
+evaluation records.
+
+Governance policy requires every configured role to approve the exact named program, uses
+timezone-qualified decision timestamps, refuses one reviewer identity exercising multiple
+required roles, validates known subjects, and requires distinct evidence producer/reviewer
+identities. Any unresolved rejection by a required program role blocks readiness. An approval on
+a repository, requirement, relationship, or evidence item cannot
+satisfy a program-role gate. Names and roles are human-supplied claims. The
+program does not implement SSO, RBAC, certificate validation, revocation, retention, or a legally
+controlled electronic signature. Organizations can validate the public program/verdict schemas
+and place the integrity-bound artifacts inside their approved identity and records system.
+
+Program input uses a 10 MB, 100-level, 500,000-node strict duplicate-free finite UTF-8 JSON
+boundary. Evidence artifacts are consumed through identity-stable regular-file reads capped at
+100 MB each and 500 MB in aggregate. Program templates, resealing, and JSON/Markdown/HTML verdict
+publication use bounded atomic final-path-safe replacement. Verification findings are capped at a
+public-contract-aligned 200,000 records. The searchable HTML view escapes all program-controlled
+text, loads no remote resources, and provides accessible navigation, a bounded inline repository
+topology, trusted-evidence counts, timing/resilience tables, severity filtering, and print styles.
+
 ## Review-quality gates
 
 Completeness validation is intentionally separate from scanner candidate generation and risk assessment. Default gates require the system purpose, boundary, operating context, ground rules, analysis revision, and review team. Accepted items must identify a named reviewer, requirement, causes, local/next-higher/end effects, severity and rationale, and actual controls. Action-required items must describe the action and name its owner and date. Rejected prompts require rationale. Closed items must record implemented or explicit no-action resolution, residual assessment and rationale, verification evidence, and applicable named approval. Incomplete scans, malformed configuration or persisted records, unmatched critical patterns, corrupt references, and stale source/context/baseline validation are errors.

@@ -590,7 +590,7 @@ class ExtensionTests(unittest.TestCase):
             }.issubset(names)
         )
         self.assertTrue(REVIEW_PACKAGE_SCHEMA_FILES.issubset(names))
-        self.assertEqual(manifest["schema_catalog"]["schema_count"], 14)
+        self.assertEqual(manifest["schema_catalog"]["schema_count"], 16)
         self.assertEqual(
             manifest["capabilities"],
             [
@@ -1391,7 +1391,7 @@ class ExtensionTests(unittest.TestCase):
                 ).validate(receipt)
                 self.assertTrue(receipt["valid"])
                 self.assertEqual(receipt["container"], container)
-                self.assertEqual(receipt["checked_files"], 42)
+                self.assertEqual(receipt["checked_files"], 44)
                 self.assertEqual(len(receipt["capabilities"]), 9)
                 self.assertEqual(Path(receipt["package"]), destination.resolve())
                 self.assertEqual(
@@ -2017,7 +2017,7 @@ class ExtensionTests(unittest.TestCase):
         )
         verified = verify_review_package(destination)
         self.assertTrue(verified["valid"])
-        self.assertEqual(verified["checked_files"], 42)
+        self.assertEqual(verified["checked_files"], 44)
         self.assertEqual(
             verified["verification_format"], REVIEW_PACKAGE_VERIFICATION_FORMAT
         )
@@ -2085,7 +2085,7 @@ class ExtensionTests(unittest.TestCase):
         with contextlib.redirect_stdout(human_output):
             self.assertEqual(main(["verify-package", str(destination)]), 0)
         self.assertIn(
-            "Schema catalog: valid=True, schemas=14", human_output.getvalue()
+            "Schema catalog: valid=True, schemas=16", human_output.getvalue()
         )
         self.assertIn(
             "Analysis structure: valid=True, nodes=", human_output.getvalue()
@@ -2730,7 +2730,7 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_package(archive)
         self.assertTrue(verified["valid"])
         self.assertEqual(verified["container"], "zip")
-        self.assertEqual(verified["checked_files"], 42)
+        self.assertEqual(verified["checked_files"], 44)
         self.assertTrue(verified["schema_catalog"]["valid"])
         self.assertEqual(
             verified["capabilities"],
@@ -2793,6 +2793,8 @@ class ExtensionTests(unittest.TestCase):
                     "manifest.json",
                     "README.md",
                     "schema-catalog.json",
+                    "pysfmea-assurance-program.schema.json",
+                    "pysfmea-assurance-program-verification.schema.json",
                     "pysfmea-detached-signature.schema.json",
                     "pysfmea-diagram.schema.json",
                     "pysfmea-diagram-bundle.schema.json",

@@ -64,3 +64,22 @@ Keep pull requests scoped and include:
 
 Do not include generated analyses, review packages, credentials, proprietary guidance, customer
 repositories, or assurance evidence unless they are intentionally synthetic and safe to publish.
+
+### GitHub publishing prerequisites
+
+Before pushing a branch, confirm that GitHub CLI authentication is active:
+
+```powershell
+gh auth status
+```
+
+GitHub requires the additional `workflow` OAuth scope when any commit being pushed creates or
+updates `.github/workflows/*.yml`. Refresh the existing authorization interactively before the
+push when that scope is absent:
+
+```powershell
+gh auth refresh -h github.com -s workflow
+```
+
+Never place a token in the remote URL, command history, repository configuration, issue, or pull
+request. Prefer the operating system credential store managed by GitHub CLI.

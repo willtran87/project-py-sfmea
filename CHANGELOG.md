@@ -3,6 +3,37 @@
 Notable user-visible changes are recorded here. PySFMEA follows semantic versioning for the
 package; public artifact and schema identifiers carry their own explicit compatibility versions.
 
+## 0.58.0 - 2026-08-05
+
+### Governed system assurance programs
+
+- Add `program-init`, `program-seal`, and `program-verify` for content-addressed,
+  multi-repository assurance programs bound to exact governed analyses and baselines.
+- Validate cross-repository component relationships, deadlines, timeouts, retries, ordering,
+  clock semantics, and observed timing evidence without presenting static topology as causality.
+- Add provider-neutral external requirements and evidence records with source/content digests,
+  artifact hashes, bounded consumption, subject validation, and producer/reviewer independence.
+- Aggregate independently reviewed validation cohorts and configurable recall/precision gates;
+  separately aggregate model/prompt-specific grounding, citation, unsupported-claim, and sample
+  metrics for optional LLM use.
+- Enforce named program approval, required roles, known approval subjects, and independent
+  evidence review while leaving authentication, authorization, and legal signature to enterprise
+  controls.
+- Add self-contained searchable HTML, Markdown, and JSON program-verification reports plus public
+  JSON Schema contracts. Current review packages now contain 16 schemas and 44 checked artifacts;
+  genuine older schema sets remain verifiable.
+- Credit timing and resilience only from completed, digest-verified evidence; failed evidence now
+  blocks readiness, while unrun and inconclusive records remain visible without claim credit.
+- Add explicit circuit-breaker opening, half-open, and bounded-recovery contracts with
+  fault-evidence verification and independent timing/resilience states.
+- Require repository-qualified finding/hazard references, timezone-qualified program/source/
+  approval timestamps, closed nested records, independent validation/LLM producer-reviewer
+  identities, distinct program-level approval authorities for every required role, and unresolved
+  required-role rejection blocking.
+- Add an accessible bounded repository-topology visual, trusted-evidence accounting,
+  timing/resilience tables, report navigation, severity filtering, Markdown escaping, and a
+  bounded finding envelope.
+
 ## 0.57.65 - 2026-08-05
 
 ### Consistent safe inventory accounting across outputs
@@ -15,6 +46,9 @@ package; public artifact and schema identifiers carry their own explicit compati
   governed analysis unchanged and keeping validation/handoff errors explicit.
 - Version-gate regenerated inventory and coverage review views so current packages require the
   richer accounting while genuine pre-0.57.65 packages remain exactly verifiable.
+- Add a concise operator workflow covering timestamped artifacts, scan-to-handoff commands,
+  repository-accounting states, executable assurance tests, evidence boundaries, and exact
+  artifact verification; document GitHub Actions publishing authorization for contributors.
 
 ## 0.57.64 - 2026-08-05
 

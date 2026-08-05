@@ -10,7 +10,8 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 
 ## Documentation map
 
-- [Quick start and end-to-end workflow](#quick-start)
+- [Operator workflow](docs/WORKFLOW.md) — the concise scan-to-handoff path
+- [Complete command guide](#quick-start)
 - [Methodology and assurance boundaries](docs/METHODOLOGY.md)
 - [Canonical diagram model](docs/DIAGRAMS.md)
 - [Public interchange schemas](docs/SCHEMAS.md)
@@ -79,6 +80,9 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
 - CSV and Markdown exports
 - Immutable scan manifests with source/configuration/guidance/adapter/dependency/contract digests, a typed health-reporting adapter registry, and a hashed per-adapter contribution ledger
 - A local browser reviewer with no hosted service or repository upload
+- A governed system-assurance program that federates multiple repository analyses, external
+  requirements and test evidence, cross-service timing, independent validation cohorts, LLM
+  quality metrics, and named approval roles into one verifiable HTML/JSON/Markdown result
 
 ## Install
 
@@ -107,6 +111,8 @@ sfmea schema diagram-bundle -o diagram-bundle.schema.json
 sfmea schema html-report-verification -o report-verdict.schema.json
 sfmea schema workflow-status -o workflow-status.schema.json
 sfmea schema assurance-work-queue -o assurance-work-queue.schema.json
+sfmea schema assurance-program -o assurance-program.schema.json
+sfmea schema assurance-program-verification -o assurance-program-verdict.schema.json
 sfmea schema --bundle offline-contracts
 sfmea schema --verify-bundle offline-contracts
 sfmea schema --verify-bundle offline-contracts --json
@@ -134,6 +140,10 @@ verification. JSON mode emits the public catalog-verification verdict and return
 received catalog is unavailable, malformed, drifted, or not the catalog shipped by that verifier.
 
 ## Quick start
+
+For the shortest repeatable scan-to-review-to-assurance-to-package path, including a timestamped
+`.artifacts` layout and the relationship between generated outputs, follow the
+[operator workflow](docs/WORKFLOW.md). This section is the detailed command reference.
 
 Create a project configuration and edit its system boundary, hazards, rating policy,
 critical functions, and domain rules:
@@ -499,7 +509,7 @@ explicit.
 snapshot, resolved context, repository coverage, adapter-run provenance, CSV and
 Markdown worksheets, inventory, architecture, traceability,
 coverage, validation, summary, audit history, the exact offline public-schema catalog,
-fourteen self-contained assurance, diagram, workflow, package, catalog, signature, and verifier
+sixteen self-contained assurance, diagram, workflow, package, catalog, signature, program, and verifier
 schema documents, a standalone `assurance-work.json` hardening queue,
 and a SHA-256 manifest. A non-empty destination is protected unless `--force` is supplied.
 The manifest explicitly declares `analysis_diagnostics_projection_v1`,
@@ -1191,6 +1201,57 @@ sfmea summarize sfmea-analysis.json --by subsystem --key Payments --llm `
 Machine summaries are bounded to cited worksheet records, stored separately, and
 marked stale after a baseline change. They are not risk-acceptance conclusions.
 
+## System-level assurance programs
+
+Individual analyses remain the source of truth for their repositories. A separate assurance
+program binds multiple governed analyses and adds system-of-systems relationships, external
+requirements, independent evidence, temporal contracts, validation cohorts, model-quality
+metrics, and organizational approval gates without merging or rewriting those analyses.
+
+Create a template with exact analysis-state and baseline bindings:
+
+```powershell
+sfmea program-init `
+  --analysis orders=.artifacts\orders\sfmea-analysis.json `
+  --analysis payments=.artifacts\payments\sfmea-analysis.json `
+  --name "Checkout assurance program" `
+  -o .artifacts\checkout-program.json
+```
+
+Edit the generated JSON to add cross-repository component relationships, deadline/timeout/retry
+and clock semantics, circuit-breaker opening/recovery contracts, requirements-source records,
+content-addressed evidence, independently produced and reviewed validation cohorts, optional LLM
+evaluations, and named approvals. Finding and hazard references use exact
+`REPOSITORY_ID:RECORD_ID` identities so repeated repository-local IDs cannot become ambiguous.
+Refresh integrity only after an intentional edit, then verify and publish the review views:
+
+```powershell
+sfmea program-seal .artifacts\checkout-program.json
+sfmea program-verify .artifacts\checkout-program.json
+sfmea program-verify .artifacts\checkout-program.json --format json `
+  -o .artifacts\checkout-program-verification.json
+sfmea program-verify .artifacts\checkout-program.json --format html `
+  -o .artifacts\checkout-program-report.html
+```
+
+The default program policy deliberately remains not ready until at least three independently
+reviewed validation repositories, configured recall/precision thresholds, software and safety
+approval roles, and a named program approval are present. A configured cross-service deadline also
+requires passing, digest-verified observed timing evidence from runtime tracing, load,
+fault-injection, concurrency, or chaos testing. Configured circuit breakers similarly require
+passing fault evidence that demonstrates opening, half-open recovery, and recovery within the
+declared deadline. Failed evidence blocks readiness; inconclusive and unrun records remain visible
+but receive no assurance credit. Required roles must approve the named program itself and must use
+distinct reviewer identities. Validation and LLM evaluation records retain distinct producer and
+reviewer identities plus content-addressed corpus provenance.
+
+The HTML verdict includes a bounded repository topology, timing and circuit-breaker states,
+trusted-versus-declared evidence, verification checks, model-quality metrics, severity/search
+filters, print styling, and accessible navigation without remote assets. These defaults are policy
+starters, not certification requirements; tailor them to the approved organizational process.
+Program verification proves binding and configured gate consistency, not causal completeness,
+evidence adequacy, regulatory applicability, or risk acceptance.
+
 ## Evaluation hook
 
 The repository includes a checked-in synthetic validation corpus under
@@ -1371,6 +1432,9 @@ relevance; they do not prove a defect, regulatory applicability, or compliance.
 - Suggested causes and actions are prompts, not findings proven to exist.
 - Rule output can be repetitive. Scope and review disposition are expected to reduce the working set.
 - Project-defined common causes and explicit SFTA are supported, but the tool does not infer or approve arbitrary fault-tree logic, prove independence, perform STPA, or automatically execute runtime fault injection or mutation analysis.
+- System assurance programs verify declared cross-repository endpoints, temporal contracts, evidence,
+  quality metrics, and governance gates; they do not discover every deployed service, establish
+  causal completeness or schedulability, authenticate named identities, or execute external tools.
 - The local reviewer uses strong ETag/`If-Match` revision checks to refuse stale writes from external edits or concurrent browser sessions, but it has no identity provider, electronic-signature control, role enforcement, or enterprise approval workflow.
 - Hosted-model use is opt-in and requires an explicit endpoint. Organizations remain responsible for provider approval, retention policy, regional processing, and sensitive-data controls.
 - CSV exports neutralize formula-like reviewer text for safer spreadsheet opening, but exported files still need the recipient organization's document controls.

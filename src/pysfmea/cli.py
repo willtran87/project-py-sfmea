@@ -70,6 +70,14 @@ from .interchange import (
     sarif_document,
 )
 from .pdf_report import export_pdf_report
+from .program import (
+    export_program_verification,
+    program_verification_html,
+    program_verification_markdown,
+    seal_program_file,
+    verify_assurance_program,
+    write_program_template,
+)
 from .publication import (
     export_publication_failure_catalog,
     publication_failure_catalog,
@@ -699,6 +707,41 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--json", action="store_true", help="emit the complete result")
     evaluate.add_argument("--max-findings", type=int, default=25)
     evaluate.set_defaults(handler=_evaluate)
+
+    program_init = subparsers.add_parser(
+        "program-init",
+        help="create a state-bound multi-repository assurance-program template",
+    )
+    program_init.add_argument(
+        "--analysis",
+        action="append",
+        required=True,
+        metavar="ID=PATH",
+        help="repository ID and governed analysis path; repeat for multiple repositories",
+    )
+    program_init.add_argument("-o", "--output", required=True, help="program JSON destination")
+    program_init.add_argument("--name", default="System assurance program")
+    program_init.add_argument("--force", action="store_true", help="replace only a recognized program")
+    program_init.set_defaults(handler=_program_init)
+
+    program_seal = subparsers.add_parser(
+        "program-seal",
+        help="refresh assurance-program integrity after intentional edits",
+    )
+    program_seal.add_argument("program", help="assurance-program JSON path")
+    program_seal.set_defaults(handler=_program_seal)
+
+    program_verify = subparsers.add_parser(
+        "program-verify",
+        help="verify multi-repository bindings, evidence, timing, validation, and governance",
+    )
+    program_verify.add_argument("program", help="assurance-program JSON path")
+    program_verify.add_argument(
+        "--format", choices=("human", "json", "markdown", "html"), default="human"
+    )
+    program_verify.add_argument("-o", "--output", help="JSON, Markdown, or HTML verification output")
+    program_verify.add_argument("--max-findings", type=int, default=50)
+    program_verify.set_defaults(handler=_program_verify)
 
     guidance = subparsers.add_parser("guidance", help="show methodology sources and limitations")
     guidance.set_defaults(handler=_guidance)
@@ -2254,6 +2297,69 @@ def _evaluate(args: argparse.Namespace) -> int:
             or result.get("metrics", {}).get("unsupported_verification_claims")
         )
     )
+
+
+def _program_analysis_references(values: list[str]) -> list[tuple[str, str]]:
+    references: list[tuple[str, str]] = []
+    for value in values:
+        repository_id, separator, path = value.partition("=")
+        if not separator or not repository_id.strip() or not path.strip():
+            raise ValueError("--analysis must use ID=PATH")
+        references.append((repository_id.strip(), path.strip()))
+    return references
+
+
+def _program_init(args: argparse.Namespace) -> int:
+    destination = write_program_template(
+        args.output,
+        _program_analysis_references(args.analysis),
+        name=args.name,
+        force=args.force,
+    )
+    print(f"Created assurance program: {destination}")
+    print("Add relationships, requirements, evidence, validation cohorts, and approvals; then run `sfmea program-seal` and `sfmea program-verify`.")
+    return 0
+
+
+def _program_seal(args: argparse.Namespace) -> int:
+    destination = seal_program_file(args.program)
+    print(f"Sealed assurance program: {destination}")
+    return 0
+
+
+def _program_verify(args: argparse.Namespace) -> int:
+    if args.max_findings < 1:
+        raise ValueError("--max-findings must be at least 1")
+    result = verify_assurance_program(args.program)
+    if args.output:
+        if args.format == "human":
+            raise ValueError("--output requires --format json, markdown, or html")
+        output = export_program_verification(result, args.output, format=args.format)
+        print(f"Exported assurance program verification: {output}")
+    elif args.format == "json":
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    elif args.format == "markdown":
+        print(program_verification_markdown(result), end="")
+    elif args.format == "html":
+        print(program_verification_html(result), end="")
+    else:
+        summary = result.get("summary", {})
+        validation = result.get("validation", {})
+        print(
+            "Assurance program: "
+            f"{'VALID' if result.get('valid') else 'NOT READY'}; "
+            f"repositories={summary.get('bound_repositories', 0)}/{summary.get('repositories', 0)}, "
+            f"relationships={summary.get('relationships', 0)}, "
+            f"evidence={summary.get('external_evidence', 0)}, "
+            f"validation_repositories={validation.get('repositories', 0)}"
+        )
+        for finding in result.get("findings", [])[: args.max_findings]:
+            print(f"- {finding['level'].upper()} {finding['code']}: {finding['message']}")
+        remaining = len(result.get("findings", [])) - args.max_findings
+        if remaining > 0:
+            print(f"... {remaining} additional finding(s) omitted")
+        print(result.get("notice", ""))
+    return int(not result.get("valid", False))
 
 
 def _guidance(args: argparse.Namespace) -> int:

@@ -198,7 +198,7 @@ class WorkflowStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             current["artifacts"]["review_package"]["integrity"]["checked_files"],
-            42,
+            44,
         )
         self.assertTrue(
             current["artifacts"]["review_package"]["integrity"]["schema_catalog"][
