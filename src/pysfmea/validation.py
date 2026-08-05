@@ -18,6 +18,11 @@ from .guidance import (
     guidance_bundle,
 )
 from .model import calculate_rpn, utc_now
+from .repository_inventory import (
+    SNAPSHOT_SOURCES,
+    derive_repository_inventory_summary,
+    repository_inventory_summary_mismatches,
+)
 from .sfta import build_sfta
 
 LEVELS = {"error", "warning", "information"}
@@ -165,7 +170,10 @@ def validate_analysis(
                 field=f"system_context.resolved.{field}",
             )
     repository_inventory = analysis.get("repository_inventory", {})
-    if repository_inventory.get("schema_version") != "pysfmea-repository-inventory-1":
+    if (
+        not isinstance(repository_inventory, dict)
+        or repository_inventory.get("schema_version") != "pysfmea-repository-inventory-1"
+    ):
         add(
             "coverage.missing_repository_inventory",
             "error",
@@ -173,6 +181,9 @@ def validate_analysis(
             field="repository_inventory",
         )
     else:
+        entries = repository_inventory.get("entries", [])
+        regions = repository_inventory.get("regions", [])
+        derived_inventory_summary: dict[str, Any] | None = None
         inventory_material = {
             key: repository_inventory.get(key)
             for key in ("entries", "regions", "truncated")
@@ -184,6 +195,62 @@ def validate_analysis(
                 "The repository inventory digest does not match its content.",
                 field="repository_inventory.inventory_sha256",
             )
+        records_are_valid = (
+            isinstance(entries, list)
+            and isinstance(regions, list)
+            and all(isinstance(entry, dict) for entry in entries)
+            and all(isinstance(region, dict) for region in regions)
+        )
+        if not records_are_valid:
+            add(
+                "coverage.invalid_inventory_records",
+                "error",
+                "Repository inventory entries and regions must be object-valued lists; rescan to rebuild the inventory.",
+                field="repository_inventory",
+            )
+        else:
+            invalid_sources = Counter(
+                source
+                if isinstance(source, str) and source
+                else "<missing-or-non-text>"
+                for source in (entry.get("snapshot_source") for entry in entries)
+                if not isinstance(source, str) or source not in SNAPSHOT_SOURCES
+            )
+            if invalid_sources:
+                rendered = ", ".join(
+                    f"{source} ({count})"
+                    for source, count in sorted(invalid_sources.items())
+                )
+                add(
+                    "coverage.invalid_snapshot_provenance",
+                    "error",
+                    "Repository inventory contains unsupported or missing snapshot provenance: "
+                    f"{rendered}. Rescan with the current PySFMEA version.",
+                    field="repository_inventory.entries",
+                )
+            expected_summary = derive_repository_inventory_summary(
+                repository_inventory
+            )
+            if expected_summary is None:
+                add(
+                    "coverage.invalid_inventory_records",
+                    "error",
+                    "Repository inventory records are missing the status, kind, or snapshot provenance needed for coverage accounting; rescan to rebuild the inventory.",
+                    field="repository_inventory.entries",
+                )
+            else:
+                derived_inventory_summary = expected_summary
+                mismatches = repository_inventory_summary_mismatches(
+                    repository_inventory, expected_summary
+                )
+                if mismatches:
+                    add(
+                        "coverage.inventory_summary_mismatch",
+                        "error",
+                        "Repository inventory summary does not reconcile with its entries and regions "
+                        f"({', '.join(mismatches)}); rescan to rebuild derived coverage accounting.",
+                        field="repository_inventory.summary",
+                    )
         if repository_inventory.get("truncated"):
             add(
                 "coverage.inventory_truncated",
@@ -191,8 +258,10 @@ def validate_analysis(
                 "Repository artifact inventory reached its bounded safety limit.",
                 field="repository_inventory.truncated",
             )
-        opaque_or_unresolved = repository_inventory.get("summary", {}).get(
-            "opaque_or_unresolved", 0
+        opaque_or_unresolved = (
+            derived_inventory_summary.get("opaque_or_unresolved", 0)
+            if derived_inventory_summary is not None
+            else 0
         )
         if opaque_or_unresolved:
             add(

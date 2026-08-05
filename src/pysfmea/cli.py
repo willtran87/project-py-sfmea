@@ -87,6 +87,7 @@ from .report import (
     package_publication_error_result,
     verify_review_package,
 )
+from .repository_inventory import repository_inventory_summary_projection
 from .runtime import import_runtime_trace
 from .scanner import scan_repository
 from .schemas import (
@@ -1932,7 +1933,16 @@ def _sign_package(args: argparse.Namespace) -> int:
 
 def _summary(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
-    summary: dict[str, Any] = analysis.get("summary", {})
+    summary: dict[str, Any] = dict(analysis.get("summary", {}))
+    repository = repository_inventory_summary_projection(
+        analysis.get("repository_inventory", {})
+    )
+    repository_summary = repository["summary"]
+    summary["repository_artifacts"] = repository_summary.get("files")
+    summary["opaque_or_unresolved_artifacts"] = repository_summary.get(
+        "opaque_or_unresolved"
+    )
+    summary["repository_inventory"] = repository
     if args.json:
         print(json.dumps(summary, indent=2))
         return 0
@@ -1960,6 +1970,13 @@ def _summary(args: argparse.Namespace) -> int:
         )
     )
     print(f"Revalidation required: {summary.get('revalidation_required', 0)}")
+    print(
+        "Repository inventory: "
+        f"status={repository['status']}, "
+        f"files={repository_summary.get('files', 'unavailable')}, "
+        "opaque/unresolved="
+        f"{repository_summary.get('opaque_or_unresolved', 'unavailable')}"
+    )
     suggestion_counts = summary.get("suggestions", {})
     print(
         "Machine suggestions: "

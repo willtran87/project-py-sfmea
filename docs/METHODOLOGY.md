@@ -177,6 +177,43 @@ stream. Formats without an explicit semantic parser remain content-addressed art
 proves which bytes were analyzed, not that resolution, installation, provenance, licensing,
 vulnerability state, or runtime compatibility is correct.
 
+### Repository snapshot provenance
+
+The repository inventory uses `schema_version: pysfmea-repository-inventory-1`. Every file entry
+has a `snapshot_source` that explains whether its digest reused evidence already accepted by a
+semantic adapter or came from the inventory's own bounded read:
+
+| `snapshot_source` | Meaning |
+|---|---|
+| `analysis_source_snapshot` | Reuses the exact Python source bytes accepted for decoding, AST analysis, test indexing, and baseline construction. |
+| `test_evidence_snapshot` | Reuses accepted textual test-reference evidence captured before baseline construction. |
+| `dependency_manifest_snapshot` | Reuses an accepted pyproject, requirements/constraints, or supported lockfile snapshot. |
+| `interface_contract_snapshot` | Reuses an accepted OpenAPI, Swagger, JSON Schema, YAML, or protobuf contract snapshot. |
+| `coverage_evidence_snapshot` | Reuses accepted coverage.py JSON bytes only when that evidence file is inside the analyzed repository. |
+| `identity_stable_inventory_snapshot` | The inventory performed its own bounded regular-file read with inspected/opened/final identity reconciliation. |
+| `none` | No accepted content snapshot contributed to the entry, normally because only metadata was safe or available for an opaque, unresolved, excluded, or budget-limited artifact. |
+
+`summary.by_snapshot_source` counts file entries by these values; its counts therefore sum to
+`summary.files`. Regions are accounted separately and do not claim a content snapshot. A reused
+snapshot means the inventory did not reopen that path, which prevents analysis and inventory from
+describing different bytes after a concurrent replacement. It does not establish the origin,
+authenticity, completeness, or fitness of those bytes. External coverage evidence remains bound
+to scan provenance but is intentionally absent from repository inventory accounting.
+Validation recomputes the derived file, region, status, kind, snapshot-source,
+opaque/unresolved, and non-empty semantic-coverage values. Unknown or missing provenance produces
+`coverage.invalid_snapshot_provenance`; inconsistent derived accounting produces
+`coverage.inventory_summary_mismatch`. Historical analyses remain readable, but these errors
+require a current rescan before a handoff can claim reconciled repository coverage.
+Self-contained reports never visualize the stored summary directly. They recompute displayed
+metrics from the complete bounded entry and region records and declare the projection
+`reconciled`, `recomputed`, or `unavailable`. A recomputed report remains useful for diagnosis but
+does not clear the validation or handoff gate; unavailable records withhold inventory counts.
+The same safe projection supplies `sfmea coverage`, `sfmea inventory`, and human/JSON
+`sfmea summary`. These views cannot disagree about reconciliation state or reuse stale stored
+artifact totals. Review-package verification selects the producer's view contract: packages from
+0.57.65 onward require the richer accounting, while genuine older views are regenerated with
+their historical layout.
+
 Confidence describes how directly a rule was triggered by observable syntax. It is not likelihood or occurrence. The two baseline functional rules are generated systematically even when no specialized syntax is present.
 
 Ordered call evidence and common framework decorators identify HTTP routes, background tasks, event handlers, and CLI commands. Framework recognition is metadata and a screening aid; it does not prove the runtime router, dependency injection graph, middleware order, or deployed configuration.

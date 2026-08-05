@@ -70,6 +70,33 @@ The schemas use stable `urn:pysfmea:schema:…:1` identifiers and have no extern
 dependencies. A consumer can pin the catalog digest and retain the exported schema beside its
 CI policy or evidence record.
 
+### Repository inventory programmatic output
+
+The governed analysis and review package also carry a versioned
+`pysfmea-repository-inventory-1` object (the analysis JSON's top-level
+`repository_inventory` field and the package's `repository-inventory.json`). This object is
+programmatic output, but it is not currently a
+separately published `sfmea schema` contract. Consumers should require its `schema_version`,
+tolerate additive fields, and treat unknown values conservatively.
+
+Each file entry includes `snapshot_source`; `summary.by_snapshot_source` aggregates the same
+values for the producing release. Counts cover file entries, while `regions` remain separate. See
+[Repository snapshot provenance](METHODOLOGY.md#repository-snapshot-provenance) for the value
+definitions and trust boundary. Package verification regenerates this projection from the
+packaged governed analysis, so the manifest checksum alone is not its only integrity check.
+Quality validation also recomputes the inventory summary and rejects missing or unknown snapshot
+provenance. This protects consumers from trusting altered derived counts, which are intentionally
+not part of `inventory_sha256`.
+The HTML report payload independently includes `summary_reconciliation.status` with
+`reconciled`, `recomputed`, or `unavailable`. Its displayed `summary` is always derived from the
+embedded analysis records or empty when safe derivation is impossible; it is never copied from an
+unreconciled stored summary. This report-only diagnostic is additive output, not a public schema
+catalog contract or a repair of the governed analysis.
+Coverage JSON and `sfmea summary --json` expose the same additive safe projection. Their
+repository accounting is programmatic output rather than a cataloged public schema: consumers
+must branch on `reconciliation_status`/`status`, accept `null` totals when unavailable, and avoid
+interpreting semantic accounting coverage as behavioral or test adequacy.
+
 ## Offline review-package use
 
 Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all fourteen
@@ -279,3 +306,8 @@ format-specific extensions. The required verdict envelope and named checks remai
 major version 1. A breaking required-field, meaning, type, or closed-vocabulary change requires
 a new schema name/URN major version. Catalog SHA-256 values expose every byte-level contract
 change, including compatible clarifications.
+
+Versioned programmatic outputs that are not present in the public schema catalog, including the
+repository inventory described above, do not inherit this schema-compatibility guarantee. Their
+format identifier is still a required consumption boundary; integrations should reject an unknown
+major format and tolerate additive fields within a recognized format.

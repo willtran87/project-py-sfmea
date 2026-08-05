@@ -11,6 +11,7 @@ from typing import Any
 
 from .architecture import architecture_graph
 from .file_publication import atomic_publish_text
+from .repository_inventory import repository_inventory_summary_projection
 
 
 def _md(value: Any) -> str:
@@ -466,6 +467,11 @@ def coverage_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
     }
     linked_hazards = {value for item in active_items for value in item.get("review", {}).get("linked_hazards", [])}
     mapped_interfaces = {value for component in components for value in component.get("interface_ids", [])}
+    repository_projection = repository_inventory_summary_projection(
+        analysis.get("repository_inventory", {})
+    )
+    repository_summary = repository_projection["summary"]
+    repository_status = repository_summary.get("by_status", {})
 
     def ratio(numerator: int, denominator: int) -> float | None:
         return round(100 * numerator / denominator, 1) if denominator else None
@@ -476,12 +482,38 @@ def coverage_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
         "requirements": {"configured": len(requirements), "linked": len(requirements & linked_requirements), "coverage_percent": ratio(len(requirements & linked_requirements), len(requirements))},
         "hazards": {"configured": len(hazards), "linked": len(hazards & linked_hazards), "coverage_percent": ratio(len(hazards & linked_hazards), len(hazards))},
         "interfaces": {"configured": len(interfaces), "mapped": len(interfaces & mapped_interfaces), "coverage_percent": ratio(len(interfaces & mapped_interfaces), len(interfaces))},
-        "limitations": ["Coverage measures linkage and disposition completeness, not correctness or hazard-analysis sufficiency."],
+        "repository_artifacts": {
+            "reconciliation_status": repository_projection["status"],
+            "display_source": repository_projection["display_source"],
+            "files": repository_summary.get("files"),
+            "regions": repository_summary.get("regions"),
+            "analyzed": repository_status.get("analyzed"),
+            "indexed": repository_status.get("indexed"),
+            "excluded": repository_status.get("excluded_region"),
+            "opaque_or_unresolved": repository_summary.get(
+                "opaque_or_unresolved"
+            ),
+            "semantic_coverage_percent": repository_summary.get(
+                "semantic_coverage_percent"
+            ),
+            "by_snapshot_source": repository_summary.get(
+                "by_snapshot_source", {}
+            ),
+            "notice": repository_projection["notice"],
+        },
+        "limitations": [
+            "Coverage measures linkage and disposition completeness, not correctness or hazard-analysis sufficiency.",
+            "Repository artifact coverage measures static accounting depth, not behavioral or test adequacy.",
+        ],
     }
 
 
 def export_coverage(
-    analysis: dict[str, Any], destination: str | Path, *, format: str = "markdown"
+    analysis: dict[str, Any],
+    destination: str | Path,
+    *,
+    format: str = "markdown",
+    include_repository_accounting: bool = True,
 ) -> Path:
     metrics = coverage_metrics(analysis)
     if format == "json":
@@ -502,6 +534,30 @@ def export_coverage(
         values = metrics[metric_key]
         percent = values[percent_key]
         lines.append(f"| {area} | {values[covered_key]} | {values[total_key]} | {percent if percent is not None else 'n/a'} |")
+    if include_repository_accounting:
+        repository = metrics["repository_artifacts"]
+        semantic_coverage = repository["semantic_coverage_percent"]
+        lines.extend(
+            [
+                "",
+                "## Repository artifact accounting",
+                "",
+                f"- Reconciliation: {repository['reconciliation_status']}",
+                f"- Files: {repository['files'] if repository['files'] is not None else 'unavailable'}",
+                f"- Regions: {repository['regions'] if repository['regions'] is not None else 'unavailable'}",
+                f"- Semantically analyzed: {repository['analyzed'] if repository['analyzed'] is not None else 'unavailable'}",
+                f"- Indexed: {repository['indexed'] if repository['indexed'] is not None else 'unavailable'}",
+                f"- Opaque or unresolved: {repository['opaque_or_unresolved'] if repository['opaque_or_unresolved'] is not None else 'unavailable'}",
+                "- Semantic accounting coverage: "
+                + (
+                    f"{semantic_coverage}%"
+                    if semantic_coverage is not None
+                    else "n/a"
+                ),
+                "",
+                "> " + repository["notice"],
+            ]
+        )
     return atomic_publish_text(
         destination,
         "\n".join(lines) + "\n",

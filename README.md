@@ -8,6 +8,18 @@ PySFMEA scans a Python repository and creates a local, reviewable Software Failu
 
 It is designed to help begin and maintain an SFMEA. It does not claim that static analysis can determine system consequences or replace a cross-functional review.
 
+## Documentation map
+
+- [Quick start and end-to-end workflow](#quick-start)
+- [Methodology and assurance boundaries](docs/METHODOLOGY.md)
+- [Canonical diagram model](docs/DIAGRAMS.md)
+- [Public interchange schemas](docs/SCHEMAS.md)
+- [Organizational guidance packs](docs/GUIDANCE_PACKS.md)
+- [Requirements traceability](docs/REQUIREMENTS_TRACEABILITY.md)
+- [NASA/FAA guidance coverage audit](docs/GAP_AUDIT.md)
+- [Contributing](CONTRIBUTING.md), [security](SECURITY.md), and the
+  [release checklist](docs/RELEASE.md)
+
 ## What it produces
 
 - Stable components linked to file and line locations
@@ -45,7 +57,7 @@ It is designed to help begin and maintain an SFMEA. It does not claim that stati
   preventing a few finding-heavy components from crowding out the system overview.
   Scanner and report metadata disclose path-count and depth limits, omitted paths and
   segments, and whether the underlying static caller-path inventory was itself truncated
-- SFMEA linkage and review-coverage reports
+- SFMEA linkage and review-coverage reports with reconciled repository artifact accounting
 - Self-contained interactive HTML reports with executive metrics, filters, record
   drill-down, architecture, traceability, sequences, notes, CSV extraction, and print styling
 - Paginated PDF reports rendered from the same self-contained workspace through a locally installed Edge, Chrome, or Chromium browser
@@ -174,6 +186,8 @@ its snapshot source; non-regular filesystem objects are never opened. If the agg
 exhausted, metadata and already-authorized semantic analysis continue, but the inventory records a
 digest-protected unresolved region and is explicitly marked truncated. File and
 excluded/opaque-region traversal are each capped at 100,000 records.
+The inventory's `snapshot_source` values and summary accounting are defined in
+[Repository snapshot provenance](docs/METHODOLOGY.md#repository-snapshot-provenance).
 
 `sfmea status` is the read-only workflow cockpit. It auto-discovers configuration and
 analysis files in the repository root or `.artifacts`, classifies the current lifecycle

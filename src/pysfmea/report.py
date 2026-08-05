@@ -44,6 +44,7 @@ from .publication import (
     PUBLICATION_FAILURE_CATALOG_SHA256,
     classify_publication_failure,
 )
+from .repository_inventory import repository_inventory_summary_projection
 from .sfta import SFTA_GAP_FIELDS, build_sfta, export_sfta, sfta_gap_rows
 from .validation import validate_analysis
 from .version import __version__
@@ -211,6 +212,7 @@ INTERCHANGE_ARTIFACTS_PACKAGE_VERSION = (0, 55, 0)
 REVIEW_VIEWS_PACKAGE_VERSION = (0, 56, 0)
 PACKAGE_PROVENANCE_VERSION = (0, 57, 0)
 SFTA_EXACT_SELECTOR_VERSION = (0, 57, 2)
+RECONCILED_INVENTORY_VIEWS_VERSION = (0, 57, 65)
 REVIEW_PACKAGE_CAPABILITIES = (
     "analysis_diagnostics_projection_v1",
     "assurance_register_projection",
@@ -836,7 +838,12 @@ def export_audit(analysis: dict[str, Any], destination: str | Path) -> Path:
     )
 
 
-def export_inventory(analysis: dict[str, Any], destination: str | Path) -> Path:
+def export_inventory(
+    analysis: dict[str, Any],
+    destination: str | Path,
+    *,
+    include_repository_accounting: bool = True,
+) -> Path:
     """Export the system-definition and component worksheet supporting the SFMEA."""
 
     context = analysis.get("context", {})
@@ -848,6 +855,16 @@ def export_inventory(analysis: dict[str, Any], destination: str | Path) -> Path:
     for field in ("phase", "revision"):
         if analysis_context.get(field):
             analysis_context[field] = _markdown_text(analysis_context[field])
+    repository = repository_inventory_summary_projection(
+        analysis.get("repository_inventory", {})
+    )
+    repository_summary = repository["summary"]
+    repository_status = repository_summary.get("by_status", {})
+    snapshot_counts = repository_summary.get("by_snapshot_source", {})
+    snapshot_text = ", ".join(
+        f"{name}={count}" for name, count in sorted(snapshot_counts.items())
+    ) or "unavailable"
+    semantic_coverage = repository_summary.get("semantic_coverage_percent")
     lines = [
         f"# SFMEA system and component inventory — {analysis.get('project', {}).get('name', '')}",
         "",
@@ -858,9 +875,31 @@ def export_inventory(analysis: dict[str, Any], destination: str | Path) -> Path:
         f"- Analysis revision: {analysis_context.get('revision', '') or 'Not configured'}",
         f"- Source/configuration baseline: {analysis.get('project', {}).get('baseline', {}).get('id', '')}",
         "",
-        "## Ground rules and assumptions",
-        "",
     ]
+    if include_repository_accounting:
+        lines.extend(
+            [
+                "## Repository artifact accounting",
+                "",
+                f"- Reconciliation: {repository['status']}",
+                f"- Files: {repository_summary.get('files', 'unavailable')}",
+                f"- Regions: {repository_summary.get('regions', 'unavailable')}",
+                f"- Semantically analyzed: {repository_status.get('analyzed', 'unavailable')}",
+                f"- Indexed: {repository_status.get('indexed', 'unavailable')}",
+                f"- Opaque or unresolved: {repository_summary.get('opaque_or_unresolved', 'unavailable')}",
+                "- Semantic accounting coverage: "
+                + (
+                    f"{semantic_coverage}%"
+                    if semantic_coverage is not None
+                    else "n/a"
+                ),
+                f"- Snapshot provenance: {snapshot_text}",
+                "",
+                "> " + repository["notice"],
+                "",
+            ]
+        )
+    lines.extend(["## Ground rules and assumptions", ""])
     lines[0] = "# SFMEA system and component inventory - " + _markdown_text(
         analysis.get("project", {}).get("name", "")
     )
@@ -2511,6 +2550,9 @@ def _verify_review_views(
     legacy_sfta_id_wildcard = not _package_version_at_least(
         producer_version, SFTA_EXACT_SELECTOR_VERSION
     )
+    include_repository_accounting = _package_version_at_least(
+        producer_version, RECONCILED_INVENTORY_VIEWS_VERSION
+    )
     artifact_specs = (
         (
             "worksheet.csv",
@@ -2524,7 +2566,12 @@ def _verify_review_views(
             export_markdown,
             {"legacy_sfta_id_wildcard": legacy_sfta_id_wildcard},
         ),
-        ("inventory.md", "system_views_projection", export_inventory, {}),
+        (
+            "inventory.md",
+            "system_views_projection",
+            export_inventory,
+            {"include_repository_accounting": include_repository_accounting},
+        ),
         (
             "architecture.md",
             "system_views_projection",
@@ -2541,7 +2588,10 @@ def _verify_review_views(
             "coverage.md",
             "system_views_projection",
             export_coverage,
-            {"format": "markdown"},
+            {
+                "format": "markdown",
+                "include_repository_accounting": include_repository_accounting,
+            },
         ),
         ("audit.csv", "audit_projection", export_audit, {}),
         (

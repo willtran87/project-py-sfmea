@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.cli import main
+from pysfmea.repository_inventory import legacy_repository_inventory
 from pysfmea.scanner import scan_repository
 from pysfmea.store import save_analysis, update_item_review
 from pysfmea.validation import review_queue, validate_analysis
@@ -161,6 +163,24 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("Validation: errors=", output.getvalue())
 
+    def test_cli_summary_recomputes_repository_artifact_totals(self) -> None:
+        inventory = self.analysis["repository_inventory"]
+        expected_files = len(inventory["entries"])
+        inventory["summary"]["files"] = expected_files + 999
+        self.analysis["summary"]["repository_artifacts"] = expected_files + 999
+        path = self.root / "analysis.json"
+        save_analysis(path, self.analysis)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["summary", str(path), "--json"])
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary["repository_artifacts"], expected_files)
+        self.assertEqual(
+            summary["repository_inventory"]["status"], "recomputed"
+        )
+
     def test_rejection_traceability_and_integrity_checks(self) -> None:
         update_item_review(
             self.analysis,
@@ -219,6 +239,53 @@ class ValidationTests(unittest.TestCase):
             if finding["rule_id"] == "scan.warning"
         )
         self.assertEqual(scan_finding["level"], "error")
+
+    def test_repository_snapshot_provenance_and_summary_are_gated(self) -> None:
+        self.assertNotIn("coverage.invalid_snapshot_provenance", self.rules())
+        self.assertNotIn("coverage.inventory_summary_mismatch", self.rules())
+
+        inventory = self.analysis["repository_inventory"]
+        inventory["entries"][0]["snapshot_source"] = "unrecognized_snapshot"
+        self.assertIn("coverage.invalid_snapshot_provenance", self.rules())
+
+        self.analysis = scan_repository(self.root)
+        inventory = self.analysis["repository_inventory"]
+        inventory["summary"]["files"] += 1
+        inventory["summary"]["opaque_or_unresolved"] = 999
+        inventory["summary"]["semantic_coverage_percent"] = -1
+        findings = validate_analysis(self.analysis)["findings"]
+        self.assertIn("coverage.inventory_summary_mismatch", self.rules())
+        self.assertFalse(
+            any(
+                finding["rule_id"] == "coverage.opaque_or_unresolved_artifacts"
+                and "999" in finding["message"]
+                for finding in findings
+            )
+        )
+
+    def test_malformed_repository_inventory_records_are_bounded_findings(self) -> None:
+        inventory = self.analysis["repository_inventory"]
+        inventory["entries"][0] = "not-an-object"
+        findings = validate_analysis(self.analysis)["findings"]
+        invalid = [
+            finding
+            for finding in findings
+            if finding["rule_id"] == "coverage.invalid_inventory_records"
+        ]
+        self.assertEqual(len(invalid), 1)
+        self.assertEqual(invalid[0]["level"], "error")
+
+        self.analysis = scan_repository(self.root)
+        self.analysis["repository_inventory"]["summary"] = []
+        self.assertIn("coverage.inventory_summary_mismatch", self.rules())
+
+    def test_legacy_zero_file_inventory_retains_null_coverage_compatibility(self) -> None:
+        self.analysis["repository_inventory"] = legacy_repository_inventory(
+            "Historical scan did not capture repository coverage."
+        )
+        rules = self.rules()
+        self.assertNotIn("coverage.inventory_summary_mismatch", rules)
+        self.assertNotIn("coverage.invalid_snapshot_provenance", rules)
 
     def test_empty_failure_mode_set_is_an_error(self) -> None:
         self.analysis["items"] = []

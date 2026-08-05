@@ -2393,7 +2393,10 @@ class ScannerTests(unittest.TestCase):
         self.assertIn(",42,", csv_text)
         self.assertIn("# Software FMEA", md_path.read_text(encoding="utf-8"))
         self.assertIn("review_update", audit_path.read_text(encoding="utf-8-sig"))
-        self.assertIn("## Components", inventory_path.read_text(encoding="utf-8"))
+        inventory_text = inventory_path.read_text(encoding="utf-8")
+        self.assertIn("## Repository artifact accounting", inventory_text)
+        self.assertIn("- Reconciliation: reconciled", inventory_text)
+        self.assertIn("## Components", inventory_text)
 
     def test_csv_exports_neutralize_spreadsheet_formulas(self) -> None:
         analysis = scan_repository(self.root)

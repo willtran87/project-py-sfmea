@@ -1,6 +1,6 @@
 # Workbench requirements traceability
 
-Last implementation audit: 2026-08-05 · PySFMEA 0.57.62 · analysis schema 0.6
+Last implementation audit: 2026-08-05 · PySFMEA 0.57.65 · analysis schema 0.6
 
 Governed-analysis persistence traceability includes 100 MB identity-stable ingestion and hashing,
 strict duplicate-free finite UTF-8 JSON, shared 100-level/2,000,000-node limits, bounded output

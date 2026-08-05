@@ -115,6 +115,25 @@ class WorkflowStatusTests(unittest.TestCase):
             if not gate["passed"]:
                 self.assertIn(gate["remediation_action_id"], available_actions)
 
+    def test_unreconciled_inventory_summary_blocks_handoff(self) -> None:
+        analysis = self._scan()
+        analysis["repository_inventory"]["summary"]["files"] += 1
+        save_analysis(self.analysis_path, analysis)
+
+        status = workflow_status(self.root)
+        validation_gate = next(
+            gate for gate in status["handoff_gates"] if gate["id"] == "validation_clear"
+        )
+        self.assertFalse(validation_gate["passed"])
+        self.assertGreaterEqual(validation_gate["evidence"]["error_count"], 1)
+        self.assertEqual(
+            validation_gate["remediation_action_id"], "validate_analysis"
+        )
+        self.assertIn(
+            "validate_analysis", {action["id"] for action in status["next_actions"]}
+        )
+        self.assertFalse(status["ready_for_handoff"])
+
     def test_artifact_freshness_integrity_and_exact_binding(self) -> None:
         analysis = self._scan()
         report = self.root / "sfmea-report.html"

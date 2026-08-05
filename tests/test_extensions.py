@@ -43,7 +43,9 @@ from pysfmea.readiness import repository_readiness
 from pysfmea.report import (
     REVIEW_PACKAGE_SCHEMA_FILES,
     _verify_analysis_structure,
+    _verify_review_views,
     analysis_state_sha256,
+    export_inventory,
     export_review_archive,
     export_review_package,
     verify_review_package,
@@ -217,11 +219,25 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(len({node["id"] for node in shared}), 2)
         metrics = coverage_metrics(self.analysis)
         self.assertEqual(metrics["requirements"]["coverage_percent"], 100.0)
+        self.assertEqual(
+            metrics["repository_artifacts"]["reconciliation_status"], "reconciled"
+        )
+        self.assertEqual(
+            metrics["repository_artifacts"]["files"],
+            len(self.analysis["repository_inventory"]["entries"]),
+        )
         self.assertIn(
             "SFMEA analysis coverage",
             export_coverage(self.analysis, self.root / "coverage.md").read_text(
                 encoding="utf-8"
             ),
+        )
+        self.analysis["repository_inventory"]["summary"]["files"] += 999
+        recomputed = coverage_metrics(self.analysis)["repository_artifacts"]
+        self.assertEqual(recomputed["reconciliation_status"], "recomputed")
+        self.assertEqual(
+            recomputed["files"],
+            len(self.analysis["repository_inventory"]["entries"]),
         )
 
     def test_runtime_trace_import_adds_observed_sequence_edges(self) -> None:
@@ -1103,9 +1119,24 @@ class ExtensionTests(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
+        pre_provenance_inventory_path = pre_provenance / "inventory.md"
+        export_inventory(
+            pre_provenance_analysis,
+            pre_provenance_inventory_path,
+            include_repository_accounting=False,
+        )
+        pre_provenance_coverage_path = pre_provenance / "coverage.md"
+        export_coverage(
+            pre_provenance_analysis,
+            pre_provenance_coverage_path,
+            format="markdown",
+            include_repository_accounting=False,
+        )
         for filename, path in (
             ("findings.sarif", pre_provenance_sarif_path),
             ("components.cdx.json", pre_provenance_cyclonedx_path),
+            ("inventory.md", pre_provenance_inventory_path),
+            ("coverage.md", pre_provenance_coverage_path),
         ):
             raw = path.read_bytes()
             entry = next(
@@ -1227,6 +1258,36 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(portable_manifest["source_analysis"], "analysis.json")
         self.assertTrue(portable_manifest["portable"])
         self.assertEqual(self.analysis["project"]["root"], str(self.root))
+
+    def test_review_view_reconciliation_preserves_pre_05765_packages(self) -> None:
+        destination = export_review_package(
+            self.analysis, self.root / "legacy-review-views"
+        )
+        packaged_analysis = json.loads(
+            (destination / "analysis.json").read_text(encoding="utf-8")
+        )
+        export_inventory(
+            packaged_analysis,
+            destination / "inventory.md",
+            include_repository_accounting=False,
+        )
+        export_coverage(
+            packaged_analysis,
+            destination / "coverage.md",
+            format="markdown",
+            include_repository_accounting=False,
+        )
+        listed = {path.name for path in destination.iterdir() if path.is_file()}
+
+        historical = _verify_review_views(
+            destination, listed, packaged_analysis, "0.57.64"
+        )
+        self.assertTrue(historical["valid"])
+        current = _verify_review_views(
+            destination, listed, packaged_analysis, "0.57.65"
+        )
+        self.assertFalse(current["valid"])
+        self.assertFalse(current["checks"]["system_views_projection"])
 
     def test_review_package_materializes_assurance_before_snapshot(self) -> None:
         for case, missing_value in (

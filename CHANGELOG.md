@@ -3,6 +3,47 @@
 Notable user-visible changes are recorded here. PySFMEA follows semantic versioning for the
 package; public artifact and schema identifiers carry their own explicit compatibility versions.
 
+## 0.57.65 - 2026-08-05
+
+### Consistent safe inventory accounting across outputs
+
+- Use one repository-inventory summary projection for HTML, coverage JSON/Markdown, system
+  inventory Markdown, and human/JSON CLI summaries.
+- Add repository files, regions, semantic-analysis depth, opaque/unresolved totals, snapshot
+  provenance, and `reconciled`/`recomputed`/`unavailable` state to coverage and inventory views.
+- Override stale artifact totals in `sfmea summary` with record-derived values while retaining the
+  governed analysis unchanged and keeping validation/handoff errors explicit.
+- Version-gate regenerated inventory and coverage review views so current packages require the
+  richer accounting while genuine pre-0.57.65 packages remain exactly verifiable.
+
+## 0.57.64 - 2026-08-05
+
+### Reconciled inventory reporting and handoff enforcement
+
+- Centralize safe repository-inventory summary derivation and compared-field policy for validation
+  and report projection so the two consumption paths cannot drift, including non-empty semantic
+  coverage while preserving historical zero-file `null` compatibility.
+- Render only record-derived inventory metrics in self-contained HTML reports; inconsistent stored
+  summaries are visibly labeled `recomputed`, while structurally unusable records withhold counts
+  as `unavailable` instead of displaying untrusted values.
+- Preserve exact governed analysis and validation findings while distinguishing a clean
+  `reconciled` summary from repaired presentation data inside report integrity.
+- Prove workflow handoff remains blocked by inventory-summary validation errors and provide the
+  existing validation remediation command.
+
+## 0.57.63 - 2026-08-05
+
+### Repository provenance validation and reporting polish
+
+- Derive repository inventory summaries through one shared implementation and reconcile file,
+  region, status, kind, snapshot-source, and opaque/unresolved counts during quality validation.
+- Reject missing or unknown snapshot provenance with bounded, actionable validation findings while
+  keeping historical analyses loadable for explicit rescan and repair.
+- Explain reused, independently captured, and unavailable snapshots directly in the self-contained
+  HTML coverage view and document the programmatic inventory compatibility boundary.
+- Refresh documentation navigation, release adapter-version checks, guidance/requirements audit
+  identity, and the tool's own SFMEA verification record.
+
 ## 0.57.62 - 2026-08-05
 
 ### Coverage snapshot and repository-provenance unification

@@ -166,7 +166,9 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn("Export filtered CSV", document)
         self.assertIn("System context and analysis coverage", document)
         self.assertIn('id="inventorySnapshotBars"', document)
+        self.assertIn('id="inventorySummaryReconciliation"', document)
         self.assertIn("Snapshot provenance", document)
+        self.assertIn("bound to the same bytes", document)
         self.assertIn("by_snapshot_source", document)
         self.assertIn('id="sftaGapCount"', document)
         self.assertIn("bounded_interactive_view", document)
@@ -199,6 +201,10 @@ class HtmlReportTests(unittest.TestCase):
         self.assertEqual(payload["interfaces"][0]["id"], "IF-API")
         self.assertTrue(payload["sequences"])
         self.assertTrue(payload["diagrams"])
+        self.assertEqual(
+            payload["repository_inventory"]["summary_reconciliation"]["status"],
+            "reconciled",
+        )
         self.assertEqual(
             payload["report"]["diagram_configuration"]["failure_propagation"],
             {
@@ -270,6 +276,36 @@ class HtmlReportTests(unittest.TestCase):
         downgraded = verify_html_report_file(output, analysis=self.analysis)
         self.assertFalse(downgraded["valid"])
         self.assertFalse(downgraded["checks"]["document_integrity"])
+
+    def test_report_recomputes_or_withholds_untrusted_inventory_summary(self) -> None:
+        inventory = self.analysis["repository_inventory"]
+        actual_files = len(inventory["entries"])
+        actual_opaque = inventory["summary"]["opaque_or_unresolved"]
+        inventory["summary"]["files"] = actual_files + 999
+        inventory["summary"]["opaque_or_unresolved"] = actual_opaque + 999
+        inventory["summary"]["semantic_coverage_percent"] = -1
+
+        payload = build_html_report_data(self.analysis)
+        projected = payload["repository_inventory"]
+        self.assertEqual(projected["summary_reconciliation"]["status"], "recomputed")
+        self.assertEqual(projected["summary"]["files"], actual_files)
+        self.assertEqual(
+            projected["summary"]["opaque_or_unresolved"], actual_opaque
+        )
+        self.assertIn(
+            "coverage.inventory_summary_mismatch",
+            {
+                finding["rule_id"]
+                for finding in payload["validation"]["project_findings"]
+            },
+        )
+
+        inventory["entries"][0].pop("snapshot_source")
+        unavailable = build_html_report_data(self.analysis)["repository_inventory"]
+        self.assertEqual(
+            unavailable["summary_reconciliation"]["status"], "unavailable"
+        )
+        self.assertEqual(unavailable["summary"], {})
 
     def test_report_data_is_bounded_and_reports_truncation(self) -> None:
         payload = build_html_report_data(self.analysis, max_records=1)

@@ -159,11 +159,19 @@ signing remain explicit maintainer actions.
 - Confirm repository inventory hashing reuses accepted Python analysis, test-evidence,
   dependency-manifest, interface-contract, and in-repository coverage snapshots; rejects links and
   non-regular artifacts before opening, identity-reconciles every independent artifact snapshot,
-  exposes per-entry snapshot provenance, enforces 20 MB per artifact and 500 MB across bytes
-  actually consumed, and never exposes raw filesystem failures. Confirm aggregate exhaustion
+  exposes a valid per-entry `snapshot_source`, and reconciles `summary.by_snapshot_source` to the
+  complete file-entry count. Confirm external coverage never receives repository snapshot
+  attribution. Enforce 20 MB per artifact and 500 MB across bytes actually consumed, and never
+  expose raw filesystem failures. Confirm aggregate exhaustion
   continues safe metadata/semantic accounting but adds a digest-bound unresolved region, marks the
   inventory truncated, and omits later hashes; file and excluded/opaque-region traversal each stop
   at 100,000 records.
+- Confirm HTML report inventory metrics are derived from entry/region records, declare
+  `reconciled`, `recomputed`, or `unavailable`, never visualize a mismatched stored summary, and
+  retain the validation error and blocked handoff gate until the governed analysis is rescanned.
+- Confirm coverage JSON/Markdown, inventory Markdown, and human/JSON summary output reuse the same
+  safe projection. Confirm review-view verification enables the richer Markdown sections only for
+  0.57.65-and-newer producers and still accepts exact pre-0.57.65 package views.
 - Confirm project configuration rejects links/non-files and inspected/opened identity changes,
   enforces its 5 MB limit while consuming the binary stream, and validates bounded UTF-8 TOML before semantic normalization. Confirm
   relative coverage/guidance paths retain final-link identity for their downstream loaders.
@@ -182,10 +190,13 @@ signing remain explicit maintainer actions.
   reconciliation limit.
 - Confirm signature publication revalidates destination identity at atomic replacement, refuses
   concurrent replacement, preserves prior content on failure, and removes staging residue.
-- Confirm repository-discovery, AST-parser, and local-contract adapters report version 2, while
-  dependency inventory reports version 3. Confirm AST provenance advertises exact-byte source
-  snapshots, PEP 263 decoding, identity reconciliation, and single-snapshot baseline binding;
-  dependency provenance advertises byte counts, recursive ingestion, and containment.
+- Confirm the repository discoverer reports version 6, the AST parser version 2, dependency
+  inventory version 4, local-contract analysis version 3, and coverage.py JSON evidence version 2.
+  Confirm discoverer provenance advertises source/test/dependency/contract/coverage snapshot reuse
+  and snapshot attribution; AST provenance advertises exact-byte source snapshots, PEP 263
+  decoding, identity reconciliation, and single-snapshot baseline binding; dependency, contract,
+  and coverage provenance advertise their respective exact-byte reuse and manifest-binding
+  capabilities.
 - Confirm `report --json` stages privately, verifies exact binding before atomic replacement,
   emits only a schema-valid receipt, preserves prior output and removes residue on every failure,
   sanitizes unexpected load/generation/verification/publication details, and leaves stderr empty.

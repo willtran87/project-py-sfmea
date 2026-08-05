@@ -20,6 +20,134 @@ MAX_REGIONS = 100_000
 MAX_HASH_BYTES = 20_000_000
 MAX_TOTAL_HASH_BYTES = 500_000_000
 
+SNAPSHOT_SOURCES = frozenset(
+    {
+        "analysis_source_snapshot",
+        "coverage_evidence_snapshot",
+        "dependency_manifest_snapshot",
+        "identity_stable_inventory_snapshot",
+        "interface_contract_snapshot",
+        "none",
+        "test_evidence_snapshot",
+    }
+)
+RECONCILED_SUMMARY_FIELDS = (
+    "files",
+    "regions",
+    "by_status",
+    "by_kind",
+    "by_snapshot_source",
+    "opaque_or_unresolved",
+)
+
+
+def summarize_repository_inventory(
+    entries: list[dict[str, Any]], regions: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Derive the complete repository-inventory summary from governed records."""
+
+    status_counts = Counter(value["status"] for value in entries)
+    status_counts.update(value["status"] for value in regions)
+    kind_counts = Counter(value["kind"] for value in entries)
+    snapshot_counts = Counter(value["snapshot_source"] for value in entries)
+    return {
+        "files": len(entries),
+        "regions": len(regions),
+        "by_status": dict(sorted(status_counts.items())),
+        "by_kind": dict(sorted(kind_counts.items())),
+        "by_snapshot_source": dict(sorted(snapshot_counts.items())),
+        "semantic_coverage_percent": round(
+            100 * status_counts.get("analyzed", 0) / len(entries), 1
+        )
+        if entries
+        else 100.0,
+        "opaque_or_unresolved": status_counts.get("opaque", 0)
+        + status_counts.get("unresolved", 0),
+    }
+
+
+def derive_repository_inventory_summary(inventory: Any) -> dict[str, Any] | None:
+    """Safely derive a summary only when every required record field is usable."""
+
+    if not isinstance(inventory, Mapping):
+        return None
+    entries = inventory.get("entries")
+    regions = inventory.get("regions")
+    if (
+        not isinstance(entries, list)
+        or not isinstance(regions, list)
+        or any(not isinstance(entry, dict) for entry in entries)
+        or any(not isinstance(region, dict) for region in regions)
+    ):
+        return None
+    if not all(
+        isinstance(entry.get(field), str) and bool(entry.get(field))
+        for entry in entries
+        for field in ("status", "kind", "snapshot_source")
+    ) or not all(
+        isinstance(region.get("status"), str) and bool(region.get("status"))
+        for region in regions
+    ):
+        return None
+    return summarize_repository_inventory(entries, regions)
+
+
+def repository_inventory_summary_mismatches(
+    inventory: Any, derived_summary: dict[str, Any] | None = None
+) -> list[str]:
+    """Return stored-summary fields that differ from safely derived accounting."""
+
+    if not isinstance(inventory, Mapping):
+        return list(RECONCILED_SUMMARY_FIELDS)
+    derived = derived_summary or derive_repository_inventory_summary(inventory)
+    if derived is None:
+        return list(RECONCILED_SUMMARY_FIELDS)
+    supplied = inventory.get("summary")
+    fields = list(RECONCILED_SUMMARY_FIELDS)
+    # Historical pre-inventory scans intentionally use null for zero-file semantic coverage.
+    if derived["files"]:
+        fields.append("semantic_coverage_percent")
+    return [
+        field
+        for field in fields
+        if not isinstance(supplied, Mapping)
+        or supplied.get(field) != derived[field]
+    ]
+
+
+def repository_inventory_summary_projection(inventory: Any) -> dict[str, Any]:
+    """Return safe display accounting plus its reconciliation state."""
+
+    derived = derive_repository_inventory_summary(inventory)
+    if derived is None:
+        return {
+            "status": "unavailable",
+            "display_source": "unavailable",
+            "summary": {},
+            "notice": (
+                "Inventory counts are unavailable because the underlying records cannot be "
+                "safely reconciled. Review the quality-gate findings and rescan."
+            ),
+        }
+    if repository_inventory_summary_mismatches(inventory, derived):
+        return {
+            "status": "recomputed",
+            "display_source": "derived_inventory_records",
+            "summary": derived,
+            "notice": (
+                "Displayed inventory counts were recomputed from governed records because the "
+                "stored summary is inconsistent. Review the quality-gate finding and rescan."
+            ),
+        }
+    return {
+        "status": "reconciled",
+        "display_source": "derived_inventory_records",
+        "summary": derived,
+        "notice": (
+            "Displayed inventory counts reconcile with the governed entry and region records."
+        ),
+    }
+
 
 def legacy_repository_inventory(reason: str) -> dict[str, Any]:
     """Represent unavailable historical coverage without reconstructing past evidence."""
@@ -415,10 +543,6 @@ def build_repository_inventory(
             }
         )
     truncated = walk_truncated or hash_truncated
-    status_counts = Counter(value["status"] for value in entries)
-    status_counts.update(value["status"] for value in regions)
-    kind_counts = Counter(value["kind"] for value in entries)
-    snapshot_counts = Counter(value["snapshot_source"] for value in entries)
     material = {"entries": entries, "regions": regions, "truncated": truncated}
     digest = hashlib.sha256(
         json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -426,20 +550,7 @@ def build_repository_inventory(
     return {
         "schema_version": "pysfmea-repository-inventory-1",
         **material,
-        "summary": {
-            "files": len(entries),
-            "regions": len(regions),
-            "by_status": dict(sorted(status_counts.items())),
-            "by_kind": dict(sorted(kind_counts.items())),
-            "by_snapshot_source": dict(sorted(snapshot_counts.items())),
-            "semantic_coverage_percent": round(
-                100 * status_counts.get("analyzed", 0) / len(entries), 1
-            )
-            if entries
-            else 100.0,
-            "opaque_or_unresolved": status_counts.get("opaque", 0)
-            + status_counts.get("unresolved", 0),
-        },
+        "summary": summarize_repository_inventory(entries, regions),
         "inventory_sha256": digest,
         "notice": (
             "Coverage is artifact accounting, not proof that every behavior or failure mode was "

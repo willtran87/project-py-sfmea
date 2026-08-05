@@ -1,6 +1,6 @@
 # SFMEA guidance coverage audit
 
-Last implementation audit: 2026-08-04
+Last implementation audit: 2026-08-05 · PySFMEA 0.57.65 · analysis schema 0.6
 
 This matrix compares PySFMEA with the public NASA and FAA process guidance used by the project. “Implemented” means the repository contains a tested capability; it does not mean that scanner output has been accepted by a qualified engineering team.
 
