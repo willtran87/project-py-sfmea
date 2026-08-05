@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from .assurance import assurance_summary, ensure_assurance_register
+from .json_ingestion import load_bounded_json_file
 from .model import stable_id, utc_now
 
 EXECUTION_SCHEMA_VERSION = "1.0"
@@ -36,6 +37,8 @@ MAX_TIMEOUT_SECONDS = 7200
 MAX_IMPORT_MANIFEST_BYTES = 2_000_000
 MAX_IMPORTED_ARTIFACT_BYTES = 100_000_000
 MAX_IMPORTED_EVIDENCE_BYTES = 500_000_000
+MAX_EXECUTION_JSON_DEPTH = 100
+MAX_EXECUTION_JSON_NODES = 100_000
 
 
 def _sha256_file(path: Path) -> str:
@@ -47,21 +50,29 @@ def _sha256_file(path: Path) -> str:
 
 
 def _read_json_object_bounded(path: Path, *, limit: int, label: str) -> dict[str, Any]:
-    """Read one regular UTF-8 JSON object under a consumption-time byte limit."""
+    """Read one strict, bounded, identity-stable execution JSON object."""
 
-    if path.is_symlink() or not path.is_file():
-        raise ValueError(f"{label} must be a regular non-symbolic-link file")
     try:
-        with path.open("rb") as source_file:
-            raw = source_file.read(limit + 1)
-    except OSError as exc:
-        raise ValueError(f"{label} could not be read safely") from exc
-    if len(raw) > limit:
-        raise ValueError(f"{label} exceeds the {limit}-byte consumption limit")
-    try:
-        loaded = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
-        raise ValueError(f"{label} is not valid bounded UTF-8 JSON") from exc
+        _path, loaded, _size = load_bounded_json_file(
+            path,
+            label=label,
+            max_bytes=limit,
+            max_depth=MAX_EXECUTION_JSON_DEPTH,
+            max_nodes=MAX_EXECUTION_JSON_NODES,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == f"{label} exceeds the {limit}-byte limit":
+            raise ValueError(
+                f"{label} exceeds the {limit}-byte consumption limit"
+            ) from exc
+        if message in {
+            f"{label} is not valid UTF-8 JSON",
+            f"{label} is not valid JSON",
+            f"{label} exceeds the JSON parser nesting limit",
+        }:
+            raise ValueError(f"{label} is not valid bounded UTF-8 JSON") from exc
+        raise
     if not isinstance(loaded, dict):
         raise ValueError(f"{label} root must be an object")
     return loaded

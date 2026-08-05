@@ -11,9 +11,11 @@ import os
 import stat
 import tempfile
 import zipfile
+from os import replace as atomic_replace
 from pathlib import Path
 from typing import Any
 
+from .json_ingestion import parse_bounded_json_bytes
 from .model import utc_now
 from .report import verify_review_package
 
@@ -25,6 +27,12 @@ MAX_MANIFEST_BYTES = 10_000_000
 MAX_SIGNED_ARCHIVE_BYTES = 550_000_000
 MAX_SIGNER_CHARS = 4_096
 MAX_PASSPHRASE_BYTES = 1_000_000
+MAX_SIGNATURE_JSON_DEPTH = 20
+MAX_SIGNATURE_JSON_NODES = 10_000
+MAX_MANIFEST_JSON_DEPTH = 100
+MAX_MANIFEST_JSON_NODES = 250_000
+
+_same_file_identity = os.path.samestat
 
 
 def sign_review_package(
@@ -148,8 +156,14 @@ def verify_review_signature(
         _key_path, public_key_bytes = _read_regular_bounded(
             public_key, "public key", MAX_KEY_BYTES
         )
-        envelope = json.loads(signature_raw.decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
+        envelope = parse_bounded_json_bytes(
+            signature_raw,
+            label="detached signature",
+            max_bytes=MAX_SIGNATURE_BYTES,
+            max_depth=MAX_SIGNATURE_JSON_DEPTH,
+            max_nodes=MAX_SIGNATURE_JSON_NODES,
+        )
+    except (UnicodeError, ValueError) as exc:
         return _signature_error(
             result, "signature.input_invalid", f"Signature input cannot be read: {exc}"
         )
@@ -339,8 +353,14 @@ def _read_manifest(artifact: Path) -> tuple[dict[str, Any], str]:
     if len(raw) > MAX_MANIFEST_BYTES:
         raise ValueError("verified package manifest exceeds the bounded read limit")
     try:
-        value = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        value = parse_bounded_json_bytes(
+            raw,
+            label="verified package manifest",
+            max_bytes=MAX_MANIFEST_BYTES,
+            max_depth=MAX_MANIFEST_JSON_DEPTH,
+            max_nodes=MAX_MANIFEST_JSON_NODES,
+        )
+    except ValueError as exc:
         raise ValueError(
             "verified package manifest is not valid bounded UTF-8 JSON"
         ) from exc
@@ -362,11 +382,14 @@ def _read_regular_bounded(
     if not stat.S_ISREG(inspected.st_mode):
         raise ValueError(f"{label} must be a regular non-symbolic-link file")
     descriptor: int | None = None
+    opened: os.stat_result | None = None
     try:
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags)
         opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(inspected, opened):
+        if not stat.S_ISREG(opened.st_mode) or not _same_file_identity(
+            inspected, opened
+        ):
             raise ValueError(f"{label} changed during safe open")
         with os.fdopen(descriptor, "rb") as handle:
             descriptor = None
@@ -383,6 +406,12 @@ def _read_regular_bounded(
                 pass
     if len(raw) > limit:
         raise ValueError(f"{label} exceeds the {limit}-byte limit")
+    try:
+        current = path.lstat()
+    except OSError as exc:
+        raise ValueError(f"{label} changed during bounded consumption") from exc
+    if opened is None or not _same_file_identity(opened, current):
+        raise ValueError(f"{label} changed during bounded consumption")
     return path, raw
 
 
@@ -420,7 +449,9 @@ def _hash_regular_bounded(
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags)
         opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(inspected, opened):
+        if not stat.S_ISREG(opened.st_mode) or not _same_file_identity(
+            inspected, opened
+        ):
             raise ValueError(f"{label} changed during safe open")
         with os.fdopen(descriptor, "rb") as handle:
             descriptor = None
@@ -443,7 +474,7 @@ def _hash_regular_bounded(
         current = path.lstat()
     except OSError as exc:
         raise ValueError(f"{label} changed during bounded hashing") from exc
-    if opened is None or not os.path.samestat(opened, current):
+    if opened is None or not _same_file_identity(opened, current):
         raise ValueError(f"{label} changed during bounded hashing")
     return path, digest.hexdigest()
 
@@ -503,11 +534,11 @@ def _atomic_write_json(
         if expected_destination is None:
             if current_destination is not None:
                 raise ValueError("signature destination changed before publication")
-        elif current_destination is None or not os.path.samestat(
+        elif current_destination is None or not _same_file_identity(
             expected_destination, current_destination
         ):
             raise ValueError("signature destination changed before publication")
-        os.replace(temporary, destination)
+        atomic_replace(temporary, destination)
         temporary = ""
     except ValueError:
         raise

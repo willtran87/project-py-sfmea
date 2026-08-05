@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from .json_ingestion import load_bounded_json_document
 from .model import utc_now
 from .store import refresh_summary
 
 MAX_SPANS_PER_IMPORT = 50_000
 MAX_RUNTIME_TRACE_BYTES = 100_000_000
 MAX_RUNTIME_ATTRIBUTE_DEPTH = 32
+MAX_RUNTIME_JSON_DEPTH = 100
+MAX_RUNTIME_JSON_NODES = 2_000_000
 
 
 def _attribute_value(value: Any, *, depth: int = 0) -> Any:
@@ -100,26 +102,33 @@ def _iter_spans(payload: Any) -> Iterable[dict[str, Any]]:
 
 
 def _read_runtime_trace(path: Path) -> tuple[Any, bytes]:
-    """Read regular runtime JSON under the limit applied to bytes consumed."""
+    """Read strict runtime JSON and retain the exact identity-stable bytes."""
 
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("runtime trace must be a regular non-symbolic-link file")
     try:
-        with path.open("rb") as source_file:
-            raw = source_file.read(MAX_RUNTIME_TRACE_BYTES + 1)
-    except OSError as exc:
-        raise ValueError("runtime trace could not be read safely") from exc
-    if len(raw) > MAX_RUNTIME_TRACE_BYTES:
-        raise ValueError(
-            f"runtime trace exceeds the {MAX_RUNTIME_TRACE_BYTES}-byte import limit"
+        document = load_bounded_json_document(
+            path,
+            label="runtime trace",
+            max_bytes=MAX_RUNTIME_TRACE_BYTES,
+            max_depth=MAX_RUNTIME_JSON_DEPTH,
+            max_nodes=MAX_RUNTIME_JSON_NODES,
         )
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
-        raise ValueError("runtime trace is not valid bounded UTF-8 JSON") from exc
+    except ValueError as exc:
+        message = str(exc)
+        if message == f"runtime trace exceeds the {MAX_RUNTIME_TRACE_BYTES}-byte limit":
+            raise ValueError(
+                f"runtime trace exceeds the {MAX_RUNTIME_TRACE_BYTES}-byte import limit"
+            ) from exc
+        if message in {
+            "runtime trace is not valid UTF-8 JSON",
+            "runtime trace is not valid JSON",
+            "runtime trace exceeds the JSON parser nesting limit",
+        }:
+            raise ValueError("runtime trace is not valid bounded UTF-8 JSON") from exc
+        raise
+    payload = document.value
     if not isinstance(payload, (dict, list)):
         raise ValueError("runtime trace root must be an object or array")
-    return payload, raw
+    return payload, document.raw
 
 
 def _component_lookup(analysis: dict[str, Any]) -> dict[str, str]:

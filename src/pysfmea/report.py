@@ -26,6 +26,7 @@ from .assurance import (
     verify_assurance_work_queue_file,
 )
 from .config import DEFAULT_CONFIG, normalize_config
+from .file_publication import atomic_publish_text
 from .guidance import guidance_traceability
 from .integrity import (
     MAX_GOVERNED_JSON_DEPTH,
@@ -580,26 +581,29 @@ def export_csv(
     *,
     legacy_sfta_id_wildcard: bool = False,
 ) -> Path:
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        findings_by_item: dict[str, list[dict[str, Any]]] = {}
-        for finding in validate_analysis(
-            analysis, legacy_sfta_id_wildcard=legacy_sfta_id_wildcard
-        )["findings"]:
-            findings_by_item.setdefault(finding["item_id"], []).append(finding)
-        for item in analysis.get("items", []):
-            _write_csv_row(
-                writer,
-                item_row(
-                    item,
-                    findings_by_item.get(item.get("id", ""), []),
-                    analysis.get("project", {}).get("baseline", {}).get("id", ""),
-                )
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    findings_by_item: dict[str, list[dict[str, Any]]] = {}
+    for finding in validate_analysis(
+        analysis, legacy_sfta_id_wildcard=legacy_sfta_id_wildcard
+    )["findings"]:
+        findings_by_item.setdefault(finding["item_id"], []).append(finding)
+    for item in analysis.get("items", []):
+        _write_csv_row(
+            writer,
+            item_row(
+                item,
+                findings_by_item.get(item.get("id", ""), []),
+                analysis.get("project", {}).get("baseline", {}).get("id", ""),
             )
-    return path
+        )
+    return atomic_publish_text(
+        destination,
+        handle.getvalue(),
+        encoding="utf-8-sig",
+        label="SFMEA CSV export",
+    )
 
 
 def _markdown_text(value: Any) -> str:
@@ -617,8 +621,6 @@ def export_markdown(
     *,
     legacy_sfta_id_wildcard: bool = False,
 ) -> Path:
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     project = analysis.get("project", {})
     summary = analysis.get("summary", {})
     validation = validate_analysis(
@@ -680,8 +682,11 @@ def export_markdown(
     lines.extend(["", "## Guidance basis", ""])
     for source in analysis.get("methodology", {}).get("basis", []):
         lines.append(f"- [{source.get('title')}]({source.get('url')}) — {source.get('use')}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    return atomic_publish_text(
+        destination,
+        "\n".join(lines) + "\n",
+        label="SFMEA Markdown export",
+    )
 
 
 GUIDANCE_TRACEABILITY_FIELDS = [
@@ -717,61 +722,63 @@ def export_guidance_traceability(
 
     if format not in {"json", "csv"}:
         raise ValueError("guidance traceability format must be json or csv")
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     trace = guidance_traceability(analysis)
     if format == "json":
-        path.write_text(
-            json.dumps(trace, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        return atomic_publish_text(
+            destination,
+            json.dumps(trace, indent=2, ensure_ascii=False) + "\n",
+            label="guidance traceability JSON export",
         )
-        return path
 
     citations = {value["id"]: value for value in trace["citations"]}
     sources = {value["id"]: value for value in trace["sources"]}
-    with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=GUIDANCE_TRACEABILITY_FIELDS)
-        writer.writeheader()
-        for finding in trace["finding_links"]:
-            links = finding["citations"] or [{}]
-            for link in links:
-                citation = citations.get(link.get("citation_id", ""), {})
-                source = sources.get(citation.get("source_id", ""), {})
-                locator = citation.get("locator", {})
-                _write_csv_row(
-                    writer,
-                    {
-                        "finding_id": finding.get("finding_id", ""),
-                        "component_id": finding.get("component_id", ""),
-                        "component": finding.get("component", ""),
-                        "path": finding.get("source", {}).get("path", ""),
-                        "line": finding.get("source", {}).get("line", ""),
-                        "rule_id": finding.get("rule_id", ""),
-                        "failure_class": finding.get("failure_class", ""),
-                        "citation_id": citation.get("id", ""),
-                        "source_id": source.get("id", ""),
-                        "document_title": source.get("title", ""),
-                        "document_version": source.get("version", ""),
-                        "document_status": source.get("status", ""),
-                        "relationship": link.get("relationship", ""),
-                        "strength": link.get("strength", ""),
-                        "applicability": link.get("applicability", ""),
-                        "section": locator.get("section", ""),
-                        "heading": locator.get("heading", ""),
-                        "page": locator.get("page", ""),
-                        "summary": citation.get("summary", ""),
-                        "url": citation.get("url") or source.get("url", ""),
-                        "mapping_id": link.get("mapping_id", ""),
-                        "mapping_status": link.get("status", ""),
-                    },
-                )
-    return path
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=GUIDANCE_TRACEABILITY_FIELDS)
+    writer.writeheader()
+    for finding in trace["finding_links"]:
+        links = finding["citations"] or [{}]
+        for link in links:
+            citation = citations.get(link.get("citation_id", ""), {})
+            source = sources.get(citation.get("source_id", ""), {})
+            locator = citation.get("locator", {})
+            _write_csv_row(
+                writer,
+                {
+                    "finding_id": finding.get("finding_id", ""),
+                    "component_id": finding.get("component_id", ""),
+                    "component": finding.get("component", ""),
+                    "path": finding.get("source", {}).get("path", ""),
+                    "line": finding.get("source", {}).get("line", ""),
+                    "rule_id": finding.get("rule_id", ""),
+                    "failure_class": finding.get("failure_class", ""),
+                    "citation_id": citation.get("id", ""),
+                    "source_id": source.get("id", ""),
+                    "document_title": source.get("title", ""),
+                    "document_version": source.get("version", ""),
+                    "document_status": source.get("status", ""),
+                    "relationship": link.get("relationship", ""),
+                    "strength": link.get("strength", ""),
+                    "applicability": link.get("applicability", ""),
+                    "section": locator.get("section", ""),
+                    "heading": locator.get("heading", ""),
+                    "page": locator.get("page", ""),
+                    "summary": citation.get("summary", ""),
+                    "url": citation.get("url") or source.get("url", ""),
+                    "mapping_id": link.get("mapping_id", ""),
+                    "mapping_status": link.get("status", ""),
+                },
+            )
+    return atomic_publish_text(
+        destination,
+        handle.getvalue(),
+        encoding="utf-8-sig",
+        label="guidance traceability CSV export",
+    )
 
 
 def export_audit(analysis: dict[str, Any], destination: str | Path) -> Path:
     """Export analysis-level and item-level lifecycle history as a flat CSV."""
 
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "scope",
         "item_id",
@@ -784,51 +791,54 @@ def export_audit(analysis: dict[str, Any], destination: str | Path) -> Path:
         "after",
         "details",
     ]
-    with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for event in analysis.get("history", []):
-            _write_csv_row(
-                writer,
-                {
-                    "scope": "analysis",
-                    "event": event.get("event", ""),
-                    "at": event.get("at", ""),
-                    "details": json.dumps(event, ensure_ascii=False, sort_keys=True),
-                }
-            )
-        for item in analysis.get("items", []):
-            for event in item.get("review_history", []):
-                changes = event.get("changes", {})
-                if not changes:
-                    changes = {"": {"before": "", "after": ""}}
-                for field, change in changes.items():
-                    _write_csv_row(
-                        writer,
-                        {
-                            "scope": "item",
-                            "item_id": item.get("id", ""),
-                            "component": item.get("component", {}).get("qualname", ""),
-                            "event": event.get("event", ""),
-                            "at": event.get("at", ""),
-                            "reviewer": event.get("reviewer", ""),
-                            "field": field,
-                            "before": json.dumps(
-                                change.get("before"), ensure_ascii=False, sort_keys=True
-                            ),
-                            "after": json.dumps(
-                                change.get("after"), ensure_ascii=False, sort_keys=True
-                            ),
-                        }
-                    )
-    return path
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=fields)
+    writer.writeheader()
+    for event in analysis.get("history", []):
+        _write_csv_row(
+            writer,
+            {
+                "scope": "analysis",
+                "event": event.get("event", ""),
+                "at": event.get("at", ""),
+                "details": json.dumps(event, ensure_ascii=False, sort_keys=True),
+            }
+        )
+    for item in analysis.get("items", []):
+        for event in item.get("review_history", []):
+            changes = event.get("changes", {})
+            if not changes:
+                changes = {"": {"before": "", "after": ""}}
+            for field, change in changes.items():
+                _write_csv_row(
+                    writer,
+                    {
+                        "scope": "item",
+                        "item_id": item.get("id", ""),
+                        "component": item.get("component", {}).get("qualname", ""),
+                        "event": event.get("event", ""),
+                        "at": event.get("at", ""),
+                        "reviewer": event.get("reviewer", ""),
+                        "field": field,
+                        "before": json.dumps(
+                            change.get("before"), ensure_ascii=False, sort_keys=True
+                        ),
+                        "after": json.dumps(
+                            change.get("after"), ensure_ascii=False, sort_keys=True
+                        ),
+                    }
+                )
+    return atomic_publish_text(
+        destination,
+        handle.getvalue(),
+        encoding="utf-8-sig",
+        label="SFMEA audit CSV export",
+    )
 
 
 def export_inventory(analysis: dict[str, Any], destination: str | Path) -> Path:
     """Export the system-definition and component worksheet supporting the SFMEA."""
 
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     context = analysis.get("context", {})
     project = dict(context.get("project", {}))
     analysis_context = dict(context.get("analysis", {}))
@@ -915,8 +925,11 @@ def export_inventory(analysis: dict[str, Any], destination: str | Path) -> Path:
         lines.append("|" + "|".join("---" for _column in columns) + "|")
         for value in values:
             lines.append("| " + " | ".join(_cell(value.get(column)) for column in columns) + " |")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    return atomic_publish_text(
+        destination,
+        "\n".join(lines) + "\n",
+        label="SFMEA inventory Markdown export",
+    )
 
 
 def evidence_catalog_document(analysis: dict[str, Any]) -> dict[str, Any]:

@@ -39,10 +39,11 @@ sfmea diagram-verify diagrams.json --analysis sfmea-analysis.json
 sfmea diagram-verify diagrams.json --analysis sfmea-analysis.json --json
 ```
 
-The verifier applies the five-megabyte bound to bytes consumed from the open stream, rejects
-symbolic links and malformed UTF-8 JSON, checks canonical content integrity, validates every
-embedded diagram and unique diagram ID, and optionally requires the exact analysis schema,
-baseline, and state digest.
+The verifier captures at most five megabytes from one regular non-link file whose inspected,
+opened, and final identities agree. Strict decoding rejects duplicate keys, non-finite or
+overflowed numbers, malformed UTF-8, and structures over 100 levels or 250,000 nodes before
+canonical content integrity, every embedded diagram, and unique diagram IDs are checked. It can
+optionally require the exact analysis schema, baseline, and state digest.
 Human output distinguishes a matched binding from one that was not checked; `--json` emits
 the complete versioned verification record for automation. JSON remains valid when the
 artifact is missing, unsafe, malformed, integrity-invalid, or binding-mismatched. Completed
@@ -146,8 +147,11 @@ sfmea report sfmea-analysis.json `
 
 Each file may contain one diagram, an array of diagrams, or a bundle with a
 top-level `diagrams` array. Custom diagram IDs must not collide with generated or
-other imported diagram IDs. Imports reject symbolic links and share the verifier's bounded binary
-reader, so a file-size precheck cannot be invalidated by concurrent file growth.
+other imported diagram IDs. Imports share the verifier's strict exact-byte identity-stable reader,
+so path replacement, duplicate JSON keys, non-finite values, malformed UTF-8, or structure
+exhaustion cannot silently change a report. Each imported diagram records the accepted source
+file's byte count and SHA-256 under `metadata.imported_file`; the report integrity binding covers
+that provenance but does not authenticate its author.
 
 ## Diagram schema
 
@@ -253,8 +257,9 @@ direction for layered layout and propagation.
 - Duplicate nodes, duplicate edges, dangling references, unsupported types,
   malformed metadata, and invalid layer/order values are rejected.
 - A diagram can contain at most 2,000 nodes and 5,000 edges.
-- At most 50 custom diagrams are accepted, and each regular, non-symbolic-link input is limited to
-  5 MB while it is consumed.
+- At most 50 custom files and 50 custom diagrams are accepted. Each exact identity-stable regular
+  non-link input is limited to 5 MB and strict 100-level/250,000-node JSON; accepted input bytes
+  are limited to 25 MB per report invocation.
 - Imported text is embedded as escaped JSON and rendered using DOM text nodes.
 - Diagrams cannot add scripts, styles, HTML, URLs, event handlers, or remote
   resources to the report.

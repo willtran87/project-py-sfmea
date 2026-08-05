@@ -22,6 +22,11 @@ rate and unsupported verification claims remain zero; no expected candidate is m
 no unexpected candidate appears; repeated scans preserve source/input digests; and
 domain-specific guidance profiles remain isolated.
 
+`expected.json` follows the closed `pysfmea-golden-corpus-1` contract. Evaluation requires a
+stable regular non-link UTF-8 JSON input, applies byte/structure/record limits, rejects duplicate
+keys and cases, and reports the canonical corpus digest in `pysfmea-evaluation-result-1`. Retain
+that digest with release evidence so an approved baseline update is explicit.
+
 This synthetic corpus validates deterministic behavior; it does not establish real-world completeness, regulatory qualification, certification credit, or performance on unseen repositories. Any intentional scanner change must be independently reviewed before updating `expected.json`.
 
 The project also maintains a machine-readable SFMEA of PySFMEA itself in

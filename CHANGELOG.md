@@ -3,6 +3,275 @@
 Notable user-visible changes are recorded here. PySFMEA follows semantic versioning for the
 package; public artifact and schema identifiers carry their own explicit compatibility versions.
 
+## 0.57.62 - 2026-08-05
+
+### Coverage snapshot and repository-provenance unification
+
+- Load optional coverage JSON before repository baseline construction and reuse the exact accepted
+  bytes for coverage attribution, settings provenance, immutable run-manifest binding, and
+  in-repository inventory hashing.
+- Prevent a coverage path replacement after normalization from making component line/branch
+  evidence describe different bytes than repository coverage or the baseline identity.
+- Preserve semantically partial coverage snapshots as content-addressed repository evidence while
+  retaining explicit unsafe-path, malformed-record, and duplicate-path warnings.
+- Keep external coverage inputs outside repository artifact accounting while retaining their exact
+  byte count and SHA-256 in scan settings and the run manifest.
+- Expose `coverage_evidence_snapshot` through inventory entries, summary counts, and the HTML
+  provenance visual; upgrade repository discoverer provenance to v6 and coverage.py JSON evidence
+  provenance to v2 with replacement, external-boundary, zero-reread, wheel, and compatibility tests.
+
+## 0.57.61 - 2026-08-05
+
+### Unified supporting-evidence snapshots
+
+- Publish accepted dependency-manifest and interface-contract byte snapshots into the scan-local
+  repository evidence registry and reuse them for repository inventory size/digest evidence.
+- Prevent a dependency or contract path replacement after parsing from making repository coverage
+  describe different bytes than the manifest claims, extracted operations/data types, baseline,
+  or immutable run manifest.
+- Expose `dependency_manifest_snapshot` and `interface_contract_snapshot` provenance through each
+  inventory entry, summary counts, and the self-contained HTML snapshot-provenance visualization.
+- Preserve all existing dependency/contract per-file, discovery, aggregate, structure, semantic,
+  link, containment, and identity limits without adding repository reads.
+- Upgrade repository discoverer provenance to v5, dependency inventory to v4, and local contract
+  analysis to v3; add replacement-race, zero-reread, provenance, installed-wheel, and historical
+  package compatibility regressions.
+
+## 0.57.60 - 2026-08-05
+
+### Run-bound single-snapshot test evidence
+
+- Capture each eligible textual test-evidence file once before baseline construction and reuse the
+  same immutable bytes for PEP 263 decoding, component test-reference attribution, and repository
+  inventory hashing.
+- Record accepted/rejected test-evidence counts, accepted bytes, and a canonical snapshot-set
+  SHA-256 in the repository baseline; bind that digest into the immutable run manifest and overall
+  source baseline identity.
+- Apply configured and hidden/default directory exclusions consistently to test-reference indexing,
+  and expose outside-repository, link/non-file, identity-race, file-limit, and aggregate-limit
+  rejection as bounded evidence rather than silent omission.
+- Add inventory snapshot-source summary counts and a dedicated provenance visualization to the
+  self-contained HTML coverage view.
+- Upgrade repository-discoverer capability provenance to v4 and add replacement-race, zero-reread,
+  exclusion-scope, manifest-binding, visual-report, installed-wheel, and historical-package tests.
+
+## 0.57.59 - 2026-08-05
+
+### Identity-stable repository inventory
+
+- Reuse each accepted Python analysis snapshot for repository-inventory size and digest evidence,
+  preventing a later path replacement from making the inventory describe different source bytes
+  than the AST findings and source-snapshot baseline.
+- Route every other hashed artifact through the shared regular-file, non-link,
+  inspected/opened/final identity-stable boundary while preserving the 20 MB per-artifact and
+  500 MB aggregate consumption budgets.
+- Expose `snapshot_source` on every inventory entry so consumers can distinguish reused analysis
+  evidence, independent identity-stable inventory evidence, and unavailable snapshots.
+- Retain bounded bytes-consumed accounting on rejected snapshots, make identity races explicit
+  unresolved evidence, and add source-replacement, zero-reread, artifact-race, installed-wheel,
+  and historical-package compatibility regressions.
+- Upgrade repository-discoverer capability provenance to v3.
+
+## 0.57.58 - 2026-08-05
+
+### Single-snapshot Python source analysis
+
+- Route Python source and textual test evidence through the shared exact-byte, regular-file,
+  non-link, inspected/opened/final identity-stable ingestion boundary.
+- Capture each selected source once and reuse those immutable bytes for PEP 263 decoding, AST
+  parsing, included-test indexing, and repository baseline hashing, preventing a concurrent edit
+  from binding findings to a different source baseline.
+- Record accepted/rejected source counts, total accepted bytes, and a canonical source-snapshot-set
+  SHA-256 in the baseline and bind that digest into the immutable run manifest.
+- Preserve explicit warnings and digest-bound rejected records when a source cannot be safely read;
+  syntax or encoding failures remain distinct from file-identity failures.
+- Upgrade AST parser capability provenance to v2 and add exact-read-count, identity-race,
+  provenance, encoding, limit, installed-wheel, and historical-package regressions.
+
+## 0.57.57 - 2026-08-05
+
+### Exact-snapshot dependency manifest provenance
+
+- Route pyproject, requirements/constraints include chains, and supported lockfiles through the
+  shared exact-byte, regular-file, non-link, inspected/opened/final identity-stable boundary.
+- Preserve the existing conservative contract: supported declarations are parsed only where their
+  format is explicitly understood, while opaque lockfile formats remain content-addressed evidence
+  rather than sources of speculative dependency claims.
+- Add explicit `evidence_type`, accepted byte count, and SHA-256 fields to every manifest inventory
+  record while retaining the compatible `sha256:` specification representation.
+- Bind the richer inventory into the repository baseline, dependency component fingerprint,
+  immutable run manifest, and v3 dependency-adapter provenance ledger.
+- Add exact-provenance, recursive-include, per-file/aggregate limit, identity-replacement,
+  revalidation, and installed-wheel regressions.
+
+## 0.57.56 - 2026-08-05
+
+### Strict custom-diagram provenance and import budgets
+
+- Route custom report diagrams and standalone diagram-bundle verification through the shared
+  exact-byte, regular-file, non-link, inspected/opened/final identity-stable JSON boundary.
+- Reject duplicate keys, `NaN`/`Infinity`, numeric overflow, malformed UTF-8, and excessive JSON
+  structure under explicit 5 MB/100-level/250,000-node per-file limits.
+- Bound each report invocation to 50 custom diagram files and 25 MB of accepted source bytes in
+  addition to the existing 50-diagram, 2,000-node, and 5,000-edge model limits.
+- Attach the exact accepted source byte count and SHA-256 to every imported diagram so the report's
+  integrity-protected visual narrative remains attributable to one file snapshot.
+- Add ambiguity, numeric-overflow, structure, identity-replacement, file-count, aggregate-byte,
+  provenance, and installed-wheel regression coverage.
+
+## 0.57.55 - 2026-08-05
+
+### Identity-stable interface-contract evidence
+
+- Extract a reusable exact-byte bounded file snapshot boundary that rejects links/non-files and
+  reconciles inspected, opened, and final file identity before returning accepted bytes.
+- Route OpenAPI, JSON Schema, YAML, and protobuf contract evidence through that shared boundary
+  before it can create contract components or compatibility failure modes.
+- Strictly decode JSON contracts with duplicate-key and non-finite-number rejection plus explicit
+  100-level/1,000,000-node limits while retaining malformed contracts as visible, unparsed
+  inventory records with deterministic warnings.
+- Record the accepted byte count beside each contract SHA-256; the complete contract inventory,
+  including this provenance, remains bound into the immutable run manifest.
+- Add exact-snapshot, byte-limit, ambiguity, numeric-overflow, structure-exhaustion,
+  identity-replacement, and provenance regressions.
+
+## 0.57.54 - 2026-08-05
+
+### Exact-byte coverage evidence provenance
+
+- Route coverage.py JSON through the shared exact-byte, regular-file, non-link,
+  inspected/opened/final identity-stable ingestion boundary before line or branch evidence can
+  influence a component.
+- Reject duplicate object keys, non-finite or overflowed numbers, malformed UTF-8, and excessive
+  JSON depth or node count under explicit 100 MB/100-level/2,000,000-node limits.
+- Bound file-record traversal to 100,000 entries and path processing to 4,096 characters while
+  preserving aggregate warnings for unsafe paths, malformed coordinates, and normalized aliases.
+- Record the exact accepted coverage byte count, SHA-256 digest, supplied file count, and accepted
+  file count in scan settings, and bind that digest into the immutable run manifest.
+- Add adversarial coverage ambiguity, overflow, structure, identity-race, file/path-limit, and
+  end-to-end provenance regressions while retaining compatible historical package verification.
+
+## 0.57.53 - 2026-08-05
+
+### Strict guidance and runtime-evidence provenance
+
+- Add an exact-byte governed JSON document result so callers can decode, validate, hash, and retain
+  provenance from one inspected/opened/final identity-stable file snapshot without a second read.
+- Route organizational guidance packs through a 5 MB/100-level/250,000-node strict boundary before
+  source, locator, applicability, or rule-mapping data can influence finding citations.
+- Route simple and OTLP runtime traces through a 100 MB/100-level/2,000,000-node strict boundary
+  before observed spans, cascade edges, timing fields, history, or summary state are derived.
+- Reject duplicate keys, `NaN`/`Infinity`, finite-syntax numeric overflow, links/non-files,
+  concurrent replacement, and decoded-structure exhaustion while preserving exact accepted-byte
+  provenance hashes and transactional runtime rollback.
+- Add adversarial guidance/runtime regressions and a maintained tool-SFMEA runtime-evidence failure
+  mode covering incomplete, ambiguous, stale, or hostile observations.
+
+## 0.57.52 - 2026-08-05
+
+### Identity-stable strict signature verification
+
+- Add a reusable strict decoder for already-captured JSON bytes, giving ZIP members and other
+  bounded streams the same duplicate-key, finite-number, UTF-8, depth, and node rules as files.
+- Strictly decode detached signature envelopes under a 1 MB/20-level/10,000-node boundary before
+  envelope validation, canonicalization, key comparison, or Ed25519 verification.
+- Strictly decode the independently reread signed package manifest under its existing 10 MB limit
+  plus a 100-level/250,000-node structure boundary before constructing the signed subject.
+- Reconcile inspected, opened, and final identities for private keys, public keys, detached
+  signatures, and directory manifests, preventing path replacement during bounded consumption.
+- Isolate signing file-identity comparisons from unrelated verifier fault injection and add
+  duplicate/non-finite/overflow, structure-limit, signature-race, and public-key-race regressions.
+
+## 0.57.51 - 2026-08-05
+
+### Strict assurance and execution evidence ingestion
+
+- Route assurance work queues, scaffold manifests, retirement records, imported execution-evidence
+  manifests, and recorded execution manifests through the shared bounded, identity-stable JSON
+  boundary before lifecycle, integrity, baseline, or artifact decisions are made.
+- Reject duplicate object keys, `NaN`/`Infinity`, and finite-syntax numeric overflow such as
+  `1e9999`, preventing ambiguous or platform-dependent evidence from changing assurance status.
+- Apply explicit 100-level and caller-scaled node ceilings before canonical hashing or deterministic
+  projection, while retaining existing byte limits and transactional evidence-import rollback.
+- Harden each generated standalone pytest scaffold with its own strict JSON decoder and iterative
+  structure guard, so exported tests fail collection safely without importing PySFMEA.
+- Add adversarial queue, scaffold, and execution-evidence tests for ambiguity, numeric overflow,
+  structure exhaustion, inspected/opened/final identity changes, and link refusal.
+
+## 0.57.50 - 2026-08-05
+
+### Strict identity-stable governed JSON verification
+
+- Add one reusable governed-JSON ingestion boundary with regular non-link enforcement, bounded
+  binary consumption, inspected/opened/final identity reconciliation, and strict UTF-8 decoding.
+- Reject duplicate object keys and non-finite `NaN`/`Infinity` values before semantic validation
+  or canonical hashing so ambiguous JSON cannot be normalized into an apparently valid artifact.
+- Apply iterative decoded-structure limits with caller-selected depth/node ceilings, preventing
+  deeply nested or high-cardinality inputs from reaching recursive digest and projection logic.
+- Route public failure-catalog file verification through a 1 MB, 50-level, 100,000-node boundary
+  while retaining schema-valid structured rejection verdicts and stable source identity.
+- Route every allowed offline schema-bundle file through a 2 MB, 100-level, 250,000-node boundary
+  before root-object, identity, catalog, and canonical-digest reconciliation.
+- Add exact UTF-8 round-trip, byte/depth/node, duplicate/non-finite, non-file/link, safe-open/final
+  identity, catalog CLI, and schema-bundle regression coverage.
+
+## 0.57.49 - 2026-08-05
+
+### Race-safe assurance and contract publication
+
+- Route executable assurance-register JSON/CSV/Markdown and focused work-queue JSON through the
+  shared bounded, final-link-safe, prior-preserving single-file publisher.
+- Preserve the exact UTF-8-BOM assurance CSV contract while refusing non-file destinations,
+  synchronizing staging bytes, and cleaning residue after a rejected atomic replacement.
+- Move individual offline JSON Schema exports onto the same publication boundary without changing
+  schema identity, canonical content, CLI behavior, or schema-bundle directory semantics.
+- Add an opaque retained-destination state so a caller can validate an existing or absent output
+  and require that exact state at staging and atomic replacement boundaries.
+- Apply retained-state publication to the public failure catalog, preserving its refusal to
+  replace unknown files and preventing a newly appeared or concurrently edited destination from
+  being overwritten after catalog-envelope validation.
+- Add assurance, schema, prior-preservation, exact BOM, non-file, replacement-failure, cleanup,
+  and absent-to-present destination-race regressions.
+
+## 0.57.48 - 2026-08-05
+
+### Uniform bounded artifact publication
+
+- Add one reusable 256 MiB single-file publication boundary that preserves final-path identity,
+  rejects symbolic-link and non-file destinations, stages beside the destination, flushes and
+  synchronizes bytes, and refuses a concurrently changed destination before atomic replacement.
+- Route CSV/Markdown worksheets, inventory/audit/guidance views, architecture/sequence/
+  traceability/coverage exports, SFTA, SARIF/CycloneDX JSON, canonical diagram bundles, and the
+  self-contained HTML report through the shared prior-preserving publisher.
+- Preserve exact format behavior, including UTF-8-BOM spreadsheet exports and portable CSV
+  newlines, while bounding the complete encoded artifact before destination preparation.
+- Isolate the signing replacement seam so a simulated signature-publication failure cannot
+  disable independent package-projection regeneration through a process-wide mock.
+- Add adversarial size, link, concurrent-change, failed-replacement, staging-cleanup, and exact
+  encoding coverage plus cross-export/package/signing regression tests.
+
+## 0.57.47 - 2026-08-05
+
+### Bounded content-addressed golden-corpus evaluation
+
+- Replace unbounded, link-following CLI evaluation-file reads with a 20 MB consumption boundary
+  that requires a regular non-link file and reconciles inspected, opened, consumed, and final
+  identity.
+- Strictly decode UTF-8 corpus JSON with duplicate-key and non-finite-number rejection plus
+  iterative 20-level/500,000-node limits before semantic evaluation.
+- Define the `pysfmea-golden-corpus-1` closed contract with bounded metadata, 100,000 cases, 100
+  unique scope patterns, exact string fields, supported schema identity, and duplicate-case
+  rejection for file and programmatic callers.
+- Bound active evaluation candidates at 500,000 and replace repeated corpus/candidate scans with
+  source/component/rule indexes while preserving ambiguity refusal and exact-key semantics.
+- Emit deterministic `pysfmea-evaluation-result-1` verifier provenance and a canonical corpus
+  SHA-256 digest with explicit case/scope counts.
+- Register the bounded golden-corpus verifier in the adapter catalog and extend PySFMEA's own tool
+  SFMEA with malformed, stale, or adversarial evaluation-baseline failure handling.
+- Add malformed UTF-8/JSON, duplicate/non-finite, link/non-file, forced-small byte/depth/node/
+  case/candidate, identity-change, closed-contract, CLI, installed-wheel, and historical-package
+  compatibility coverage.
+
 ## 0.57.46 - 2026-08-05
 
 ### Bounded transactional model-assisted discovery

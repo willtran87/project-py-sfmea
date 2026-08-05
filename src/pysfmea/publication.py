@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from .file_publication import atomic_publish_text, inspect_artifact_destination
 from .integrity import canonical_json_sha256
+from .json_ingestion import load_bounded_json_file
 
 PUBLICATION_FAILURE_CATALOG_FORMAT = "pysfmea-publication-failure-catalog-1"
 PUBLICATION_FAILURE_CATALOG_ALGORITHM = "sha256"
@@ -19,6 +19,8 @@ PUBLICATION_FAILURE_CATALOG_VERIFICATION_FORMAT = (
     "pysfmea-publication-failure-catalog-verification-1"
 )
 MAX_PUBLICATION_FAILURE_CATALOG_BYTES = 1_000_000
+MAX_PUBLICATION_FAILURE_CATALOG_DEPTH = 50
+MAX_PUBLICATION_FAILURE_CATALOG_NODES = 100_000
 PUBLICATION_FAILURE_CATALOG_NOTICE = (
     "Failure categories and next actions support automation and remediation; "
     "they do not prove package safety, approval, or successful recovery."
@@ -189,13 +191,11 @@ def export_publication_failure_catalog(
 ) -> Path:
     """Atomically publish deterministic catalog JSON without replacing unknown files."""
 
-    supplied = Path(destination).expanduser().absolute()
-    if supplied.is_symlink():
-        raise ValueError("publication catalog destination must not be a symbolic link")
-    path = supplied.resolve()
-    if path.exists():
-        if not path.is_file():
-            raise ValueError("publication catalog destination must be a regular file")
+    destination_state = inspect_artifact_destination(
+        destination, label="publication catalog"
+    )
+    path = destination_state.path
+    if destination_state.snapshot is not None:
         if not overwrite:
             raise ValueError(
                 "publication catalog destination already exists; use --force to replace it"
@@ -212,21 +212,16 @@ def export_publication_failure_catalog(
                 "publication catalog destination is not a recognized catalog envelope; "
                 "refusing replacement"
             )
-    path.parent.mkdir(parents=True, exist_ok=True)
     document = (
         json.dumps(publication_failure_catalog(), indent=2, ensure_ascii=False) + "\n"
     )
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        temporary.write_text(document, encoding="utf-8", newline="\n")
-        staged = verify_publication_failure_catalog_file(temporary)
-        if not staged["valid"]:
-            raise ValueError("staged publication catalog did not pass verification")
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
-    return path
+    return atomic_publish_text(
+        destination,
+        document,
+        max_bytes=MAX_PUBLICATION_FAILURE_CATALOG_BYTES,
+        label="publication catalog",
+        expected_destination=destination_state,
+    )
 
 
 def verify_publication_failure_catalog(value: Any) -> dict[str, object]:
@@ -334,25 +329,21 @@ def verify_publication_failure_catalog(value: Any) -> dict[str, object]:
 
 
 def verify_publication_failure_catalog_file(source: str | Path) -> dict[str, object]:
-    """Load and verify one bounded, regular UTF-8 catalog JSON file."""
+    """Load and verify one strict, bounded, identity-stable catalog JSON file."""
 
     path = Path(source).expanduser().absolute()
     input_error = ""
     candidate: Any = None
     try:
-        if path.is_symlink() or not path.is_file():
-            input_error = "Catalog input must be an available regular file."
-        else:
-            with path.open("rb") as source_file:
-                raw = source_file.read(MAX_PUBLICATION_FAILURE_CATALOG_BYTES + 1)
-            if len(raw) > MAX_PUBLICATION_FAILURE_CATALOG_BYTES:
-                input_error = (
-                    "Catalog input exceeds the bounded verification size limit."
-                )
-            else:
-                candidate = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        input_error = "Catalog input could not be read as bounded UTF-8 JSON."
+        path, candidate, _size = load_bounded_json_file(
+            path,
+            label="publication catalog input",
+            max_bytes=MAX_PUBLICATION_FAILURE_CATALOG_BYTES,
+            max_depth=MAX_PUBLICATION_FAILURE_CATALOG_DEPTH,
+            max_nodes=MAX_PUBLICATION_FAILURE_CATALOG_NODES,
+        )
+    except ValueError as exc:
+        input_error = str(exc)
     result = verify_publication_failure_catalog(candidate)
     result["source"] = str(path)
     if input_error:

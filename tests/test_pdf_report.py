@@ -161,7 +161,7 @@ class PdfReportTests(unittest.TestCase):
                 "pysfmea.pdf_report.subprocess.run",
                 side_effect=lambda command, **_: self._render_pdf(command),
             ),
-            patch("pysfmea.pdf_report.os.replace", side_effect=OSError("blocked")),
+            patch("pysfmea.pdf_report.atomic_replace", side_effect=OSError("blocked")),
         ):
             with self.assertRaisesRegex(OSError, "blocked"):
                 export_pdf_report(analysis, output, browser=browser)

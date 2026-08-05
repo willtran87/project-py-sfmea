@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .file_publication import atomic_publish_text
+
 
 def architecture_graph(analysis: dict[str, Any]) -> dict[str, Any]:
     components = analysis.get("components", [])
@@ -114,12 +116,13 @@ def architecture_graph(analysis: dict[str, Any]) -> dict[str, Any]:
 def export_architecture(
     analysis: dict[str, Any], destination: str | Path, *, format: str = "markdown"
 ) -> Path:
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     graph = architecture_graph(analysis)
     if format == "json":
-        path.write_text(json.dumps(graph, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return path
+        return atomic_publish_text(
+            destination,
+            json.dumps(graph, indent=2, ensure_ascii=False) + "\n",
+            label="architecture JSON export",
+        )
     if format != "markdown":
         raise ValueError("architecture format must be markdown or json")
     context = analysis.get("context", {})
@@ -169,8 +172,11 @@ def export_architecture(
         )
     if not graph["system_interfaces"]:
         lines.append("- None configured")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    return atomic_publish_text(
+        destination,
+        "\n".join(lines) + "\n",
+        label="architecture Markdown export",
+    )
 
 
 def _safe_id(value: str) -> str:

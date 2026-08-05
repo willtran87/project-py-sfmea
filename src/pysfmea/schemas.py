@@ -27,8 +27,10 @@ from .diagrams import (
     MAX_DIAGRAMS,
     MAX_TEXT_LENGTH,
 )
+from .file_publication import atomic_publish_text
 from .html_report import HTML_REPORT_VERIFICATION_FORMAT
 from .integrity import canonical_json_sha256
+from .json_ingestion import load_bounded_json_file
 from .publication import (
     PUBLICATION_FAILURE_CATALOG_ALGORITHM,
     PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
@@ -46,6 +48,8 @@ JSON_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 SCHEMA_CATALOG_FORMAT = "pysfmea-schema-catalog-1"
 SCHEMA_BUNDLE_VERIFICATION_FORMAT = "pysfmea-schema-bundle-verification-1"
 MAX_SCHEMA_BUNDLE_FILE_BYTES = 2_000_000
+MAX_SCHEMA_BUNDLE_JSON_DEPTH = 100
+MAX_SCHEMA_BUNDLE_JSON_NODES = 250_000
 REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
 REVIEW_PACKAGE_VERIFICATION_FORMAT = "pysfmea-review-package-verification-1"
 ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = (
@@ -2256,17 +2260,12 @@ def verify_schema_bundle_documents(
 def export_schema(name: str, destination: str | Path) -> Path:
     """Publish a schema atomically using deterministic UTF-8 JSON."""
 
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     document = json.dumps(schema_document(name), indent=2, ensure_ascii=False) + "\n"
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        temporary.write_text(document, encoding="utf-8", newline="\n")
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
-    return path
+    return atomic_publish_text(
+        destination,
+        document,
+        label=f"{name} JSON Schema export",
+    )
 
 
 def verify_schema_bundle_path(source: str | Path) -> dict[str, Any]:
@@ -2304,17 +2303,17 @@ def verify_schema_bundle_path(source: str | Path) -> dict[str, Any]:
             add("schema.file_type", "Schema-bundle entries must be regular files.", name)
             continue
         try:
-            with entry.open("rb") as schema_file:
-                raw = schema_file.read(MAX_SCHEMA_BUNDLE_FILE_BYTES + 1)
-            if len(raw) > MAX_SCHEMA_BUNDLE_FILE_BYTES:
-                raise ValueError(
-                    f"file exceeds the {MAX_SCHEMA_BUNDLE_FILE_BYTES}-byte limit"
-                )
-            document = json.loads(raw.decode("utf-8"))
+            _path, document, _size = load_bounded_json_file(
+                entry,
+                label="schema-bundle file",
+                max_bytes=MAX_SCHEMA_BUNDLE_FILE_BYTES,
+                max_depth=MAX_SCHEMA_BUNDLE_JSON_DEPTH,
+                max_nodes=MAX_SCHEMA_BUNDLE_JSON_NODES,
+            )
             if not isinstance(document, dict):
                 raise ValueError("JSON root is not an object")
             documents[name] = document
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        except ValueError as exc:
             documents[name] = None
             add("schema.file_invalid", f"Schema-bundle file cannot be read: {exc}", name)
 

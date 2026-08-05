@@ -6,6 +6,7 @@ import copy
 import csv
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import re
@@ -15,7 +16,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .file_publication import atomic_publish_text
 from .integrity import canonical_json_sha256
+from .json_ingestion import load_bounded_json_file
 from .model import preserve_unchanged_generated_at, stable_id, utc_now
 from .version import __version__
 
@@ -24,6 +27,9 @@ ASSURANCE_WORK_QUEUE_FORMAT = "pysfmea-assurance-work-queue-2"
 ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT = "pysfmea-assurance-work-queue-verification-1"
 ASSURANCE_REGISTER_VERIFICATION_FORMAT = "pysfmea-assurance-register-verification-1"
 MAX_ASSURANCE_WORK_QUEUE_BYTES = 100 * 1024 * 1024
+MAX_ASSURANCE_JSON_DEPTH = 100
+MAX_ASSURANCE_SCAFFOLD_JSON_NODES = 500_000
+MAX_ASSURANCE_WORK_QUEUE_JSON_NODES = 1_000_000
 ASSURANCE_WORK_STATES = (
     "contract_gap",
     "definition_required",
@@ -63,21 +69,25 @@ ASSURANCE_NOTICE = (
 
 
 def _read_assurance_json_object(path: Path, *, label: str) -> dict[str, Any]:
-    """Read a regular assurance JSON object with a consumption-time bound."""
+    """Read one strict, bounded, identity-stable assurance JSON object."""
 
-    if path.is_symlink() or not path.is_file():
-        raise ValueError(f"{label} must be a regular file")
     try:
-        with path.open("rb") as source_file:
-            raw = source_file.read(MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES + 1)
-        if len(raw) > MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES:
+        _path, loaded, _size = load_bounded_json_file(
+            path,
+            label=label,
+            max_bytes=MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES,
+            max_depth=MAX_ASSURANCE_JSON_DEPTH,
+            max_nodes=MAX_ASSURANCE_SCAFFOLD_JSON_NODES,
+        )
+    except ValueError as exc:
+        if str(exc) == (
+            f"{label} exceeds the {MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES}-byte limit"
+        ):
             raise ValueError(
                 f"{label} exceeds the {MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES}-byte "
                 "verification limit"
-            )
-        loaded = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{label} is not valid UTF-8 JSON: {exc}") from exc
+            ) from exc
+        raise
     if not isinstance(loaded, dict):
         raise ValueError(f"{label} root must be an object")
     return loaded
@@ -1430,35 +1440,13 @@ def verify_assurance_work_queue_file(
 ) -> dict[str, Any]:
     """Load and verify a bounded, regular assurance work-queue JSON file."""
 
-    candidate = Path(source).expanduser()
-    if candidate.is_symlink():
-        raise ValueError(
-            f"assurance work queue must not be a symbolic link: {candidate}"
-        )
-    path = candidate.resolve()
-    if not path.is_file():
-        raise ValueError(f"assurance work queue must be a regular file: {path}")
-    size = path.stat().st_size
-    if size > MAX_ASSURANCE_WORK_QUEUE_BYTES:
-        raise ValueError(
-            "assurance work queue exceeds "
-            f"{MAX_ASSURANCE_WORK_QUEUE_BYTES} bytes: {path}"
-        )
-    raw = bytearray()
-    try:
-        with path.open("rb") as source_file:
-            while chunk := source_file.read(1024 * 1024):
-                raw.extend(chunk)
-                if len(raw) > MAX_ASSURANCE_WORK_QUEUE_BYTES:
-                    raise ValueError(
-                        "assurance work queue exceeds "
-                        f"{MAX_ASSURANCE_WORK_QUEUE_BYTES} bytes: {path}"
-                    )
-        queue = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(
-            f"assurance work queue is not valid UTF-8 JSON: {path}: {exc}"
-        ) from exc
+    path, queue, _size = load_bounded_json_file(
+        source,
+        label="assurance work queue",
+        max_bytes=MAX_ASSURANCE_WORK_QUEUE_BYTES,
+        max_depth=MAX_ASSURANCE_JSON_DEPTH,
+        max_nodes=MAX_ASSURANCE_WORK_QUEUE_JSON_NODES,
+    )
     if not isinstance(queue, dict):
         raise ValueError("assurance work queue root must be an object")
     verdict = verify_assurance_work_queue(queue, analysis=analysis)
@@ -1851,8 +1839,6 @@ def export_assurance_register(
 
     if format not in {"json", "work-json", "csv", "markdown"}:
         raise ValueError("assurance format must be json, work-json, csv, or markdown")
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     register = ensure_assurance_register(analysis)
     work_queue = assurance_work_queue(analysis)
     work_by_obligation = {
@@ -1861,27 +1847,32 @@ def export_assurance_register(
         if value.get("obligation_id")
     }
     if format == "work-json":
-        path.write_text(
+        return atomic_publish_text(
+            destination,
             json.dumps(work_queue, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+            label="assurance work queue JSON export",
         )
-        return path
     if format == "json":
         payload = assurance_register_document(analysis)
-        path.write_text(
+        return atomic_publish_text(
+            destination,
             json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+            label="assurance register JSON export",
         )
-        return path
     if format == "csv":
-        with path.open("w", encoding="utf-8-sig", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=ASSURANCE_CSV_FIELDS)
-            writer.writeheader()
-            for value in register.get("obligations", []):
-                writer.writerow(
-                    _flat_row(value, work_by_obligation.get(str(value.get("id", ""))))
-                )
-        return path
+        handle = io.StringIO(newline="")
+        writer = csv.DictWriter(handle, fieldnames=ASSURANCE_CSV_FIELDS)
+        writer.writeheader()
+        for value in register.get("obligations", []):
+            writer.writerow(
+                _flat_row(value, work_by_obligation.get(str(value.get("id", ""))))
+            )
+        return atomic_publish_text(
+            destination,
+            handle.getvalue(),
+            encoding="utf-8-sig",
+            label="assurance register CSV export",
+        )
     progress = assurance_progress(analysis)
     planning_percent = progress["planning_percent"]
     planning_label = f"{planning_percent}%" if planning_percent is not None else "n/a"
@@ -1917,8 +1908,11 @@ def export_assurance_register(
         lines.append(
             "| " + " | ".join(str(cell).replace("|", "\\|") for cell in cells) + " |"
         )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    return atomic_publish_text(
+        destination,
+        "\n".join(lines) + "\n",
+        label="assurance register Markdown export",
+    )
 
 
 def export_pytest_scaffold(
@@ -2040,11 +2034,51 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import pytest
 
 MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+MAX_MANIFEST_DEPTH = 100
+MAX_MANIFEST_NODES = 500_000
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate object key")
+        result[key] = value
+    return result
+
+
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"non-finite number: {value}")
+
+
+def _finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("non-finite number")
+    return parsed
+
+
+def _validate_structure(payload: object) -> None:
+    nodes = 0
+    stack = [(payload, 0)]
+    while stack:
+        current, depth = stack.pop()
+        nodes += 1
+        if depth > MAX_MANIFEST_DEPTH or nodes > MAX_MANIFEST_NODES:
+            raise RuntimeError(
+                "assurance-manifest.json exceeds its bounded JSON structure limits; "
+                "regenerate the scaffold from the governed analysis"
+            )
+        if isinstance(current, dict):
+            stack.extend((child, depth + 1) for child in current.values())
+        elif isinstance(current, list):
+            stack.extend((child, depth + 1) for child in current)
 
 
 def _load_manifest() -> dict:
@@ -2068,17 +2102,24 @@ def _load_manifest() -> dict:
             "limit; inspect or regenerate the scaffold"
         )
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_constant,
+            parse_float=_finite_float,
+        )
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise RuntimeError(
-            "assurance-manifest.json must be valid bounded UTF-8 JSON; regenerate the "
-            "scaffold from the governed analysis"
+            "assurance-manifest.json must be valid bounded UTF-8 JSON with "
+            "unambiguous objects and finite numbers; regenerate the scaffold from the "
+            "governed analysis"
         ) from exc
     if not isinstance(payload, dict):
         raise RuntimeError(
             "assurance-manifest.json root must be an object; regenerate the scaffold "
             "from the governed analysis"
         )
+    _validate_structure(payload)
     if payload.get("format") != "pysfmea-pytest-assurance-scaffold-6":
         raise RuntimeError(
             "assurance-manifest.json has an unsupported scaffold format; regenerate it "

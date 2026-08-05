@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import sys
@@ -388,8 +389,10 @@ class DiagramTests(unittest.TestCase):
         destination = self.root / "atomic-bundle.json"
         destination.write_text("previous artifact", encoding="utf-8")
 
-        with patch("pysfmea.diagrams.os.replace", side_effect=OSError("blocked")):
-            with self.assertRaisesRegex(OSError, "blocked"):
+        with patch(
+            "pysfmea.file_publication.os.replace", side_effect=OSError("blocked")
+        ):
+            with self.assertRaisesRegex(ValueError, "could not be published safely"):
                 export_diagram_bundle(self.analysis, destination)
 
         self.assertEqual(destination.read_text(encoding="utf-8"), "previous artifact")
@@ -834,6 +837,14 @@ class DiagramTests(unittest.TestCase):
         custom_path.write_text(json.dumps(custom_state_diagram()), encoding="utf-8")
         imported = load_diagram_files([custom_path])
         self.assertEqual(imported[0]["metadata"]["imported_from"], "custom.json")
+        custom_raw = custom_path.read_bytes()
+        self.assertEqual(
+            imported[0]["metadata"]["imported_file"],
+            {
+                "bytes": len(custom_raw),
+                "sha256": hashlib.sha256(custom_raw).hexdigest(),
+            },
+        )
 
         report = export_html_report(
             self.analysis,
@@ -853,6 +864,45 @@ class DiagramTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "duplicate imported diagram"):
             load_diagram_files([bundle_path])
+
+        ambiguous_path = self.root / "ambiguous.json"
+        ambiguous_path.write_text(
+            '{"schema_version":"pysfmea-diagram-1",'
+            '"id":"first","id":"second","title":"Ambiguous",'
+            '"type":"state","nodes":[],"edges":[]}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate object key"):
+            load_diagram_files([ambiguous_path])
+
+        non_finite_path = self.root / "non-finite.json"
+        non_finite_path.write_text(
+            '{"schema_version":"pysfmea-diagram-1",'
+            '"id":"non-finite","title":"Non-finite","type":"state",'
+            '"nodes":[],"edges":[],"probe":1e9999}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "non-finite number"):
+            load_diagram_files([non_finite_path])
+
+        with patch("pysfmea.diagrams.MAX_DIAGRAM_JSON_NODES", 2):
+            with self.assertRaisesRegex(ValueError, "2-node JSON structure limit"):
+                load_diagram_files([custom_path])
+
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            side_effect=[True, False],
+        ):
+            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+                load_diagram_files([custom_path])
+
+        with patch("pysfmea.diagrams.MAX_DIAGRAM_IMPORT_FILES", 1):
+            with self.assertRaisesRegex(ValueError, "1-file import limit"):
+                load_diagram_files([custom_path, bundle_path])
+
+        with patch("pysfmea.diagrams.MAX_DIAGRAM_IMPORT_TOTAL_BYTES", 1):
+            with self.assertRaisesRegex(ValueError, "1-byte aggregate import limit"):
+                load_diagram_files([custom_path])
 
 
 if __name__ == "__main__":

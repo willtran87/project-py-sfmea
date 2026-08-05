@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .file_publication import atomic_publish_text
 from .model import stable_id, utc_now
 from .version import __version__
 
@@ -262,7 +263,8 @@ def differential_analysis(previous: dict[str, Any], current: dict[str, Any]) -> 
 
 
 def export_json_document(document: dict[str, Any], destination: str | Path) -> Path:
-    target = Path(destination).expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return target
+    return atomic_publish_text(
+        destination,
+        json.dumps(document, indent=2, ensure_ascii=False) + "\n",
+        label="interchange JSON export",
+    )

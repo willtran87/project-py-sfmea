@@ -8,11 +8,12 @@ import json
 import os
 import stat
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
 from .guidance import DEFAULT_EXCLUDES
+from .json_ingestion import BoundedFileSnapshotError, load_bounded_file_snapshot
 
 MAX_FILES = 100_000
 MAX_REGIONS = 100_000
@@ -45,6 +46,7 @@ def legacy_repository_inventory(reason: str) -> dict[str, Any]:
             "regions": 1,
             "by_status": {"unresolved": 1},
             "by_kind": {},
+            "by_snapshot_source": {},
             "semantic_coverage_percent": None,
             "opaque_or_unresolved": 1,
         },
@@ -118,9 +120,19 @@ def build_repository_inventory(
     parsed_python_paths: set[str],
     include_tests: bool,
     exclude_patterns: Iterable[str] = (),
+    source_snapshots: Mapping[str, bytes] | None = None,
+    test_evidence_snapshots: Mapping[str, bytes] | None = None,
+    dependency_snapshots: Mapping[str, bytes] | None = None,
+    contract_snapshots: Mapping[str, bytes] | None = None,
+    coverage_snapshots: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
-    """Inventory the repository while making every excluded/opaque region visible."""
+    """Inventory stable artifact snapshots and expose every excluded/opaque region."""
 
+    accepted_source_snapshots = source_snapshots or {}
+    accepted_test_evidence_snapshots = test_evidence_snapshots or {}
+    accepted_dependency_snapshots = dependency_snapshots or {}
+    accepted_contract_snapshots = contract_snapshots or {}
+    accepted_coverage_snapshots = coverage_snapshots or {}
     entries: list[dict[str, Any]] = []
     regions: list[dict[str, Any]] = []
     walk_truncated = False
@@ -176,38 +188,75 @@ def build_repository_inventory(
                 "reason": "Recognized repository artifact is indexed but not semantically analyzed.",
                 "size": None,
                 "sha256": "",
+                "snapshot_source": "none",
                 "adapter_ids": ["python.repository_discoverer"],
             }
-            if path.is_symlink():
-                record.update(
-                    status="opaque",
-                    analysis_depth="none",
-                    reason="Symbolic-link file is not followed.",
-                )
-                entries.append(record)
-                continue
-            try:
-                metadata = path.stat()
-            except OSError:
-                record.update(
-                    status="unresolved",
-                    analysis_depth="none",
-                    reason="Artifact metadata or content could not be read safely.",
-                )
-                entries.append(record)
-                continue
-            if not stat.S_ISREG(metadata.st_mode):
-                record.update(
-                    status="opaque",
-                    analysis_depth="none",
-                    size=metadata.st_size,
-                    reason="Non-regular repository artifact is not opened or hashed.",
-                )
-                entries.append(record)
-                continue
+            snapshot_source = "none"
+            raw = accepted_source_snapshots.get(rel)
+            if rel in accepted_source_snapshots:
+                snapshot_source = "analysis_source_snapshot"
+            elif rel in accepted_test_evidence_snapshots:
+                raw = accepted_test_evidence_snapshots[rel]
+                snapshot_source = "test_evidence_snapshot"
+            elif rel in accepted_dependency_snapshots:
+                raw = accepted_dependency_snapshots[rel]
+                snapshot_source = "dependency_manifest_snapshot"
+            elif rel in accepted_contract_snapshots:
+                raw = accepted_contract_snapshots[rel]
+                snapshot_source = "interface_contract_snapshot"
+            elif rel in accepted_coverage_snapshots:
+                raw = accepted_coverage_snapshots[rel]
+                snapshot_source = "coverage_evidence_snapshot"
+            metadata: os.stat_result | None = None
+            if raw is not None:
+                if not isinstance(raw, bytes):
+                    record.update(
+                        status="unresolved",
+                        analysis_depth="none",
+                        reason="Accepted analysis snapshot is not an immutable byte stream.",
+                    )
+                    entries.append(record)
+                    continue
+                record["snapshot_source"] = snapshot_source
+            else:
+                if path.is_symlink():
+                    record.update(
+                        status="opaque",
+                        analysis_depth="none",
+                        reason="Symbolic-link file is not followed.",
+                    )
+                    entries.append(record)
+                    continue
+                try:
+                    metadata = path.lstat()
+                except OSError:
+                    record.update(
+                        status="unresolved",
+                        analysis_depth="none",
+                        reason="Artifact metadata or content could not be read safely.",
+                    )
+                    entries.append(record)
+                    continue
+                if stat.S_ISLNK(metadata.st_mode):
+                    record.update(
+                        status="opaque",
+                        analysis_depth="none",
+                        reason="Symbolic-link file is not followed.",
+                    )
+                    entries.append(record)
+                    continue
+                if not stat.S_ISREG(metadata.st_mode):
+                    record.update(
+                        status="opaque",
+                        analysis_depth="none",
+                        size=metadata.st_size,
+                        reason="Non-regular repository artifact is not opened or hashed.",
+                    )
+                    entries.append(record)
+                    continue
             try:
                 if hash_truncated:
-                    record["size"] = path.stat().st_size
+                    record["size"] = len(raw) if raw is not None else metadata.st_size
                     record.update(
                         analysis_depth="metadata_only",
                         reason="Artifact digest omitted after the aggregate hashing limit.",
@@ -216,18 +265,23 @@ def build_repository_inventory(
                     remaining = MAX_TOTAL_HASH_BYTES - hash_consumed
                     if remaining <= 0:
                         hash_truncated = True
-                        record["size"] = path.stat().st_size
+                        record["size"] = len(raw) if raw is not None else metadata.st_size
                         record.update(
                             analysis_depth="metadata_only",
                             reason="Artifact digest omitted after the aggregate hashing limit.",
                         )
                     else:
-                        read_limit = min(MAX_HASH_BYTES + 1, remaining + 1)
-                        with path.open("rb") as source_file:
-                            size = os.fstat(source_file.fileno()).st_size
-                            raw = source_file.read(read_limit)
-                        record["size"] = size
-                        hash_consumed += len(raw)
+                        read_limit = min(MAX_HASH_BYTES, remaining)
+                        if raw is None:
+                            snapshot = load_bounded_file_snapshot(
+                                path,
+                                label="Repository artifact",
+                                max_bytes=read_limit,
+                            )
+                            raw = snapshot.raw
+                            record["snapshot_source"] = "identity_stable_inventory_snapshot"
+                        record["size"] = len(raw)
+                        hash_consumed += min(len(raw), read_limit + 1)
                         if len(raw) > remaining:
                             hash_truncated = True
                             record.update(
@@ -248,6 +302,36 @@ def build_repository_inventory(
                             )
                         else:
                             record["sha256"] = hashlib.sha256(raw).hexdigest()
+            except BoundedFileSnapshotError as exc:
+                hash_consumed += exc.bytes_consumed
+                if exc.bytes_consumed > remaining:
+                    hash_truncated = True
+                    record.update(
+                        analysis_depth="metadata_only",
+                        reason=(
+                            "Artifact digest omitted because repository hashing reached "
+                            "the aggregate safety limit."
+                        ),
+                    )
+                elif str(exc) == (
+                    f"Repository artifact exceeds the {read_limit}-byte limit"
+                ):
+                    record.update(
+                        status="opaque",
+                        analysis_depth="metadata_only",
+                        reason=(
+                            "Artifact exceeds the "
+                            f"{MAX_HASH_BYTES}-byte hashing and analysis limit."
+                        ),
+                    )
+                else:
+                    record.update(
+                        status="unresolved",
+                        analysis_depth="none",
+                        reason=f"Artifact snapshot rejected: {exc}.",
+                    )
+                entries.append(record)
+                continue
             except OSError:
                 record.update(
                     status="unresolved",
@@ -334,6 +418,7 @@ def build_repository_inventory(
     status_counts = Counter(value["status"] for value in entries)
     status_counts.update(value["status"] for value in regions)
     kind_counts = Counter(value["kind"] for value in entries)
+    snapshot_counts = Counter(value["snapshot_source"] for value in entries)
     material = {"entries": entries, "regions": regions, "truncated": truncated}
     digest = hashlib.sha256(
         json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -346,6 +431,7 @@ def build_repository_inventory(
             "regions": len(regions),
             "by_status": dict(sorted(status_counts.items())),
             "by_kind": dict(sorted(kind_counts.items())),
+            "by_snapshot_source": dict(sorted(snapshot_counts.items())),
             "semantic_coverage_percent": round(
                 100 * status_counts.get("analyzed", 0) / len(entries), 1
             )

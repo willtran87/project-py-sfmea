@@ -285,7 +285,31 @@ class ExtensionTests(unittest.TestCase):
             import_runtime_trace(self.analysis, trace_path)
         trace_path.write_bytes(trace_bytes)
 
-        with patch("pysfmea.runtime.Path.is_symlink", return_value=True):
+        trace_text = trace_bytes.decode("utf-8")
+        trace_path.write_text(
+            '{"spans":[],"spans":' + trace_text.split('"spans":', 1)[1],
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate object key"):
+            import_runtime_trace(self.analysis, trace_path)
+        for value in ("NaN", "1e9999"):
+            with self.subTest(non_finite=value):
+                trace_path.write_text(
+                    '{"numeric_probe":' + value + "," + trace_text[1:],
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(ValueError, "non-finite number"):
+                    import_runtime_trace(self.analysis, trace_path)
+        trace_path.write_bytes(trace_bytes)
+        with patch("pysfmea.runtime.MAX_RUNTIME_JSON_NODES", 2):
+            with self.assertRaisesRegex(ValueError, "2-node JSON structure limit"):
+                import_runtime_trace(self.analysis, trace_path)
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity", side_effect=[True, False]
+        ):
+            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+                import_runtime_trace(self.analysis, trace_path)
+        with patch("pysfmea.json_ingestion.stat.S_ISLNK", return_value=True):
             with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
                 import_runtime_trace(self.analysis, trace_path)
         with self.assertRaisesRegex(ValueError, "500 printable"):
@@ -2890,13 +2914,56 @@ class ExtensionTests(unittest.TestCase):
             {value["rule_id"] for value in invalid_utf8["findings"]},
         )
 
-        with patch("pysfmea.signing.os.path.samestat", return_value=False):
+        signature_raw = signature_path.read_text(encoding="utf-8")
+        signature_path.write_text(
+            '{"format":"ambiguous",' + signature_raw[1:], encoding="utf-8"
+        )
+        duplicate_key = verify_review_signature(archive, signature_path, public_path)
+        self.assertIn(
+            "signature.input_invalid",
+            {value["rule_id"] for value in duplicate_key["findings"]},
+        )
+        for value in ("NaN", "1e9999"):
+            with self.subTest(non_finite=value):
+                signature_path.write_text(
+                    '{"numeric_probe":' + value + "," + signature_raw[1:],
+                    encoding="utf-8",
+                )
+                non_finite = verify_review_signature(
+                    archive, signature_path, public_path
+                )
+                self.assertIn(
+                    "signature.input_invalid",
+                    {item["rule_id"] for item in non_finite["findings"]},
+                )
+        signature_path.write_text(signature_raw, encoding="utf-8")
+        with patch("pysfmea.signing.MAX_SIGNATURE_JSON_NODES", 2):
+            oversized_structure = verify_review_signature(
+                archive, signature_path, public_path
+            )
+        self.assertIn(
+            "signature.input_invalid",
+            {value["rule_id"] for value in oversized_structure["findings"]},
+        )
+
+        with patch("pysfmea.signing._same_file_identity", return_value=False):
             changed_input = verify_review_signature(
                 archive, signature_path, public_path
             )
         self.assertIn(
             "signature.input_invalid",
             {value["rule_id"] for value in changed_input["findings"]},
+        )
+        with patch(
+            "pysfmea.signing._same_file_identity",
+            side_effect=[True, True, True, False],
+        ):
+            changed_public_key = verify_review_signature(
+                archive, signature_path, public_path
+            )
+        self.assertIn(
+            "signature.input_invalid",
+            {value["rule_id"] for value in changed_public_key["findings"]},
         )
 
         with patch("pysfmea.signing.MAX_MANIFEST_BYTES", 10):
@@ -2936,7 +3003,7 @@ class ExtensionTests(unittest.TestCase):
         atomic_destination = self.root / "atomic-signature.json"
         atomic_destination.write_text("prior signature content\n", encoding="utf-8")
         with patch(
-            "pysfmea.signing.os.replace",
+            "pysfmea.signing.atomic_replace",
             side_effect=OSError("injected publication failure"),
         ):
             with self.assertRaisesRegex(ValueError, "could not be published safely"):
@@ -2960,8 +3027,8 @@ class ExtensionTests(unittest.TestCase):
         race_destination = self.root / "raced-signature.json"
         race_destination.write_text("prior raced content\n", encoding="utf-8")
         with patch(
-            "pysfmea.signing.os.path.samestat",
-            side_effect=[True, True, True, False],
+            "pysfmea.signing._same_file_identity",
+            side_effect=[True, True, True, True, False],
         ):
             with self.assertRaisesRegex(ValueError, "changed before publication"):
                 sign_review_package(

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import os
 import re
-import uuid
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from .architecture import architecture_graph
+from .file_publication import atomic_publish_text
 from .guidance import guidance_traceability
 from .integrity import canonical_json_sha256
+from .json_ingestion import BoundedJsonDocument, load_bounded_json_document
 from .model import stable_id, utc_now
 from .sfta import build_sfta
 from .version import __version__
@@ -46,6 +47,10 @@ MAX_DIAGRAMS = 50
 MAX_DIAGRAM_NODES = 2_000
 MAX_DIAGRAM_EDGES = 5_000
 MAX_DIAGRAM_FILE_BYTES = 5_000_000
+MAX_DIAGRAM_IMPORT_FILES = 50
+MAX_DIAGRAM_IMPORT_TOTAL_BYTES = 25_000_000
+MAX_DIAGRAM_JSON_DEPTH = 100
+MAX_DIAGRAM_JSON_NODES = 250_000
 MAX_TEXT_LENGTH = 8_000
 DEFAULT_PROPAGATION_RECORD_LIMIT = 40
 DEFAULT_PROPAGATION_PATH_LIMIT = 3
@@ -2052,10 +2057,25 @@ def load_diagram_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
 
     diagrams: list[dict[str, Any]] = []
     ids: set[str] = set()
-    for source in paths:
-        path, payload, _ = _read_bounded_diagram_json(
-            source, label="diagram file"
+    consumed_bytes = 0
+    for index, source in enumerate(paths, start=1):
+        if index > MAX_DIAGRAM_IMPORT_FILES:
+            raise ValueError(
+                "diagram imports exceed the "
+                f"{MAX_DIAGRAM_IMPORT_FILES}-file import limit"
+            )
+        document = _read_bounded_diagram_document(
+            source,
+            label="diagram file",
         )
+        path = document.path
+        payload = document.value
+        consumed_bytes += document.size
+        if consumed_bytes > MAX_DIAGRAM_IMPORT_TOTAL_BYTES:
+            raise ValueError(
+                "diagram imports exceed the "
+                f"{MAX_DIAGRAM_IMPORT_TOTAL_BYTES}-byte aggregate import limit"
+            )
         if isinstance(payload, dict) and payload.get(
             "schema_version"
         ) == DIAGRAM_BUNDLE_SCHEMA and (
@@ -2079,6 +2099,10 @@ def load_diagram_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
                 raise ValueError(f"duplicate imported diagram id: {diagram['id']}")
             ids.add(diagram["id"])
             diagram["metadata"]["imported_from"] = path.name
+            diagram["metadata"]["imported_file"] = {
+                "bytes": document.size,
+                "sha256": hashlib.sha256(document.raw).hexdigest(),
+            }
             diagrams.append(diagram)
             if len(diagrams) > MAX_DIAGRAMS:
                 raise ValueError(f"diagram imports exceed {MAX_DIAGRAMS} diagrams")
@@ -2088,25 +2112,42 @@ def load_diagram_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
 def _read_bounded_diagram_json(
     source: str | Path, *, label: str
 ) -> tuple[Path, Any, int]:
-    """Read one regular diagram JSON file with a consumption-time byte bound."""
+    """Read one strict diagram JSON document through the shared safe boundary."""
 
-    candidate = Path(source).expanduser()
-    if candidate.is_symlink():
-        raise ValueError(f"{label} must not be a symbolic link: {candidate}")
-    path = candidate.resolve()
-    if not path.is_file():
-        raise ValueError(f"{label} must be a regular file: {path}")
+    document = _read_bounded_diagram_document(source, label=label)
+    return document.path, document.value, document.size
+
+
+def _read_bounded_diagram_document(
+    source: str | Path, *, label: str
+) -> BoundedJsonDocument:
+    """Capture strict diagram JSON from one exact identity-stable file snapshot."""
+
+    candidate = Path(source).expanduser().absolute()
     try:
-        with path.open("rb") as source_file:
-            raw = source_file.read(MAX_DIAGRAM_FILE_BYTES + 1)
-        if len(raw) > MAX_DIAGRAM_FILE_BYTES:
-            raise ValueError(
-                f"{label} exceeds {MAX_DIAGRAM_FILE_BYTES} bytes: {path}"
-            )
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{label} is not valid UTF-8 JSON: {path}: {exc}") from exc
-    return path, payload, len(raw)
+        return load_bounded_json_document(
+            candidate,
+            label=label,
+            max_bytes=MAX_DIAGRAM_FILE_BYTES,
+            max_depth=MAX_DIAGRAM_JSON_DEPTH,
+            max_nodes=MAX_DIAGRAM_JSON_NODES,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == f"{label} exceeds the {MAX_DIAGRAM_FILE_BYTES}-byte limit":
+            message = f"{label} exceeds {MAX_DIAGRAM_FILE_BYTES} bytes"
+        elif message in {
+            f"{label} must be an available regular file",
+            f"{label} must be a regular non-symbolic-link file",
+        }:
+            message = f"{label} must be a regular non-symbolic link file"
+        elif message in {
+            f"{label} is not valid UTF-8 JSON",
+            f"{label} is not valid JSON",
+            f"{label} exceeds the JSON parser nesting limit",
+        }:
+            message = f"{label} is not valid bounded UTF-8 JSON"
+        raise ValueError(f"{message}: {candidate}") from exc
 
 
 def diagram_bundle(
@@ -2291,8 +2332,6 @@ def export_diagram_bundle(
     propagation_depth: int = DEFAULT_PROPAGATION_DEPTH,
     propagation_include_finding_ids: Iterable[str] | None = None,
 ) -> Path:
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     document = (
         json.dumps(
             diagram_bundle(
@@ -2308,10 +2347,8 @@ def export_diagram_bundle(
         )
         + "\n"
     )
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        temporary.write_text(document, encoding="utf-8", newline="\n")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return path
+    return atomic_publish_text(
+        destination,
+        document,
+        label="diagram bundle",
+    )

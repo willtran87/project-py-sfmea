@@ -8,6 +8,7 @@ import stat
 import subprocess
 import tempfile
 from collections.abc import Iterable
+from os import replace as atomic_replace
 from pathlib import Path
 from typing import Any
 
@@ -291,7 +292,7 @@ def export_pdf_report(
             verify_pdf_file(publish)
             if not _destination_is_unchanged(target, destination_state):
                 raise ValueError("PDF destination changed before atomic replacement")
-            os.replace(publish, target)
+            atomic_replace(publish, target)
             publish = None
         finally:
             if publish is not None:

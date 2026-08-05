@@ -44,6 +44,7 @@ from .discovery import (
     evaluate_candidates,
     evidence_packets,
     generate_summary,
+    load_evaluation_spec,
     review_suggestion,
 )
 from .execution import (
@@ -2190,8 +2191,7 @@ def _evaluate(args: argparse.Namespace) -> int:
     if args.max_findings < 1:
         raise ValueError("--max-findings must be at least 1")
     analysis = load_analysis(args.analysis)
-    expected_path = Path(args.expected).expanduser().resolve()
-    expected = json.loads(expected_path.read_text(encoding="utf-8"))
+    expected = load_evaluation_spec(args.expected)
     result = evaluate_candidates(analysis, expected)
     if args.json:
         print(json.dumps(result, indent=2))

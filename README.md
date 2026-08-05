@@ -145,24 +145,35 @@ downstream safety check. `sfmea init` publishes templates atomically, refuses li
 destinations, and preserves prior content if forced replacement cannot complete.
 
 Repository scanning does not import or execute Python code. Each Python source or test-evidence
-file must be a regular non-symbolic-link file and is read through a 20 MB consumption boundary
-using its PEP 263 encoding declaration. Source discovery stops explicitly at 100,000 selected
-files; the optional textual test-reference index stops at 10,000 files or 100 MB. Rejected files
-remain visible through repository-inventory state and stable scan warnings while other files
-continue through analysis. Baseline calculation reuses the same source-file byte boundary.
+file must be a regular non-link file and is captured through a 20 MB exact-byte boundary whose
+inspected, opened, and final identities agree before PEP 263 decoding. Each selected source is read
+once; AST parsing, included-test indexing, and baseline hashing reuse the same immutable bytes.
+Eligible test-reference evidence is likewise read once before baseline construction and reused for
+reference attribution and inventory hashing; configured/default/hidden exclusions apply equally.
+Source discovery stops explicitly at 100,000 selected files; the optional textual test-reference
+index stops at 10,000 files or 100 MB. The baseline records accepted/rejected source counts, total
+accepted bytes, and separate canonical source/test-evidence snapshot-set SHA-256 values that are
+also bound into the immutable run manifest. Rejected files remain visible through
+repository-inventory state and stable warnings while other files continue through analysis.
 
 Dependency evidence is also treated as untrusted repository input. PySFMEA reads pyproject,
-requirements/constraints include chains, and supported lockfiles once through a regular-file,
-non-symbolic-link boundary: 20 MB per file, 1,000 attempted files, and 100 MB total. Requirement
-text must be UTF-8, include paths must remain inside the repository, and supported pyproject
-dependency containers must have their declared TOML shapes. The exact accepted bytes provide both
-the manifest SHA-256 and parsed dependency claims; rejected content produces stable warnings.
+requirements/constraints include chains, and supported lockfiles once through an exact-byte
+regular non-link boundary whose inspected, opened, and final identities must agree: 20 MB per file,
+1,000 attempted files, and 100 MB total. Requirement text must be UTF-8, include paths must remain
+inside the repository, and supported pyproject dependency containers must have their declared TOML
+shapes. Each manifest record exposes its accepted byte count and SHA-256, and parsed claims reuse
+that same snapshot. Lockfile formats without an explicit parser remain content-addressed evidence;
+PySFMEA does not infer package claims from unfamiliar syntax. The complete dependency inventory is
+bound into the baseline and immutable run manifest; rejected content produces stable warnings.
 
-The complete repository inventory hashes regular non-linked artifacts through a separate 20 MB
-per-artifact and 500 MB aggregate consumption budget. Non-regular filesystem objects are never
-opened. If the aggregate budget is exhausted, metadata and already-authorized semantic analysis
-continue, but the inventory records a digest-protected unresolved region and is explicitly marked
-truncated. File and excluded/opaque-region traversal are each capped at 100,000 records.
+The complete repository inventory reuses the exact accepted Python analysis, test-evidence,
+dependency-manifest, interface-contract, and in-repository coverage snapshots and hashes every other regular non-linked artifact through an
+inspected/opened/final identity-stable boundary
+with a separate 20 MB per-artifact and 500 MB aggregate consumption budget. Each entry identifies
+its snapshot source; non-regular filesystem objects are never opened. If the aggregate budget is
+exhausted, metadata and already-authorized semantic analysis continue, but the inventory records a
+digest-protected unresolved region and is explicitly marked truncated. File and
+excluded/opaque-region traversal are each capped at 100,000 records.
 
 `sfmea status` is the read-only workflow cockpit. It auto-discovers configuration and
 analysis files in the repository root or `.artifacts`, classifies the current lifecycle
@@ -329,6 +340,16 @@ analysis JSON itself is never accepted as the HTML destination. Existing destina
 symbolic links, and other non-regular objects are rejected before generation; PySFMEA never
 resolves an output link and overwrites its target.
 
+The same bounded publication contract now covers standalone CSV, Markdown, JSON, SARIF,
+CycloneDX, SFTA, architecture, sequence, traceability, coverage, audit, guidance, diagram-bundle,
+assurance-register/work-queue, individual JSON Schema, publication-catalog, and HTML outputs. Each
+complete encoded artifact is limited to 256 MiB (or the artifact's stricter public limit), written to a private
+sibling, flushed and synchronized, and published only if the inspected destination remains
+unchanged. A rejected link, concurrent edit, short/failed write, or replacement failure preserves
+the prior file and removes staging residue. Catalog refresh retains the destination state inspected
+before envelope validation, so a newly appeared or concurrently edited file is never treated as an
+approved replacement target.
+
 Verify the complete standalone document and optionally require an exact analysis match:
 
 ```powershell
@@ -437,17 +458,23 @@ sfmea report sfmea-analysis.json `
 Use `sfmea diagram --type TYPE` to export generated models for reuse by other
 renderers or engineering tools. The complete schema, limits, import formats, and
 example state diagram are documented in [Canonical diagrams](docs/DIAGRAMS.md).
-Custom diagram inputs use the same five-megabyte consumption-time bound and symbolic-link refusal
-as standalone diagram verification, so report generation cannot bypass the verifier's ingestion
-boundary.
+Custom diagram inputs use the same exact-byte, inspected/opened/final identity-stable boundary as
+standalone diagram verification. Each regular non-link file is limited to 5 MB and strict
+duplicate-free finite UTF-8 JSON under 100-level/250,000-node structure limits. One report accepts
+at most 50 files and 25 MB in aggregate, in addition to the canonical 50-diagram limits. Every
+imported model records the exact source byte count and SHA-256; those provenance fields are covered
+by the report's integrity binding. This does not authenticate the diagram author or validate its
+engineering claims.
 
 To add an organization-controlled or licensed standard without modifying PySFMEA,
 configure a governed JSON guidance pack. The schema, integrity behavior, licensing
 boundary, and complete example are documented in
 [Organizational guidance packs](docs/GUIDANCE_PACKS.md).
 Configured packs must be regular, non-symbolic-link UTF-8 JSON files. Their five-megabyte limit is
-enforced on bytes consumed from the open stream, and provenance hashes those exact validated bytes
-before any source, locator, or rule mapping can influence findings.
+enforced on bytes consumed from one inspected/opened/final identity-stable stream. Strict decoding
+rejects duplicate keys, non-finite literals, numeric overflow, malformed UTF-8, and structures over
+100 levels or 250,000 nodes. Provenance hashes those exact validated bytes before any source,
+locator, applicability profile, or rule mapping can influence findings.
 
 The implementation-to-acceptance audit is maintained in
 [Workbench requirements traceability](docs/REQUIREMENTS_TRACEABILITY.md); it identifies
@@ -622,10 +649,13 @@ bytes—to the package format, project, baseline, schema version, generation tim
 signer label, and signing time. Verification requires both `--signature` and an
 explicitly trusted `--public-key`; it reports the SHA-256 fingerprint of that key.
 Private/public keys and detached envelopes must be regular non-symbolic-link files and
-are consumed under one-megabyte byte limits with inspected/opened identity checks. The
-verified package manifest is independently reread under a 10 MB limit and must retain
-the exact digest established by a fresh package verification; caller-supplied or stale
-verification results cannot bypass this step. Signature publication is atomic and
+are consumed under one-megabyte byte limits with inspected/opened/final identity checks.
+Detached envelopes are strict duplicate-free finite UTF-8 JSON bounded to 20 levels and
+10,000 nodes; ambiguous keys, non-finite literals, numeric overflow, and structure exhaustion
+fail before cryptographic verification. The verified package manifest is independently reread
+under a 10 MB/100-level/250,000-node strict boundary and must retain the exact digest established
+by a fresh package verification; caller-supplied or stale verification results cannot bypass this
+step. Signature publication is atomic and
 refuses a destination whose identity changes before replacement. Exact ZIP-container
 bytes are rehashed through a 550 MB streaming boundary and reconciled to the fresh verdict.
 Use your approved key-generation, storage, rotation, revocation, and release process.
@@ -640,7 +670,11 @@ For offline CI integrations, `sfmea schema --bundle DIRECTORY` atomically export
 and every contract in one operation. `sfmea schema --verify-bundle DIRECTORY` independently
 checks the complete known profile, root-level regular-file boundary, JSON structure, identities,
 and catalog digests. Every allowed entry is read once with a two-megabyte consumption-time bound
-and explicit UTF-8 JSON decoding; oversized or linked entries remain structured rejections. Use
+and strict UTF-8 JSON decoding; inspected, opened, and final identities must match. Duplicate
+keys, non-finite numbers, excessive depth or node count, malformed encoding, oversized content,
+and linked/non-file entries remain structured rejections before canonical hashing. The
+publication-catalog verifier uses the same boundary with its stricter one-megabyte and catalog
+structure limits. Use
 `--json` for the stable machine verdict. Refreshing a non-empty bundle
 requires `--force` and is refused if the directory contains unrecognized or non-file entries.
 
@@ -681,11 +715,15 @@ sfmea scan . --coverage-json coverage.json -o sfmea-analysis.json
 
 Coverage is evidence of observed execution, not proof that a detection control is effective.
 Coverage JSON is treated as untrusted evidence input: PySFMEA reads at most 100 MB, refuses
-symbolic links and non-files, validates UTF-8 JSON, ignores paths outside the analyzed repository,
-and accepts only typed positive line/source coordinates and nonzero branch destinations. Unsafe
-paths, malformed records, and
-duplicate normalized file keys are omitted and reported as stable `CoverageError` warnings; they do
-not abort the rest of the repository scan.
+symbolic links and non-files, requires the inspected/opened/final file identity to remain stable,
+and strictly validates duplicate-free finite UTF-8 JSON under 100-level and 2,000,000-node limits.
+At most 100,000 file records are traversed and file paths are bounded to 4,096 characters. Paths
+outside the analyzed repository and parent traversal are ignored; only typed positive line/source
+coordinates and nonzero branch destinations are accepted. Unsafe paths, malformed records, and
+duplicate normalized file keys are omitted and reported as stable `CoverageError` warnings; they
+do not abort the rest of the repository scan. The accepted snapshot's exact byte count, SHA-256,
+supplied file count, and accepted file count are retained in scan settings, and its digest is bound
+into the immutable run manifest.
 
 ## Interface contracts
 
@@ -693,7 +731,12 @@ OpenAPI/Swagger JSON or YAML, `*.schema.json`, and protobuf files are discovered
 automatically. Each file becomes a stable interface-contract component with extracted
 operations and data types, a content hash, and a contract-compatibility failure-mode
 prompt. Contract changes participate in the repository baseline and therefore trigger
-normal review revalidation. The built-in YAML extraction is intentionally conservative;
+normal review revalidation. Contract bytes are captured from one bounded regular non-link
+snapshot whose inspected, opened, and final identities must agree. JSON contracts additionally
+reject duplicate keys and non-finite or overflowed numbers and enforce 100-level/1,000,000-node
+structure limits. Malformed contracts remain visible with an exact byte count and SHA-256 but
+cannot contribute parsed operation or data-type claims; the inventory is bound into the immutable
+run manifest. The built-in YAML extraction is intentionally conservative;
 generated, templated, or externally hosted specifications should be supplied as local
 artifacts or represented through configured system interfaces.
 
@@ -727,8 +770,10 @@ the same trace is idempotent. Code-file plus function attributes resolve otherwi
 ambiguous span names, and the CLI reports mapped and unmapped totals.
 
 Trace ingestion requires a regular non-symbolic-link file, applies the 100 MB limit to bytes
-consumed from the opened stream, and decodes bounded UTF-8 JSON with an object or array root. The
-simple/OTLP walker is iterative and type-safe, caps each import at 50,000 spans, and limits nested
+consumed from an inspected/opened/final identity-stable stream, and strictly decodes duplicate-free
+finite UTF-8 JSON with an object or array root. The decoded document is capped at 100 levels and
+2,000,000 nodes before traversal. The simple/OTLP walker is iterative and type-safe, caps each
+import at 50,000 spans, and limits nested
 attribute normalization to 32 levels. Empty, malformed, linked, oversized, or excessively nested
 inputs leave the analysis unchanged. Runtime spans, edges, import provenance, history, and summary
 are committed together; an unexpected finalization failure restores the complete prior analysis.
@@ -833,7 +878,10 @@ sfmea assurance-work-verify assurance-work.json --analysis sfmea-analysis.json -
 The first command detects content drift. Supplying the analysis additionally recomputes the
 entire deterministic projection, so a stale queue or an edited queue with a recomputed digest
 is rejected. Verification establishes consistency, not authorship, approval, or authorization
-to execute tests.
+to execute tests. Queue verification uses a strict 100 MiB, 100-level, 1,000,000-node JSON
+boundary with regular non-link and inspected/opened/final identity reconciliation. Duplicate
+keys, non-finite literals, numeric overflow, malformed UTF-8, and concurrent replacement are
+rejected before integrity or projection checks.
 
 The local browser reviewer also exposes an **Assurance plan** workspace for accepted
 findings. It presents the derived stimulus, acceptance criteria, definition gaps,
@@ -970,8 +1018,10 @@ are reported as informational because test implementation is expected; they beco
 when registered against an obligation. Verification consumes the manifest and optional
 retirement record through a 64 MiB byte boundary and streams generated-file hashes through
 an independent 64 MiB boundary. Manifest and retirement inputs must be regular,
-non-symbolic-link files; malformed UTF-8, concurrent growth beyond a boundary, and broken
-retirement links fail closed as structured verification findings. Generated files are never
+non-symbolic-link files whose inspected, opened, and final identities agree. Strict decoding
+rejects duplicate keys, non-finite literals, numeric overflow, malformed UTF-8, structures beyond
+100 levels or 500,000 nodes, concurrent replacement, growth beyond a boundary, and broken
+retirement links as structured verification findings. Generated files are never
 followed through links: an unavailable, linked, or oversized placeholder is reported separately
 as changed and cannot pass the untouched-file precondition for guarded refresh or archival.
 
@@ -985,8 +1035,9 @@ set `verified`, `accepted_risk`, or `closed`.
 
 The emitted pytest module remains self-contained, but collection does not trust its adjacent
 manifest blindly. It requires a regular non-symbolic-link file, consumes at most 64 MiB from the
-opened binary stream, decodes explicit UTF-8 JSON, checks the object/format/integrity envelope,
-and requires a usable obligation list before parameterization. Unsafe or malformed manifests stop
+opened binary stream, strictly decodes duplicate-free finite UTF-8 JSON, iteratively enforces the
+same 100-level/500,000-node structure limit, checks the object/format/integrity envelope, and
+requires a usable obligation list before parameterization. Unsafe or ambiguous manifests stop
 collection with a bounded remediation message rather than being followed or buffered without limit.
 
 Each derived obligation carries a canonical verification-contract digest. Editing the
@@ -1034,9 +1085,11 @@ sfmea assurance-evidence-import sfmea-analysis.json VO-... `
 The versioned import manifest identifies the current `baseline_id`, repository revision,
 test path and SHA-256, shell-free `command_argv`, outcome, environment, dependency-lock
 metadata, and one or more manifest-relative artifacts with optional SHA-256 claims. Import
-is idempotent and rejects traversal, symbolic links, non-files, malformed UTF-8 JSON, excessive
-manifest bytes, per-artifact bytes, and aggregate evidence bytes. Limits are enforced while bytes
-are consumed rather than from a pre-read size observation. Every artifact is first streamed into a
+is idempotent and rejects traversal, symbolic links, non-files, malformed or ambiguous UTF-8 JSON,
+duplicate keys, non-finite values or numeric overflow, structures beyond 100 levels or 100,000
+nodes, excessive manifest bytes, per-artifact bytes, and aggregate evidence bytes. The manifest's
+inspected, opened, and final file identities must agree, and limits are enforced while bytes are
+consumed rather than from a pre-read size observation. Every artifact is first streamed into a
 bounded hash and then copied through an independently bounded hashing stream; a source that changes
 between validation and copy is refused and private staging is removed. Imported test registration
 and evidence recording occur only after successful publication. A recording failure restores the
@@ -1190,6 +1243,13 @@ controls still requires qualified review.
 `source` may be omitted when a qualified component name is unique. If the same name
 and rule occur in multiple files, evaluation stops and requests a source rather than
 silently combining the cases.
+
+Golden corpora use the closed `pysfmea-golden-corpus-1` contract. The CLI consumes at most 20 MB
+from a stable regular, non-symbolic-link file; strict UTF-8 JSON rejects duplicate keys,
+non-finite numbers, unsupported fields, and excessive depth or node count. Case, scope-pattern,
+field-length, and active-candidate ceilings keep evaluation bounded. Results identify
+`pysfmea-evaluation-result-1`, the exact verifier version, and a canonical corpus SHA-256 digest,
+so retained release evidence can distinguish a scanner change from a changed golden baseline.
 
 ## Recommended review sequence
 

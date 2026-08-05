@@ -84,6 +84,24 @@ execution from work that first requires engineering definition, review, or remed
 projection is reproducible and export-only: it does not modify the governed obligation, approve
 execution, infer evidence sufficiency, or close a finding.
 
+External assurance state is parsed before it can influence that lifecycle. Work queues use a
+100 MiB/100-level/1,000,000-node strict JSON boundary; scaffold and retirement manifests use a
+64 MiB/100-level/500,000-node boundary; imported and recorded execution manifests use a
+2 MB/100-level/100,000-node boundary. Each boundary refuses links and non-files, reconciles
+inspected/opened/final identity, requires exact UTF-8, and rejects duplicate keys, non-finite
+literals, and finite-syntax float overflow before canonical hashing or semantic checks. The
+standalone generated pytest loader independently applies the scaffold structure and decoding
+rules so its safety does not depend on an installed PySFMEA package.
+
+Optional organizational guidance and runtime observations use the same exact-byte governed JSON
+document primitive. A guidance pack is limited to 5 MB/100 levels/250,000 nodes before it can add
+sources, locators, applicability, or rule relationships. A simple/OTLP trace is limited to
+100 MB/100 levels/2,000,000 nodes before its separately bounded span and attribute traversal can
+add observed cascade or timing evidence. Both require inspected/opened/final file identity,
+duplicate-free finite UTF-8 JSON, and exact captured-byte hashing. Runtime state, history, and
+summary commit together and roll back together. These controls preserve deterministic provenance;
+they do not make a trace complete, representative, correctly instrumented, or causally sufficient.
+
 ## Analysis structure
 
 The default implementation-level elements are public and private functions, methods, constructors, selected lifecycle methods, nested functions, closures, named lambdas, declarative data models, and executable module initialization. The inventory also contains the declared dependency environment, project-defined common causes, and local OpenAPI, Swagger, JSON Schema, and protobuf interface contracts. Dependency evidence includes parsed declarations, recursively included requirement files, and hashes of common lock/build manifests. Contract evidence includes extracted operations/data types and a content hash. Tests are evidence sources but are not analyzed as production components unless explicitly included.
@@ -135,7 +153,29 @@ The rules intentionally state failure at the functional boundary. A coding defec
 
 ## Evidence and confidence
 
-Scanner evidence includes source location, AST signals, approximate internal callers and transitive upstream paths, complexity, decorators, textual test references, dependency declarations, and optional function-level line and branch evidence derived from coverage.py JSON. These are useful for triage and traceability. They are not proof that a failure exists or that a control is effective. Python's runtime dispatch means the caller evidence is deliberately conservative and incomplete.
+Scanner evidence includes source location, AST signals, approximate internal callers and transitive upstream paths, complexity, decorators, textual test references, dependency declarations, and optional function-level line and branch evidence derived from coverage.py JSON. Coverage input is accepted from one exact-byte, regular-file, non-link, identity-stable snapshot under 100 MB/100-level/2,000,000-node JSON limits, with 100,000-file and 4,096-character path bounds. Duplicate keys, non-finite values, repository escapes, unsafe aliases, and malformed coordinates cannot silently influence a component. Accepted byte and record provenance remains in scan settings, its SHA-256 is part of the immutable run-manifest inputs, and an input inside the analyzed repository reuses those same bytes for inventory evidence. External coverage remains external evidence rather than being added to repository accounting. These are useful for triage and traceability. They are not proof that a failure exists or that a control is effective. Python's runtime dispatch means the caller evidence is deliberately conservative and incomplete.
+
+Python source uses one exact identity-stable snapshot per selected file. The same immutable bytes
+drive PEP 263 decoding, AST construction, included-test reference indexing, and baseline hashing;
+the scanner does not reread a selected file after findings have been derived. Eligible textual test
+evidence uses a separate single-snapshot set captured before baseline construction and reused for
+reference attribution and inventory hashing. Configured/default/hidden exclusions apply to that
+index, and rejected link, boundary, identity, or limit cases remain explicit. The baseline records
+accepted and rejected counts, accepted bytes, and canonical source and test-evidence digests over
+ordered path/status/byte/hash records; the run manifest binds both digests. A successful snapshot
+proves which bytes were inspected, not test adequacy or that static analysis resolves runtime
+dispatch, generated code, imports, metaprogramming, deployed configuration, or native extensions.
+
+Dependency evidence uses the same exact-snapshot principle. Pyproject, recursive
+requirements/constraints, and supported lockfiles are captured from regular non-link files whose
+inspected, opened, and final identities agree under 20 MB per-file, 1,000 attempted-file, and
+100 MB aggregate limits. Each manifest record retains its byte count and SHA-256; supported parsing,
+environment fingerprints, repository-inventory evidence, the repository baseline, and the
+immutable run manifest reuse that snapshot. Interface-contract extraction follows the same rule:
+operations, data types, contract inventory, and repository coverage bind to one captured byte
+stream. Formats without an explicit semantic parser remain content-addressed artifacts. A hash
+proves which bytes were analyzed, not that resolution, installation, provenance, licensing,
+vulnerability state, or runtime compatibility is correct.
 
 Confidence describes how directly a rule was triggered by observable syntax. It is not likelihood or occurrence. The two baseline functional rules are generated systematically even when no specialized syntax is present.
 
@@ -197,6 +237,21 @@ Trace import is idempotent by source hash. Mapping prefers explicit `sfmea.compo
 and code-function attributes, then unambiguous names, then code-file/function pairs.
 Mapped and unmapped counts and mapping methods are retained so reviewers can assess
 the strength of the runtime-to-source correlation.
+
+## Curated regression evaluation boundary
+
+Golden scanner corpora use the closed `pysfmea-golden-corpus-1` contract: bounded metadata,
+unique optional scope globs, and unique source/component/rule cases. File ingestion consumes at
+most 20 MB from a regular non-symbolic-link input, reconciles path and opened-file identity, and
+strictly decodes UTF-8 JSON without duplicate keys or non-finite values. Depth, node, case, scope,
+field-length, and active-candidate limits are enforced before matching. Matching indexes exact
+source/component/rule identities and refuses ambiguous source-less cases.
+
+The deterministic `pysfmea-evaluation-result-1` includes verifier provenance and a canonical
+corpus digest. Recall, precision, duplicate, localization, citation, traceability, provenance,
+and source-accounting metrics establish repeatable behavior only within the declared corpus
+scope. They do not establish semantic correctness, performance on unseen systems, certification
+credit, or engineering approval of an updated golden baseline.
 
 ## Machine-assisted discovery boundary
 
@@ -298,7 +353,11 @@ requirement-to-hazard traceability, candidate failure propagation, recorded cont
 coverage, and ordered static/observed sequences. Projects can import custom flow,
 state, traceability, cause/effect, sequence, or directed-graph models. Imported
 relationships retain their declared evidence but receive no additional credibility
-from validation or rendering.
+from validation or rendering. Custom files use exact-byte identity-stable strict JSON ingestion
+under 5 MB/100-level/250,000-node per-file and 50-file/25 MB aggregate limits. Every imported
+diagram retains its accepted source byte count and SHA-256 inside the integrity-protected report;
+this supports attribution and reproducibility but does not authenticate authorship or establish
+that any represented relationship is correct.
 
 The failure-propagation projection is explicitly bounded. By default it selects one
 priority-ordered finding per component before filling remaining capacity. Operators can
@@ -341,6 +400,14 @@ contract it consumed. Structural schema validation complements but does not repl
 verification of content digests, unique identifiers, edge references, or current analysis
 bindings.
 
+Offline schema-bundle and public failure-catalog files are consumed through a shared strict JSON
+boundary before canonical hashing. Each file must be a regular non-link whose inspected, opened,
+and final identities agree; bytes are bounded during the read; UTF-8 must decode exactly; duplicate
+keys and non-finite numbers are rejected; and iterative depth/node ceilings constrain the decoded
+structure. Schema files use a 2 MB/100-level/250,000-node limit and the catalog uses a
+1 MB/50-level/100,000-node limit. Passing these checks establishes deterministic input handling,
+not schema authorship, compatibility approval, or correctness of downstream policy.
+
 Traceability graph identities are namespaced by element kind. Human catalog IDs remain
 visible as `reference_id`, while a requirement and hazard that happen to share the same
 textual ID cannot overwrite one another in JSON or Mermaid output. Configured
@@ -349,7 +416,13 @@ requirement-to-hazard relationships are rendered explicitly as mitigation links.
 Contract components use the same configured component-mapping vocabulary as Python
 components. Requirements, hazards, subsystems, and system interfaces flow into their
 worksheet records and analysis-context fingerprints, so mapping changes require
-review revalidation.
+review revalidation. Contract evidence is captured as one exact bounded regular-file snapshot;
+links/non-files and inspected/opened/final identity changes are rejected. JSON contracts use
+duplicate-free finite decoding under 100-level/1,000,000-node limits before semantic extraction.
+Malformed files remain visible with warnings, exact byte counts, and content hashes but contribute
+no unsupported operations or data types. The complete contract inventory is included in the
+immutable run-manifest inputs. This integrity establishes attribution to accepted bytes, not that a
+contract is authoritative, deployed, compatible, or complete.
 
 All sequence interactions—including static internal, selected external, and observed
 runtime relationships—share the configured depth and interaction bounds. Truncated
@@ -383,12 +456,26 @@ signature stays outside the package so it does not invalidate the manifest or be
 self-referential. Verification is meaningful only when the supplied public key has
 been obtained through a separately trusted process; key custody, revocation,
 authorization, and formal engineering approval remain organizational controls.
-Key and envelope files are consumed through bounded, regular-file, final-link-safe
-reads with opened-file identity checks. Signature verification always reruns package
-integrity verification, then requires the bounded manifest bytes to match that exact
-verification digest. Detached-signature publication revalidates its destination at
+Key and envelope files are consumed through bounded regular-file reads whose inspected, opened,
+and final identities must agree. Envelopes use strict duplicate-free finite UTF-8 decoding under
+a 1 MB/20-level/10,000-node boundary. Signature verification always reruns package integrity
+verification, then strictly decodes the independently reread manifest under a
+10 MB/100-level/250,000-node boundary and requires those exact bytes to match the verification
+digest. Detached-signature publication revalidates its destination at
 the atomic replacement boundary and preserves prior content on rejected publication.
 Exact ZIP bytes receive an additional identity-checked 550 MB streaming reconciliation.
+
+Standalone engineering exports share a 256 MiB encoded-artifact publication boundary. CSV,
+Markdown, JSON, SARIF, CycloneDX, SFTA, architecture, sequence, traceability, coverage, audit,
+guidance, assurance-register/work-queue, individual JSON Schema, publication-catalog,
+diagram-bundle, and HTML outputs retain the caller's final path identity instead of
+resolving through a link. Publication rejects links and non-files, stages a private sibling,
+flushes and synchronizes it, compares the destination with its inspected state, and then performs
+one atomic replacement. This preserves an existing artifact when rendering, staging, identity
+reconciliation, or replacement fails; it does not make the artifact's engineering conclusions
+correct or provide durable-storage guarantees beyond the host filesystem contract.
+Catalog replacement carries the exact absent/file state across existing-envelope validation and
+refuses publication if that state changes before staging or replacement.
 
 Portable-package mode operates on a copy and removes machine-local absolute path
 prefixes from the package snapshot and manifest. Relative source locations, hashes,

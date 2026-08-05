@@ -14,9 +14,11 @@ guidance_packs = ["standards/company-software-assurance.json"]
 ```
 
 Paths are resolved relative to `sfmea.toml`. Each pack must be a regular, non-symbolic-link UTF-8
-JSON file. PySFMEA reads at most five megabytes from the open stream, parses and schema-checks that
-bounded content, hashes the exact consumed bytes, and adds the pack as an automatically active
-`org.*` profile. IDs may not collide with built-in or other pack records. Pack provenance,
+JSON file. PySFMEA reads at most five megabytes from one inspected/opened/final identity-stable
+stream and rejects duplicate keys, non-finite values, numeric overflow, malformed UTF-8, depth over
+100 levels, or more than 250,000 decoded nodes. It schema-checks that bounded content, hashes the
+exact consumed bytes, and adds the pack as an automatically active `org.*` profile. IDs may not
+collide with built-in or other pack records. Pack provenance,
 source-record digests, catalog digest, profile selection digest, and per-finding
 mapping IDs are preserved in JSON, CSV, HTML, run-manifest, and review-package output.
 

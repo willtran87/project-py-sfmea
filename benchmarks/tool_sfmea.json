@@ -8,20 +8,20 @@
       "id": "TOOL-FM-001",
       "function": "Discover repository inputs",
       "failure_mode": "A relevant source or supporting artifact is silently omitted.",
-      "trigger": "Exclusion, symlink, size, permission, path, or file-count boundary is encountered.",
+      "trigger": "Exclusion, symlink, size, permission, path, file-count, unstable Python source, unstable repository artifact, unstable dependency manifest, ambiguous coverage evidence, or unstable/ambiguous interface-contract evidence is encountered.",
       "effects": ["The component/failure inventory is incomplete.", "A reviewer may overestimate analysis coverage."],
-      "controls": ["Bounded non-following walk", "Explicit analyzed/indexed/excluded/unresolved/opaque status", "Inventory digest"],
-      "verification": ["test_scan_records_context_repository_coverage_and_adapter_contributions", "portable package verification"],
+      "controls": ["Bounded non-following walk", "Explicit analyzed/indexed/excluded/unresolved/opaque status", "Exact-byte identity-stable source, test-evidence, repository-artifact, dependency, coverage, and contract ingestion", "Single-snapshot source/test/dependency/contract/coverage attribution, inventory evidence, and baseline binding", "Configured test-evidence scope", "External coverage boundary", "Per-entry repository snapshot provenance", "Strict structurally bounded contract JSON decoding", "Source/test/dependency/contract/coverage byte/hash provenance", "Source, test-evidence, dependency, coverage, contract, and repository inventory digests"],
+      "verification": ["single-read source, test-evidence, dependency, contract, and coverage identity-race, replacement, encoding, limit, exclusion, inventory-reuse, and provenance tests", "identity-stable repository-artifact hashing and bounded-consumption tests", "test_scan_records_context_repository_coverage_and_adapter_contributions", "dependency identity-race, recursive, limit, replacement, and provenance tests", "coverage and contract ambiguity, overflow, structure, identity-race, replacement, external-boundary, limit, and provenance tests", "portable package verification"],
       "residual_risk": "Unsupported formats and dynamic/generated material still require project-specific analyzers or explicit manual review."
     },
     {
       "id": "TOOL-FM-002",
       "function": "Parse Python without execution",
       "failure_mode": "Python syntax is parsed incorrectly or a parse failure is represented as analyzed.",
-      "trigger": "Unsupported syntax, encoding, malformed source, or parser-version difference.",
+      "trigger": "Unsupported syntax, encoding, malformed or concurrently replaced source, parser-version difference, or mismatch between parsed and baseline bytes.",
       "effects": ["Components and source evidence may be missing or incorrectly localized."],
-      "controls": ["Standard-library tokenizer/AST", "Parse warnings", "Unresolved inventory status", "No repository import/execution"],
-      "verification": ["scanner syntax-error tests", "multi-version CI"],
+      "controls": ["Standard-library tokenizer/AST", "Exact-byte identity-stable source snapshots", "Single-snapshot parsing/baseline reuse", "Snapshot-set run-manifest digest", "Parse warnings", "Unresolved inventory status", "No repository import/execution"],
+      "verification": ["single-read source snapshot, identity-race, encoding, syntax-error, limit, and run-manifest tests", "multi-version CI"],
       "residual_risk": "AST analysis cannot resolve runtime metaprogramming or interpreter-specific behavior."
     },
     {
@@ -48,10 +48,10 @@
       "id": "TOOL-FM-005",
       "function": "Trace guidance to findings",
       "failure_mode": "A locator, revision, applicability profile, or rule relationship is wrong, stale, or leaks across domains.",
-      "trigger": "Catalog update, mapping error, profile error, or malformed organizational pack.",
+      "trigger": "Catalog update, mapping error, profile error, ambiguous JSON, input replacement, oversized structure, or malformed organizational pack.",
       "effects": ["Reviewers may apply irrelevant guidance or misunderstand the authority of a finding."],
-      "controls": ["Versioned profiles", "Exact locators", "Source/pack/catalog hashes", "Closed relationship vocabulary", "Collision rejection", "No compliance claims"],
-      "verification": ["guidance integrity/profile-isolation tests", "organizational pack end-to-end test"],
+      "controls": ["Versioned profiles", "Exact locators", "Strict exact-byte identity-stable pack ingestion", "Byte/depth/node limits", "Source/pack/catalog hashes", "Closed relationship vocabulary", "Collision rejection", "No compliance claims"],
+      "verification": ["guidance integrity/profile-isolation tests", "organizational pack ambiguity, overflow, structure, identity-race, and end-to-end tests"],
       "residual_risk": "Document interpretation and legal/regulatory applicability remain human responsibilities."
     },
     {
@@ -68,10 +68,10 @@
       "id": "TOOL-FM-007",
       "function": "Generate executable assurance obligations",
       "failure_mode": "A proposed test lacks a real fault stimulus/oracle or a passing result is treated as verification.",
-      "trigger": "Placeholder implementation, false-pass test, stale baseline, incomplete evidence, or same-person review.",
+      "trigger": "Placeholder implementation, false-pass test, stale baseline, ambiguous or unstable assurance/evidence JSON, incomplete evidence, or same-person review.",
       "effects": ["A control or failure response may appear verified without objective evidence."],
-      "controls": ["Intentionally failing scaffolds", "Predefined criteria", "Stimulus proof", "Artifact hashes", "Baseline binding", "Independent evidence review", "Passing cannot close risk"],
-      "verification": ["assurance lifecycle and evidence-review tests", "unsupported verification metric"],
+      "controls": ["Intentionally failing scaffolds", "Strict bounded identity-stable assurance/evidence ingestion", "Standalone scaffold structure guard", "Predefined criteria", "Stimulus proof", "Artifact hashes", "Baseline binding", "Independent evidence review", "Passing cannot close risk"],
+      "verification": ["assurance queue/scaffold ambiguity and structure tests", "execution-evidence numeric-overflow and identity-race tests", "assurance lifecycle and evidence-review tests", "unsupported verification metric"],
       "residual_risk": "Test adequacy and oracle correctness require domain expertise."
     },
     {
@@ -88,21 +88,41 @@
       "id": "TOOL-FM-009",
       "function": "Render and exchange analysis results",
       "failure_mode": "Repository-controlled content executes, corrupts a report, or produces unsafe spreadsheet/package behavior.",
-      "trigger": "HTML/script text, spreadsheet formula prefix, path traversal, symlink, ZIP bomb, or malformed diagram.",
+      "trigger": "HTML/script text, spreadsheet formula prefix, path traversal, symlink, destination race, partial write, ZIP bomb, ambiguous/non-finite/oversized diagram JSON, or excessive custom diagram inputs.",
       "effects": ["Reviewer workstation compromise, misleading report, or unsafe package extraction."],
-      "controls": ["DOM text rendering", "Restrictive CSP", "Spreadsheet formula neutralization", "Validated diagrams", "Canonical package paths", "No general ZIP extraction", "Size/ratio limits"],
-      "verification": ["HTML injection/JavaScript syntax tests", "CSV safety tests", "package traversal/symlink/tamper/ZIP-bomb tests"],
+      "controls": ["DOM text rendering", "Restrictive CSP", "Spreadsheet formula neutralization", "Strict exact-byte identity-stable custom diagram ingestion", "Diagram file/aggregate/structure/model limits", "Imported-file SHA-256 provenance", "Validated diagrams", "Shared bounded identity-safe atomic artifact publication", "Canonical package paths", "No general ZIP extraction", "Size/ratio limits"],
+      "verification": ["HTML injection/JavaScript syntax tests", "custom diagram ambiguity/overflow/structure/identity/file-count/aggregate/provenance tests", "CSV safety tests", "artifact publication size/link/race/failure/encoding tests", "package traversal/symlink/tamper/ZIP-bomb tests"],
       "residual_risk": "Consumer software vulnerabilities and very large but permitted reports remain external risks."
     },
     {
       "id": "TOOL-FM-010",
       "function": "Preserve reproducible audit provenance",
       "failure_mode": "Analysis or package bytes differ from recorded inputs while integrity checks still pass.",
-      "trigger": "Digest omission, mutable manifest field, migration error, partial write, or verifier defect.",
+      "trigger": "Digest omission, mutable manifest field, duplicate, non-finite, or overflowed numeric JSON, input identity swap, oversized structure, accepted source, dependency, coverage, or interface-contract snapshot omission, migration error, partial write, or verifier defect.",
       "effects": ["Reviewers cannot reproduce or trust the claimed analysis baseline."],
-      "controls": ["Canonical SHA-256 digests", "Atomic writes/publication", "Schema migrations", "Independent package verification", "Optional detached Ed25519 signature", "Adapter contribution ledger"],
-      "verification": ["manifest canonicalization, migration, atomicity, signing, and package-tamper tests"],
+      "controls": ["Canonical SHA-256 digests", "Strict bounded identity-stable governed JSON ingestion", "Source, dependency, coverage, and contract exact-byte provenance with immutable input binding", "Strict signed-envelope and manifest decoding", "Final key/signature identity reconciliation", "Atomic writes/publication", "Schema migrations", "Independent package verification", "Optional detached Ed25519 signature", "Adapter contribution ledger"],
+      "verification": ["manifest canonicalization, source/dependency/coverage/contract snapshot binding, strict file/stream JSON ingestion, key/signature identity-change, envelope/manifest structure-bound, migration, atomicity, signing, and package-tamper tests"],
       "residual_risk": "Hashes prove byte consistency, not authorship, authorization, semantic correctness, or long-term algorithm suitability."
+    },
+    {
+      "id": "TOOL-FM-011",
+      "function": "Evaluate scanner behavior against a curated golden corpus",
+      "failure_mode": "A malformed, changed, ambiguous, or adversarial evaluation baseline produces misleading quality metrics.",
+      "trigger": "Linked or changing input, duplicate JSON/cases, oversized structure, unknown fields, ambiguous component identity, or unreviewed baseline revision.",
+      "effects": ["Scanner regressions may be hidden.", "A release may cite recall or precision measured against the wrong corpus."],
+      "controls": ["Regular non-link identity-stable ingestion", "Byte/depth/node/case/scope/candidate limits", "Strict closed JSON contract", "Source-aware ambiguity rejection", "Canonical corpus digest", "Versioned verifier provenance"],
+      "verification": ["test_evaluation.py adversarial ingestion and contract tests", "test_validation_benchmark.py exact regression gate", "installed-wheel evaluation smoke"],
+      "residual_risk": "A valid curated corpus can still be incomplete, biased, or incorrectly approved; independent baseline review remains required."
+    },
+    {
+      "id": "TOOL-FM-012",
+      "function": "Import observed runtime topology and timing evidence",
+      "failure_mode": "An incomplete, ambiguous, stale, malformed, or hostile trace produces misleading cascade or timing relationships.",
+      "trigger": "Instrumentation gaps, sampling, duplicate JSON keys, non-finite values, input replacement, oversized structure, ambiguous component mapping, or an unrepresentative execution.",
+      "effects": ["A reviewer may infer a cascade path that was not reliably observed.", "A real runtime dependency or timing failure may remain absent from the analysis."],
+      "controls": ["Candidate evidence semantics", "Exact-byte strict identity-stable JSON ingestion", "Byte/depth/node/span/attribute limits", "Unambiguous component mapping", "Explicit unmapped counts", "Content-addressed idempotence", "Transactional analysis commit", "Incompleteness notice"],
+      "verification": ["runtime ambiguity, numeric-overflow, structure, link, identity-race, mapping, idempotence, and rollback tests", "installed-wheel trace-import smoke"],
+      "residual_risk": "A valid trace proves only what the selected instrumentation captured in that execution; coverage, clock quality, causality, and operational representativeness require independent review."
     }
   ]
 }

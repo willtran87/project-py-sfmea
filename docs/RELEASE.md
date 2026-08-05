@@ -69,7 +69,9 @@ signing remain explicit maintainer actions.
   `json-sort-keys-compact-utf8`, is included in the canonical digest, and rejects missing,
   unsupported, or published-state declarations.
 - Confirm `publication-catalog --verify` accepts the exact catalog, rejects drift and unavailable
-  inputs with schema-valid bounded verdicts, and returns a nonzero rejection status.
+  inputs with schema-valid bounded verdicts, requires inspected/opened/final identity agreement,
+  rejects duplicate keys, non-finite numbers, malformed UTF-8, and depth/node overflow, and
+  returns a nonzero rejection status.
 - Confirm `publication-catalog --output` is deterministic and atomic, protects existing files,
   refreshes only recognized catalogs with `--force`, and preserves prior bytes on failure.
 - Confirm JSON export emits a schema-valid path-bound verification receipt and forced refresh
@@ -78,15 +80,26 @@ signing remain explicit maintainer actions.
   twelve- and thirteen-schema packages remain compatible under the current verifier.
 - Confirm offline schema-bundle verification rejects linked, non-file, malformed UTF-8, and
   oversized entries through schema-valid verdicts and enforces its two-megabyte limit on bytes
-  consumed from each open stream rather than a pre-read size observation.
+  consumed from each open stream rather than a pre-read size observation. Confirm every allowed
+  file reconciles inspected/opened/final identity and rejects duplicate keys, non-finite numbers,
+  and 100-level/250,000-node overflow before canonical hashing.
 - Confirm organizational guidance packs reject missing, directory, symbolic-link, malformed
-  UTF-8, and oversized inputs; enforce the five-megabyte limit while consuming the stream; and
-  hash the exact bounded bytes used for citation selection.
+  UTF-8, duplicate-key, non-finite/overflowed numeric, oversized, deep, high-node-count, and
+  inspected/opened/final identity-changing inputs; enforce the 5 MB/100-level/250,000-node limits;
+  and hash the exact single-snapshot bytes used for citation selection.
 - Confirm assurance-scaffold verification bounds manifest and retirement-record bytes while
   consuming each stream, streams generated-file hashes under their own byte limit, rejects
-  non-regular/symbolic-link JSON artifacts, and reports broken retirement links as invalid records.
+  non-regular/symbolic-link JSON artifacts, reconciles inspected/opened/final identity, rejects
+  duplicate/non-finite/overflowed numeric JSON and depth/node exhaustion, and reports broken
+  retirement links as invalid records. Confirm the generated standalone pytest loader applies the
+  same strict decoding and iterative structure policy before collection.
   Confirm guarded refresh/archive reuse bounded ingestion, retain final-link identity, and refuse
   linked sources, retirement records, and destinations without following them.
+- Confirm standalone assurance work queues use the strict 100 MiB/100-level/1,000,000-node input
+  boundary before digest and deterministic projection checks. Confirm imported and recorded
+  execution manifests use the strict 2 MB/100-level/100,000-node boundary before baseline,
+  artifact, lifecycle, or evidence-review decisions, and identity-change failures remain
+  transactional.
 - Confirm guarded refresh/archive retain the exact initially verified manifest snapshot, revalidate
   the queue at the mutation boundary, reject a different independently valid manifest identity,
   preserve the source queue, and remove refresh staging residue without creating retirement state.
@@ -99,34 +112,58 @@ signing remain explicit maintainer actions.
   and restores both analysis and filesystem state if final recording fails; managed review reuses
   the bounded link-safe verifier.
 - Confirm simple/OTLP runtime trace import rejects links/non-files, enforces its 100 MB byte limit
-  while consuming the stream, validates UTF-8 JSON roots, iteratively traverses typed containers,
-  caps spans/attribute depth/labels, leaves rejected traces side-effect free, and restores the full
-  analysis if runtime/history/summary finalization fails.
+  while consuming an inspected/opened/final identity-stable stream, rejects duplicate keys,
+  non-finite/overflowed numeric values, malformed UTF-8, and 100-level/2,000,000-node overflow,
+  validates JSON roots, iteratively traverses typed containers, caps spans/attribute depth/labels,
+  leaves rejected traces side-effect free, and restores the full analysis if
+  runtime/history/summary finalization fails.
 - Confirm coverage JSON import rejects links/non-files, enforces its 100 MB limit while consuming
-  the binary stream, validates UTF-8 JSON object roots, refuses repository escapes and parent
-  traversal, and normalizes line/branch coordinates while retaining valid signed branch
-  destinations. Confirm unsafe, malformed, and duplicate normalized records are omitted with
-  stable aggregate warnings while the remaining repository analysis completes.
+  an inspected/opened/final identity-stable binary stream, rejects duplicate keys,
+  non-finite/overflowed numbers, malformed UTF-8, and 100-level/2,000,000-node overflow, and
+  validates JSON object roots. Confirm file traversal stops before exceeding 100,000 records,
+  path processing is bounded to 4,096 characters, repository escapes and parent traversal are
+  refused, and typed line/branch coordinates retain valid signed branch destinations. Confirm
+  unsafe, malformed, and duplicate normalized records are omitted with stable aggregate warnings
+  while the remaining repository analysis completes. Confirm the exact accepted-byte digest and
+  record counts are retained in settings, the digest is bound into the immutable run manifest, and
+  an in-repository coverage artifact reuses that captured snapshot for inventory hashing without a
+  second read. Confirm external coverage is not added to repository artifact accounting.
 - Confirm Python source and test-reference evidence reject links/non-files, enforce the 20 MB
-  per-file limit while consuming each stream, honor valid PEP 263 encodings, and report invalid or
-  unsupported encodings without aborting the scan. Confirm source discovery stops explicitly at
-  100,000 selected files, test indexing stops at 10,000 files or 100 MB, rejected source remains
-  visible as unresolved/opaque inventory, and baseline hashing cannot re-read it unbounded.
+  per-file limit while consuming an inspected/opened/final identity-stable stream, honor valid
+  PEP 263 encodings, and report invalid or unsupported encodings without aborting the scan. Confirm
+  each selected source is read once and its accepted bytes are reused for AST parsing, included-test
+  indexing, and baseline hashing. Confirm each eligible test-evidence file is also read once before
+  baseline construction, configured/default/hidden exclusions apply, and its bytes are reused for
+  reference attribution and repository inventory hashing. Confirm discovery stops at 100,000
+  selected files, test indexing stops at 10,000 files or 100 MB, rejected evidence remains visible,
+  accepted/rejected file and byte counts are accurate, and both canonical snapshot-set digests are
+  bound into the run manifest and baseline identity.
 - Confirm pyproject, recursively included requirements/constraints, and supported lockfiles reject
-  links/non-files and normalized repository escapes; enforce 20 MB per-file, 1,000 attempted-file,
-  and 100 MB aggregate limits; and stop reading after aggregate exhaustion. Confirm hashing and
-  semantic parsing reuse one exact accepted byte snapshot, requirement text requires UTF-8, and
-  malformed pyproject dependency container shapes cannot create dependency claims.
+  links/non-files, inspected/opened/final identity changes, and normalized repository escapes;
+  enforce 20 MB per-file, 1,000 attempted-file, and 100 MB aggregate limits; and stop reading after
+  aggregate exhaustion. Confirm hashing, accepted byte counts, recursive parsing, baseline
+  fingerprinting, repository inventory evidence, and immutable manifest binding reuse one exact
+  accepted snapshot without reopening the manifest path. Confirm
+  requirement text requires UTF-8, malformed pyproject dependency container shapes cannot create
+  dependency claims, and unsupported lockfile syntax remains hash evidence rather than speculative
+  parsed claims.
 - Confirm OpenAPI/Swagger, JSON Schema, YAML, and protobuf contract discovery rejects links,
-  non-files, and resolved escapes; enforces 20 MB per-file, 1,000 discovered-file, and 100 MB
-  aggregate limits while consuming streams; and handles invalid UTF-8, malformed JSON, scalar
-  roots, and unexpected containers without aborting the scan. Confirm operations/data types stop
-  at 500 distinct values per category and truncation is explicit.
-- Confirm repository inventory hashing rejects links and non-regular artifacts before opening,
-  enforces 20 MB per artifact and 500 MB across bytes actually consumed, and never exposes raw
-  filesystem failures. Confirm aggregate exhaustion continues safe metadata/semantic accounting
-  but adds a digest-bound unresolved region, marks the inventory truncated, and omits later hashes;
-  file and excluded/opaque-region traversal each stop at 100,000 records.
+  non-files, resolved escapes, and inspected/opened/final identity changes; enforces 20 MB
+  per-file, 1,000 discovered-file, and 100 MB aggregate limits while consuming streams; and
+  handles invalid UTF-8, malformed JSON, scalar roots, and unexpected containers without aborting
+  the scan. Confirm JSON contracts reject duplicate keys, non-finite/overflowed numbers, and
+  100-level/1,000,000-node structure overflow before semantic extraction. Confirm operations/data
+  types stop at 500 distinct values per category, truncation is explicit, accepted byte counts and
+  digests remain visible, repository inventory evidence reuses the captured contract bytes, and the
+  complete inventory digest is bound into the run manifest.
+- Confirm repository inventory hashing reuses accepted Python analysis, test-evidence,
+  dependency-manifest, interface-contract, and in-repository coverage snapshots; rejects links and
+  non-regular artifacts before opening, identity-reconciles every independent artifact snapshot,
+  exposes per-entry snapshot provenance, enforces 20 MB per artifact and 500 MB across bytes
+  actually consumed, and never exposes raw filesystem failures. Confirm aggregate exhaustion
+  continues safe metadata/semantic accounting but adds a digest-bound unresolved region, marks the
+  inventory truncated, and omits later hashes; file and excluded/opaque-region traversal each stop
+  at 100,000 records.
 - Confirm project configuration rejects links/non-files and inspected/opened identity changes,
   enforces its 5 MB limit while consuming the binary stream, and validates bounded UTF-8 TOML before semantic normalization. Confirm
   relative coverage/guidance paths retain final-link identity for their downstream loaders.
@@ -134,16 +171,21 @@ signing remain explicit maintainer actions.
   flushes complete content before atomic replacement, revalidates at the mutation boundary,
   preserves prior content when replacement fails, and removes temporary residue.
 - Confirm detached signing and verification enforce consumption-time key/envelope limits,
-  reject links/non-files and inspected/opened identity changes, and parse envelopes as strict
-  bounded UTF-8 JSON. Confirm signer/passphrase limits fail before package or key processing.
+  reject links/non-files and inspected/opened/final identity changes, and parse envelopes as
+  strict duplicate-free finite UTF-8 JSON under 20-level/10,000-node limits. Confirm duplicate
+  keys, non-finite literals, numeric overflow, and structure exhaustion fail before cryptography.
+  Confirm signer/passphrase limits fail before package or key processing.
 - Confirm signature verification ignores stale caller-supplied package verdicts, freshly verifies
-  integrity, reconciles a bounded manifest reread to that exact digest, and returns structured
-  rejection when package bytes change between verification phases. Confirm exact ZIP bytes are
-  identity-checked and streamed under the 550 MB reconciliation limit.
+  integrity, strictly decodes a 10 MB/100-level/250,000-node manifest reread, reconciles those exact
+  bytes to the verified digest, and returns structured rejection when package bytes change between
+  verification phases. Confirm exact ZIP bytes are identity-checked and streamed under the 550 MB
+  reconciliation limit.
 - Confirm signature publication revalidates destination identity at atomic replacement, refuses
   concurrent replacement, preserves prior content on failure, and removes staging residue.
-- Confirm the repository-discovery, dependency-inventory, and local-contract adapter descriptors
-  report version 2 with capabilities matching their current bounded-ingestion semantics.
+- Confirm repository-discovery, AST-parser, and local-contract adapters report version 2, while
+  dependency inventory reports version 3. Confirm AST provenance advertises exact-byte source
+  snapshots, PEP 263 decoding, identity reconciliation, and single-snapshot baseline binding;
+  dependency provenance advertises byte counts, recursive ingestion, and containment.
 - Confirm `report --json` stages privately, verifies exact binding before atomic replacement,
   emits only a schema-valid receipt, preserves prior output and removes residue on every failure,
   sanitizes unexpected load/generation/verification/publication details, and leaves stderr empty.
@@ -153,15 +195,25 @@ signing remain explicit maintainer actions.
 - Confirm report publication rejects destination symbolic links, directories, and other
   non-regular objects before generation in human and JSON modes, preserves their bytes/targets,
   and never resolves the final atomic replacement through a link.
+- Confirm every standalone CSV/Markdown/JSON/SARIF/CycloneDX/SFTA/visual/diagram/HTML,
+  assurance-register/work-queue, individual-schema, and publication-catalog export uses the shared
+  encoded-artifact boundary, retains BOM/newline compatibility, rejects link and non-file
+  destinations, refuses concurrent destination changes, preserves prior bytes after forced
+  replacement failure, and removes every sibling staging file.
+- Confirm forced publication-catalog refresh carries the inspected destination state across
+  recognized-envelope validation and refuses absent-to-present, replacement, and in-place edits
+  before staging or atomic replacement without modifying the concurrent owner's bytes.
 - Confirm HTML/PDF engineering notes reject missing, non-regular, symbolic-link, malformed UTF-8,
   and oversized inputs; enforce the byte limit while consuming the stream; canonicalize newlines;
   and preserve prior JSON-mode output through a sanitized generation receipt.
 - Confirm HTML verification enforces its byte limit on the consumed stream rather than relying on
   a pre-read size check.
-- Confirm diagram verification likewise enforces its byte limit on the consumed stream, and that
-  oversized input returns a bounded structured rejection without an unbounded text read.
-- Confirm custom report-diagram imports reuse the same regular-file, symbolic-link, UTF-8 JSON, and
-  consumption-time size boundary as standalone diagram verification.
+- Confirm diagram verification consumes one inspected/opened/final identity-stable regular
+  non-link stream, enforces its 5 MB limit, rejects duplicate keys, non-finite/overflowed numbers,
+  malformed UTF-8, and 100-level/250,000-node overflow, and returns bounded structured rejection.
+- Confirm custom report-diagram imports reuse the standalone verifier boundary, stop at 50 files
+  or 25 MB accepted in aggregate, retain the existing 50-diagram/node/edge limits, and embed each
+  accepted source snapshot's exact byte count and SHA-256 in report-integrity-covered metadata.
 - Confirm every current HTML, diagram-bundle, and assurance-work-queue success and rejection
   verdict records exact verifier name/version provenance while historical v1 receipts without the
   additive field remain schema-compatible.
@@ -202,6 +254,12 @@ sfmea schema --verify-bundle .release-contracts --json
 Validate each public schema with a Draft 2020-12 validator and retain the catalog SHA-256 values
 with the release evidence. Run the golden evaluation corpus and review unsupported-verification
 claims, citation accuracy, trace integrity, and adapter provenance.
+
+Confirm the golden corpus is a stable regular non-link file; ingestion enforces its 20 MB byte,
+20-level/500,000-node JSON, 100,000-case, 100-scope, field-length, and 500,000-active-candidate
+limits. Confirm duplicate/non-finite/unknown/malformed inputs fail closed, the result identifies
+`pysfmea-evaluation-result-1`, and the recorded canonical corpus digest matches approved release
+evidence.
 
 ```powershell
 sfmea scan benchmarks\python_sfmea_corpus\repository `

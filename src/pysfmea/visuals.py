@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .architecture import architecture_graph
+from .file_publication import atomic_publish_text
 
 
 def _md(value: Any) -> str:
@@ -246,8 +247,6 @@ def export_sequence(
     max_interactions: int = 100,
     include_runtime: bool = True,
 ) -> Path:
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     model = sequence_model(
         analysis,
         entrypoint,
@@ -256,8 +255,11 @@ def export_sequence(
         include_runtime=include_runtime,
     )
     if format == "json":
-        path.write_text(json.dumps(model, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return path
+        return atomic_publish_text(
+            destination,
+            json.dumps(model, indent=2, ensure_ascii=False) + "\n",
+            label="sequence JSON export",
+        )
     if format != "markdown":
         raise ValueError("sequence format must be markdown or json")
     aliases = {participant["id"]: _alias(index) for index, participant in enumerate(model["participants"])}
@@ -286,8 +288,11 @@ def export_sequence(
             f'{_mermaid(interaction["label"] + suffix)}'
         )
     lines.extend(["```", "", "## Evidence legend", "", "- `[static]`: conservative AST-derived internal or external call relation.", "- `[observed]`: imported runtime span relation."])
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    return atomic_publish_text(
+        destination,
+        "\n".join(lines) + "\n",
+        label="sequence Markdown export",
+    )
 
 
 def traceability_model(analysis: dict[str, Any]) -> dict[str, Any]:
@@ -408,12 +413,13 @@ def traceability_model(analysis: dict[str, Any]) -> dict[str, Any]:
 def export_traceability(
     analysis: dict[str, Any], destination: str | Path, *, format: str = "markdown"
 ) -> Path:
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     model = traceability_model(analysis)
     if format == "json":
-        path.write_text(json.dumps(model, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return path
+        return atomic_publish_text(
+            destination,
+            json.dumps(model, indent=2, ensure_ascii=False) + "\n",
+            label="traceability JSON export",
+        )
     if format != "markdown":
         raise ValueError("traceability format must be markdown or json")
     aliases = {node["id"]: f"N{index}" for index, node in enumerate(model["nodes"]) if node["id"]}
@@ -434,8 +440,11 @@ def export_traceability(
         if edge["source"] in aliases and edge["target"] in aliases:
             lines.append(f'  {aliases[edge["source"]]} -->|"{_mermaid(edge["kind"])}"| {aliases[edge["target"]]}')
     lines.append("```")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    return atomic_publish_text(
+        destination,
+        "\n".join(lines) + "\n",
+        label="traceability Markdown export",
+    )
 
 
 def coverage_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
@@ -474,12 +483,13 @@ def coverage_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
 def export_coverage(
     analysis: dict[str, Any], destination: str | Path, *, format: str = "markdown"
 ) -> Path:
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     metrics = coverage_metrics(analysis)
     if format == "json":
-        path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return path
+        return atomic_publish_text(
+            destination,
+            json.dumps(metrics, indent=2, ensure_ascii=False) + "\n",
+            label="coverage JSON export",
+        )
     if format != "markdown":
         raise ValueError("coverage format must be markdown or json")
     lines = ["# SFMEA analysis coverage", "", "> " + metrics["limitations"][0], "", "| Area | Covered | Total | Percent |", "|---|---:|---:|---:|"]
@@ -492,5 +502,8 @@ def export_coverage(
         values = metrics[metric_key]
         percent = values[percent_key]
         lines.append(f"| {area} | {values[covered_key]} | {values[total_key]} | {percent if percent is not None else 'n/a'} |")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    return atomic_publish_text(
+        destination,
+        "\n".join(lines) + "\n",
+        label="coverage Markdown export",
+    )

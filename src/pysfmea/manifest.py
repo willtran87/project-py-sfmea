@@ -58,6 +58,19 @@ def create_run_manifest(
             "ledger_sha256", ""
         ),
     }
+    source_snapshot_sha256 = baseline.get("source_snapshot_sha256")
+    if source_snapshot_sha256:
+        inputs["source_snapshot_sha256"] = str(source_snapshot_sha256)
+    test_evidence_snapshot_sha256 = baseline.get("test_evidence_snapshot_sha256")
+    if test_evidence_snapshot_sha256:
+        inputs["test_evidence_snapshot_sha256"] = str(
+            test_evidence_snapshot_sha256
+        )
+    coverage_evidence = (
+        analysis.get("project", {}).get("settings", {}).get("coverage_evidence")
+    )
+    if isinstance(coverage_evidence, dict) and coverage_evidence.get("sha256"):
+        inputs["coverage_json_sha256"] = str(coverage_evidence["sha256"])
     created_at = str(analysis.get("project", {}).get("scanned_at") or utc_now())
     manifest: dict[str, Any] = {
         "schema_version": "pysfmea-run-manifest-1",

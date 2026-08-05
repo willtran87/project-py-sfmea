@@ -116,6 +116,33 @@ class AssuranceRegisterTests(unittest.TestCase):
             {"name": "PySFMEA", "version": __version__},
         )
 
+        canonical_text = json.dumps(queue, separators=(",", ":"))
+        queue_path.write_text(
+            '{"format":"ambiguous",' + canonical_text[1:], encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate object key"):
+            verify_assurance_work_queue_file(queue_path)
+        for value in ("NaN", "1e9999"):
+            with self.subTest(non_finite=value):
+                queue_path.write_text(
+                    '{"numeric_probe":' + value + "," + canonical_text[1:],
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(ValueError, "non-finite number"):
+                    verify_assurance_work_queue_file(queue_path)
+        queue_path.write_text(canonical_text, encoding="utf-8")
+        with mock.patch(
+            "pysfmea.assurance.MAX_ASSURANCE_WORK_QUEUE_JSON_NODES", 2
+        ):
+            with self.assertRaisesRegex(ValueError, "2-node JSON structure limit"):
+                verify_assurance_work_queue_file(queue_path)
+        with mock.patch(
+            "pysfmea.json_ingestion._same_file_identity", side_effect=[True, False]
+        ):
+            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+                verify_assurance_work_queue_file(queue_path)
+        queue_path.write_text(canonical_text, encoding="utf-8")
+
         older_producer = json.loads(json.dumps(queue))
         older_producer["generator"]["version"] = "0.46.0"
         older_content = dict(older_producer)
@@ -232,6 +259,7 @@ class AssuranceRegisterTests(unittest.TestCase):
             "pysfmea-assurance-work-queue-2",
         )
         work_payload = json.loads(work_path.read_text(encoding="utf-8"))
+        self.assertTrue(csv_path.read_bytes().startswith(b"\xef\xbb\xbf"))
         self.assertEqual(work_payload, json_payload["work_queue"])
         self.assertNotIn("obligations", work_payload)
         self.assertEqual(
@@ -411,6 +439,26 @@ class AssuranceRegisterTests(unittest.TestCase):
         manifest_path.write_bytes(b"\xff\xfe")
         with self.assertRaisesRegex(RuntimeError, "valid bounded UTF-8 JSON"):
             runpy.run_path(str(test_path))
+        manifest_path.write_text(
+            '{"format":"ambiguous",' + original_manifest_text[1:],
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "unambiguous objects"):
+            runpy.run_path(str(test_path))
+        rejected_manifest = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertFalse(rejected_manifest["valid"])
+        self.assertTrue(
+            any(
+                "duplicate object key" in finding["message"]
+                for finding in rejected_manifest["findings"]
+            )
+        )
+        manifest_path.write_text(
+            '{"numeric_probe":1e9999,' + original_manifest_text[1:],
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "finite numbers"):
+            runpy.run_path(str(test_path))
         manifest_path.write_text("[]", encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "root must be an object"):
             runpy.run_path(str(test_path))
@@ -491,6 +539,28 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertEqual(
             package_verification["assurance_work_queue"]["status"], "matched"
         )
+
+    def test_register_export_uses_safe_prior_preserving_publication(self) -> None:
+        destination = self.root / "assurance.json"
+        destination.write_text("trusted previous register\n", encoding="utf-8")
+
+        with mock.patch(
+            "pysfmea.file_publication.os.replace",
+            side_effect=OSError("injected publication failure"),
+        ):
+            with self.assertRaisesRegex(ValueError, "could not be published safely"):
+                export_assurance_register(self.analysis, destination, format="json")
+
+        self.assertEqual(
+            destination.read_text(encoding="utf-8"),
+            "trusted previous register\n",
+        )
+        self.assertFalse(list(self.root.glob(".assurance.json.*.tmp")))
+
+        directory = self.root / "assurance-directory"
+        directory.mkdir()
+        with self.assertRaisesRegex(ValueError, "regular file path"):
+            export_assurance_register(self.analysis, directory, format="work-json")
 
     def test_scaffold_publication_cleans_staging_after_failure(self) -> None:
         destination = self.root / "assurance-tests"
@@ -1323,7 +1393,49 @@ class AssuranceRegisterTests(unittest.TestCase):
                 initiated_by="Boundary Importer",
             )
         manifest_path.write_bytes(manifest_bytes)
-        with mock.patch("pysfmea.execution.Path.is_symlink", return_value=True):
+        duplicate_manifest = (
+            '{"schema_version":"ambiguous",'
+            + manifest_bytes.decode("utf-8")[1:]
+        ).encode("utf-8")
+        manifest_path.write_bytes(duplicate_manifest)
+        with self.assertRaisesRegex(ValueError, "duplicate object key"):
+            import_execution_evidence(
+                self.analysis,
+                obligation["id"],
+                manifest_path=manifest_path,
+                evidence_root=evidence_root,
+                initiated_by="Boundary Importer",
+            )
+        for value in ("NaN", "1e9999"):
+            with self.subTest(non_finite=value):
+                manifest_path.write_text(
+                    '{"numeric_probe":'
+                    + value
+                    + ","
+                    + manifest_bytes.decode("utf-8")[1:],
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(ValueError, "non-finite number"):
+                    import_execution_evidence(
+                        self.analysis,
+                        obligation["id"],
+                        manifest_path=manifest_path,
+                        evidence_root=evidence_root,
+                        initiated_by="Boundary Importer",
+                    )
+        manifest_path.write_bytes(manifest_bytes)
+        with mock.patch(
+            "pysfmea.json_ingestion._same_file_identity", side_effect=[True, False]
+        ):
+            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+                import_execution_evidence(
+                    self.analysis,
+                    obligation["id"],
+                    manifest_path=manifest_path,
+                    evidence_root=evidence_root,
+                    initiated_by="Boundary Importer",
+                )
+        with mock.patch("pysfmea.json_ingestion.stat.S_ISLNK", return_value=True):
             with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
                 import_execution_evidence(
                     self.analysis,

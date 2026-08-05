@@ -8,10 +8,12 @@ import hashlib
 import json
 import os
 import re
+import stat
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from .guidance import (
@@ -19,9 +21,10 @@ from .guidance import (
     guidance_bundle,
     selected_sources_from_bundle,
 )
-from .integrity import bounded_json_structure_metrics
+from .integrity import bounded_json_structure_metrics, canonical_json_sha256
 from .model import stable_id, utc_now
 from .store import add_manual_item, refresh_summary, update_item_review
+from .version import __version__
 from .visuals import coverage_metrics
 
 PROMPT_VERSION = "sfmea-grounded-discovery-3"
@@ -37,6 +40,15 @@ MAX_GENERATED_ID_ITEMS = 500
 MAX_PROVIDER_IDENTITY_CHARS = 500
 MAX_ENDPOINT_CHARS = 4096
 MAX_API_KEY_CHARS = 16_384
+EVALUATION_CORPUS_FORMAT = "pysfmea-golden-corpus-1"
+MAX_EVALUATION_FILE_BYTES = 20_000_000
+MAX_EVALUATION_JSON_DEPTH = 20
+MAX_EVALUATION_JSON_NODES = 500_000
+MAX_EVALUATION_CASES = 100_000
+MAX_EVALUATION_SCOPES = 100
+MAX_EVALUATION_CANDIDATES = 500_000
+MAX_EVALUATION_VALUE_CHARS = 4096
+MAX_EVALUATION_METADATA_CHARS = 20_000
 ALLOWED_CONTENT_FIELDS = {
     "failure_class",
     "guideword",
@@ -938,27 +950,193 @@ def generate_summary(
     return record
 
 
+def _same_evaluation_file_state(
+    first: os.stat_result, second: os.stat_result
+) -> bool:
+    common = bool(
+        os.path.samestat(first, second)
+        and first.st_size == second.st_size
+        and first.st_mtime_ns == second.st_mtime_ns
+    )
+    return common and (os.name == "nt" or first.st_ctime_ns == second.st_ctime_ns)
+
+
+def _unique_evaluation_json_object(
+    pairs: list[tuple[str, Any]],
+) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, entry in pairs:
+        if key in value:
+            raise ValueError("evaluation JSON contains a duplicate object key")
+        value[key] = entry
+    return value
+
+
+def _reject_evaluation_json_constant(value: str) -> None:
+    raise ValueError(f"evaluation JSON contains a non-finite number: {value}")
+
+
+def _validate_evaluation_spec(
+    expected: Any,
+) -> tuple[list[dict[str, str]], list[str]]:
+    if not isinstance(expected, dict):
+        raise ValueError("evaluation file root must be an object")
+    allowed_root = {"schema_version", "name", "purpose", "scope", "cases"}
+    unknown_root = set(expected) - allowed_root
+    if unknown_root:
+        raise ValueError(
+            "evaluation file contains unsupported fields: "
+            + ", ".join(sorted(unknown_root))
+        )
+    schema_version = expected.get("schema_version", EVALUATION_CORPUS_FORMAT)
+    if schema_version != EVALUATION_CORPUS_FORMAT:
+        raise ValueError("evaluation schema_version is missing or unsupported")
+    for field in ("name", "purpose"):
+        value = expected.get(field, "")
+        if not isinstance(value, str) or len(value) > MAX_EVALUATION_METADATA_CHARS:
+            raise ValueError(
+                f"evaluation {field} must be a string within its length limit"
+            )
+    raw_scope = expected.get("scope", [])
+    if not isinstance(raw_scope, list) or not all(
+        isinstance(value, str) for value in raw_scope
+    ):
+        raise ValueError("evaluation scope must be a list of path:component globs")
+    if len(raw_scope) > MAX_EVALUATION_SCOPES:
+        raise ValueError(
+            f"evaluation scope exceeds the {MAX_EVALUATION_SCOPES}-pattern limit"
+        )
+    scope = []
+    for value in raw_scope:
+        pattern = value.strip()
+        if not pattern or len(pattern) > MAX_EVALUATION_VALUE_CHARS:
+            raise ValueError("evaluation scope contains an invalid or oversized pattern")
+        scope.append(pattern)
+    if len(scope) != len(set(scope)):
+        raise ValueError("evaluation scope must not contain duplicate patterns")
+
+    raw_cases = expected.get("cases", [])
+    if not isinstance(raw_cases, list) or not all(
+        isinstance(value, dict) for value in raw_cases
+    ):
+        raise ValueError("evaluation file must contain a cases list")
+    if len(raw_cases) > MAX_EVALUATION_CASES:
+        raise ValueError(
+            f"evaluation cases exceed the {MAX_EVALUATION_CASES}-record limit"
+        )
+    cases: list[dict[str, str]] = []
+    for index, value in enumerate(raw_cases, start=1):
+        unknown_case = set(value) - {"source", "component", "rule_id"}
+        if unknown_case:
+            raise ValueError(
+                f"evaluation case {index} contains unsupported fields: "
+                + ", ".join(sorted(unknown_case))
+            )
+        if not all(
+            isinstance(value.get(field, ""), str)
+            for field in ("source", "component", "rule_id")
+        ):
+            raise ValueError(f"evaluation case {index} fields must be strings")
+        case = {
+            field: value.get(field, "").strip()
+            for field in ("source", "component", "rule_id")
+        }
+        if not case["component"] or not case["rule_id"]:
+            raise ValueError("every evaluation case requires component and rule_id")
+        if any(len(entry) > MAX_EVALUATION_VALUE_CHARS for entry in case.values()):
+            raise ValueError(f"evaluation case {index} exceeds its field length limit")
+        cases.append(case)
+    identities = {
+        (value["source"], value["component"], value["rule_id"]) for value in cases
+    }
+    if len(identities) != len(cases):
+        raise ValueError(
+            "evaluation cases must not contain duplicate source/component/rule keys"
+        )
+    return cases, scope
+
+
+def load_evaluation_spec(source: str | Path) -> dict[str, Any]:
+    """Load one strict, bounded, identity-stable golden evaluation corpus."""
+
+    path = Path(os.path.abspath(Path(source).expanduser()))
+    try:
+        inspected = path.lstat()
+    except FileNotFoundError as exc:
+        raise ValueError("evaluation input is unavailable") from exc
+    except OSError as exc:
+        raise ValueError("evaluation input could not be inspected safely") from exc
+    if not stat.S_ISREG(inspected.st_mode):
+        raise ValueError("evaluation input must be a regular non-symbolic-link file")
+    descriptor: int | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened_before = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_before.st_mode) or not _same_evaluation_file_state(
+            inspected, opened_before
+        ):
+            raise ValueError("evaluation input changed during safe open")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            raw = handle.read(MAX_EVALUATION_FILE_BYTES + 1)
+            opened_after = os.fstat(handle.fileno())
+    except ValueError:
+        raise
+    except OSError as exc:
+        raise ValueError("evaluation input could not be read safely") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    if len(raw) > MAX_EVALUATION_FILE_BYTES:
+        raise ValueError(
+            f"evaluation input exceeds the {MAX_EVALUATION_FILE_BYTES}-byte limit"
+        )
+    if not _same_evaluation_file_state(opened_before, opened_after):
+        raise ValueError("evaluation input changed while it was being read")
+    try:
+        current = path.lstat()
+    except OSError as exc:
+        raise ValueError("evaluation input changed while it was being read") from exc
+    if not _same_evaluation_file_state(opened_after, current):
+        raise ValueError("evaluation input changed while it was being read")
+    try:
+        expected = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_evaluation_json_object,
+            parse_constant=_reject_evaluation_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("evaluation input is not valid bounded UTF-8 JSON") from exc
+    metrics = bounded_json_structure_metrics(
+        expected,
+        max_depth=MAX_EVALUATION_JSON_DEPTH,
+        max_nodes=MAX_EVALUATION_JSON_NODES,
+    )
+    if not metrics["depth_within_limit"]:
+        raise ValueError(
+            f"evaluation JSON exceeds the {MAX_EVALUATION_JSON_DEPTH}-level depth limit"
+        )
+    if not metrics["node_within_limit"]:
+        raise ValueError(
+            f"evaluation JSON exceeds the {MAX_EVALUATION_JSON_NODES}-node limit"
+        )
+    _validate_evaluation_spec(expected)
+    return expected
+
+
 def evaluate_candidates(analysis: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
     """Source-aware exact-key regression hook for curated golden repositories."""
 
-    cases = expected.get("cases", [])
-    if not isinstance(cases, list) or not all(isinstance(value, dict) for value in cases):
-        raise ValueError("evaluation file must contain a cases list")
-    scope = expected.get("scope", [])
-    if not isinstance(scope, list) or not all(isinstance(value, str) for value in scope):
-        raise ValueError("evaluation scope must be a list of path:component globs")
+    cases, scope = _validate_evaluation_spec(expected)
     expected_specs = {
         (
-            str(value.get("source", "")),
-            str(value.get("component", "")),
-            str(value.get("rule_id", "")),
+            value["source"],
+            value["component"],
+            value["rule_id"],
         )
         for value in cases
     }
-    if any(not component or not rule_id for _source, component, rule_id in expected_specs):
-        raise ValueError("every evaluation case requires component and rule_id")
-    if len(expected_specs) != len(cases):
-        raise ValueError("evaluation cases must not contain duplicate source/component/rule keys")
 
     all_actual_records = [
         (
@@ -970,14 +1148,23 @@ def evaluate_candidates(analysis: dict[str, Any], expected: dict[str, Any]) -> d
         for item in analysis.get("items", [])
         if item.get("source_status", "active") == "active"
     ]
+    if len(all_actual_records) > MAX_EVALUATION_CANDIDATES:
+        raise ValueError(
+            "active evaluation candidates exceed the "
+            f"{MAX_EVALUATION_CANDIDATES}-record limit"
+        )
     all_actual = {value[:3] for value in all_actual_records}
+    actual_by_component_rule: dict[
+        tuple[str, str], set[tuple[str, str, str]]
+    ] = {}
+    for entry in all_actual:
+        actual_by_component_rule.setdefault((entry[1], entry[2]), set()).add(entry)
     for source, component, rule_id in expected_specs:
         if source:
             continue
         matching_sources = {
-            actual_source
-            for actual_source, actual_component, actual_rule in all_actual
-            if actual_component == component and actual_rule == rule_id
+            entry[0]
+            for entry in actual_by_component_rule.get((component, rule_id), set())
         }
         if len(matching_sources) > 1:
             raise ValueError(
@@ -985,24 +1172,28 @@ def evaluate_candidates(analysis: dict[str, Any], expected: dict[str, Any]) -> d
                 "add a source field"
             )
 
-    actual = {
-        entry
-        for entry in all_actual
-        if (
-            any(
-                fnmatch.fnmatchcase(
-                    f"{entry[0]}:{entry[1]}",
-                    pattern,
-                )
+    if scope:
+        actual = {
+            entry
+            for entry in all_actual
+            if any(
+                fnmatch.fnmatchcase(f"{entry[0]}:{entry[1]}", pattern)
                 for pattern in scope
             )
-            if scope
-            else any(
-                entry[1] == component and (not source or entry[0] == source)
-                for source, component, _rule_id in expected_specs
+        }
+    else:
+        expected_sources_by_component: dict[str, set[str]] = {}
+        for source, component, _rule_id in expected_specs:
+            expected_sources_by_component.setdefault(component, set()).add(source)
+        actual = {
+            entry
+            for entry in all_actual
+            if entry[1] in expected_sources_by_component
+            and (
+                "" in expected_sources_by_component[entry[1]]
+                or entry[0] in expected_sources_by_component[entry[1]]
             )
-        )
-    }
+        }
     scoped_items = [
         item
         for source, component, rule_id, item in all_actual_records
@@ -1013,10 +1204,8 @@ def evaluate_candidates(analysis: dict[str, Any], expected: dict[str, Any]) -> d
     for source, component, rule_id in expected_specs:
         matches = {
             entry
-            for entry in actual
-            if entry[1] == component
-            and entry[2] == rule_id
-            and (not source or entry[0] == source)
+            for entry in actual_by_component_rule.get((component, rule_id), set())
+            if entry in actual and (not source or entry[0] == source)
         }
         if matches:
             matched_actual.update(matches)
@@ -1078,6 +1267,14 @@ def evaluate_candidates(analysis: dict[str, Any], expected: dict[str, Any]) -> d
         return {"source": source, "component": component, "rule_id": rule_id}
 
     return {
+        "format": "pysfmea-evaluation-result-1",
+        "verifier": {"name": "PySFMEA", "version": __version__},
+        "corpus": {
+            "format": EVALUATION_CORPUS_FORMAT,
+            "content_sha256": canonical_json_sha256(expected),
+            "case_count": len(cases),
+            "scope_count": len(scope),
+        },
         "expected": len(expected_specs),
         "actual": len(actual),
         "scope": scope

@@ -9,10 +9,14 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .json_ingestion import load_bounded_json_document
+
 GUIDANCE_SCHEMA_VERSION = "1.1"
 GUIDANCE_CATALOG_VERSION = "2026.08.04"
 GUIDANCE_RETRIEVED_AT = "2026-08-04"
 MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES = 5_000_000
+MAX_ORGANIZATIONAL_GUIDANCE_PACK_DEPTH = 100
+MAX_ORGANIZATIONAL_GUIDANCE_PACK_NODES = 250_000
 
 RELATIONSHIP_TYPES = {
     "methodology_basis",
@@ -878,29 +882,28 @@ def selected_sources_from_bundle(bundle: dict[str, Any]) -> list[dict[str, Any]]
 def load_organizational_guidance_pack(path: str | Path) -> dict[str, Any]:
     """Load and strictly validate a local organizational guidance pack."""
 
-    candidate = Path(path).expanduser()
-    if candidate.is_symlink():
-        raise ValueError(
-            f"organizational guidance pack must not be a symbolic link: {candidate}"
-        )
-    source_path = candidate.resolve()
-    if not source_path.is_file():
-        raise ValueError(
-            f"organizational guidance pack must be a regular file: {source_path}"
-        )
     try:
-        with source_path.open("rb") as pack_file:
-            raw = pack_file.read(MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES + 1)
-        if len(raw) > MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES:
+        document = load_bounded_json_document(
+            path,
+            label="organizational guidance pack",
+            max_bytes=MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES,
+            max_depth=MAX_ORGANIZATIONAL_GUIDANCE_PACK_DEPTH,
+            max_nodes=MAX_ORGANIZATIONAL_GUIDANCE_PACK_NODES,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == (
+            "organizational guidance pack exceeds the "
+            f"{MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES}-byte limit"
+        ):
             raise ValueError(
                 "organizational guidance pack exceeds the "
                 f"{MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES}-byte safety limit"
-            )
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(
-            f"invalid organizational guidance pack UTF-8 JSON: {exc}"
-        ) from exc
+            ) from exc
+        raise
+    source_path = document.path
+    payload = document.value
+    raw = document.raw
     if not isinstance(payload, dict):
         raise ValueError("organizational guidance pack root must be an object")
     allowed = {"schema_version", "profile", "sources", "citations", "rule_mappings"}

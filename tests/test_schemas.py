@@ -36,8 +36,10 @@ from pysfmea.publication import (
     PUBLICATION_FAILURE_CATALOG_SHA256,
     PUBLICATION_FAILURE_CATALOG_VERIFICATION_FORMAT,
     PUBLICATION_FAILURES,
+    export_publication_failure_catalog,
     publication_failure_catalog,
     verify_publication_failure_catalog,
+    verify_publication_failure_catalog_file,
 )
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import (
@@ -232,7 +234,9 @@ class SchemaCatalogTests(unittest.TestCase):
         )
 
         original = exported_path.read_bytes()
-        with patch("pysfmea.publication.os.replace", side_effect=OSError("blocked")):
+        with patch(
+            "pysfmea.file_publication.os.replace", side_effect=OSError("blocked")
+        ):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(
                     main(
@@ -253,6 +257,24 @@ class SchemaCatalogTests(unittest.TestCase):
                 for path in exported_path.parent.iterdir()
             )
         )
+
+        def verify_then_replace(path: str | Path) -> dict[str, object]:
+            verdict = verify_publication_failure_catalog_file(path)
+            Path(path).write_text("concurrent owner\n", encoding="utf-8")
+            return verdict
+
+        with patch(
+            "pysfmea.publication.verify_publication_failure_catalog_file",
+            side_effect=verify_then_replace,
+        ):
+            with self.assertRaisesRegex(ValueError, "changed before staging"):
+                export_publication_failure_catalog(exported_path, overwrite=True)
+        self.assertEqual(
+            exported_path.read_text(encoding="utf-8"), "concurrent owner\n"
+        )
+        self.assertFalse(any(exported_path.parent.glob(".*.tmp")))
+
+        exported_path.write_bytes(original)
 
         unrelated_path = self.root / "unrelated.json"
         unrelated = '{"format":"unrelated","keep":true}'
@@ -399,8 +421,33 @@ class SchemaCatalogTests(unittest.TestCase):
             )
         oversized = json.loads(oversized_output.getvalue())
         self.assertFalse(oversized["valid"])
-        self.assertIn("bounded verification size", oversized["errors"][0]["message"])
+        self.assertIn("byte limit", oversized["errors"][0]["message"])
         Draft202012Validator(verification_schema).validate(oversized)
+
+        for filename, document, message in (
+            ("duplicate-catalog.json", '{"format":"a","format":"b"}', "duplicate"),
+            ("nonfinite-catalog.json", '{"value":NaN}', "non-finite"),
+        ):
+            with self.subTest(filename=filename):
+                malformed_path = self.root / filename
+                malformed_path.write_text(document, encoding="utf-8")
+                malformed = verify_publication_failure_catalog_file(malformed_path)
+                self.assertFalse(malformed["valid"])
+                self.assertIn(message, malformed["errors"][0]["message"])
+                Draft202012Validator(verification_schema).validate(malformed)
+
+        catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            side_effect=[True, False],
+        ):
+            changed_during_read = verify_publication_failure_catalog_file(catalog_path)
+        self.assertFalse(changed_during_read["valid"])
+        self.assertIn(
+            "changed during bounded consumption",
+            changed_during_read["errors"][0]["message"],
+        )
+        Draft202012Validator(verification_schema).validate(changed_during_read)
 
     def test_offline_bundle_verification_detects_catalog_and_schema_drift(self) -> None:
         documents = schema_bundle_documents()
@@ -593,6 +640,19 @@ class SchemaCatalogTests(unittest.TestCase):
         )
         self.assertFalse(any(destination.parent.glob(".*.tmp")))
 
+        original_schema = destination.read_bytes()
+        with patch(
+            "pysfmea.file_publication.os.replace",
+            side_effect=OSError("injected schema publication failure"),
+        ):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    main(["schema", "diagram-bundle", "-o", str(destination)]),
+                    2,
+                )
+        self.assertEqual(destination.read_bytes(), original_schema)
+        self.assertFalse(any(destination.parent.glob(".*.tmp")))
+
         bundle = self.root / "offline-contracts"
         bundle_output = io.StringIO()
         with contextlib.redirect_stdout(bundle_output):
@@ -710,6 +770,34 @@ class SchemaCatalogTests(unittest.TestCase):
         )
         verdict_schema.validate(invalid_utf8)
         target.write_bytes(original)
+
+        target.write_text('{"$id":"first","$id":"second"}', encoding="utf-8")
+        duplicate = verify_schema_bundle_path(bundle)
+        self.assertFalse(duplicate["valid"])
+        self.assertTrue(
+            any("duplicate object key" in error["message"] for error in duplicate["errors"])
+        )
+        verdict_schema.validate(duplicate)
+        target.write_bytes(original)
+
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            return_value=False,
+        ):
+            changed_during_read = verify_schema_bundle_path(bundle)
+        self.assertFalse(changed_during_read["valid"])
+        self.assertTrue(
+            any("changed during safe open" in error["message"] for error in changed_during_read["errors"])
+        )
+        verdict_schema.validate(changed_during_read)
+
+        with patch("pysfmea.schemas.MAX_SCHEMA_BUNDLE_JSON_DEPTH", 1):
+            too_deep = verify_schema_bundle_path(bundle)
+        self.assertFalse(too_deep["valid"])
+        self.assertTrue(
+            any("JSON depth limit" in error["message"] for error in too_deep["errors"])
+        )
+        verdict_schema.validate(too_deep)
 
         with patch(
             "pysfmea.schemas.Path.is_symlink",

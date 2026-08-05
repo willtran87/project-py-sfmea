@@ -16,10 +16,15 @@ from pysfmea.architecture import architecture_graph, export_architecture
 from pysfmea.config import load_config, write_config_template
 from pysfmea.discovery import evidence_packets
 from pysfmea.guidance import load_organizational_guidance_pack
+from pysfmea.json_ingestion import load_bounded_file_snapshot
 from pysfmea.model import calculate_rpn
 from pysfmea.report import export_audit, export_csv, export_inventory, export_markdown
 from pysfmea.repository_inventory import build_repository_inventory
-from pysfmea.scanner import _load_coverage, scan_repository
+from pysfmea.scanner import (
+    _load_coverage,
+    _read_python_source_bytes_bounded,
+    scan_repository,
+)
 from pysfmea.store import add_manual_item, merge_rescan, update_item_review
 
 SAMPLE_SOURCE = """
@@ -45,6 +50,15 @@ async def fetch_configuration(key):
 def _private_helper():
     return 1
 """
+
+
+def _identity_sequence(*values: bool):
+    outcomes = iter(values)
+    return lambda *_args: next(outcomes, True)
+
+
+def _identity_changes_once():
+    return _identity_sequence(True, False)
 
 
 class ScannerTests(unittest.TestCase):
@@ -319,6 +333,14 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(by_path["tests/test_app.py"]["status"], "excluded_region")
         self.assertEqual(by_path["broken.py"]["status"], "unresolved")
         self.assertEqual(by_path["opaque.bin"]["status"], "opaque")
+        self.assertEqual(
+            inventory["summary"]["by_snapshot_source"]["analysis_source_snapshot"],
+            2,
+        )
+        self.assertEqual(
+            inventory["summary"]["by_snapshot_source"]["test_evidence_snapshot"],
+            1,
+        )
         self.assertTrue(
             any(region["path"] == "generated/" for region in inventory["regions"])
         )
@@ -432,9 +454,37 @@ class ScannerTests(unittest.TestCase):
             hashlib.sha256(raw).hexdigest(),
         )
 
+        canonical_pack = json.dumps(pack, separators=(",", ":"))
+        pack_path.write_text(
+            '{"schema_version":"ambiguous",' + canonical_pack[1:],
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate object key"):
+            load_organizational_guidance_pack(pack_path)
+        for value in ("NaN", "1e9999"):
+            with self.subTest(non_finite=value):
+                pack_path.write_text(
+                    '{"numeric_probe":' + value + "," + canonical_pack[1:],
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(ValueError, "non-finite number"):
+                    load_organizational_guidance_pack(pack_path)
+        pack_path.write_text(canonical_pack, encoding="utf-8")
+        with patch(
+            "pysfmea.guidance.MAX_ORGANIZATIONAL_GUIDANCE_PACK_NODES", 2
+        ):
+            with self.assertRaisesRegex(ValueError, "2-node JSON structure limit"):
+                load_organizational_guidance_pack(pack_path)
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            side_effect=_identity_changes_once(),
+        ):
+            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+                load_organizational_guidance_pack(pack_path)
+
         pack_directory = self.root / "guidance-directory"
         pack_directory.mkdir()
-        with self.assertRaisesRegex(ValueError, "regular file"):
+        with self.assertRaisesRegex(ValueError, "regular non-symbolic-link file"):
             load_organizational_guidance_pack(pack_directory)
 
         invalid_utf8 = self.root / "invalid-guidance.json"
@@ -450,8 +500,8 @@ class ScannerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "10-byte safety limit"):
                 load_organizational_guidance_pack(oversized)
 
-        with patch("pysfmea.guidance.Path.is_symlink", return_value=True):
-            with self.assertRaisesRegex(ValueError, "symbolic link"):
+        with patch("pysfmea.json_ingestion.stat.S_ISLNK", return_value=True):
+            with self.assertRaisesRegex(ValueError, "non-symbolic-link"):
                 load_organizational_guidance_pack(pack_path)
 
         linked_pack = self.root / "linked-guidance.json"
@@ -514,6 +564,38 @@ class ScannerTests(unittest.TestCase):
             {"requests", "critical-lib", "manifest:requirements.txt"}
             <= {entry["name"] for entry in first["context"]["dependencies"]}
         )
+        dependency_entries = {
+            entry["name"]: entry for entry in first["context"]["dependencies"]
+        }
+        requirements_raw = (self.root / "requirements.txt").read_bytes()
+        requirements_digest = hashlib.sha256(requirements_raw).hexdigest()
+        self.assertEqual(
+            dependency_entries["manifest:requirements.txt"],
+            {
+                "name": "manifest:requirements.txt",
+                "specification": f"sha256:{requirements_digest}",
+                "source": "requirements.txt",
+                "evidence_type": "manifest_snapshot",
+                "bytes": len(requirements_raw),
+                "sha256": requirements_digest,
+            },
+        )
+        self.assertEqual(
+            first["run_manifest"]["resolved_inputs"]["dependency_inventory_sha256"],
+            hashlib.sha256(
+                json.dumps(
+                    first["context"]["dependencies"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        )
+        dependency_run = next(
+            run
+            for run in first["adapter_runs"]["runs"]
+            if run["adapter_id"] == "python.dependency_inventory"
+        )
+        self.assertEqual(dependency_run["adapter_version"], "4")
         update_item_review(first, environment["id"], {"disposition": "accepted"})
         (self.root / "requirements.txt").write_text(
             "requests==2.33.0\ncritical-lib>=1.0\n",
@@ -524,6 +606,85 @@ class ScannerTests(unittest.TestCase):
         updated = next(item for item in merged["items"] if item["id"] == environment["id"])
         self.assertEqual(updated["source_change"], "changed")
         self.assertTrue(updated["review"]["revalidation_required"])
+
+    def test_dependency_and_contract_snapshots_are_reused_by_inventory(self) -> None:
+        evidence_root = self.root / "supporting-evidence-snapshots"
+        evidence_root.mkdir()
+        service = evidence_root / "service.py"
+        requirements = evidence_root / "requirements.txt"
+        contract = evidence_root / "openapi.json"
+        service.write_text("def execute():\n    return True\n", encoding="utf-8")
+        requirements_raw = b"critical-lib==1.0\n"
+        contract_raw = json.dumps(
+            {
+                "openapi": "3.1.0",
+                "paths": {"/ready": {"get": {}}},
+                "components": {"schemas": {}},
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        requirements.write_bytes(requirements_raw)
+        contract.write_bytes(contract_raw)
+
+        def replace_before_inventory(*args, **kwargs):
+            requirements.write_text("critical-lib==9.9\n", encoding="utf-8")
+            contract.write_text(
+                '{"openapi":"3.1.0","paths":{},"components":{"schemas":{}}}',
+                encoding="utf-8",
+            )
+            return build_repository_inventory(*args, **kwargs)
+
+        with patch(
+            "pysfmea.repository_inventory.load_bounded_file_snapshot",
+            wraps=load_bounded_file_snapshot,
+        ) as inventory_reader, patch(
+            "pysfmea.scanner.build_repository_inventory",
+            side_effect=replace_before_inventory,
+        ):
+            analysis = scan_repository(evidence_root)
+
+        self.assertEqual(inventory_reader.call_count, 0)
+        dependency = next(
+            entry
+            for entry in analysis["context"]["dependencies"]
+            if entry["name"] == "manifest:requirements.txt"
+        )
+        self.assertEqual(
+            dependency["sha256"], hashlib.sha256(requirements_raw).hexdigest()
+        )
+        contract_entry = analysis["context"]["contracts"][0]
+        self.assertEqual(contract_entry["sha256"], hashlib.sha256(contract_raw).hexdigest())
+        self.assertEqual(contract_entry["operations"], ["GET /ready"])
+        inventory = {
+            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+        }
+        self.assertEqual(
+            inventory["requirements.txt"]["sha256"],
+            hashlib.sha256(requirements_raw).hexdigest(),
+        )
+        self.assertEqual(
+            inventory["requirements.txt"]["snapshot_source"],
+            "dependency_manifest_snapshot",
+        )
+        self.assertEqual(
+            inventory["openapi.json"]["sha256"],
+            hashlib.sha256(contract_raw).hexdigest(),
+        )
+        self.assertEqual(
+            inventory["openapi.json"]["snapshot_source"],
+            "interface_contract_snapshot",
+        )
+        snapshot_counts = analysis["repository_inventory"]["summary"][
+            "by_snapshot_source"
+        ]
+        self.assertEqual(snapshot_counts["dependency_manifest_snapshot"], 1)
+        self.assertEqual(snapshot_counts["interface_contract_snapshot"], 1)
+        contract_run = next(
+            run
+            for run in analysis["adapter_runs"]["runs"]
+            if run["adapter_id"] == "contracts.local_schema"
+        )
+        self.assertEqual(contract_run["adapter_version"], "3")
 
     def test_lockfile_and_included_requirement_changes_are_tracked(self) -> None:
         constraints = self.root / "constraints"
@@ -654,6 +815,25 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("requests", aggregate_names)
         self.assertNotIn("critical-lib", aggregate_names)
 
+        race_root = self.root / "dependency-race"
+        race_root.mkdir()
+        changing = race_root / "requirements.txt"
+        changing.write_text("changing-lib==1.0\n", encoding="utf-8")
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            side_effect=_identity_changes_once(),
+        ):
+            raced = scan_repository(race_root)
+        self.assertEqual(raced["context"]["dependencies"], [])
+        self.assertTrue(
+            any(
+                warning["path"] == changing.name
+                and warning["type"] == "DependencyError"
+                and "changed during bounded consumption" in warning["message"]
+                for warning in raced["warnings"]
+            )
+        )
+
     def test_pyproject_dependency_shape_and_encoding_fail_closed(self) -> None:
         pyproject = self.root / "pyproject.toml"
         pyproject.write_text(
@@ -747,6 +927,7 @@ class ScannerTests(unittest.TestCase):
             contracts["invalid.schema.json"]["sha256"],
             hashlib.sha256(invalid_schema.read_bytes()).hexdigest(),
         )
+        self.assertEqual(contracts["many.proto"]["bytes"], len(many.read_bytes()))
         self.assertEqual(len(contracts["many.proto"]["operations"]), 1)
         self.assertEqual(len(contracts["many.proto"]["data_types"]), 1)
         self.assertEqual(contracts["openapi.json"]["operations"], [])
@@ -787,6 +968,82 @@ class ScannerTests(unittest.TestCase):
                 warning["type"] == "ContractLimit"
                 and warning["message"] == "Contract discovery reached the 1-file analysis limit"
                 for warning in file_limited["warnings"]
+            )
+        )
+
+    def test_contract_json_is_strict_structurally_bounded_and_identity_stable(
+        self,
+    ) -> None:
+        duplicate = self.root / "duplicate.schema.json"
+        duplicate.write_text(
+            '{"title":"First","title":"Second","properties":{}}',
+            encoding="utf-8",
+        )
+        overflow = self.root / "overflow.schema.json"
+        overflow.write_text(
+            '{"title":"Overflow","probe":1e9999,"properties":{}}',
+            encoding="utf-8",
+        )
+        structured = self.root / "structured.schema.json"
+        structured.write_text(
+            json.dumps(
+                {
+                    "title": "Structured",
+                    "properties": {"value": {"type": "string"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch("pysfmea.scanner.MAX_CONTRACT_JSON_NODES", 2):
+            analysis = scan_repository(self.root)
+
+        contracts = {
+            contract["path"]: contract for contract in analysis["context"]["contracts"]
+        }
+        self.assertEqual(
+            contracts[duplicate.name]["sha256"],
+            hashlib.sha256(duplicate.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(contracts[duplicate.name]["bytes"], len(duplicate.read_bytes()))
+        warnings = {
+            warning["path"]: warning["message"]
+            for warning in analysis["warnings"]
+            if warning["type"] == "ContractError"
+        }
+        self.assertIn("duplicate object key", warnings[duplicate.name])
+        self.assertIn("non-finite number", warnings[overflow.name])
+        self.assertIn("2-node JSON structure limit", warnings[structured.name])
+        self.assertEqual(contracts[duplicate.name]["data_types"], [])
+        self.assertEqual(contracts[overflow.name]["data_types"], [])
+        self.assertEqual(contracts[structured.name]["data_types"], [])
+        self.assertEqual(
+            analysis["run_manifest"]["resolved_inputs"]["contract_inventory_sha256"],
+            hashlib.sha256(
+                json.dumps(
+                    analysis["context"]["contracts"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        )
+
+        race_root = self.root / "contract-race"
+        race_root.mkdir()
+        changing = race_root / "changing.proto"
+        changing.write_text("message Changing {}\n", encoding="utf-8")
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            side_effect=_identity_changes_once(),
+        ):
+            raced = scan_repository(race_root)
+        self.assertEqual(raced["context"]["contracts"], [])
+        self.assertTrue(
+            any(
+                warning["path"] == changing.name
+                and warning["type"] == "ContractError"
+                and "changed during bounded consumption" in warning["message"]
+                for warning in raced["warnings"]
             )
         )
 
@@ -868,6 +1125,45 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(oversized_entry["analysis_depth"], "metadata_only")
         self.assertEqual(oversized_entry["sha256"], "")
         self.assertIn("10-byte hashing and analysis limit", oversized_entry["reason"])
+
+        snapshot_root = self.root / "snapshot-inventory"
+        snapshot_root.mkdir()
+        source = snapshot_root / "changing.py"
+        accepted_raw = b"def accepted():\n    return True\n"
+        source.write_bytes(b"def replacement():\n    return False\n")
+        snapshot_inventory = build_repository_inventory(
+            snapshot_root,
+            selected_python_paths={source.name},
+            parsed_python_paths={source.name},
+            include_tests=False,
+            source_snapshots={source.name: accepted_raw},
+        )
+        snapshot_entry = snapshot_inventory["entries"][0]
+        self.assertEqual(snapshot_entry["status"], "analyzed")
+        self.assertEqual(snapshot_entry["size"], len(accepted_raw))
+        self.assertEqual(
+            snapshot_entry["sha256"], hashlib.sha256(accepted_raw).hexdigest()
+        )
+        self.assertEqual(snapshot_entry["snapshot_source"], "analysis_source_snapshot")
+
+        identity_root = self.root / "identity-inventory"
+        identity_root.mkdir()
+        (identity_root / "changing.txt").write_bytes(b"change")
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            side_effect=_identity_changes_once(),
+        ):
+            identity_inventory = build_repository_inventory(
+                identity_root,
+                selected_python_paths=set(),
+                parsed_python_paths=set(),
+                include_tests=False,
+            )
+        identity_entry = identity_inventory["entries"][0]
+        self.assertEqual(identity_entry["status"], "unresolved")
+        self.assertEqual(identity_entry["analysis_depth"], "none")
+        self.assertEqual(identity_entry["sha256"], "")
+        self.assertIn("changed during bounded consumption", identity_entry["reason"])
 
         linked_root = self.root / "linked-inventory"
         linked_root.mkdir()
@@ -998,6 +1294,103 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(inventory["oversized.py"]["status"], "unresolved")
         self.assertEqual(inventory["invalid_encoding.py"]["status"], "unresolved")
 
+    def test_python_source_snapshot_is_identity_stable_reused_and_manifest_bound(
+        self,
+    ) -> None:
+        snapshot_root = self.root / "source-snapshot"
+        snapshot_root.mkdir()
+        tests_root = snapshot_root / "tests"
+        tests_root.mkdir()
+        app = snapshot_root / "app.py"
+        test_app = tests_root / "test_app.py"
+        app.write_text("def calculate(value):\n    return value * 2\n", encoding="utf-8")
+        test_app.write_text(
+            "from app import calculate\n\ndef test_calculate():\n"
+            "    assert calculate(2) == 4\n",
+            encoding="utf-8",
+        )
+
+        with patch(
+            "pysfmea.scanner._read_python_source_bytes_bounded",
+            wraps=_read_python_source_bytes_bounded,
+        ) as bounded_reader, patch(
+            "pysfmea.repository_inventory.load_bounded_file_snapshot",
+            wraps=load_bounded_file_snapshot,
+        ) as inventory_reader:
+            analysis = scan_repository(snapshot_root, include_tests=True)
+
+        self.assertEqual(bounded_reader.call_count, 2)
+        self.assertEqual(inventory_reader.call_count, 0)
+        baseline = analysis["project"]["baseline"]
+        self.assertEqual(baseline["source_snapshot_files"], 2)
+        self.assertEqual(
+            baseline["source_snapshot_bytes"],
+            len(app.read_bytes()) + len(test_app.read_bytes()),
+        )
+        self.assertEqual(baseline["source_snapshot_rejected_files"], 0)
+        records = [
+            {
+                "path": path.relative_to(snapshot_root).as_posix(),
+                "status": "accepted",
+                "bytes": len(path.read_bytes()),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            for path in (app, test_app)
+        ]
+        expected_snapshot_digest = hashlib.sha256(
+            json.dumps(records, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(baseline["source_snapshot_sha256"], expected_snapshot_digest)
+        self.assertEqual(
+            analysis["run_manifest"]["resolved_inputs"]["source_snapshot_sha256"],
+            expected_snapshot_digest,
+        )
+        parser_run = next(
+            run
+            for run in analysis["adapter_runs"]["runs"]
+            if run["adapter_id"] == "python.ast_parser"
+        )
+        self.assertEqual(parser_run["adapter_version"], "2")
+        inventory_entries = {
+            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+        }
+        for path in (app, test_app):
+            relative = path.relative_to(snapshot_root).as_posix()
+            self.assertEqual(
+                inventory_entries[relative]["sha256"],
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                inventory_entries[relative]["snapshot_source"],
+                "analysis_source_snapshot",
+            )
+
+        race_root = self.root / "source-race"
+        race_root.mkdir()
+        changing = race_root / "changing.py"
+        changing.write_text("def changing():\n    return True\n", encoding="utf-8")
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            side_effect=_identity_changes_once(),
+        ):
+            raced = scan_repository(race_root)
+        self.assertEqual(raced["components"], [])
+        raced_baseline = raced["project"]["baseline"]
+        self.assertEqual(raced_baseline["source_snapshot_files"], 0)
+        self.assertEqual(raced_baseline["source_snapshot_rejected_files"], 1)
+        self.assertEqual(
+            raced["run_manifest"]["resolved_inputs"]["source_snapshot_sha256"],
+            raced_baseline["source_snapshot_sha256"],
+        )
+        self.assertTrue(
+            any(
+                warning["path"] == changing.name
+                and warning["type"] == "PythonSourceError"
+                and "changed during bounded consumption" in warning["message"]
+                for warning in raced["warnings"]
+            )
+        )
+
     def test_python_source_internal_link_is_rejected_consistently(self) -> None:
         linked = self.root / "linked.py"
         linked.write_text("def linked_alias():\n    return True\n", encoding="utf-8")
@@ -1048,6 +1441,12 @@ class ScannerTests(unittest.TestCase):
             if component["qualname"] == "fetch_configuration"
         )
         self.assertNotIn("tests/test_extra.py", fetch["test_references"])
+        self.assertEqual(
+            file_limited["project"]["baseline"][
+                "test_evidence_snapshot_rejected_files"
+            ],
+            1,
+        )
 
         with patch("pysfmea.scanner.MAX_TEST_EVIDENCE_BYTES", 10):
             byte_limited = scan_repository(self.root)
@@ -1065,6 +1464,144 @@ class ScannerTests(unittest.TestCase):
             if component["qualname"] == "calculate_total"
         )
         self.assertEqual(calculate["test_references"], [])
+        self.assertEqual(
+            byte_limited["project"]["baseline"]["test_evidence_snapshot_files"],
+            0,
+        )
+        self.assertEqual(
+            byte_limited["project"]["baseline"][
+                "test_evidence_snapshot_rejected_files"
+            ],
+            1,
+        )
+
+    def test_test_evidence_is_single_snapshot_scoped_and_manifest_bound(self) -> None:
+        evidence_root = self.root / "test-evidence-snapshot"
+        evidence_root.mkdir()
+        tests_root = evidence_root / "tests"
+        tests_root.mkdir()
+        app = evidence_root / "app.py"
+        test_app = tests_root / "test_app.py"
+        excluded_test = tests_root / "excluded_test.py"
+        app.write_text("def calculate(value):\n    return value * 2\n", encoding="utf-8")
+        accepted_raw = (
+            b"from app import calculate\n\ndef test_calculate():\n"
+            b"    assert calculate(2) == 4\n"
+        )
+        test_app.write_bytes(accepted_raw)
+        excluded_test.write_text(
+            "from app import calculate\n\ndef test_excluded():\n    assert calculate\n",
+            encoding="utf-8",
+        )
+
+        def replace_after_test_index(*args, **kwargs):
+            test_app.write_text(
+                "def test_replacement():\n    assert False\n", encoding="utf-8"
+            )
+            return build_repository_inventory(*args, **kwargs)
+
+        with patch(
+            "pysfmea.scanner._read_python_source_bytes_bounded",
+            wraps=_read_python_source_bytes_bounded,
+        ) as bounded_reader, patch(
+            "pysfmea.repository_inventory.load_bounded_file_snapshot",
+            wraps=load_bounded_file_snapshot,
+        ) as inventory_reader, patch(
+            "pysfmea.scanner.build_repository_inventory",
+            side_effect=replace_after_test_index,
+        ):
+            analysis = scan_repository(
+                evidence_root,
+                config={"scan": {"exclude": ["tests/excluded_test.py"]}},
+            )
+
+        self.assertEqual(bounded_reader.call_count, 2)
+        self.assertEqual(inventory_reader.call_count, 1)
+        self.assertEqual(inventory_reader.call_args.args[0], excluded_test)
+        component = next(
+            value
+            for value in analysis["components"]
+            if value["qualname"] == "calculate"
+        )
+        self.assertEqual(component["test_references"], ["tests/test_app.py"])
+        inventory = {
+            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+        }
+        self.assertEqual(
+            inventory["tests/test_app.py"]["sha256"],
+            hashlib.sha256(accepted_raw).hexdigest(),
+        )
+        self.assertEqual(
+            inventory["tests/test_app.py"]["snapshot_source"],
+            "test_evidence_snapshot",
+        )
+        self.assertEqual(inventory["tests/excluded_test.py"]["status"], "excluded_region")
+        baseline = analysis["project"]["baseline"]
+        record = [
+            {
+                "path": "tests/test_app.py",
+                "status": "accepted",
+                "bytes": len(accepted_raw),
+                "sha256": hashlib.sha256(accepted_raw).hexdigest(),
+            }
+        ]
+        expected_digest = hashlib.sha256(
+            json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(baseline["test_evidence_snapshot_files"], 1)
+        self.assertEqual(baseline["test_evidence_snapshot_bytes"], len(accepted_raw))
+        self.assertEqual(baseline["test_evidence_snapshot_rejected_files"], 0)
+        self.assertEqual(baseline["test_evidence_snapshot_sha256"], expected_digest)
+        self.assertEqual(
+            analysis["run_manifest"]["resolved_inputs"][
+                "test_evidence_snapshot_sha256"
+            ],
+            expected_digest,
+        )
+        discoverer_run = next(
+            run
+            for run in analysis["adapter_runs"]["runs"]
+            if run["adapter_id"] == "python.repository_discoverer"
+        )
+        self.assertEqual(discoverer_run["adapter_version"], "6")
+
+        race_root = self.root / "test-evidence-race"
+        race_root.mkdir()
+        race_tests = race_root / "tests"
+        race_tests.mkdir()
+        (race_root / "app.py").write_text(
+            "def calculate(value):\n    return value * 2\n", encoding="utf-8"
+        )
+        changing_test = race_tests / "test_app.py"
+        changing_test.write_bytes(accepted_raw)
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            side_effect=_identity_sequence(True, True, True, False),
+        ):
+            raced = scan_repository(race_root)
+        raced_component = next(
+            value
+            for value in raced["components"]
+            if value["qualname"] == "calculate"
+        )
+        self.assertEqual(raced_component["test_references"], [])
+        raced_baseline = raced["project"]["baseline"]
+        self.assertEqual(raced_baseline["test_evidence_snapshot_files"], 0)
+        self.assertEqual(raced_baseline["test_evidence_snapshot_rejected_files"], 1)
+        self.assertEqual(
+            raced["run_manifest"]["resolved_inputs"][
+                "test_evidence_snapshot_sha256"
+            ],
+            raced_baseline["test_evidence_snapshot_sha256"],
+        )
+        self.assertTrue(
+            any(
+                warning["path"] == "tests/test_app.py"
+                and warning["type"] == "TestEvidenceError"
+                and "changed during bounded consumption" in warning["message"]
+                for warning in raced["warnings"]
+            )
+        )
 
     def test_constructor_and_module_initialization_are_analyzed(self) -> None:
         (self.root / "startup.py").write_text(
@@ -1374,8 +1911,41 @@ class ScannerTests(unittest.TestCase):
             ],
         }
 
-        analysis = scan_repository(self.root, config=config)
+        with patch(
+            "pysfmea.repository_inventory.load_bounded_file_snapshot",
+            wraps=load_bounded_file_snapshot,
+        ) as inventory_reader:
+            analysis = scan_repository(self.root, config=config)
+        self.assertEqual(inventory_reader.call_count, 0)
         self.assertEqual(analysis["project"]["name"], "Billing")
+        coverage_raw = coverage.read_bytes()
+        coverage_evidence = analysis["project"]["settings"]["coverage_evidence"]
+        self.assertEqual(coverage_evidence["bytes"], len(coverage_raw))
+        self.assertEqual(
+            coverage_evidence["sha256"],
+            hashlib.sha256(coverage_raw).hexdigest(),
+        )
+        self.assertEqual(coverage_evidence["file_records"], 1)
+        self.assertEqual(coverage_evidence["accepted_file_records"], 1)
+        self.assertEqual(
+            analysis["run_manifest"]["resolved_inputs"]["coverage_json_sha256"],
+            coverage_evidence["sha256"],
+        )
+        coverage_inventory = next(
+            entry
+            for entry in analysis["repository_inventory"]["entries"]
+            if entry["path"] == "coverage.json"
+        )
+        self.assertEqual(coverage_inventory["sha256"], coverage_evidence["sha256"])
+        self.assertEqual(
+            coverage_inventory["snapshot_source"], "coverage_evidence_snapshot"
+        )
+        self.assertEqual(
+            analysis["repository_inventory"]["summary"]["by_snapshot_source"][
+                "coverage_evidence_snapshot"
+            ],
+            1,
+        )
         code_components = [
             component for component in analysis["components"] if component["kind"] != "common_cause"
         ]
@@ -1438,6 +2008,50 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("malformed=1", warnings[0]["message"])
         self.assertIn("duplicates=1", warnings[0]["message"])
 
+        coverage.write_text('{"files":{},"files":{}}', encoding="utf-8")
+        duplicate, duplicate_warnings = _load_coverage(coverage, self.root.resolve())
+        self.assertEqual(duplicate, {})
+        self.assertIn("duplicate object key", duplicate_warnings[0]["message"])
+
+        for non_finite_payload in ('{"files":{},"probe":NaN}', '{"files":{},"probe":1e9999}'):
+            coverage.write_text(non_finite_payload, encoding="utf-8")
+            non_finite, non_finite_warnings = _load_coverage(
+                coverage,
+                self.root.resolve(),
+            )
+            self.assertEqual(non_finite, {})
+            self.assertIn("non-finite number", non_finite_warnings[0]["message"])
+
+        coverage.write_text(json.dumps(coverage_payload), encoding="utf-8")
+        with patch("pysfmea.scanner.MAX_COVERAGE_JSON_NODES", 2):
+            oversized, oversized_warnings = _load_coverage(coverage, self.root.resolve())
+        self.assertEqual(oversized, {})
+        self.assertIn("2-node JSON structure limit", oversized_warnings[0]["message"])
+
+        with patch(
+            "pysfmea.json_ingestion._same_file_identity",
+            side_effect=_identity_changes_once(),
+        ):
+            changed, changed_warnings = _load_coverage(coverage, self.root.resolve())
+        self.assertEqual(changed, {})
+        self.assertIn("changed during bounded consumption", changed_warnings[0]["message"])
+
+        with patch("pysfmea.scanner.MAX_COVERAGE_FILE_RECORDS", 2):
+            excessive_files, excessive_file_warnings = _load_coverage(
+                coverage,
+                self.root.resolve(),
+            )
+        self.assertEqual(excessive_files, {})
+        self.assertIn("2-file record limit", excessive_file_warnings[0]["message"])
+
+        with patch("pysfmea.scanner.MAX_COVERAGE_PATH_CHARS", 3):
+            excessive_paths, excessive_path_warnings = _load_coverage(
+                coverage,
+                self.root.resolve(),
+            )
+        self.assertEqual(excessive_paths, {})
+        self.assertIn("unsafe=4", excessive_path_warnings[0]["message"])
+
         with patch("pysfmea.scanner.MAX_COVERAGE_JSON_BYTES", 10):
             bounded, bounded_warnings = _load_coverage(coverage, self.root.resolve())
         self.assertEqual(bounded, {})
@@ -1465,7 +2079,7 @@ class ScannerTests(unittest.TestCase):
             "coverage JSON has no files object",
         )
         coverage.write_text(json.dumps(coverage_payload), encoding="utf-8")
-        with patch("pysfmea.scanner.Path.is_symlink", return_value=True):
+        with patch("pysfmea.json_ingestion.stat.S_ISLNK", return_value=True):
             linked, linked_warnings = _load_coverage(coverage, self.root.resolve())
         self.assertEqual(linked, {})
         self.assertIn("regular non-symbolic-link", linked_warnings[0]["message"])
@@ -1480,6 +2094,87 @@ class ScannerTests(unittest.TestCase):
                 and "unsafe=1" in value.get("message", "")
                 for value in analysis["warnings"]
             )
+        )
+
+    def test_coverage_snapshot_is_reused_and_external_evidence_stays_external(
+        self,
+    ) -> None:
+        coverage_root = self.root / "coverage-snapshot"
+        coverage_root.mkdir()
+        app = coverage_root / "app.py"
+        coverage = coverage_root / "coverage.json"
+        app.write_text("def calculate():\n    return 1\n", encoding="utf-8")
+        accepted_raw = json.dumps(
+            {
+                "files": {
+                    "app.py": {
+                        "executed_lines": [1, 2],
+                        "missing_lines": [],
+                        "executed_branches": [],
+                        "missing_branches": [],
+                    }
+                }
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        coverage.write_bytes(accepted_raw)
+
+        def replace_before_inventory(*args, **kwargs):
+            coverage.write_text('{"files":{}}', encoding="utf-8")
+            return build_repository_inventory(*args, **kwargs)
+
+        with patch(
+            "pysfmea.repository_inventory.load_bounded_file_snapshot",
+            wraps=load_bounded_file_snapshot,
+        ) as inventory_reader, patch(
+            "pysfmea.scanner.build_repository_inventory",
+            side_effect=replace_before_inventory,
+        ):
+            analysis = scan_repository(coverage_root, coverage_json=coverage)
+
+        self.assertEqual(inventory_reader.call_count, 0)
+        component = next(
+            value
+            for value in analysis["components"]
+            if value["qualname"] == "calculate"
+        )
+        self.assertEqual(component["coverage"]["line_percent"], 100.0)
+        evidence = analysis["project"]["settings"]["coverage_evidence"]
+        accepted_digest = hashlib.sha256(accepted_raw).hexdigest()
+        self.assertEqual(evidence["sha256"], accepted_digest)
+        inventory = {
+            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+        }
+        self.assertEqual(inventory["coverage.json"]["sha256"], accepted_digest)
+        self.assertEqual(
+            inventory["coverage.json"]["snapshot_source"],
+            "coverage_evidence_snapshot",
+        )
+        self.assertEqual(
+            analysis["run_manifest"]["resolved_inputs"]["coverage_json_sha256"],
+            accepted_digest,
+        )
+        coverage_run = next(
+            run
+            for run in analysis["adapter_runs"]["runs"]
+            if run["adapter_id"] == "coverage.py_json"
+        )
+        self.assertEqual(coverage_run["adapter_version"], "2")
+
+        with tempfile.TemporaryDirectory() as outside_temp:
+            external_coverage = Path(outside_temp) / "coverage.json"
+            external_coverage.write_bytes(accepted_raw)
+            external = scan_repository(
+                coverage_root,
+                coverage_json=external_coverage,
+            )
+        self.assertEqual(
+            external["project"]["settings"]["coverage_evidence"]["sha256"],
+            accepted_digest,
+        )
+        self.assertNotIn(
+            "coverage_evidence_snapshot",
+            external["repository_inventory"]["summary"]["by_snapshot_source"],
         )
 
     def test_configuration_template_round_trip(self) -> None:

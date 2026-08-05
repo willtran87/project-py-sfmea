@@ -126,6 +126,11 @@ projection with packaged `analysis.json`. The JSON verdict exposes this nested v
 `assurance_work_queue`. Packages produced before 0.47 may omit the focused artifact; current
 exporter or analysis-generator provenance requires it.
 
+Standalone work-queue verification first applies a strict 100 MiB, 100-level, 1,000,000-node
+ingestion boundary. The source must remain the same regular non-symbolic-link file from inspection
+through consumption; duplicate keys, non-finite values, numeric overflow, malformed UTF-8, and
+structure exhaustion are rejected before schema, digest, binding, or projection evaluation.
+
 Current manifests declare the closed capabilities `analysis_diagnostics_projection_v1`,
 `assurance_register_projection`, `assurance_work_queue_projection`,
 `evidence_catalog_projection_v1`, `guidance_traceability_projection_v1`,
@@ -196,9 +201,11 @@ algorithm declaration, signed package-subject fields, SHA-256 fingerprint syntax
 64-byte signature encoding. Only `sfmea verify-package --signature ... --public-key ...`
 performs cryptographic verification and reconciles that subject with the supplied package.
 Key and signature files are regular, non-symbolic-link inputs consumed under one-megabyte
-limits with inspected/opened identity reconciliation. Verification freshly validates the
-package, rereads its manifest under a 10 MB limit, and rejects stale verdicts or changed
-manifest bytes before cryptographic verification. Exact ZIP bytes are additionally rehashed
+limits with inspected/opened/final identity reconciliation. Envelopes require strict
+duplicate-free finite UTF-8 JSON under 20-level/10,000-node limits. Verification freshly
+validates the package, rereads and strictly decodes its manifest under a
+10 MB/100-level/250,000-node limit, and rejects stale verdicts or changed manifest bytes before
+cryptographic verification. Exact ZIP bytes are additionally rehashed
 under a 550 MB identity-checked streaming boundary and reconciled to the fresh verdict.
 
 `pysfmea-workflow-status.schema.json` checks the complete top-level status envelope, known

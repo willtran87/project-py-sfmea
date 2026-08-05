@@ -29,6 +29,11 @@ from .guidance import (
     load_organizational_guidance_pack,
     selected_sources_from_bundle,
 )
+from .json_ingestion import (
+    load_bounded_file_snapshot,
+    load_bounded_json_document,
+    parse_bounded_json_bytes,
+)
 from .manifest import create_run_manifest
 from .model import SCHEMA_VERSION, empty_review, stable_id, utc_now
 from .repository_inventory import build_repository_inventory
@@ -80,6 +85,8 @@ MAX_CONTRACT_BYTES = 20_000_000
 MAX_CONTRACT_FILES = 1_000
 MAX_CONTRACT_TOTAL_BYTES = 100_000_000
 MAX_CONTRACT_ENTITIES = 500
+MAX_CONTRACT_JSON_DEPTH = 100
+MAX_CONTRACT_JSON_NODES = 1_000_000
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {"open", "io.open", "pathlib.Path", "os.remove", "os.rename", "shutil"}
 SUBPROCESS_NAMES = {"os.popen", "os.system", "subprocess"}
@@ -990,20 +997,30 @@ def _matches_pattern(value: str, patterns: Iterable[str]) -> bool:
 
 
 def _read_python_source_bytes_bounded(path: Path) -> bytes:
-    """Read one regular Python source stream under the scan-time byte limit."""
+    """Capture one exact identity-stable Python source stream under the byte limit."""
 
     if path.is_symlink() or not path.is_file():
         raise ValueError("Python source must be a regular non-symbolic-link file")
     try:
-        with path.open("rb") as source_file:
-            raw = source_file.read(MAX_PYTHON_SOURCE_BYTES + 1)
-    except OSError as exc:
-        raise ValueError("Python source could not be read safely") from exc
-    if len(raw) > MAX_PYTHON_SOURCE_BYTES:
-        raise ValueError(
-            f"Python source exceeds the {MAX_PYTHON_SOURCE_BYTES}-byte analysis limit"
+        snapshot = load_bounded_file_snapshot(
+            path,
+            label="Python source",
+            max_bytes=MAX_PYTHON_SOURCE_BYTES,
         )
-    return raw
+    except ValueError as exc:
+        message = str(exc)
+        if message == f"Python source exceeds the {MAX_PYTHON_SOURCE_BYTES}-byte limit":
+            message = (
+                "Python source exceeds the "
+                f"{MAX_PYTHON_SOURCE_BYTES}-byte analysis limit"
+            )
+        elif message in {
+            "Python source must be an available regular file",
+            "Python source must be a regular non-symbolic-link file",
+        }:
+            message = "Python source must be a regular non-symbolic-link file"
+        raise ValueError(message) from exc
+    return snapshot.raw
 
 
 def _read_python_source_bounded(path: Path) -> str:
@@ -1084,6 +1101,10 @@ def _python_files(
 def _test_index(
     root: Path,
     warnings: list[dict[str, Any]] | None = None,
+    source_snapshots: dict[Path, bytes] | None = None,
+    test_evidence_snapshots: dict[Path, bytes] | None = None,
+    test_evidence_errors: dict[Path, str] | None = None,
+    exclude_patterns: Iterable[str] = (),
 ) -> dict[str, str]:
     tests: dict[str, str] = {}
     consumed = 0
@@ -1092,6 +1113,16 @@ def _test_index(
         try:
             path.resolve().relative_to(root)
         except (OSError, ValueError):
+            if warnings is not None:
+                warnings.append(
+                    {
+                        "path": path.relative_to(root).as_posix(),
+                        "message": "Test evidence resolves outside the repository",
+                        "type": "TestEvidenceBoundary",
+                    }
+                )
+            if test_evidence_errors is not None:
+                test_evidence_errors[path] = "Test evidence resolves outside the repository"
             continue
         relative = path.relative_to(root)
         is_test = (
@@ -1099,42 +1130,77 @@ def _test_index(
             or path.name.startswith("test_")
             or path.name.endswith("_test.py")
         )
-        if not is_test or any(part in DEFAULT_EXCLUDES for part in relative.parts[:-1]):
+        if (
+            not is_test
+            or any(
+                part in DEFAULT_EXCLUDES or part.startswith(".")
+                for part in relative.parts[:-1]
+            )
+            or _matches_pattern(relative.as_posix(), exclude_patterns)
+        ):
             continue
         if path.is_symlink() or not path.is_file():
-            continue
-        if candidates >= MAX_TEST_EVIDENCE_FILES:
+            message = "Test evidence must be a regular non-symbolic-link file"
             if warnings is not None:
                 warnings.append(
                     {
                         "path": relative.as_posix(),
-                        "message": (
-                            "Test evidence indexing reached the "
-                            f"{MAX_TEST_EVIDENCE_FILES}-file limit"
-                        ),
+                        "message": message,
+                        "type": "TestEvidenceBoundary",
+                    }
+                )
+            if test_evidence_errors is not None:
+                test_evidence_errors[path] = message
+            continue
+        if candidates >= MAX_TEST_EVIDENCE_FILES:
+            if warnings is not None:
+                message = (
+                    "Test evidence indexing reached the "
+                    f"{MAX_TEST_EVIDENCE_FILES}-file limit"
+                )
+                warnings.append(
+                    {
+                        "path": relative.as_posix(),
+                        "message": message,
                         "type": "TestEvidenceLimit",
                     }
+                )
+            if test_evidence_errors is not None:
+                test_evidence_errors[path] = (
+                    "Test evidence indexing reached the "
+                    f"{MAX_TEST_EVIDENCE_FILES}-file limit"
                 )
             break
         candidates += 1
         try:
-            raw = _read_python_source_bytes_bounded(path)
+            raw = (source_snapshots or {}).get(path)
+            if raw is None:
+                raw = _read_python_source_bytes_bounded(path)
             if consumed + len(raw) > MAX_TEST_EVIDENCE_BYTES:
+                message = (
+                    "Test evidence indexing exceeds the "
+                    f"{MAX_TEST_EVIDENCE_BYTES}-byte aggregate limit"
+                )
                 if warnings is not None:
                     warnings.append(
                         {
                             "path": relative.as_posix(),
-                            "message": (
-                                "Test evidence indexing exceeds the "
-                                f"{MAX_TEST_EVIDENCE_BYTES}-byte aggregate limit"
-                            ),
+                            "message": message,
                             "type": "TestEvidenceLimit",
                         }
                     )
+                if test_evidence_errors is not None:
+                    test_evidence_errors[path] = message
                 break
             consumed += len(raw)
+            if test_evidence_snapshots is not None:
+                test_evidence_snapshots[path] = raw
             tests[relative.as_posix()] = _decode_python_source(raw)
         except ValueError as exc:
+            if test_evidence_errors is not None and path not in (
+                test_evidence_snapshots or {}
+            ):
+                test_evidence_errors[path] = str(exc)
             if warnings is not None:
                 warnings.append(
                     {
@@ -1147,8 +1213,12 @@ def _test_index(
     return tests
 
 
-def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict[str, str]]:
-    dependencies: dict[tuple[str, str], dict[str, str]] = {}
+def _dependency_inventory(
+    root: Path,
+    warnings: list[dict[str, Any]],
+    evidence_snapshots: dict[Path, bytes] | None = None,
+) -> list[dict[str, Any]]:
+    dependencies: dict[tuple[str, str], dict[str, Any]] = {}
     recorded_files: set[Path] = set()
     attempted_files: set[Path] = set()
     loaded_files: dict[Path, tuple[Path, str, bytes]] = {}
@@ -1207,18 +1277,29 @@ def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[di
             )
             return None
         try:
-            with candidate.open("rb") as source_file:
-                raw = source_file.read(MAX_DEPENDENCY_MANIFEST_BYTES + 1)
-        except OSError:
-            warn(relative, "Dependency manifest could not be read safely")
-            return None
-        if len(raw) > MAX_DEPENDENCY_MANIFEST_BYTES:
-            warn(
-                relative,
-                "Dependency manifest exceeds the "
-                f"{MAX_DEPENDENCY_MANIFEST_BYTES}-byte analysis limit",
+            snapshot = load_bounded_file_snapshot(
+                candidate,
+                label="Dependency manifest",
+                max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
             )
+        except ValueError as exc:
+            message = str(exc)
+            if message == (
+                "Dependency manifest exceeds the "
+                f"{MAX_DEPENDENCY_MANIFEST_BYTES}-byte limit"
+            ):
+                message = (
+                    "Dependency manifest exceeds the "
+                    f"{MAX_DEPENDENCY_MANIFEST_BYTES}-byte analysis limit"
+                )
+            elif message in {
+                "Dependency manifest must be an available regular file",
+                "Dependency manifest must be a regular non-symbolic-link file",
+            }:
+                message = "Dependency manifest must be a regular non-symbolic-link file"
+            warn(relative, message)
             return None
+        raw = snapshot.raw
         if consumed_bytes + len(raw) > MAX_DEPENDENCY_MANIFEST_TOTAL_BYTES:
             warn(
                 relative,
@@ -1228,6 +1309,8 @@ def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[di
             aggregate_limit_reported = True
             return None
         consumed_bytes += len(raw)
+        if evidence_snapshots is not None:
+            evidence_snapshots[resolved] = raw
         loaded = (resolved, relative, raw)
         loaded_files[candidate] = loaded
         loaded_resolved_files[resolved] = loaded
@@ -1254,10 +1337,14 @@ def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[di
             return loaded
         recorded_files.add(resolved)
         name = f"manifest:{relative}"
+        digest = hashlib.sha256(raw).hexdigest()
         dependencies[(name, relative)] = {
             "name": name,
-            "specification": f"sha256:{hashlib.sha256(raw).hexdigest()}",
+            "specification": f"sha256:{digest}",
             "source": relative,
+            "evidence_type": "manifest_snapshot",
+            "bytes": len(raw),
+            "sha256": digest,
         }
         return loaded
 
@@ -1359,7 +1446,11 @@ def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[di
     return sorted(dependencies.values(), key=lambda value: (value["name"].lower(), value["source"]))
 
 
-def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _contract_inventory(
+    root: Path,
+    warnings: list[dict[str, Any]],
+    evidence_snapshots: dict[Path, bytes] | None = None,
+) -> list[dict[str, Any]]:
     """Inventory common interface/data contracts without requiring third-party parsers."""
 
     candidates: list[Path] = []
@@ -1438,28 +1529,35 @@ def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict
             )
             continue
         try:
-            with candidate.open("rb") as source_file:
-                raw = source_file.read(MAX_CONTRACT_BYTES + 1)
-        except OSError:
+            snapshot = load_bounded_file_snapshot(
+                candidate,
+                label="Contract",
+                max_bytes=MAX_CONTRACT_BYTES,
+            )
+        except ValueError as exc:
+            message = str(exc)
+            if message == f"Contract exceeds the {MAX_CONTRACT_BYTES}-byte limit":
+                warning_type = "ContractTooLarge"
+                message = (
+                    f"Contract exceeds the {MAX_CONTRACT_BYTES}-byte analysis limit"
+                )
+            elif message in {
+                "Contract must be an available regular file",
+                "Contract must be a regular non-symbolic-link file",
+            }:
+                warning_type = "ContractBoundary"
+                message = "Contract must be a regular non-symbolic-link file"
+            else:
+                warning_type = "ContractError"
             warnings.append(
                 {
                     "path": relative.as_posix(),
-                    "message": "Contract could not be read safely",
-                    "type": "ContractError",
+                    "message": message,
+                    "type": warning_type,
                 }
             )
             continue
-        if len(raw) > MAX_CONTRACT_BYTES:
-            warnings.append(
-                {
-                    "path": relative.as_posix(),
-                    "message": (
-                        f"Contract exceeds the {MAX_CONTRACT_BYTES}-byte analysis limit"
-                    ),
-                    "type": "ContractTooLarge",
-                }
-            )
-            continue
+        raw = snapshot.raw
         if consumed_bytes + len(raw) > MAX_CONTRACT_TOTAL_BYTES:
             warnings.append(
                 {
@@ -1473,6 +1571,8 @@ def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict
             )
             break
         consumed_bytes += len(raw)
+        if evidence_snapshots is not None:
+            evidence_snapshots[resolved] = raw
         try:
             text: str | None = raw.decode("utf-8")
         except UnicodeDecodeError:
@@ -1501,13 +1601,20 @@ def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict
         if lower_name.endswith(".schema.json"):
             kind = "json_schema"
         malformed_structure = False
+        json_error = ""
         if (
             text is not None
             and kind in {"openapi", "json_schema"}
             and resolved.suffix.lower() == ".json"
         ):
             try:
-                payload = json.loads(text)
+                payload = parse_bounded_json_bytes(
+                    raw,
+                    label="Contract JSON",
+                    max_bytes=MAX_CONTRACT_BYTES,
+                    max_depth=MAX_CONTRACT_JSON_DEPTH,
+                    max_nodes=MAX_CONTRACT_JSON_NODES,
+                )
                 if not isinstance(payload, dict):
                     raise TypeError
                 if kind == "openapi":
@@ -1568,7 +1675,10 @@ def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict
                         if not retain(data_types, value):
                             entities_truncated = True
                             break
-            except (json.JSONDecodeError, RecursionError, TypeError):
+            except ValueError as exc:
+                malformed_structure = True
+                json_error = str(exc)
+            except TypeError:
                 malformed_structure = True
         elif text is not None and kind == "openapi":
             current_route = ""
@@ -1598,10 +1708,13 @@ def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict
                     entities_truncated = True
                     break
         if malformed_structure:
+            message = "Contract JSON has malformed or unsupported structure"
+            if json_error:
+                message += f": {json_error}"
             warnings.append(
                 {
                     "path": relative.as_posix(),
-                    "message": "Contract JSON has malformed or unsupported structure",
+                    "message": message,
                     "type": "ContractError",
                 }
             )
@@ -1622,6 +1735,7 @@ def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict
                 "id": stable_id("CONTRACT", relative.as_posix(), digest),
                 "path": relative.as_posix(),
                 "kind": kind,
+                "bytes": len(raw),
                 "sha256": digest,
                 "operations": sorted(operations),
                 "data_types": sorted(data_types),
@@ -1634,19 +1748,40 @@ def _repository_baseline(
     root: Path,
     files: list[Path],
     config: dict[str, Any],
-    dependencies: list[dict[str, str]],
+    dependencies: list[dict[str, Any]],
     contracts: list[dict[str, Any]],
     repository_inventory: dict[str, Any],
+    source_snapshots: dict[Path, bytes],
+    source_snapshot_errors: dict[Path, str],
+    test_evidence_snapshots: dict[Path, bytes],
+    test_evidence_errors: dict[Path, str],
 ) -> dict[str, Any]:
     content_hash = hashlib.sha256()
+    source_snapshot_records: list[dict[str, Any]] = []
+    source_snapshot_bytes = 0
     for path in files:
         relative = path.relative_to(root).as_posix()
         content_hash.update(relative.encode("utf-8"))
         content_hash.update(b"\0")
-        try:
-            content_hash.update(_read_python_source_bytes_bounded(path))
-        except ValueError as exc:
-            content_hash.update(f"<bounded-source:{exc}>".encode("utf-8"))
+        raw = source_snapshots.get(path)
+        if raw is not None:
+            digest = hashlib.sha256(raw).hexdigest()
+            content_hash.update(raw)
+            source_snapshot_bytes += len(raw)
+            source_snapshot_records.append(
+                {
+                    "path": relative,
+                    "status": "accepted",
+                    "bytes": len(raw),
+                    "sha256": digest,
+                }
+            )
+        else:
+            error = source_snapshot_errors.get(path, "source snapshot unavailable")
+            content_hash.update(f"<bounded-source:{error}>".encode("utf-8"))
+            source_snapshot_records.append(
+                {"path": relative, "status": "rejected", "reason": error}
+            )
         content_hash.update(b"\0")
     content_hash.update(
         json.dumps(dependencies, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -1658,6 +1793,44 @@ def _repository_baseline(
     config_digest = hashlib.sha256(
         json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    source_snapshot_sha256 = hashlib.sha256(
+        json.dumps(
+            source_snapshot_records,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    test_evidence_snapshot_records: list[dict[str, Any]] = []
+    test_evidence_snapshot_bytes = 0
+    for path in sorted(set(test_evidence_snapshots) | set(test_evidence_errors)):
+        relative = path.relative_to(root).as_posix()
+        raw = test_evidence_snapshots.get(path)
+        if raw is not None:
+            test_evidence_snapshot_bytes += len(raw)
+            test_evidence_snapshot_records.append(
+                {
+                    "path": relative,
+                    "status": "accepted",
+                    "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                }
+            )
+        else:
+            test_evidence_snapshot_records.append(
+                {
+                    "path": relative,
+                    "status": "rejected",
+                    "reason": test_evidence_errors[path],
+                }
+            )
+    test_evidence_snapshot_sha256 = hashlib.sha256(
+        json.dumps(
+            test_evidence_snapshot_records,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    content_hash.update(test_evidence_snapshot_sha256.encode("utf-8"))
     source_digest = content_hash.hexdigest()
     vcs: dict[str, Any] = {"type": "", "revision": "", "dirty": None}
     try:
@@ -1686,6 +1859,14 @@ def _repository_baseline(
     return {
         "id": stable_id("BASELINE", source_digest, config_digest),
         "source_digest": source_digest,
+        "source_snapshot_sha256": source_snapshot_sha256,
+        "source_snapshot_files": len(source_snapshots),
+        "source_snapshot_bytes": source_snapshot_bytes,
+        "source_snapshot_rejected_files": len(files) - len(source_snapshots),
+        "test_evidence_snapshot_sha256": test_evidence_snapshot_sha256,
+        "test_evidence_snapshot_files": len(test_evidence_snapshots),
+        "test_evidence_snapshot_bytes": test_evidence_snapshot_bytes,
+        "test_evidence_snapshot_rejected_files": len(test_evidence_errors),
         "config_digest": config_digest,
         "repository_inventory_sha256": repository_inventory.get(
             "inventory_sha256", ""
@@ -1695,7 +1876,7 @@ def _repository_baseline(
 
 
 def _dependency_component_and_item(
-    dependencies: list[dict[str, str]], analysis_rules: dict[str, Any]
+    dependencies: list[dict[str, Any]], analysis_rules: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]] | None:
     included = set(analysis_rules.get("included_failure_classes", []))
     excluded = set(analysis_rules.get("excluded_failure_classes", []))
@@ -2129,6 +2310,10 @@ def _find_test_references(name: str, tests: dict[str, str]) -> list[str]:
 
 
 MAX_COVERAGE_JSON_BYTES = 100_000_000
+MAX_COVERAGE_JSON_DEPTH = 100
+MAX_COVERAGE_JSON_NODES = 2_000_000
+MAX_COVERAGE_FILE_RECORDS = 100_000
+MAX_COVERAGE_PATH_CHARS = 4_096
 
 
 def _coverage_warning(path: Path, message: str) -> dict[str, str]:
@@ -2176,55 +2361,85 @@ def _normalize_coverage_file(value: Any) -> tuple[dict[str, Any] | None, bool]:
     return normalized, malformed
 
 
-def _load_coverage(path: str | Path | None, root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _load_coverage_document(
+    path: str | Path | None,
+    root: Path,
+    evidence_snapshots: dict[Path, bytes] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     if not path:
-        return {}, []
+        return {}, [], {}
     coverage_path = Path(path).expanduser().absolute()
-    if coverage_path.is_symlink() or not coverage_path.is_file():
-        return {}, [
-            _coverage_warning(
-                coverage_path,
-                "coverage JSON must be a regular non-symbolic-link file",
-            )
-        ]
     try:
-        with coverage_path.open("rb") as handle:
-            raw = handle.read(MAX_COVERAGE_JSON_BYTES + 1)
-    except OSError:
-        return {}, [_coverage_warning(coverage_path, "coverage JSON could not be read safely")]
-    if len(raw) > MAX_COVERAGE_JSON_BYTES:
-        return {}, [
-            _coverage_warning(
-                coverage_path,
-                f"coverage JSON exceeds the {MAX_COVERAGE_JSON_BYTES}-byte import limit",
+        document = load_bounded_json_document(
+            coverage_path,
+            label="coverage JSON",
+            max_bytes=MAX_COVERAGE_JSON_BYTES,
+            max_depth=MAX_COVERAGE_JSON_DEPTH,
+            max_nodes=MAX_COVERAGE_JSON_NODES,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == f"coverage JSON exceeds the {MAX_COVERAGE_JSON_BYTES}-byte limit":
+            message = (
+                f"coverage JSON exceeds the {MAX_COVERAGE_JSON_BYTES}-byte import limit"
             )
-        ]
+        elif message in {
+            "coverage JSON is not valid UTF-8 JSON",
+            "coverage JSON is not valid JSON",
+            "coverage JSON exceeds the JSON parser nesting limit",
+        }:
+            message = "coverage JSON is not valid bounded UTF-8 JSON"
+        elif message in {
+            "coverage JSON must be an available regular file",
+            "coverage JSON must be a regular non-symbolic-link file",
+        }:
+            message = "coverage JSON must be a regular non-symbolic-link file"
+        return {}, [_coverage_warning(coverage_path, message)], {}
+    coverage_path = document.path
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
-        return {}, [
-            _coverage_warning(coverage_path, "coverage JSON is not valid bounded UTF-8 JSON")
-        ]
+        coverage_path.relative_to(root)
+    except ValueError:
+        pass
+    else:
+        if evidence_snapshots is not None:
+            evidence_snapshots[coverage_path] = document.raw
+    payload = document.value
     if not isinstance(payload, dict):
-        return {}, [_coverage_warning(coverage_path, "coverage JSON root must be an object")]
+        return {}, [_coverage_warning(coverage_path, "coverage JSON root must be an object")], {}
     if "files" not in payload:
-        return {}, [_coverage_warning(coverage_path, "coverage JSON has no files object")]
+        return {}, [_coverage_warning(coverage_path, "coverage JSON has no files object")], {}
     files = payload["files"]
     if not isinstance(files, dict):
-        return {}, [_coverage_warning(coverage_path, "coverage JSON has no files object")]
+        return {}, [_coverage_warning(coverage_path, "coverage JSON has no files object")], {}
+    if len(files) > MAX_COVERAGE_FILE_RECORDS:
+        return (
+            {},
+            [
+                _coverage_warning(
+                    coverage_path,
+                    "coverage JSON exceeds the "
+                    f"{MAX_COVERAGE_FILE_RECORDS}-file record limit",
+                )
+            ],
+            {},
+        )
     indexed: dict[str, Any] = {}
     ignored_paths = 0
     malformed_records = 0
     duplicate_paths = 0
     for raw_path, value in files.items():
-        if not isinstance(raw_path, str) or not raw_path:
+        if (
+            not isinstance(raw_path, str)
+            or not raw_path
+            or len(raw_path) > MAX_COVERAGE_PATH_CHARS
+        ):
             ignored_paths += 1
             continue
         candidate = Path(raw_path)
         if candidate.is_absolute():
             try:
                 key = candidate.resolve().relative_to(root).as_posix()
-            except ValueError:
+            except (OSError, ValueError):
                 ignored_paths += 1
                 continue
         else:
@@ -2253,6 +2468,23 @@ def _load_coverage(path: str | Path | None, root: Path) -> tuple[dict[str, Any],
                 f"duplicates={duplicate_paths})",
             )
         )
+    provenance = {
+        "format": "coverage.py-json",
+        "path": str(coverage_path),
+        "bytes": document.size,
+        "sha256": hashlib.sha256(document.raw).hexdigest(),
+        "file_records": len(files),
+        "accepted_file_records": len(indexed),
+    }
+    return indexed, warnings, provenance
+
+
+def _load_coverage(
+    path: str | Path | None, root: Path
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Compatibility wrapper for callers that do not consume coverage provenance."""
+
+    indexed, warnings, _provenance = _load_coverage_document(path, root)
     return indexed, warnings
 
 
@@ -3274,8 +3506,10 @@ def scan_repository(
         coverage_json = scan_config.get("coverage_json") or None
 
     warnings: list[dict[str, Any]] = []
-    dependencies = _dependency_inventory(root_path, warnings)
-    contracts = _contract_inventory(root_path, warnings)
+    dependency_snapshots: dict[Path, bytes] = {}
+    contract_snapshots: dict[Path, bytes] = {}
+    dependencies = _dependency_inventory(root_path, warnings, dependency_snapshots)
+    contracts = _contract_inventory(root_path, warnings, contract_snapshots)
     facts_list: list[FunctionFacts] = []
     files = _python_files(
         root_path,
@@ -3284,12 +3518,18 @@ def scan_repository(
         warnings=warnings,
     )
     parsed_python_paths: set[str] = set()
+    source_snapshots: dict[Path, bytes] = {}
+    source_snapshot_errors: dict[Path, str] = {}
     for file_path in files:
         relative = file_path.relative_to(root_path).as_posix()
         try:
-            source = _read_python_source_bounded(file_path)
+            raw = _read_python_source_bytes_bounded(file_path)
+            source_snapshots[file_path] = raw
+            source = _decode_python_source(raw)
             tree = ast.parse(source, filename=relative)
         except ValueError as exc:
+            if file_path not in source_snapshots:
+                source_snapshot_errors[file_path] = str(exc)
             warnings.append(
                 {"path": relative, "message": str(exc), "type": "PythonSourceError"}
             )
@@ -3318,12 +3558,49 @@ def scan_repository(
         if module_facts:
             facts_list.append(module_facts)
 
+    test_evidence_snapshots: dict[Path, bytes] = {}
+    test_evidence_errors: dict[Path, str] = {}
+    tests = _test_index(
+        root_path,
+        warnings,
+        source_snapshots,
+        test_evidence_snapshots,
+        test_evidence_errors,
+        exclude_patterns,
+    )
+    coverage_snapshots: dict[Path, bytes] = {}
+    coverage, coverage_warnings, coverage_provenance = _load_coverage_document(
+        coverage_json,
+        root_path,
+        coverage_snapshots,
+    )
+    warnings.extend(coverage_warnings)
     repository_inventory = build_repository_inventory(
         root_path,
         selected_python_paths={path.relative_to(root_path).as_posix() for path in files},
         parsed_python_paths=parsed_python_paths,
         include_tests=include_tests,
         exclude_patterns=exclude_patterns,
+        source_snapshots={
+            path.relative_to(root_path).as_posix(): raw
+            for path, raw in source_snapshots.items()
+        },
+        test_evidence_snapshots={
+            path.relative_to(root_path).as_posix(): raw
+            for path, raw in test_evidence_snapshots.items()
+        },
+        dependency_snapshots={
+            path.relative_to(root_path).as_posix(): raw
+            for path, raw in dependency_snapshots.items()
+        },
+        contract_snapshots={
+            path.relative_to(root_path).as_posix(): raw
+            for path, raw in contract_snapshots.items()
+        },
+        coverage_snapshots={
+            path.relative_to(root_path).as_posix(): raw
+            for path, raw in coverage_snapshots.items()
+        },
     )
     baseline = _repository_baseline(
         root_path,
@@ -3332,6 +3609,10 @@ def scan_repository(
         dependencies,
         contracts,
         repository_inventory,
+        source_snapshots,
+        source_snapshot_errors,
+        test_evidence_snapshots,
+        test_evidence_errors,
     )
 
     if focus_patterns:
@@ -3339,9 +3620,6 @@ def scan_repository(
             facts for facts in facts_list if _matches_pattern(_component_ref(facts), focus_patterns)
         ]
 
-    tests = _test_index(root_path, warnings)
-    coverage, coverage_warnings = _load_coverage(coverage_json, root_path)
-    warnings.extend(coverage_warnings)
     callers = _internal_callers(facts_list)
     facts_by_reference = {_component_ref(facts): facts for facts in facts_list}
     for target_reference, caller_references in callers.items():
@@ -3500,6 +3778,8 @@ def scan_repository(
         "generated_summaries": [],
         "runtime_evidence": {"imports": [], "spans": [], "edges": []},
     }
+    if coverage_provenance:
+        analysis["project"]["settings"]["coverage_evidence"] = coverage_provenance
     refresh_assurance_register(analysis, {})
     analysis["sfta"] = build_sfta(analysis)
     analysis["adapter_runs"] = build_adapter_run_ledger(analysis)

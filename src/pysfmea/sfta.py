@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import csv
 import fnmatch
+import io
 import json
 from pathlib import Path
 from typing import Any
 
+from .file_publication import atomic_publish_text
 from .model import preserve_unchanged_generated_at, stable_id, utc_now
 
 SFTA_SCHEMA_VERSION = "1.0"
@@ -359,22 +361,27 @@ def export_sfta(
 ) -> Path:
     """Export the current SFTA/reconciliation model as JSON or a flat CSV gap register."""
 
-    target = Path(destination).expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
     model = build_sfta(analysis)
     if format == "json":
-        target.write_text(json.dumps(model, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return target
+        return atomic_publish_text(
+            destination,
+            json.dumps(model, indent=2, ensure_ascii=False) + "\n",
+            label="SFTA JSON export",
+        )
     if format != "csv":
         raise ValueError("SFTA export format must be json or csv")
     rows = sfta_gap_rows(model)
-    with target.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(
-            handle, fieldnames=SFTA_GAP_FIELDS, extrasaction="ignore"
-        )
-        writer.writeheader()
-        writer.writerows(rows)
-    return target
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(
+        handle, fieldnames=SFTA_GAP_FIELDS, extrasaction="ignore"
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+    return atomic_publish_text(
+        destination,
+        handle.getvalue(),
+        label="SFTA CSV export",
+    )
 
 
 def sfta_gap_rows(model: dict[str, Any]) -> list[dict[str, str]]:
