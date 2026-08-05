@@ -21,9 +21,7 @@ from .version import __version__
 
 ASSURANCE_SCHEMA_VERSION = "1.0"
 ASSURANCE_WORK_QUEUE_FORMAT = "pysfmea-assurance-work-queue-2"
-ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT = (
-    "pysfmea-assurance-work-queue-verification-1"
-)
+ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT = "pysfmea-assurance-work-queue-verification-1"
 ASSURANCE_REGISTER_VERIFICATION_FORMAT = "pysfmea-assurance-register-verification-1"
 MAX_ASSURANCE_WORK_QUEUE_BYTES = 100 * 1024 * 1024
 ASSURANCE_WORK_STATES = (
@@ -53,16 +51,57 @@ ASSURANCE_WORK_NEXT_ACTIONS = (
 _WORK_STATE_ACTION = dict(zip(ASSURANCE_WORK_STATES, ASSURANCE_WORK_NEXT_ACTIONS))
 PLANNER_VERSION = "deterministic-verification-planner-6"
 ASSURANCE_SCAFFOLD_FORMAT = "pysfmea-pytest-assurance-scaffold-6"
-ASSURANCE_SCAFFOLD_VERIFICATION_FORMAT = (
-    "pysfmea-assurance-scaffold-verification-5"
-)
+ASSURANCE_SCAFFOLD_VERIFICATION_FORMAT = "pysfmea-assurance-scaffold-verification-5"
 MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES = 64 * 1024 * 1024
+MAX_ASSURANCE_SCAFFOLD_GENERATED_FILE_BYTES = 64 * 1024 * 1024
 ASSURANCE_NOTICE = (
     "Verification obligations are deterministic planning drafts. A proposed or implemented "
     "test is not evidence. Passing execution cannot close a finding until the recorded "
     "stimulus, oracles, acceptance criteria, environment, freshness, and evidence sufficiency "
     "have been independently reviewed. Repository code must run only in an approved sandbox."
 )
+
+
+def _read_assurance_json_object(path: Path, *, label: str) -> dict[str, Any]:
+    """Read a regular assurance JSON object with a consumption-time bound."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be a regular file")
+    try:
+        with path.open("rb") as source_file:
+            raw = source_file.read(MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES + 1)
+        if len(raw) > MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES:
+            raise ValueError(
+                f"{label} exceeds the {MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES}-byte "
+                "verification limit"
+            )
+        loaded = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not valid UTF-8 JSON: {exc}") from exc
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{label} root must be an object")
+    return loaded
+
+
+def _sha256_assurance_file_bounded(path: Path) -> str:
+    """Hash a regular generated scaffold file without buffering it unboundedly."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("generated scaffold file must be a regular file")
+    digest = hashlib.sha256()
+    consumed = 0
+    with path.open("rb") as source_file:
+        while chunk := source_file.read(1024 * 1024):
+            consumed += len(chunk)
+            if consumed > MAX_ASSURANCE_SCAFFOLD_GENERATED_FILE_BYTES:
+                raise ValueError(
+                    "generated scaffold file exceeds the "
+                    f"{MAX_ASSURANCE_SCAFFOLD_GENERATED_FILE_BYTES}-byte verification "
+                    "limit"
+                )
+            digest.update(chunk)
+    return digest.hexdigest()
+
 
 ASSURANCE_STATUSES = {
     "candidate",
@@ -292,36 +331,81 @@ def _method_for(item: dict[str, Any]) -> tuple[str, str]:
     rule = str(scanner.get("rule_id", ""))
     failure_class = str(scanner.get("failure_class", ""))
     if rule.startswith("resilience.circuit_breaker_"):
-        return "fault_injection_test", "Exercise trip, isolation, degraded fallback, and timed recovery across controlled breaker-state transitions."
+        return (
+            "fault_injection_test",
+            "Exercise trip, isolation, degraded fallback, and timed recovery across controlled breaker-state transitions.",
+        )
     if rule.startswith(("storage.", "persistence.")):
-        return "fault_injection_test", "Exercise rollback and externally visible side effects at persistence failure boundaries."
+        return (
+            "fault_injection_test",
+            "Exercise rollback and externally visible side effects at persistence failure boundaries.",
+        )
     if rule.startswith("state."):
-        return "state_transition_test", "Exercise valid and invalid state transitions and their invariants."
+        return (
+            "state_transition_test",
+            "Exercise valid and invalid state transitions and their invariants.",
+        )
     if rule.startswith("timing."):
-        return "concurrency_test", "Exercise ordering, timeout, cancellation, and repeated interleavings."
+        return (
+            "concurrency_test",
+            "Exercise ordering, timeout, cancellation, and repeated interleavings.",
+        )
     if rule.startswith("resource."):
-        return "stress_test", "Exercise declared resource bounds and controlled degradation."
+        return (
+            "stress_test",
+            "Exercise declared resource bounds and controlled degradation.",
+        )
     if rule.startswith("detection."):
-        return "fault_injection_test", "Trigger the failure and demonstrate detection, alerting, and containment."
+        return (
+            "fault_injection_test",
+            "Trigger the failure and demonstrate detection, alerting, and containment.",
+        )
     if rule.startswith("configuration.") or rule.startswith("environment."):
-        return "configuration_inspection", "Validate configuration constraints and fail-safe startup behavior."
+        return (
+            "configuration_inspection",
+            "Validate configuration constraints and fail-safe startup behavior.",
+        )
     if rule.startswith("interface.contract"):
-        return "contract_test", "Exercise compatible and incompatible interface contracts at the real boundary."
+        return (
+            "contract_test",
+            "Exercise compatible and incompatible interface contracts at the real boundary.",
+        )
     if rule.startswith("interface."):
-        return "integration_test", "Exercise unavailable, malformed, delayed, and partial interface responses."
+        return (
+            "integration_test",
+            "Exercise unavailable, malformed, delayed, and partial interface responses.",
+        )
     if rule.startswith("common_cause."):
-        return "architecture_review", "Demonstrate independence or containment against the common cause."
+        return (
+            "architecture_review",
+            "Demonstrate independence or containment against the common cause.",
+        )
     if failure_class in {"calculation", "data"}:
-        return "property_test", "Generate boundary and adversarial values and verify declared invariants."
+        return (
+            "property_test",
+            "Generate boundary and adversarial values and verify declared invariants.",
+        )
     if failure_class == "security" or any(
         token in rule for token in ("access", "auth", "trust", "untrusted", "outbound")
     ):
-        return "security_test", "Exercise the trust boundary with unauthorized and adversarial inputs."
+        return (
+            "security_test",
+            "Exercise the trust boundary with unauthorized and adversarial inputs.",
+        )
     if failure_class == "logic":
-        return "property_test", "Exercise branch and sequence invariants across representative input classes."
+        return (
+            "property_test",
+            "Exercise branch and sequence invariants across representative input classes.",
+        )
     if failure_class == "functional":
-        return "unit_test", "Exercise the required behavior and negative behavior at the function boundary."
-    return "integration_test", "Exercise the failure at the nearest representative system boundary."
+        return (
+            "unit_test",
+            "Exercise the required behavior and negative behavior at the function boundary.",
+        )
+    return (
+        "integration_test",
+        "Exercise the failure at the nearest representative system boundary.",
+    )
 
 
 def _stimulus(method: str, item: dict[str, Any]) -> dict[str, Any]:
@@ -345,7 +429,8 @@ def _stimulus(method: str, item: dict[str, Any]) -> dict[str, Any]:
     obligation = {
         "method": method,
         "description": f"{verbs.get(method, 'Stimulate')} {trigger or 'the documented failure condition'}.",
-        "injection_required": method in {
+        "injection_required": method
+        in {
             "fault_injection_test",
             "concurrency_test",
             "stress_test",
@@ -372,7 +457,9 @@ def _circuit_breaker_review_questions(control: dict[str, Any]) -> list[str]:
     roles = set(_text_list(control.get("roles", [])))
     questions = []
     if not control.get("threshold_expressions"):
-        questions.append("What exact failure-count or rate threshold opens the breaker?")
+        questions.append(
+            "What exact failure-count or rate threshold opens the breaker?"
+        )
     if "recovery_timer" in roles and not control.get("cooldown_expressions"):
         questions.append("What exact cooldown boundary permits a recovery probe?")
     if "recovery_timer" in roles and not control.get("clock_sources"):
@@ -380,15 +467,23 @@ def _circuit_breaker_review_questions(control: dict[str, Any]) -> list[str]:
     if "recovery_timer" in roles and "half_open" not in set(
         _text_list(control.get("observed_states", control.get("states", [])))
     ):
-        questions.append("How is the bounded recovery-probe or HALF-OPEN policy represented?")
+        questions.append(
+            "How is the bounded recovery-probe or HALF-OPEN policy represented?"
+        )
     if "recovery_timer" in roles and "success_reset" not in roles:
-        questions.append("What observed transition returns a successful recovery probe to CLOSED?")
+        questions.append(
+            "What observed transition returns a successful recovery probe to CLOSED?"
+        )
     if "recovery_timer" in roles and not control.get("synchronization"):
         questions.append("How are concurrent recovery probes serialized or bounded?")
     if not control.get("scope_keys"):
-        questions.append("What dependency, tenant, or instance identity scopes breaker state?")
+        questions.append(
+            "What dependency, tenant, or instance identity scopes breaker state?"
+        )
     if "degraded_fallback" not in roles:
-        questions.append("Is a caller-visible degraded contract required, or explicitly not applicable?")
+        questions.append(
+            "Is a caller-visible degraded contract required, or explicitly not applicable?"
+        )
     return questions
 
 
@@ -430,9 +525,13 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
     if not end_effect:
         gaps.append("system/end effect requires engineering definition")
     if not prevention and not detection:
-        gaps.append("required prevention, detection, containment, or recovery control is not confirmed")
+        gaps.append(
+            "required prevention, detection, containment, or recovery control is not confirmed"
+        )
     if not safe_state and not degraded_behavior and not recovery_behavior:
-        gaps.append("required safe-state, degraded, or recovery behavior is not defined")
+        gaps.append(
+            "required safe-state, degraded, or recovery behavior is not defined"
+        )
     if upstream_paths and not upstream_path_analysis.get(
         "complete_within_static_call_model", True
     ):
@@ -490,7 +589,10 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
             "state": str(review.get("operational_state", "")),
         },
         "preconditions": [
-            str(review.get("trigger") or scanner.get("trigger", "The failure trigger is established.")),
+            str(
+                review.get("trigger")
+                or scanner.get("trigger", "The failure trigger is established.")
+            ),
             "The test records proof that the intended failure path was actually exercised.",
         ],
         "stimulus": _stimulus(method, item),
@@ -529,7 +631,10 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
             "Representative dependency versions and configuration captured in the execution manifest.",
             "Deterministic setup/cleanup for stateful dependencies and asynchronous work.",
         ],
-        "repeatability": {"minimum_runs": 1, "additional_runs_when_nondeterministic": 10},
+        "repeatability": {
+            "minimum_runs": 1,
+            "additional_runs_when_nondeterministic": 10,
+        },
         "automation": {
             "framework": "pytest",
             "proposed_test_path": proposed_path,
@@ -552,7 +657,9 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
         ],
         "citation_ids": list(dict.fromkeys(citations)),
         "planning_gaps": gaps,
-        "assurance_status": "retired" if item.get("source_status") == "removed" else "candidate",
+        "assurance_status": "retired"
+        if item.get("source_status") == "removed"
+        else "candidate",
         "evidence_status": "missing",
         "evidence_artifact_ids": [],
         "executions": [],
@@ -569,7 +676,9 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
             "planner_version": PLANNER_VERSION,
             "generated_at": utc_now(),
             "finding_source_fingerprint": scanner.get("source_fingerprint", ""),
-            "finding_context_fingerprint": scanner.get("analysis_context_fingerprint", ""),
+            "finding_context_fingerprint": scanner.get(
+                "analysis_context_fingerprint", ""
+            ),
         },
         "history": [{"event": "obligation_generated", "at": utc_now()}],
     }
@@ -610,7 +719,7 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
             )
             obligation["acceptance_criteria"].extend(
                 [
-                "The breaker opens at the reviewer-approved consecutive-failure boundary and never admits a normal dependency call while open.",
+                    "The breaker opens at the reviewer-approved consecutive-failure boundary and never admits a normal dependency call while open.",
                     "Success/reset and concurrent failure accounting cannot bypass or prematurely trigger containment.",
                 ]
             )
@@ -626,8 +735,8 @@ def _obligation(item: dict[str, Any], baseline_id: str) -> dict[str, Any]:
             )
             obligation["acceptance_criteria"].extend(
                 [
-                "Cooldown uses the approved clock semantics and does not recover before the full interval elapses.",
-                "At most the approved number of HALF-OPEN probes execute concurrently; success closes and failure reopens the breaker deterministically.",
+                    "Cooldown uses the approved clock semantics and does not recover before the full interval elapses.",
+                    "At most the approved number of HALF-OPEN probes execute concurrently; success closes and failure reopens the breaker deterministically.",
                 ]
             )
             obligation["required_environment"].append(
@@ -685,7 +794,10 @@ def refresh_assurance_register(
         if isinstance(value, dict) and value.get("id")
     }
     old_by_finding_method = {
-        (str(value.get("finding_id", "")), str(value.get("verification_method", ""))): value
+        (
+            str(value.get("finding_id", "")),
+            str(value.get("verification_method", "")),
+        ): value
         for value in previous.get("obligations", [])
         if isinstance(value, dict) and value.get("finding_id")
     }
@@ -742,9 +854,7 @@ def refresh_assurance_register(
             if old_contract_sha256 != new_contract_sha256:
                 change_reasons.append("verification contract changed")
             else:
-                previous_generated_at = old.get("provenance", {}).get(
-                    "generated_at"
-                )
+                previous_generated_at = old.get("provenance", {}).get("generated_at")
                 if isinstance(previous_generated_at, str) and previous_generated_at:
                     obligation["provenance"]["generated_at"] = previous_generated_at
             if change_reasons and obligation.get("assurance_status") not in {
@@ -772,38 +882,58 @@ def refresh_assurance_register(
         "notice": ASSURANCE_NOTICE,
         "obligations": obligations,
         "executions": copy.deepcopy(previous.get("executions", [])),
-        "evidence_artifacts": copy.deepcopy(
-            previous.get("evidence_artifacts", [])
-        ),
+        "evidence_artifacts": copy.deepcopy(previous.get("evidence_artifacts", [])),
     }
     register["summary"] = assurance_summary(register)
     preserve_unchanged_generated_at(previous, register)
     analysis["assurance"] = register
-    analysis.setdefault("summary", {})["assurance"] = copy.deepcopy(
-        register["summary"]
-    )
+    analysis.setdefault("summary", {})["assurance"] = copy.deepcopy(register["summary"])
     return register
 
 
 def ensure_assurance_register(analysis: dict[str, Any]) -> dict[str, Any]:
     register = analysis.get("assurance")
-    if not isinstance(register, dict) or not isinstance(register.get("obligations"), list):
+    if not isinstance(register, dict) or not isinstance(
+        register.get("obligations"), list
+    ):
         return refresh_assurance_register(analysis, {})
     return register
 
 
 def assurance_summary(register: dict[str, Any]) -> dict[str, Any]:
-    values = [value for value in register.get("obligations", []) if isinstance(value, dict)]
-    active = [value for value in values if value.get("source_status", "active") == "active"]
+    values = [
+        value for value in register.get("obligations", []) if isinstance(value, dict)
+    ]
+    active = [
+        value for value in values if value.get("source_status", "active") == "active"
+    ]
     executions = [
         value for value in register.get("executions", []) if isinstance(value, dict)
     ]
     return {
         "active_obligations": len(active),
         "retired_obligations": len(values) - len(active),
-        "by_status": dict(sorted(Counter(str(value.get("assurance_status", "unknown")) for value in active).items())),
-        "by_method": dict(sorted(Counter(str(value.get("verification_method", "unknown")) for value in active).items())),
-        "by_evidence_status": dict(sorted(Counter(str(value.get("evidence_status", "unknown")) for value in active).items())),
+        "by_status": dict(
+            sorted(
+                Counter(
+                    str(value.get("assurance_status", "unknown")) for value in active
+                ).items()
+            )
+        ),
+        "by_method": dict(
+            sorted(
+                Counter(
+                    str(value.get("verification_method", "unknown")) for value in active
+                ).items()
+            )
+        ),
+        "by_evidence_status": dict(
+            sorted(
+                Counter(
+                    str(value.get("evidence_status", "unknown")) for value in active
+                ).items()
+            )
+        ),
         "implemented_tests": sum(
             value.get("automation", {}).get("implementation_status") == "implemented"
             for value in active
@@ -812,7 +942,9 @@ def assurance_summary(register: dict[str, Any]) -> dict[str, Any]:
         "executions": len(executions),
         "executions_by_status": dict(
             sorted(
-                Counter(str(value.get("status", "unknown")) for value in executions).items()
+                Counter(
+                    str(value.get("status", "unknown")) for value in executions
+                ).items()
             )
         ),
         "reviewed_executions": sum(bool(value.get("reviews")) for value in executions),
@@ -849,9 +981,9 @@ def assurance_work_queue(analysis: dict[str, Any]) -> dict[str, Any]:
             isinstance(obligation, dict)
             and obligation.get("source_status", "active") == "active"
         ):
-            by_finding.setdefault(
-                str(obligation.get("finding_id", "")), []
-            ).append(obligation)
+            by_finding.setdefault(str(obligation.get("finding_id", "")), []).append(
+                obligation
+            )
     executions_by_obligation: dict[str, list[dict[str, Any]]] = {}
     for execution in register.get("executions", []):
         if isinstance(execution, dict):
@@ -871,9 +1003,7 @@ def assurance_work_queue(analysis: dict[str, Any]) -> dict[str, Any]:
                     "priority": str(
                         finding.get("scanner", {}).get("screening_priority", "")
                     ),
-                    "component": str(
-                        finding.get("component", {}).get("qualname", "")
-                    ),
+                    "component": str(finding.get("component", {}).get("qualname", "")),
                     "state": "contract_gap",
                     "actionable": True,
                     "automation_eligible": False,
@@ -986,9 +1116,7 @@ def assurance_work_queue(analysis: dict[str, Any]) -> dict[str, Any]:
             value["finding_id"],
         )
     )
-    by_state = dict(
-        sorted(Counter(value["state"] for value in items).items())
-    )
+    by_state = dict(sorted(Counter(value["state"] for value in items).items()))
     payload = {
         "format": ASSURANCE_WORK_QUEUE_FORMAT,
         "generator": {"name": "PySFMEA", "version": __version__},
@@ -1003,9 +1131,7 @@ def assurance_work_queue(analysis: dict[str, Any]) -> dict[str, Any]:
         "summary": {
             "total": len(items),
             "actionable": sum(value["actionable"] for value in items),
-            "automation_eligible": sum(
-                value["automation_eligible"] for value in items
-            ),
+            "automation_eligible": sum(value["automation_eligible"] for value in items),
             "implementation_ready": by_state.get("ready_for_implementation", 0),
             "execution_ready": by_state.get("ready_for_execution", 0),
             "by_state": by_state,
@@ -1087,8 +1213,7 @@ def _work_queue_structure_valid(queue: dict[str, Any]) -> bool:
         and isinstance(queue.get("notice"), str)
         and bool(queue.get("notice"))
         and isinstance(integrity, dict)
-        and set(integrity)
-        == {"algorithm", "canonicalization", "content_sha256"}
+        and set(integrity) == {"algorithm", "canonicalization", "content_sha256"}
     ):
         return False
 
@@ -1142,7 +1267,9 @@ def _work_queue_structure_valid(queue: dict[str, Any]) -> bool:
         return False
 
     by_state = summary.get("by_state")
-    if not isinstance(by_state, dict) or not set(by_state) <= set(ASSURANCE_WORK_STATES):
+    if not isinstance(by_state, dict) or not set(by_state) <= set(
+        ASSURANCE_WORK_STATES
+    ):
         return False
     if not all(type(value) is int and value >= 0 for value in by_state.values()):
         return False
@@ -1234,10 +1361,26 @@ def verify_assurance_work_queue(
             queue.get(name) == expected.get(name) for name in semantic_fields
         )
         for name, message, path in (
-            ("baseline", "Queue baseline does not match the supplied analysis.", "binding.baseline_id"),
-            ("schema", "Queue schema version does not match the supplied analysis.", "binding.analysis_schema_version"),
-            ("analysis_state", "Queue analysis-state digest does not match the supplied analysis.", "binding.analysis_state_sha256"),
-            ("semantic_projection", "Queue content is not the deterministic projection of the supplied analysis.", "items"),
+            (
+                "baseline",
+                "Queue baseline does not match the supplied analysis.",
+                "binding.baseline_id",
+            ),
+            (
+                "schema",
+                "Queue schema version does not match the supplied analysis.",
+                "binding.analysis_schema_version",
+            ),
+            (
+                "analysis_state",
+                "Queue analysis-state digest does not match the supplied analysis.",
+                "binding.analysis_state_sha256",
+            ),
+            (
+                "semantic_projection",
+                "Queue content is not the deterministic projection of the supplied analysis.",
+                "items",
+            ),
         ):
             if checks[name] is False:
                 reject(f"assurance_work_queue.{name}", message, path)
@@ -1261,6 +1404,7 @@ def verify_assurance_work_queue(
         status = "mismatched" if binding_requested and binding_checked else "invalid"
     return {
         "format": ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
+        "verifier": {"name": "PySFMEA", "version": __version__},
         "path": "<memory>",
         "valid": valid,
         "status": status,
@@ -1288,7 +1432,9 @@ def verify_assurance_work_queue_file(
 
     candidate = Path(source).expanduser()
     if candidate.is_symlink():
-        raise ValueError(f"assurance work queue must not be a symbolic link: {candidate}")
+        raise ValueError(
+            f"assurance work queue must not be a symbolic link: {candidate}"
+        )
     path = candidate.resolve()
     if not path.is_file():
         raise ValueError(f"assurance work queue must be a regular file: {path}")
@@ -1339,8 +1485,7 @@ def assurance_progress(analysis: dict[str, Any]) -> dict[str, Any]:
     active_obligations = [
         value
         for value in register.get("obligations", [])
-        if isinstance(value, dict)
-        and value.get("source_status", "active") == "active"
+        if isinstance(value, dict) and value.get("source_status", "active") == "active"
     ]
     by_finding: dict[str, list[dict[str, Any]]] = {}
     for obligation in active_obligations:
@@ -1377,9 +1522,7 @@ def assurance_progress(analysis: dict[str, Any]) -> dict[str, Any]:
         if value.get("automation", {}).get("implementation_status") == "implemented"
     ]
     executions = [
-        value
-        for value in register.get("executions", [])
-        if isinstance(value, dict)
+        value for value in register.get("executions", []) if isinstance(value, dict)
     ]
     executed_obligation_ids = {
         str(value.get("obligation_id", "")) for value in executions
@@ -1454,7 +1597,11 @@ def review_obligation(
         raise ValueError("assurance review requires a reviewer and rationale")
     register = ensure_assurance_register(analysis)
     obligation = next(
-        (value for value in register["obligations"] if value.get("id") == obligation_id),
+        (
+            value
+            for value in register["obligations"]
+            if value.get("id") == obligation_id
+        ),
         None,
     )
     if obligation is None:
@@ -1476,7 +1623,8 @@ def review_obligation(
             "to residual_risk_review"
         )
     if status == "residual_risk_review" and not (
-        current_status == "verified" and obligation.get("evidence_status") == "sufficient"
+        current_status == "verified"
+        and obligation.get("evidence_status") == "sufficient"
     ):
         raise ValueError(
             "residual_risk_review requires an obligation verified by sufficient evidence"
@@ -1571,7 +1719,9 @@ def _flat_row(
         "verification_method": value.get("verification_method", ""),
         "stimulus": value.get("stimulus", {}).get("description", ""),
         "oracles": " | ".join(_text_list(value.get("oracles", []))),
-        "acceptance_criteria": " | ".join(_text_list(value.get("acceptance_criteria", []))),
+        "acceptance_criteria": " | ".join(
+            _text_list(value.get("acceptance_criteria", []))
+        ),
         "proposed_test_path": automation.get("proposed_test_path", ""),
         "command_argv": " ".join(_text_list(automation.get("command_argv", []))),
         "implementation_status": automation.get("implementation_status", ""),
@@ -1590,7 +1740,9 @@ def _flat_row(
         ),
         "static_upstream_paths": " | ".join(
             " -> ".join(_text_list(path))
-            for path in value.get("cascade_context", {}).get("static_upstream_paths", [])
+            for path in value.get("cascade_context", {}).get(
+                "static_upstream_paths", []
+            )
             if isinstance(path, list)
         ),
         "cascade_path_inventory_complete": value.get("cascade_context", {})
@@ -1652,12 +1804,9 @@ def verify_assurance_register(
         if isinstance(actual_queue, dict)
         else None
     )
-    embedded_work_queue = bool(
-        embedded_verification and embedded_verification["valid"]
-    )
+    embedded_work_queue = bool(embedded_verification and embedded_verification["valid"])
     standalone_consistency = bool(
-        isinstance(actual_queue, dict)
-        and actual_queue == standalone_work_queue
+        isinstance(actual_queue, dict) and actual_queue == standalone_work_queue
     )
     checks = {
         "structure": structure_valid,
@@ -1701,9 +1850,7 @@ def export_assurance_register(
     """Export the executable assurance checklist or focused work queue."""
 
     if format not in {"json", "work-json", "csv", "markdown"}:
-        raise ValueError(
-            "assurance format must be json, work-json, csv, or markdown"
-        )
+        raise ValueError("assurance format must be json, work-json, csv, or markdown")
     path = Path(destination).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     register = ensure_assurance_register(analysis)
@@ -1767,7 +1914,9 @@ def export_assurance_register(
             row["evidence_status"],
             row["proposed_test_path"],
         ]
-        lines.append("| " + " | ".join(str(cell).replace("|", "\\|") for cell in cells) + " |")
+        lines.append(
+            "| " + " | ".join(str(cell).replace("|", "\\|") for cell in cells) + " |"
+        )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -1784,6 +1933,7 @@ def export_pytest_scaffold(
     owner: str = "",
     purpose: str = "",
     replace: bool = False,
+    _expected_manifest_sha256: str = "",
 ) -> Path:
     """Create an intentionally failing pytest checklist for selected obligations.
 
@@ -1801,7 +1951,9 @@ def export_pytest_scaffold(
     owner = owner.strip()
     purpose = purpose.strip()
     if len(owner) > 200 or any(ord(value) < 32 for value in owner):
-        raise ValueError("assurance scaffold owner must be at most 200 printable characters")
+        raise ValueError(
+            "assurance scaffold owner must be at most 200 printable characters"
+        )
     if len(purpose) > 500 or any(ord(value) < 32 for value in purpose):
         raise ValueError(
             "assurance scaffold purpose must be at most 500 printable characters"
@@ -1832,7 +1984,6 @@ def export_pytest_scaffold(
                 raise ValueError(
                     f"assurance scaffold destination must be an empty directory: {path}"
                 )
-            _require_untouched_scaffold(analysis, path, operation="replacement")
             replace_existing = True
     register = ensure_assurance_register(analysis)
     selected = _select_scaffold_obligations(
@@ -1866,9 +2017,7 @@ def export_pytest_scaffold(
                     ensure_ascii=False,
                 ).encode("utf-8")
             ).hexdigest(),
-            "scaffold_contracts_sha256": _scaffold_contracts_sha256(
-                contract_snapshot
-            ),
+            "scaffold_contracts_sha256": _scaffold_contracts_sha256(contract_snapshot),
         },
         "selection": {
             "disposition": disposition,
@@ -1895,11 +2044,46 @@ from pathlib import Path
 
 import pytest
 
+MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+
 
 def _load_manifest() -> dict:
-    payload = json.loads(
-        Path(__file__).with_name("assurance-manifest.json").read_text(encoding="utf-8")
-    )
+    path = Path(__file__).with_name("assurance-manifest.json")
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(
+            "assurance-manifest.json must be a regular non-symbolic-link file; "
+            "regenerate the scaffold from the governed analysis"
+        )
+    try:
+        with path.open("rb") as source_file:
+            raw = source_file.read(MAX_MANIFEST_BYTES + 1)
+    except OSError as exc:
+        raise RuntimeError(
+            "assurance-manifest.json could not be read safely; regenerate the scaffold "
+            "from the governed analysis"
+        ) from exc
+    if len(raw) > MAX_MANIFEST_BYTES:
+        raise RuntimeError(
+            f"assurance-manifest.json exceeds the {MAX_MANIFEST_BYTES}-byte collection "
+            "limit; inspect or regenerate the scaffold"
+        )
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise RuntimeError(
+            "assurance-manifest.json must be valid bounded UTF-8 JSON; regenerate the "
+            "scaffold from the governed analysis"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            "assurance-manifest.json root must be an object; regenerate the scaffold "
+            "from the governed analysis"
+        )
+    if payload.get("format") != "pysfmea-pytest-assurance-scaffold-6":
+        raise RuntimeError(
+            "assurance-manifest.json has an unsupported scaffold format; regenerate it "
+            "from the governed analysis"
+        )
     canonical = dict(payload)
     expected = canonical.pop("manifest_sha256", "")
     actual = hashlib.sha256(
@@ -1914,6 +2098,14 @@ def _load_manifest() -> dict:
         raise RuntimeError(
             "assurance-manifest.json failed its SHA-256 integrity check; regenerate "
             "the scaffold from the governed analysis"
+        )
+    obligations = payload.get("obligations")
+    if not isinstance(obligations, list) or not obligations or not all(
+        isinstance(value, dict) and value.get("id") for value in obligations
+    ):
+        raise RuntimeError(
+            "assurance-manifest.json has no valid obligation list; regenerate the "
+            "scaffold from the governed analysis"
         )
     return payload
 
@@ -1981,6 +2173,24 @@ def test_sfmea_assurance_obligation(obligation: dict) -> None:
         (staging / "test_sfmea_assurance.py").write_bytes(test_source.encode("utf-8"))
         (staging / "README.md").write_bytes(readme_source.encode("utf-8"))
         if replace_existing:
+            _replacement_verification, replacement_manifest = (
+                _require_untouched_scaffold(
+                    analysis,
+                    path,
+                    operation="replacement",
+                )
+            )
+            replacement_digest = str(
+                replacement_manifest.get("manifest_sha256", "")
+            ).lower()
+            if (
+                _expected_manifest_sha256
+                and replacement_digest != _expected_manifest_sha256.lower()
+            ):
+                raise ValueError(
+                    "assurance scaffold changed after guarded refresh verification; "
+                    "inspect the queue and retry without overwriting concurrent work"
+                )
             backup = Path(
                 tempfile.mkdtemp(
                     prefix="." + path.name + ".",
@@ -2009,10 +2219,10 @@ def test_sfmea_assurance_obligation(obligation: dict) -> None:
     return path
 
 
-def verify_pytest_scaffold(
+def _verify_pytest_scaffold_snapshot(
     analysis: dict[str, Any], source: str | Path
-) -> dict[str, Any]:
-    """Verify scaffold integrity and its binding to a governed analysis state.
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Verify a scaffold and return the exact manifest snapshot that was checked.
 
     Generated placeholder edits are reported separately because replacing them with
     substantive tests is an expected workflow transition, not scaffold corruption.
@@ -2033,16 +2243,12 @@ def verify_pytest_scaffold(
         add("scaffold.manifest_missing", "assurance-manifest.json is missing.")
     else:
         try:
-            if manifest_path.stat().st_size > MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES:
-                raise ValueError(
-                    "manifest exceeds the bounded verification size limit"
-                )
-            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if not isinstance(loaded, dict):
-                raise ValueError("manifest root must be an object")
-            manifest = loaded
+            manifest = _read_assurance_json_object(
+                manifest_path,
+                label="assurance scaffold manifest",
+            )
             readable = True
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             add("scaffold.manifest_unreadable", str(exc))
 
     canonical = dict(manifest)
@@ -2102,8 +2308,7 @@ def verify_pytest_scaffold(
                 character in "0123456789abcdefABCDEF"
                 for character in str(value.get("contract_sha256", ""))
             )
-            and value.get("disposition")
-            in {"accepted", "rejected", "unreviewed"}
+            and value.get("disposition") in {"accepted", "rejected", "unreviewed"}
             and value.get("source_status")
             and value.get("implementation_status")
             for value in contract_snapshot
@@ -2128,14 +2333,11 @@ def verify_pytest_scaffold(
         }
     )
     snapshot_digest = (
-        _scaffold_contracts_sha256(contract_snapshot)
-        if contract_snapshot_valid
-        else ""
+        _scaffold_contracts_sha256(contract_snapshot) if contract_snapshot_valid else ""
     )
     contract_snapshot_integrity = bool(
         snapshot_digest
-        and snapshot_digest
-        == str(binding.get("scaffold_contracts_sha256", "")).lower()
+        and snapshot_digest == str(binding.get("scaffold_contracts_sha256", "")).lower()
     )
     if readable and not (contract_snapshot_valid and contract_snapshot_integrity):
         add(
@@ -2241,9 +2443,7 @@ def verify_pytest_scaffold(
                 {
                     "obligation_id": obligation_id,
                     "finding_id": str(
-                        (current_record or previous_record or {}).get(
-                            "finding_id", ""
-                        )
+                        (current_record or previous_record or {}).get("finding_id", "")
                     ),
                     "status": change_status,
                     "changed_fields": changed_fields,
@@ -2264,9 +2464,7 @@ def verify_pytest_scaffold(
                 ensure_ascii=False,
             ).encode("utf-8")
         ).hexdigest(),
-        "scaffold_contracts_sha256": _scaffold_contracts_sha256(
-            current_contracts
-        ),
+        "scaffold_contracts_sha256": _scaffold_contracts_sha256(current_contracts),
     }
     binding_checks = {
         key: bool(binding.get(key)) and str(binding.get(key)).lower() == value.lower()
@@ -2319,10 +2517,11 @@ def verify_pytest_scaffold(
             target = path / name
             expected = str(record.get("sha256", "")) if isinstance(record, dict) else ""
             actual = ""
-            if target.is_file() and not target.is_symlink():
+            regular_target = target.is_file() and not target.is_symlink()
+            if regular_target:
                 try:
-                    actual = hashlib.sha256(target.read_bytes()).hexdigest()
-                except OSError as exc:
+                    actual = _sha256_assurance_file_bounded(target)
+                except (OSError, ValueError) as exc:
                     add(
                         "scaffold.generated_file_unreadable",
                         f"Cannot read generated starting file {name}: {exc}",
@@ -2332,7 +2531,7 @@ def verify_pytest_scaffold(
             generated_files.append(
                 {
                     "path": str(name),
-                    "exists": target.is_file(),
+                    "exists": regular_target,
                     "unchanged_from_generated": unchanged,
                     "generated_sha256": expected,
                     "current_sha256": actual,
@@ -2346,21 +2545,15 @@ def verify_pytest_scaffold(
                 )
 
     retirement_path = path / "retirement-record.json"
-    retirement_present = retirement_path.exists()
+    retirement_present = os.path.lexists(retirement_path)
     retirement_record: dict[str, Any] = {}
     retirement_valid = not retirement_present
     if retirement_present:
         try:
-            if retirement_path.is_symlink() or not retirement_path.is_file():
-                raise ValueError("retirement record must be a regular file")
-            if retirement_path.stat().st_size > MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES:
-                raise ValueError("retirement record exceeds the bounded verification limit")
-            loaded_retirement = json.loads(
-                retirement_path.read_text(encoding="utf-8")
+            retirement_record = _read_assurance_json_object(
+                retirement_path,
+                label="retirement record",
             )
-            if not isinstance(loaded_retirement, dict):
-                raise ValueError("retirement record root must be an object")
-            retirement_record = loaded_retirement
             canonical_retirement = dict(retirement_record)
             retirement_digest = str(canonical_retirement.pop("record_sha256", ""))
             actual_retirement_digest = hashlib.sha256(
@@ -2371,9 +2564,11 @@ def verify_pytest_scaffold(
                     ensure_ascii=False,
                 ).encode("utf-8")
             ).hexdigest()
-            recorded_archive = Path(
-                str(retirement_record.get("archive_path", ""))
-            ).expanduser().resolve()
+            recorded_archive = (
+                Path(str(retirement_record.get("archive_path", "")))
+                .expanduser()
+                .resolve()
+            )
             recorded_current = retirement_record.get("current_analysis", {})
             retirement_valid = bool(
                 retirement_record.get("format")
@@ -2383,8 +2578,7 @@ def verify_pytest_scaffold(
                 and len(retirement_digest) == 64
                 and retirement_digest.lower() == actual_retirement_digest
                 and retirement_record.get("queue") == supplied_queue
-                and retirement_record.get("previous_manifest_sha256")
-                == supplied_digest
+                and retirement_record.get("previous_manifest_sha256") == supplied_digest
                 and recorded_archive == path.resolve()
                 and isinstance(recorded_current, dict)
                 and all(
@@ -2396,12 +2590,10 @@ def verify_pytest_scaffold(
                         "scaffold_contracts_sha256",
                     )
                 )
-                and isinstance(
-                    retirement_record.get("contract_change_summary"), dict
-                )
+                and isinstance(retirement_record.get("contract_change_summary"), dict)
                 and isinstance(retirement_record.get("contract_changes"), list)
             )
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        except (OSError, ValueError):
             retirement_valid = False
         if not retirement_valid:
             add(
@@ -2441,7 +2633,7 @@ def verify_pytest_scaffold(
         if internal_valid
         else "invalid"
     )
-    return {
+    verification = {
         "format": ASSURANCE_SCAFFOLD_VERIFICATION_FORMAT,
         "path": str(path),
         "valid": bound,
@@ -2499,14 +2691,24 @@ def verify_pytest_scaffold(
             "Digests are not approval signatures."
         ),
     }
+    return verification, manifest
+
+
+def verify_pytest_scaffold(
+    analysis: dict[str, Any], source: str | Path
+) -> dict[str, Any]:
+    """Verify scaffold integrity and its binding to a governed analysis state."""
+
+    verification, _manifest = _verify_pytest_scaffold_snapshot(analysis, source)
+    return verification
 
 
 def _require_untouched_scaffold(
     analysis: dict[str, Any], path: Path, *, operation: str
-) -> dict[str, Any]:
-    """Return verified scaffold state only when preservation-sensitive work is safe."""
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return one verified snapshot when preservation-sensitive work is safe."""
 
-    verification = verify_pytest_scaffold(analysis, path)
+    verification, manifest = _verify_pytest_scaffold_snapshot(analysis, path)
     safe_checks = (
         "readable",
         "format",
@@ -2535,18 +2737,17 @@ def _require_untouched_scaffold(
             f"assurance scaffold {operation} refused because generated files were edited or "
             "removed; use a new destination to preserve implementation work"
         )
-    return verification
+    return verification, manifest
 
 
-def refresh_pytest_scaffold(
-    analysis: dict[str, Any], destination: str | Path
-) -> Path:
+def refresh_pytest_scaffold(analysis: dict[str, Any], destination: str | Path) -> Path:
     """Safely regenerate an untouched scaffold using its governed selection and identity."""
 
-    path = Path(destination).expanduser().resolve()
-    _require_untouched_scaffold(analysis, path, operation="refresh")
-    manifest = json.loads(
-        (path / "assurance-manifest.json").read_text(encoding="utf-8")
+    path = Path(destination).expanduser().absolute()
+    _verification, manifest = _require_untouched_scaffold(
+        analysis,
+        path,
+        operation="refresh",
     )
     selection = manifest["selection"]
     queue = manifest["queue"]
@@ -2561,6 +2762,7 @@ def refresh_pytest_scaffold(
         owner=str(queue["owner"]),
         purpose=str(queue["purpose"]),
         replace=True,
+        _expected_manifest_sha256=str(manifest.get("manifest_sha256", "")),
     )
 
 
@@ -2571,9 +2773,11 @@ def archive_pytest_scaffold(
 ) -> Path:
     """Atomically archive an untouched queue whose selection is now empty."""
 
-    path = Path(source).expanduser().resolve()
-    verification = _require_untouched_scaffold(
-        analysis, path, operation="archive"
+    path = Path(source).expanduser().absolute()
+    verification, manifest = _require_untouched_scaffold(
+        analysis,
+        path,
+        operation="archive",
     )
     if verification.get("lifecycle") != "retirement_candidate":
         raise ValueError(
@@ -2583,29 +2787,41 @@ def archive_pytest_scaffold(
     queue_id = str(verification.get("queue", {}).get("id", "queue"))
     timestamp = utc_now().replace("+00:00", "Z").replace("-", "").replace(":", "")
     archive = (
-        Path(destination).expanduser().resolve()
+        Path(destination).expanduser().absolute()
         if destination is not None
         else path.parent / ".sfmea-archive" / f"{path.name}-{queue_id}-{timestamp}"
     )
     if archive == path or archive.is_relative_to(path):
-        raise ValueError("assurance scaffold archive destination must be outside the queue")
+        raise ValueError(
+            "assurance scaffold archive destination must be outside the queue"
+        )
     if path.anchor.casefold() != archive.anchor.casefold():
         raise ValueError(
             "assurance scaffold archive destination must be on the same filesystem volume"
         )
-    if archive.exists():
+    if os.path.lexists(archive):
         raise ValueError(
             f"assurance scaffold archive destination already exists: {archive}"
         )
     retirement_path = path / "retirement-record.json"
-    if retirement_path.exists():
+    if os.path.lexists(retirement_path):
         raise ValueError(
             "assurance scaffold already contains a retirement record; inspect it manually"
         )
     archive.parent.mkdir(parents=True, exist_ok=True)
-    manifest = json.loads(
-        (path / "assurance-manifest.json").read_text(encoding="utf-8")
+    current_verification, current_manifest = _require_untouched_scaffold(
+        analysis,
+        path,
+        operation="archive",
     )
+    if str(current_manifest.get("manifest_sha256", "")).lower() != str(
+        manifest.get("manifest_sha256", "")
+    ).lower():
+        raise ValueError(
+            "assurance scaffold changed after guarded archive verification; inspect the "
+            "queue and retry without overwriting concurrent work"
+        )
+    verification = current_verification
     record = {
         "format": "pysfmea-assurance-scaffold-retirement-1",
         "archived_at": utc_now(),

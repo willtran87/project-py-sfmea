@@ -13,7 +13,7 @@ from .guidance import analysis_guidance_profiles, guidance_bundle
 from .model import stable_id, utc_now
 from .version import __version__
 
-GROUNDED_DISCOVERY_PROMPT_VERSION = "sfmea-grounded-discovery-2"
+GROUNDED_DISCOVERY_PROMPT_VERSION = "sfmea-grounded-discovery-3"
 
 
 def _digest(value: Any) -> str:

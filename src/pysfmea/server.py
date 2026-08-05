@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import gzip
-import hashlib
 import json
 import threading
 import urllib.parse
@@ -18,6 +17,7 @@ from .discovery import review_suggestion
 from .store import (
     AnalysisRevisionConflictError,
     add_manual_item,
+    analysis_file_sha256,
     load_analysis,
     save_analysis,
     update_item_review,
@@ -251,7 +251,7 @@ class _ReviewState:
         return stat.st_mtime_ns, stat.st_size
 
     def _fingerprint(self) -> str:
-        return hashlib.sha256(self.path.read_bytes()).hexdigest()
+        return analysis_file_sha256(self.path)
 
     def _revision_snapshot(self) -> tuple[tuple[int, int], str]:
         for _attempt in range(3):

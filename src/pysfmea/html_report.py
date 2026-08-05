@@ -633,6 +633,25 @@ def _safe_json(data: dict[str, Any]) -> str:
     )
 
 
+def _read_bounded_report_notes(source: str | Path) -> str:
+    """Read one regular UTF-8 notes file with a consumption-time byte bound."""
+
+    candidate = Path(source).expanduser()
+    if candidate.is_symlink():
+        raise ValueError(f"report notes file must not be a symbolic link: {candidate}")
+    path = candidate.resolve()
+    if not path.is_file():
+        raise ValueError(f"report notes file must be a regular file: {path}")
+    try:
+        with path.open("rb") as notes_file:
+            raw = notes_file.read(MAX_NOTES_BYTES + 1)
+        if len(raw) > MAX_NOTES_BYTES:
+            raise ValueError(f"report notes file exceeds {MAX_NOTES_BYTES} bytes")
+        return raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"report notes file is not valid UTF-8: {path}: {exc}") from exc
+
+
 def export_html_report(
     analysis: dict[str, Any],
     destination: str | Path,
@@ -650,12 +669,7 @@ def export_html_report(
 
     notes_text = ""
     if notes:
-        notes_path = Path(notes).expanduser().resolve()
-        if not notes_path.is_file():
-            raise ValueError(f"report notes file does not exist: {notes_path}")
-        if notes_path.stat().st_size > MAX_NOTES_BYTES:
-            raise ValueError(f"report notes file exceeds {MAX_NOTES_BYTES} bytes")
-        notes_text = notes_path.read_text(encoding="utf-8")
+        notes_text = _read_bounded_report_notes(notes)
     custom_diagrams = load_diagram_files(diagrams or [])
     data = build_html_report_data(
         analysis,
@@ -733,13 +747,16 @@ def verify_html_report_file(
     path = candidate.resolve()
     if not path.is_file():
         raise ValueError(f"HTML report must be a regular file: {path}")
-    size = path.stat().st_size
-    if size > MAX_HTML_REPORT_VERIFY_BYTES:
-        raise ValueError(
-            f"HTML report exceeds the {MAX_HTML_REPORT_VERIFY_BYTES}-byte verification limit"
-        )
     try:
-        document = path.read_bytes().decode("utf-8")
+        with path.open("rb") as source_file:
+            raw = source_file.read(MAX_HTML_REPORT_VERIFY_BYTES + 1)
+        if len(raw) > MAX_HTML_REPORT_VERIFY_BYTES:
+            raise ValueError(
+                "HTML report exceeds the "
+                f"{MAX_HTML_REPORT_VERIFY_BYTES}-byte verification limit"
+            )
+        size = len(raw)
+        document = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError(f"HTML report is not valid UTF-8: {path}: {exc}") from exc
 
@@ -883,6 +900,7 @@ def verify_html_report_file(
     unchecked_checks = sorted(key for key, value in checks.items() if value is None)
     return {
         "format": HTML_REPORT_VERIFICATION_FORMAT,
+        "verifier": {"name": "PySFMEA", "version": __version__},
         "path": str(path),
         "bytes": size,
         "valid": valid,

@@ -6,6 +6,7 @@ import ast
 import copy
 import fnmatch
 import hashlib
+import io
 import json
 import re
 import subprocess
@@ -68,6 +69,17 @@ CONCURRENCY_NAMES = {
     "threading",
 }
 TIMING_NAMES = {"asyncio.sleep", "sched", "time.sleep", "time.monotonic", "time.time"}
+MAX_PYTHON_SOURCE_BYTES = 20_000_000
+MAX_PYTHON_SOURCE_FILES = 100_000
+MAX_TEST_EVIDENCE_FILES = 10_000
+MAX_TEST_EVIDENCE_BYTES = 100_000_000
+MAX_DEPENDENCY_MANIFEST_BYTES = 20_000_000
+MAX_DEPENDENCY_MANIFEST_FILES = 1_000
+MAX_DEPENDENCY_MANIFEST_TOTAL_BYTES = 100_000_000
+MAX_CONTRACT_BYTES = 20_000_000
+MAX_CONTRACT_FILES = 1_000
+MAX_CONTRACT_TOTAL_BYTES = 100_000_000
+MAX_CONTRACT_ENTITIES = 500
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {"open", "io.open", "pathlib.Path", "os.remove", "os.rename", "shutil"}
 SUBPROCESS_NAMES = {"os.popen", "os.system", "subprocess"}
@@ -977,6 +989,40 @@ def _matches_pattern(value: str, patterns: Iterable[str]) -> bool:
     return any(fnmatch.fnmatchcase(value, pattern.replace("\\", "/")) for pattern in patterns)
 
 
+def _read_python_source_bytes_bounded(path: Path) -> bytes:
+    """Read one regular Python source stream under the scan-time byte limit."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Python source must be a regular non-symbolic-link file")
+    try:
+        with path.open("rb") as source_file:
+            raw = source_file.read(MAX_PYTHON_SOURCE_BYTES + 1)
+    except OSError as exc:
+        raise ValueError("Python source could not be read safely") from exc
+    if len(raw) > MAX_PYTHON_SOURCE_BYTES:
+        raise ValueError(
+            f"Python source exceeds the {MAX_PYTHON_SOURCE_BYTES}-byte analysis limit"
+        )
+    return raw
+
+
+def _read_python_source_bounded(path: Path) -> str:
+    """Decode bounded Python source using its PEP 263 encoding declaration."""
+
+    raw = _read_python_source_bytes_bounded(path)
+    return _decode_python_source(raw)
+
+
+def _decode_python_source(raw: bytes) -> str:
+    """Decode already-bounded source using its PEP 263 encoding declaration."""
+
+    try:
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+        return raw.decode(encoding)
+    except (LookupError, SyntaxError, UnicodeDecodeError) as exc:
+        raise ValueError("Python source has an invalid or unsupported encoding") from exc
+
+
 def _python_files(
     root: Path,
     include_tests: bool,
@@ -987,17 +1033,27 @@ def _python_files(
     for path in root.rglob("*.py"):
         try:
             path.resolve().relative_to(root)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError):
             if warnings is not None:
                 warnings.append(
                     {
                         "path": path.relative_to(root).as_posix(),
-                        "message": f"Python source resolves outside the repository: {exc}",
+                        "message": "Python source resolves outside the repository",
                         "type": "OutsideRepository",
                     }
                 )
             continue
         relative = path.relative_to(root)
+        if path.is_symlink() or not path.is_file():
+            if warnings is not None:
+                warnings.append(
+                    {
+                        "path": relative.as_posix(),
+                        "message": "Python source must be a regular non-symbolic-link file",
+                        "type": "PythonSourceBoundary",
+                    }
+                )
+            continue
         if any(part in DEFAULT_EXCLUDES or part.startswith(".") for part in relative.parts[:-1]):
             continue
         if _matches_pattern(relative.as_posix(), exclude_patterns):
@@ -1008,13 +1064,31 @@ def _python_files(
             or path.name.endswith("_test.py")
         ):
             continue
+        if len(result) >= MAX_PYTHON_SOURCE_FILES:
+            if warnings is not None:
+                warnings.append(
+                    {
+                        "path": "./",
+                        "message": (
+                            "Python source discovery reached the "
+                            f"{MAX_PYTHON_SOURCE_FILES}-file analysis limit"
+                        ),
+                        "type": "PythonSourceLimit",
+                    }
+                )
+            break
         result.append(path)
     return sorted(result)
 
 
-def _test_index(root: Path) -> dict[str, str]:
+def _test_index(
+    root: Path,
+    warnings: list[dict[str, Any]] | None = None,
+) -> dict[str, str]:
     tests: dict[str, str] = {}
-    for path in root.rglob("*.py"):
+    consumed = 0
+    candidates = 0
+    for path in sorted(root.rglob("*.py")):
         try:
             path.resolve().relative_to(root)
         except (OSError, ValueError):
@@ -1027,9 +1101,48 @@ def _test_index(root: Path) -> dict[str, str]:
         )
         if not is_test or any(part in DEFAULT_EXCLUDES for part in relative.parts[:-1]):
             continue
+        if path.is_symlink() or not path.is_file():
+            continue
+        if candidates >= MAX_TEST_EVIDENCE_FILES:
+            if warnings is not None:
+                warnings.append(
+                    {
+                        "path": relative.as_posix(),
+                        "message": (
+                            "Test evidence indexing reached the "
+                            f"{MAX_TEST_EVIDENCE_FILES}-file limit"
+                        ),
+                        "type": "TestEvidenceLimit",
+                    }
+                )
+            break
+        candidates += 1
         try:
-            tests[relative.as_posix()] = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            raw = _read_python_source_bytes_bounded(path)
+            if consumed + len(raw) > MAX_TEST_EVIDENCE_BYTES:
+                if warnings is not None:
+                    warnings.append(
+                        {
+                            "path": relative.as_posix(),
+                            "message": (
+                                "Test evidence indexing exceeds the "
+                                f"{MAX_TEST_EVIDENCE_BYTES}-byte aggregate limit"
+                            ),
+                            "type": "TestEvidenceLimit",
+                        }
+                    )
+                break
+            consumed += len(raw)
+            tests[relative.as_posix()] = _decode_python_source(raw)
+        except ValueError as exc:
+            if warnings is not None:
+                warnings.append(
+                    {
+                        "path": relative.as_posix(),
+                        "message": str(exc),
+                        "type": "TestEvidenceError",
+                    }
+                )
             continue
     return tests
 
@@ -1037,6 +1150,88 @@ def _test_index(root: Path) -> dict[str, str]:
 def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict[str, str]]:
     dependencies: dict[tuple[str, str], dict[str, str]] = {}
     recorded_files: set[Path] = set()
+    attempted_files: set[Path] = set()
+    loaded_files: dict[Path, tuple[Path, str, bytes]] = {}
+    loaded_resolved_files: dict[Path, tuple[Path, str, bytes]] = {}
+    consumed_bytes = 0
+    file_limit_reported = False
+    aggregate_limit_reported = False
+
+    def warn(path: str, message: str) -> None:
+        warnings.append({"path": path, "message": message, "type": "DependencyError"})
+
+    def display_path(path: Path) -> str:
+        try:
+            return path.relative_to(root).as_posix()
+        except ValueError:
+            return str(path)
+
+    def load_manifest(path: Path) -> tuple[Path, str, bytes] | None:
+        nonlocal consumed_bytes, file_limit_reported, aggregate_limit_reported
+        candidate = path.expanduser().absolute()
+        if candidate in loaded_files:
+            return loaded_files[candidate]
+        if candidate in attempted_files:
+            return None
+        if aggregate_limit_reported:
+            return None
+        if len(attempted_files) >= MAX_DEPENDENCY_MANIFEST_FILES:
+            if not file_limit_reported:
+                warn(
+                    display_path(candidate),
+                    "Dependency manifest discovery reached the "
+                    f"{MAX_DEPENDENCY_MANIFEST_FILES}-file limit",
+                )
+                file_limit_reported = True
+            return None
+        attempted_files.add(candidate)
+        if candidate.is_symlink():
+            warn(
+                display_path(candidate),
+                "Dependency manifest must be a regular non-symbolic-link file",
+            )
+            return None
+        try:
+            resolved = candidate.resolve()
+            relative = resolved.relative_to(root).as_posix()
+        except (OSError, ValueError):
+            warn(display_path(candidate), "Dependency manifest resolves outside the repository")
+            return None
+        if resolved in loaded_resolved_files:
+            loaded_files[candidate] = loaded_resolved_files[resolved]
+            return loaded_files[candidate]
+        if not candidate.is_file():
+            warn(
+                relative,
+                "Dependency manifest must be a regular non-symbolic-link file",
+            )
+            return None
+        try:
+            with candidate.open("rb") as source_file:
+                raw = source_file.read(MAX_DEPENDENCY_MANIFEST_BYTES + 1)
+        except OSError:
+            warn(relative, "Dependency manifest could not be read safely")
+            return None
+        if len(raw) > MAX_DEPENDENCY_MANIFEST_BYTES:
+            warn(
+                relative,
+                "Dependency manifest exceeds the "
+                f"{MAX_DEPENDENCY_MANIFEST_BYTES}-byte analysis limit",
+            )
+            return None
+        if consumed_bytes + len(raw) > MAX_DEPENDENCY_MANIFEST_TOTAL_BYTES:
+            warn(
+                relative,
+                "Dependency manifest ingestion exceeds the "
+                f"{MAX_DEPENDENCY_MANIFEST_TOTAL_BYTES}-byte aggregate limit",
+            )
+            aggregate_limit_reported = True
+            return None
+        consumed_bytes += len(raw)
+        loaded = (resolved, relative, raw)
+        loaded_files[candidate] = loaded
+        loaded_resolved_files[resolved] = loaded
+        return loaded
 
     def record(specification: str, source: str) -> None:
         value = specification.strip()
@@ -1050,45 +1245,34 @@ def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[di
             "source": source,
         }
 
-    def record_file(path: Path) -> None:
-        try:
-            resolved = path.resolve()
-            relative = resolved.relative_to(root).as_posix()
-            digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
-        except (OSError, ValueError) as exc:
-            warnings.append(
-                {"path": str(path), "message": str(exc), "type": "DependencyError"}
-            )
-            return
+    def record_file(path: Path) -> tuple[Path, str, bytes] | None:
+        loaded = load_manifest(path)
+        if loaded is None:
+            return None
+        resolved, relative, raw = loaded
         if resolved in recorded_files:
-            return
+            return loaded
         recorded_files.add(resolved)
         name = f"manifest:{relative}"
         dependencies[(name, relative)] = {
             "name": name,
-            "specification": f"sha256:{digest}",
+            "specification": f"sha256:{hashlib.sha256(raw).hexdigest()}",
             "source": relative,
         }
+        return loaded
 
     def read_requirements(path: Path, seen: set[Path]) -> None:
-        try:
-            resolved = path.resolve()
-            resolved.relative_to(root)
-        except (OSError, ValueError) as exc:
-            warnings.append(
-                {"path": str(path), "message": str(exc), "type": "DependencyError"}
-            )
+        loaded = record_file(path)
+        if loaded is None:
             return
+        resolved, relative, raw = loaded
         if resolved in seen:
             return
         seen.add(resolved)
-        record_file(resolved)
         try:
-            lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError as exc:
-            warnings.append(
-                {"path": str(path), "message": str(exc), "type": "DependencyError"}
-            )
+            lines = raw.decode("utf-8").splitlines()
+        except UnicodeDecodeError:
+            warn(relative, "Dependency manifest is not valid UTF-8 text")
             return
         for raw_line in lines:
             line = raw_line.split(" #", 1)[0].strip()
@@ -1099,30 +1283,61 @@ def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[di
                 record(line, resolved.relative_to(root).as_posix())
 
     pyproject = root / "pyproject.toml"
-    if pyproject.is_file():
-        record_file(pyproject)
+    if pyproject.exists() or pyproject.is_symlink():
+        loaded = record_file(pyproject)
         try:
-            with pyproject.open("rb") as handle:
-                payload = tomllib.load(handle)
-            for value in payload.get("project", {}).get("dependencies", []) or []:
-                if isinstance(value, str):
-                    record(value, "pyproject.toml:project.dependencies")
-            for group, values in (
-                payload.get("project", {}).get("optional-dependencies", {}) or {}
-            ).items():
-                for value in values or []:
-                    if isinstance(value, str):
-                        record(value, f"pyproject.toml:project.optional-dependencies.{group}")
-            poetry = payload.get("tool", {}).get("poetry", {}).get("dependencies", {}) or {}
+            if loaded is None:
+                raise ValueError
+            _, relative, raw = loaded
+            payload = tomllib.loads(raw.decode("utf-8"))
+            project = payload.get("project", {})
+            if not isinstance(project, dict):
+                raise TypeError
+            claims: list[tuple[str, str]] = []
+            project_dependencies = project.get("dependencies", []) or []
+            if not isinstance(project_dependencies, list) or not all(
+                isinstance(value, str) for value in project_dependencies
+            ):
+                raise TypeError
+            for value in project_dependencies:
+                claims.append((value, "pyproject.toml:project.dependencies"))
+            optional = project.get("optional-dependencies", {}) or {}
+            if not isinstance(optional, dict):
+                raise TypeError
+            for group, values in optional.items():
+                group_values = values or []
+                if not isinstance(group_values, list) or not all(
+                    isinstance(value, str) for value in group_values
+                ):
+                    raise TypeError
+                for value in group_values:
+                    claims.append(
+                        (value, f"pyproject.toml:project.optional-dependencies.{group}")
+                    )
+            tool = payload.get("tool", {}) or {}
+            if not isinstance(tool, dict):
+                raise TypeError
+            poetry_config = tool.get("poetry", {}) or {}
+            if not isinstance(poetry_config, dict):
+                raise TypeError
+            poetry = poetry_config.get("dependencies", {}) or {}
+            if not isinstance(poetry, dict):
+                raise TypeError
             for name, constraint in poetry.items():
                 if name == "python":
                     continue
                 specification = f"{name}{constraint}" if isinstance(constraint, str) else name
-                record(specification, "pyproject.toml:tool.poetry.dependencies")
-        except (OSError, tomllib.TOMLDecodeError, TypeError) as exc:
-            warnings.append(
-                {"path": "pyproject.toml", "message": str(exc), "type": "DependencyError"}
-            )
+                claims.append(
+                    (specification, "pyproject.toml:tool.poetry.dependencies")
+                )
+            for specification, source in claims:
+                record(specification, source)
+        except UnicodeDecodeError:
+            warn("pyproject.toml", "Dependency manifest is not valid UTF-8 TOML")
+        except (tomllib.TOMLDecodeError, TypeError):
+            warn("pyproject.toml", "Dependency manifest is not valid supported TOML")
+        except ValueError:
+            pass
     requirement_files = sorted(
         {path for pattern in ("requirements*.txt", "constraints*.txt") for path in root.glob(pattern)}
     )
@@ -1139,7 +1354,7 @@ def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[di
         "uv.lock",
     ):
         candidate = root / filename
-        if candidate.is_file():
+        if candidate.exists() or candidate.is_symlink():
             record_file(candidate)
     return sorted(dependencies.values(), key=lambda value: (value["name"].lower(), value["source"]))
 
@@ -1147,7 +1362,9 @@ def _dependency_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[di
 def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Inventory common interface/data contracts without requiring third-party parsers."""
 
-    candidates: set[Path] = set()
+    candidates: list[Path] = []
+    seen_candidates: set[Path] = set()
+    discovery_truncated = False
     for pattern in (
         "**/openapi*.json",
         "**/openapi*.yaml",
@@ -1158,72 +1375,202 @@ def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict
         "**/*.schema.json",
         "**/*.proto",
     ):
-        candidates.update(root.glob(pattern))
+        for path in root.glob(pattern):
+            relative = path.relative_to(root)
+            if any(
+                part in DEFAULT_EXCLUDES or part.startswith(".")
+                for part in relative.parts[:-1]
+            ):
+                continue
+            if path in seen_candidates:
+                continue
+            if len(candidates) >= MAX_CONTRACT_FILES:
+                discovery_truncated = True
+                break
+            candidates.append(path)
+            seen_candidates.add(path)
+        if discovery_truncated:
+            break
+    if discovery_truncated:
+        warnings.append(
+            {
+                "path": "./",
+                "message": (
+                    "Contract discovery reached the "
+                    f"{MAX_CONTRACT_FILES}-file analysis limit"
+                ),
+                "type": "ContractLimit",
+            }
+        )
     contracts = []
+    consumed_bytes = 0
     for path in sorted(candidates):
-        try:
-            resolved = path.resolve()
-            relative = resolved.relative_to(root)
-        except (OSError, ValueError) as exc:
+        candidate = path.absolute()
+        lexical_relative = path.relative_to(root).as_posix()
+        if candidate.is_symlink():
             warnings.append(
                 {
-                    "path": str(path),
-                    "message": f"Contract resolves outside the repository: {exc}",
+                    "path": lexical_relative,
+                    "message": "Contract must be a regular non-symbolic-link file",
+                    "type": "ContractBoundary",
+                }
+            )
+            continue
+        try:
+            resolved = candidate.resolve()
+            relative = resolved.relative_to(root)
+        except (OSError, ValueError):
+            warnings.append(
+                {
+                    "path": lexical_relative,
+                    "message": "Contract resolves outside the repository",
                     "type": "OutsideRepository",
                 }
             )
             continue
-        if any(part in DEFAULT_EXCLUDES or part.startswith(".") for part in relative.parts[:-1]):
-            continue
-        try:
-            if resolved.stat().st_size > 20_000_000:
-                warnings.append(
-                    {
-                        "path": relative.as_posix(),
-                        "message": "Contract exceeds the 20 MB analysis limit",
-                        "type": "ContractTooLarge",
-                    }
-                )
-                continue
-            raw = resolved.read_bytes()
-            text = raw.decode("utf-8", errors="replace")
-        except OSError as exc:
+        if not candidate.is_file():
             warnings.append(
-                {"path": relative.as_posix(), "message": str(exc), "type": "ContractError"}
+                {
+                    "path": relative.as_posix(),
+                    "message": "Contract must be a regular non-symbolic-link file",
+                    "type": "ContractBoundary",
+                }
             )
             continue
-        operations: list[str] = []
-        data_types: list[str] = []
-        lower_name = resolved.name.lower()
+        try:
+            with candidate.open("rb") as source_file:
+                raw = source_file.read(MAX_CONTRACT_BYTES + 1)
+        except OSError:
+            warnings.append(
+                {
+                    "path": relative.as_posix(),
+                    "message": "Contract could not be read safely",
+                    "type": "ContractError",
+                }
+            )
+            continue
+        if len(raw) > MAX_CONTRACT_BYTES:
+            warnings.append(
+                {
+                    "path": relative.as_posix(),
+                    "message": (
+                        f"Contract exceeds the {MAX_CONTRACT_BYTES}-byte analysis limit"
+                    ),
+                    "type": "ContractTooLarge",
+                }
+            )
+            continue
+        if consumed_bytes + len(raw) > MAX_CONTRACT_TOTAL_BYTES:
+            warnings.append(
+                {
+                    "path": relative.as_posix(),
+                    "message": (
+                        "Contract ingestion exceeds the "
+                        f"{MAX_CONTRACT_TOTAL_BYTES}-byte aggregate limit"
+                    ),
+                    "type": "ContractLimit",
+                }
+            )
+            break
+        consumed_bytes += len(raw)
+        try:
+            text: str | None = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+            warnings.append(
+                {
+                    "path": relative.as_posix(),
+                    "message": "Contract is not valid UTF-8 text",
+                    "type": "ContractError",
+                }
+            )
+        operations: set[str] = set()
+        data_types: set[str] = set()
+        entities_truncated = False
+
+        def retain(target: set[str], value: str) -> bool:
+            if value in target:
+                return True
+            if len(target) >= MAX_CONTRACT_ENTITIES:
+                return False
+            target.add(value)
+            return True
+
+        lower_name = candidate.name.lower()
         kind = "protobuf" if resolved.suffix.lower() == ".proto" else "openapi"
         if lower_name.endswith(".schema.json"):
             kind = "json_schema"
-        if kind in {"openapi", "json_schema"} and resolved.suffix.lower() == ".json":
+        malformed_structure = False
+        if (
+            text is not None
+            and kind in {"openapi", "json_schema"}
+            and resolved.suffix.lower() == ".json"
+        ):
             try:
                 payload = json.loads(text)
+                if not isinstance(payload, dict):
+                    raise TypeError
                 if kind == "openapi":
-                    for route, methods in payload.get("paths", {}).items():
-                        if isinstance(methods, dict):
-                            operations.extend(
-                                f"{method.upper()} {route}"
-                                for method in methods
-                                if method.lower() in {"get", "post", "put", "patch", "delete", "options", "head"}
-                            )
-                    schemas = payload.get("components", {}).get("schemas", {})
-                    if isinstance(schemas, dict):
-                        data_types.extend(str(value) for value in schemas)
+                    paths = payload.get("paths", {})
+                    if not isinstance(paths, dict):
+                        raise TypeError
+                    stop_operations = False
+                    for route, methods in paths.items():
+                        if not isinstance(route, str) or not isinstance(methods, dict):
+                            malformed_structure = True
+                            continue
+                        for method in methods:
+                            if not isinstance(method, str):
+                                malformed_structure = True
+                                continue
+                            if method.lower() not in {
+                                "get",
+                                "post",
+                                "put",
+                                "patch",
+                                "delete",
+                                "options",
+                                "head",
+                            }:
+                                continue
+                            if not retain(operations, f"{method.upper()} {route}"):
+                                entities_truncated = True
+                                stop_operations = True
+                                break
+                        if stop_operations:
+                            break
+                    components = payload.get("components", {})
+                    if not isinstance(components, dict):
+                        raise TypeError
+                    schemas = components.get("schemas", {})
+                    if not isinstance(schemas, dict):
+                        raise TypeError
+                    for value in schemas:
+                        if not isinstance(value, str):
+                            malformed_structure = True
+                            continue
+                        if not retain(data_types, value):
+                            entities_truncated = True
+                            break
                 else:
                     title = payload.get("title")
-                    if title:
-                        data_types.append(str(title))
+                    if title is not None and not isinstance(title, str):
+                        malformed_structure = True
+                    elif title:
+                        retain(data_types, title)
                     properties = payload.get("properties", {})
-                    if isinstance(properties, dict):
-                        data_types.extend(str(value) for value in properties)
-            except (json.JSONDecodeError, TypeError) as exc:
-                warnings.append(
-                    {"path": relative.as_posix(), "message": str(exc), "type": "ContractError"}
-                )
-        elif kind == "openapi":
+                    if not isinstance(properties, dict):
+                        raise TypeError
+                    for value in properties:
+                        if not isinstance(value, str):
+                            malformed_structure = True
+                            continue
+                        if not retain(data_types, value):
+                            entities_truncated = True
+                            break
+            except (json.JSONDecodeError, RecursionError, TypeError):
+                malformed_structure = True
+        elif text is not None and kind == "openapi":
             current_route = ""
             for line in text.splitlines():
                 route_match = re.match(r"^\s{0,8}(/[^:]+)\s*:\s*(?:#.*)?$", line)
@@ -1235,11 +1582,40 @@ def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict
                     line,
                     re.IGNORECASE,
                 )
-                if current_route and method_match:
-                    operations.append(f"{method_match.group(1).upper()} {current_route}")
-        else:
-            operations.extend(re.findall(r"\brpc\s+([A-Za-z_]\w*)\s*\(", text))
-            data_types.extend(re.findall(r"\bmessage\s+([A-Za-z_]\w*)\s*\{", text))
+                if current_route and method_match and not retain(
+                    operations,
+                    f"{method_match.group(1).upper()} {current_route}",
+                ):
+                    entities_truncated = True
+                    break
+        elif text is not None and kind == "protobuf":
+            for match in re.finditer(r"\brpc\s+([A-Za-z_]\w*)\s*\(", text):
+                if not retain(operations, match.group(1)):
+                    entities_truncated = True
+                    break
+            for match in re.finditer(r"\bmessage\s+([A-Za-z_]\w*)\s*\{", text):
+                if not retain(data_types, match.group(1)):
+                    entities_truncated = True
+                    break
+        if malformed_structure:
+            warnings.append(
+                {
+                    "path": relative.as_posix(),
+                    "message": "Contract JSON has malformed or unsupported structure",
+                    "type": "ContractError",
+                }
+            )
+        if entities_truncated:
+            warnings.append(
+                {
+                    "path": relative.as_posix(),
+                    "message": (
+                        "Contract semantic extraction reached the "
+                        f"{MAX_CONTRACT_ENTITIES}-entity per-category limit"
+                    ),
+                    "type": "ContractLimit",
+                }
+            )
         digest = hashlib.sha256(raw).hexdigest()
         contracts.append(
             {
@@ -1247,8 +1623,8 @@ def _contract_inventory(root: Path, warnings: list[dict[str, Any]]) -> list[dict
                 "path": relative.as_posix(),
                 "kind": kind,
                 "sha256": digest,
-                "operations": sorted(set(operations))[:500],
-                "data_types": sorted(set(data_types))[:500],
+                "operations": sorted(operations),
+                "data_types": sorted(data_types),
             }
         )
     return contracts
@@ -1268,9 +1644,9 @@ def _repository_baseline(
         content_hash.update(relative.encode("utf-8"))
         content_hash.update(b"\0")
         try:
-            content_hash.update(path.read_bytes())
-        except OSError:
-            content_hash.update(b"<unreadable>")
+            content_hash.update(_read_python_source_bytes_bounded(path))
+        except ValueError as exc:
+            content_hash.update(f"<bounded-source:{exc}>".encode("utf-8"))
         content_hash.update(b"\0")
     content_hash.update(
         json.dumps(dependencies, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -1752,36 +2128,132 @@ def _find_test_references(name: str, tests: dict[str, str]) -> list[str]:
     return [path for path, content in tests.items() if pattern.search(content)][:5]
 
 
+MAX_COVERAGE_JSON_BYTES = 100_000_000
+
+
+def _coverage_warning(path: Path, message: str) -> dict[str, str]:
+    return {"path": str(path), "message": message, "type": "CoverageError"}
+
+
+def _normalize_coverage_file(value: Any) -> tuple[dict[str, Any] | None, bool]:
+    """Keep only typed coverage.py line/branch evidence used by the scanner."""
+
+    if not isinstance(value, dict):
+        return None, True
+    malformed = False
+    normalized: dict[str, Any] = {}
+    for key in ("executed_lines", "missing_lines"):
+        supplied = value.get(key, [])
+        if not isinstance(supplied, list):
+            supplied = []
+            malformed = True
+        accepted = [
+            entry
+            for entry in supplied
+            if isinstance(entry, int) and not isinstance(entry, bool) and entry > 0
+        ]
+        malformed = malformed or len(accepted) != len(supplied)
+        normalized[key] = accepted
+    for key in ("executed_branches", "missing_branches"):
+        supplied = value.get(key, [])
+        if not isinstance(supplied, list):
+            supplied = []
+            malformed = True
+        accepted = [
+            entry
+            for entry in supplied
+            if isinstance(entry, list)
+            and len(entry) == 2
+            and isinstance(entry[0], int)
+            and not isinstance(entry[0], bool)
+            and entry[0] > 0
+            and isinstance(entry[1], int)
+            and not isinstance(entry[1], bool)
+            and entry[1] != 0
+        ]
+        malformed = malformed or len(accepted) != len(supplied)
+        normalized[key] = accepted
+    return normalized, malformed
+
+
 def _load_coverage(path: str | Path | None, root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not path:
         return {}, []
-    coverage_path = Path(path).expanduser().resolve()
-    try:
-        with coverage_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
-        return {}, [{"path": str(coverage_path), "message": str(exc), "type": "CoverageError"}]
-    files = payload.get("files", {})
-    if not isinstance(files, dict):
+    coverage_path = Path(path).expanduser().absolute()
+    if coverage_path.is_symlink() or not coverage_path.is_file():
         return {}, [
-            {
-                "path": str(coverage_path),
-                "message": "coverage JSON has no files object",
-                "type": "CoverageError",
-            }
+            _coverage_warning(
+                coverage_path,
+                "coverage JSON must be a regular non-symbolic-link file",
+            )
         ]
+    try:
+        with coverage_path.open("rb") as handle:
+            raw = handle.read(MAX_COVERAGE_JSON_BYTES + 1)
+    except OSError:
+        return {}, [_coverage_warning(coverage_path, "coverage JSON could not be read safely")]
+    if len(raw) > MAX_COVERAGE_JSON_BYTES:
+        return {}, [
+            _coverage_warning(
+                coverage_path,
+                f"coverage JSON exceeds the {MAX_COVERAGE_JSON_BYTES}-byte import limit",
+            )
+        ]
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        return {}, [
+            _coverage_warning(coverage_path, "coverage JSON is not valid bounded UTF-8 JSON")
+        ]
+    if not isinstance(payload, dict):
+        return {}, [_coverage_warning(coverage_path, "coverage JSON root must be an object")]
+    if "files" not in payload:
+        return {}, [_coverage_warning(coverage_path, "coverage JSON has no files object")]
+    files = payload["files"]
+    if not isinstance(files, dict):
+        return {}, [_coverage_warning(coverage_path, "coverage JSON has no files object")]
     indexed: dict[str, Any] = {}
+    ignored_paths = 0
+    malformed_records = 0
+    duplicate_paths = 0
     for raw_path, value in files.items():
+        if not isinstance(raw_path, str) or not raw_path:
+            ignored_paths += 1
+            continue
         candidate = Path(raw_path)
         if candidate.is_absolute():
             try:
                 key = candidate.resolve().relative_to(root).as_posix()
             except ValueError:
+                ignored_paths += 1
                 continue
         else:
-            key = candidate.as_posix().lstrip("./")
-        indexed[key] = value
-    return indexed, []
+            if ".." in candidate.parts or not candidate.parts:
+                ignored_paths += 1
+                continue
+            key = candidate.as_posix()
+            if key.startswith("./"):
+                key = key[2:]
+        normalized, malformed = _normalize_coverage_file(value)
+        if normalized is None:
+            malformed_records += 1
+            continue
+        if key in indexed:
+            duplicate_paths += 1
+            continue
+        indexed[key] = normalized
+        malformed_records += int(malformed)
+    warnings = []
+    if ignored_paths or malformed_records or duplicate_paths:
+        warnings.append(
+            _coverage_warning(
+                coverage_path,
+                "coverage JSON ignored unsafe paths, malformed records, or duplicate normalized "
+                f"paths (unsafe={ignored_paths}, malformed={malformed_records}, "
+                f"duplicates={duplicate_paths})",
+            )
+        )
+    return indexed, warnings
 
 
 def _function_coverage(facts: FunctionFacts, coverage: dict[str, Any]) -> dict[str, Any] | None:
@@ -1789,14 +2261,14 @@ def _function_coverage(facts: FunctionFacts, coverage: dict[str, Any]) -> dict[s
     if not isinstance(file_data, dict):
         return None
     executed = {
-        int(line)
+        line
         for line in file_data.get("executed_lines", [])
-        if facts.line <= int(line) <= facts.end_line
+        if facts.line <= line <= facts.end_line
     }
     missing = {
-        int(line)
+        line
         for line in file_data.get("missing_lines", [])
-        if facts.line <= int(line) <= facts.end_line
+        if facts.line <= line <= facts.end_line
     }
     relevant = executed | missing
     executed_branches = [
@@ -1804,14 +2276,14 @@ def _function_coverage(facts: FunctionFacts, coverage: dict[str, Any]) -> dict[s
         for branch in file_data.get("executed_branches", [])
         if isinstance(branch, list)
         and len(branch) == 2
-        and facts.line <= int(branch[0]) <= facts.end_line
+        and facts.line <= branch[0] <= facts.end_line
     ]
     missing_branches = [
         branch
         for branch in file_data.get("missing_branches", [])
         if isinstance(branch, list)
         and len(branch) == 2
-        and facts.line <= int(branch[0]) <= facts.end_line
+        and facts.line <= branch[0] <= facts.end_line
     ]
     branch_total = len(executed_branches) + len(missing_branches)
     if not relevant:
@@ -2815,11 +3287,17 @@ def scan_repository(
     for file_path in files:
         relative = file_path.relative_to(root_path).as_posix()
         try:
-            with tokenize.open(file_path) as handle:
-                source = handle.read()
+            source = _read_python_source_bounded(file_path)
             tree = ast.parse(source, filename=relative)
-        except (OSError, SyntaxError, UnicodeError) as exc:
-            warnings.append({"path": relative, "message": str(exc), "type": type(exc).__name__})
+        except ValueError as exc:
+            warnings.append(
+                {"path": relative, "message": str(exc), "type": "PythonSourceError"}
+            )
+            continue
+        except SyntaxError as exc:
+            warnings.append(
+                {"path": relative, "message": str(exc), "type": "SyntaxError"}
+            )
             continue
         parsed_python_paths.add(relative)
         collector = _ModuleCollector(
@@ -2861,7 +3339,7 @@ def scan_repository(
             facts for facts in facts_list if _matches_pattern(_component_ref(facts), focus_patterns)
         ]
 
-    tests = _test_index(root_path)
+    tests = _test_index(root_path, warnings)
     coverage, coverage_warnings = _load_coverage(coverage_json, root_path)
     warnings.extend(coverage_warnings)
     callers = _internal_callers(facts_list)

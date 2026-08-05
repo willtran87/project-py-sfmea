@@ -12,6 +12,7 @@ from typing import Any
 GUIDANCE_SCHEMA_VERSION = "1.1"
 GUIDANCE_CATALOG_VERSION = "2026.08.04"
 GUIDANCE_RETRIEVED_AT = "2026-08-04"
+MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES = 5_000_000
 
 RELATIONSHIP_TYPES = {
     "methodology_basis",
@@ -877,16 +878,29 @@ def selected_sources_from_bundle(bundle: dict[str, Any]) -> list[dict[str, Any]]
 def load_organizational_guidance_pack(path: str | Path) -> dict[str, Any]:
     """Load and strictly validate a local organizational guidance pack."""
 
-    source_path = Path(path).expanduser().resolve()
+    candidate = Path(path).expanduser()
+    if candidate.is_symlink():
+        raise ValueError(
+            f"organizational guidance pack must not be a symbolic link: {candidate}"
+        )
+    source_path = candidate.resolve()
     if not source_path.is_file():
-        raise ValueError(f"organizational guidance pack does not exist: {source_path}")
-    if source_path.stat().st_size > 5_000_000:
-        raise ValueError("organizational guidance pack exceeds the 5 MB safety limit")
-    raw = source_path.read_bytes()
+        raise ValueError(
+            f"organizational guidance pack must be a regular file: {source_path}"
+        )
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid organizational guidance pack JSON: {exc}") from exc
+        with source_path.open("rb") as pack_file:
+            raw = pack_file.read(MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES + 1)
+        if len(raw) > MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES:
+            raise ValueError(
+                "organizational guidance pack exceeds the "
+                f"{MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES}-byte safety limit"
+            )
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"invalid organizational guidance pack UTF-8 JSON: {exc}"
+        ) from exc
     if not isinstance(payload, dict):
         raise ValueError("organizational guidance pack root must be an object")
     allowed = {"schema_version", "profile", "sources", "citations", "rule_mappings"}

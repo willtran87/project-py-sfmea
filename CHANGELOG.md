@@ -3,6 +3,588 @@
 Notable user-visible changes are recorded here. PySFMEA follows semantic versioning for the
 package; public artifact and schema identifiers carry their own explicit compatibility versions.
 
+## 0.57.46 - 2026-08-05
+
+### Bounded transactional model-assisted discovery
+
+- Bound OpenAI-compatible requests at 3 MB and responses at 10 MB, validate endpoint/model/key
+  metadata, and strictly decode outer and nested UTF-8 JSON with duplicate-key and non-finite
+  number rejection.
+- Apply iterative 50-level/100,000-node response limits to network and custom providers before
+  hashing, validation, or governed-state mutation.
+- Replace permissive suggestion parsing with an exact output field set, bounded text/list/identity
+  values, evidence/citation allowlists, and an explicit 25-suggestion per-component ceiling.
+- Bound grounded summary packets and responses through the same provider contract, require exact
+  summary fields, and retain the canonical response hash alongside provider and prompt provenance.
+- Stage suggestions across every requested component and commit only after all provider responses
+  validate, so a later rejection leaves suggestions, history, and summary state unchanged.
+- Roll back the complete governed analysis when accepted-suggestion materialization fails after a
+  partial mutation, preserving both the proposal and the pre-review worksheet state.
+- Publish version-2 LLM adapter capabilities and prompt/evidence/suggestion contract version 3;
+  no provider-generated content gains engineering authority or automatic acceptance.
+- Add duplicate, request/response size, depth, unknown-field, suggestion-count, multi-packet
+  rollback, materialization-rollback, summary-bound, installed-wheel, and historical-package
+  compatibility coverage.
+
+## 0.57.45 - 2026-08-05
+
+### Transactional bounded PDF report publication
+
+- Preserve the caller's final PDF path identity and reject symbolic-link, directory, and other
+  non-regular destinations without following them to an unintended target.
+- Verify browser output through a regular non-link file descriptor, cap both verification and
+  publication at 250 MB, and reconcile inspected, opened, consumed, and final source identity.
+- Stream the verified renderer snapshot into a random private sibling, flush it to stable storage,
+  and independently verify its PDF header, trailer, size, and identity before publication.
+- Revalidate an existing or absent destination immediately before atomic replacement so a
+  concurrent writer is preserved and reported rather than silently overwritten.
+- Preserve the previous PDF and remove private staging residue on invalid/oversized renderer
+  output, identity drift, destination races, and atomic replacement failures.
+- Reconcile Windows path/descriptor creation-time precision when comparing governed-analysis file
+  snapshots, while retaining file identity, exact size, and modification-time checks and the
+  stricter metadata-change-time comparison on POSIX.
+- Add forced-small size, malformed output, linked/non-file destination, opened-identity,
+  destination-race, replacement-failure, installed-wheel, and historical-package compatibility
+  coverage without changing the PDF command or report contract.
+
+## 0.57.44 - 2026-08-04
+
+### Bounded transactional governed-analysis persistence
+
+- Replace unbounded `json.load` analysis ingestion with a 100 MB consumption-time binary boundary
+  that rejects symbolic links/non-files and reconciles inspected, opened, and final file identity.
+- Decode strict UTF-8 JSON with duplicate-key and non-finite-number rejection, then apply a shared
+  iterative 100-level/2,000,000-node limit before migrations or derived-state materialization.
+- Reuse the same structure primitive in review-package verification so persisted and packaged
+  analyses cannot drift onto different JSON-complexity contracts.
+- Replace unbounded no-op-save reconciliation and reviewer ETag `read_bytes` hashing with the same
+  bounded identity-stable analysis reader/streaming hasher.
+- Keep the final analysis path unresolved, reject linked/non-file destinations, serialize UTF-8
+  output through the 100 MB limit, and revalidate destination identity and metadata immediately
+  before atomic replacement.
+- Preserve prior content and remove staging residue on size, destination-race, revision-conflict,
+  and replacement failures without changing analysis schema or package formats.
+- Add forced-small byte/depth/node/hash/output, invalid-UTF-8/JSON, duplicate/non-finite, link,
+  directory, opened-identity, destination-race, replacement-failure, installed-wheel, and
+  historical-package compatibility coverage.
+
+## 0.57.43 - 2026-08-04
+
+### Bounded snapshot-safe package authentication
+
+- Replace precheck-only, unbounded private/public key and detached-signature reads with regular-file,
+  symbolic-link-safe, consumption-time bounded reads that revalidate inspected/opened identity.
+- Parse signature envelopes as strict bounded UTF-8 JSON, bound signer labels and passphrases, and
+  return stable key/input failures without exposing cryptography or filesystem exception details.
+- Read directory and ZIP manifests through a 10 MB boundary and reconcile their exact byte digest
+  with the freshly verified package before constructing or accepting a signed subject.
+- Treat caller-supplied package-verification results as advisory and always perform fresh integrity
+  verification, preventing stale or fabricated verdicts from authenticating changed package bytes.
+- Derive signed manifest digests from the successful verification snapshot and reconcile exact ZIP
+  bytes through a 550 MB identity-checked streaming rehash instead of unbounded artifact hashing.
+- Revalidate signature-destination identity at the publication boundary, atomically replace only
+  the inspected destination, preserve prior content on failure/race, and remove staging residue.
+- Add forced-small key/signature/manifest/passphrase, invalid-UTF-8, identity-change, stale-verdict,
+  replacement-failure, installed-wheel, and historical-package compatibility coverage.
+
+## 0.57.42 - 2026-08-04
+
+### Bounded identity-preserving project configuration
+
+- Replace unbounded `tomllib.load` configuration parsing with a regular-file,
+  symbolic-link-safe binary read capped at 5 MB, revalidate inspected/opened file identity before
+  consumption, and apply explicit bounded UTF-8 TOML validation.
+- Preserve the final path identity of configured coverage JSON and organizational guidance packs
+  while normalizing relative paths, so downstream link-safety checks cannot be bypassed by early
+  path resolution.
+- Return stable configuration read/encoding/size failures without leaking raw filesystem details;
+  semantic schema validation remains specific and fail-closed after bounded parsing succeeds.
+- Make configuration-template publication final-link-safe and atomic, revalidate destination type
+  at the mutation boundary, preserve an existing file on replacement failure, and remove staging
+  residue on every rejected publication.
+- Add forced-small byte, invalid-UTF-8/TOML, directory/link, downstream-identity, injected atomic
+  replacement failure, workflow-status, and installed-package regression coverage.
+
+## 0.57.41 - 2026-08-04
+
+### Consumption-bounded repository inventory hashing
+
+- Replace repository artifact size prechecks plus unbounded `read_bytes` hashing with regular-file
+  stream reads capped at 20 MB per artifact and 500 MB actually consumed across the inventory.
+- Refuse symbolic links and non-regular filesystem artifacts before opening them, and replace raw
+  filesystem exception details with stable unresolved accounting.
+- Continue safe metadata and semantic accounting after aggregate hash exhaustion, but add a
+  digest-protected unresolved region and set the inventory truncation signal so reports and
+  validation cannot present the inventory as complete.
+- Bound excluded/opaque directory-region accounting at 100,000 records in addition to the existing
+  100,000-file ceiling, while preserving deterministic inventory hashes and status summaries.
+- Publish version-2 repository, dependency, and contract adapter descriptors whose capabilities now
+  declare the implemented bounded-ingestion and fail-soft semantics.
+- Add forced-small per-file/aggregate/region limits, exact-hash, link/non-regular refusal, inventory
+  integrity, and installed-package regression coverage without changing inventory schema versions.
+
+## 0.57.40 - 2026-08-04
+
+### Bounded type-safe interface-contract analysis
+
+- Replace interface-contract size prechecks plus unbounded byte reads with regular-file,
+  symbolic-link-safe consumption-time reads capped at 20 MB per file, 1,000 discovered files, and
+  100 MB in aggregate across OpenAPI/Swagger, JSON Schema, YAML, and protobuf inputs.
+- Reject final links, non-files, and resolved repository escapes with stable warnings while
+  retaining continued analysis of safe contracts and the rest of the repository.
+- Decode contract text as strict UTF-8, handle malformed JSON and unexpected scalar/container
+  shapes without tracebacks, and retain the exact accepted-byte digest even when semantic
+  extraction is unavailable.
+- Bound extracted operations and data types to 500 distinct values per category during traversal,
+  emitting explicit truncation evidence instead of building an unbounded intermediate list.
+- Add forced-small per-file/discovery/aggregate/entity limits, invalid-UTF-8, scalar-root, link,
+  exact-digest, and installed-package regression coverage without changing analysis formats.
+
+## 0.57.39 - 2026-08-04
+
+### Bounded dependency-manifest evidence ingestion
+
+- Replace unbounded and repeated dependency-manifest reads with cached regular-file,
+  symbolic-link-safe binary reads capped at 20 MB per file, 1,000 attempted files, and 100 MB in
+  aggregate across pyproject, requirements/constraints include chains, and supported lockfiles.
+- Hash and parse the exact same accepted bytes so dependency evidence cannot change between a
+  manifest digest pass and its semantic extraction pass; resolved aliases reuse one snapshot.
+- Normalize included-manifest paths before containment checks, reject final links and repository
+  escapes, and stop further ingestion after aggregate exhaustion with stable warnings.
+- Decode requirements as strict UTF-8 and validate supported pyproject dependency container shapes,
+  retaining the accepted manifest hash while refusing malformed dependency claims.
+- Add forced-small byte/file/aggregate limits, link, traversal, invalid-UTF-8, malformed-TOML-shape,
+  exact-hash, and continued-analysis regression coverage without changing analysis formats.
+
+## 0.57.38 - 2026-08-04
+
+### Bounded Python source and test-evidence ingestion
+
+- Replace unbounded Python source and test-file text reads with a shared regular-file,
+  symbolic-link-safe, consumption-time 20 MB reader that honors PEP 263 encoding declarations.
+- Reject in-repository source links consistently with the repository inventory and surface stable
+  boundary, size, and encoding warnings without aborting analysis of the remaining repository.
+- Cap selected Python source discovery at 100,000 files and the test-reference index at 10,000
+  files and 100 MB, reporting the exact limit when deterministic indexing stops.
+- Reuse the source byte boundary during repository baseline calculation so a rejected source file
+  cannot be consumed unbounded by a later scan phase.
+- Add forced-small file/aggregate limits, non-UTF-8 declared encoding, unsupported encoding,
+  internal-link, inventory-accounting, and continued-analysis regression coverage.
+
+## 0.57.37 - 2026-08-04
+
+### Bounded path-safe coverage evidence ingestion
+
+- Replace resolved-path plus unbounded coverage JSON loading with a final-link-safe,
+  consumption-time 100 MB bounded binary read and explicit UTF-8 JSON object validation.
+- Reject repository escapes, parent traversal, empty paths, and duplicate normalized file keys;
+  absolute coverage paths are retained only when they resolve beneath the analyzed repository.
+- Normalize line and branch evidence to typed coordinates before analysis, retaining coverage.py's
+  signed branch destinations while requiring positive source lines, so malformed records cannot
+  crash a scan or be mistaken for observed execution.
+- Preserve the first valid normalized record and expose aggregate unsafe, malformed, and duplicate
+  counts through stable `CoverageError` warnings while the remainder of the scan continues.
+- Add forced-small limit, invalid-UTF-8/root/link, path-traversal, duplicate-key, malformed-record,
+  and end-to-end scan regression coverage without changing the analysis schema.
+
+## 0.57.36 - 2026-08-04
+
+### Transactional bounded runtime-trace ingestion
+
+- Replace runtime trace resolution plus unbounded byte buffering with a final-link-safe,
+  consumption-time 100 MB bounded binary read and explicit UTF-8 JSON root validation.
+- Replace permissive recursive span traversal with a type-safe iterative simple/OTLP walker and
+  enforce the existing 50,000-span limit before governed state changes.
+- Bound nested runtime attribute normalization to 32 levels and validate human labels, malformed
+  runtime/history containers, empty traces, and unsupported scalar roots with stable errors.
+- Defer all runtime-evidence, history, and summary mutation until normalization and edge derivation
+  succeed; restore the complete analysis snapshot if final summary refresh fails.
+- Add forced-small byte/span/depth limits, invalid-UTF-8/root/link/label/empty-trace inputs, and
+  injected summary-failure rollback coverage without changing runtime evidence record formats.
+
+## 0.57.35 - 2026-08-04
+
+### Transactional bounded external evidence ingestion
+
+- Replace external execution-manifest size prechecks plus unbounded text reads with a regular-file,
+  symbolic-link-safe, consumption-time bounded UTF-8 JSON object reader.
+- Hash external artifacts under per-file and aggregate consumed-byte limits, then copy and hash each
+  stream through an independent bound; reject changed content/size and clean private staging.
+- Apply the same bounded, link-safe manifest and artifact verification when managed evidence is
+  later adjudicated, preventing review from consuming mutated oversized records.
+- Defer imported test registration until evidence validation and publication succeed; roll back the
+  complete analysis snapshot and published evidence directory if governed recording fails.
+- Add forced-small-limit, invalid-UTF-8, manifest/artifact link, bounded-copy failure, managed-review
+  bound, staging cleanup, and analysis/filesystem rollback regression coverage.
+
+## 0.57.34 - 2026-08-04
+
+### Safe standalone scaffold collection
+
+- Replace the generated pytest module's unbounded collection-time manifest text read with a
+  self-contained 64 MiB consumption-time bounded binary read.
+- Require a regular non-symbolic-link manifest, decode exact consumed bytes as UTF-8 JSON, and
+  reject malformed encoding, excessive nesting, non-object roots, and unsupported scaffold formats
+  with stable operator-facing collection failures.
+- Preserve canonical manifest integrity verification and additionally require a non-empty,
+  object-shaped obligation list before pytest parameterization.
+- Add execution-level forced-small-limit, invalid-UTF-8, root-shape, symbolic-link, integrity, and
+  obligation-shape regression coverage for the emitted test module.
+
+## 0.57.33 - 2026-08-04
+
+### Race-resistant scaffold lifecycle operations
+
+- Refactor scaffold verification internally to return the exact bounded manifest object whose
+  integrity, binding, selection, queue identity, and generated-file state were checked, while
+  keeping the public verification response unchanged.
+- Carry that verified snapshot into guarded refresh and archive instead of independently consuming
+  lifecycle parameters from a later manifest read.
+- Revalidate the queue at the publication/mutation boundary and compare its manifest identity with
+  the initial snapshot, refusing concurrent replacement even when both manifests are independently
+  valid.
+- Preserve the original queue and remove staged output on refresh races; leave archive sources and
+  retirement state untouched on archive races; add deterministic race-injection regression tests.
+
+## 0.57.32 - 2026-08-04
+
+### Bounded assurance-scaffold verification
+
+- Replace assurance-manifest and retirement-record size prechecks plus unbounded text reads with
+  exact consumption-time bounded UTF-8 JSON ingestion across verification, guarded refresh, and
+  archival.
+- Stream generated pytest/README SHA-256 verification under an independent byte limit instead of
+  buffering entire files, while retaining informational treatment of expected implementation edits.
+- Require every consumed scaffold artifact to be a regular non-symbolic-link file and detect a
+  broken retirement link as an invalid present record rather than silently treating it as absent;
+  refresh/archive retain final-path identity and refuse broken-link destinations or records.
+- Add forced-small-limit, invalid-UTF-8, oversized generated-file/retirement-record, and
+  broken-link-equivalent regression coverage without changing public scaffold formats.
+
+## 0.57.31 - 2026-08-04
+
+### Consumption-bounded offline schema verification
+
+- Replace offline schema-bundle entry size prechecks plus unbounded text reads with one bounded
+  binary read per catalog/schema file, closing concurrent-growth bypasses at the public-contract
+  verification boundary.
+- Explicitly decode bounded bytes as UTF-8 JSON and preserve the existing closed-object and exact
+  catalog identity/digest reconciliation after safe ingestion.
+- Keep missing, malformed, oversized, symbolic-link, and non-file entries as schema-valid
+  `schema-bundle-verification` rejections with stable file-level error locations.
+- Add default-limit, forced-small-limit, invalid-UTF-8, mocked/real symbolic-link, public-schema,
+  and atomic export regression coverage without changing bundle contents or profile counts.
+
+## 0.57.30 - 2026-08-04
+
+### Hardened organizational guidance ingestion
+
+- Replace organizational-guidance size prechecks plus unbounded byte reads with one
+  consumption-time bounded read, preventing concurrent growth from bypassing the five-megabyte
+  trust boundary used by citation discovery.
+- Require every configured pack to be a regular non-symbolic-link file and explicitly decode it as
+  UTF-8 JSON before schema, locator, applicability, and mapping validation.
+- Continue hashing the exact bytes that passed bounded ingestion so pack provenance remains bound
+  to the content actually used to generate finding citations and package projections.
+- Add directory, invalid-UTF-8, oversized, mocked/real symbolic-link, exact-byte-count, and digest
+  regression coverage without changing the organizational pack schema.
+
+## 0.57.29 - 2026-08-04
+
+### Bounded, link-safe engineering notes
+
+- Replace report-notes size prechecks plus unbounded text reads with one consumption-time bounded
+  binary read, closing concurrent-growth bypasses for both HTML and PDF report generation.
+- Require notes to be a regular non-symbolic-link file and valid UTF-8 before any report content is
+  built; missing, directory, linked, malformed, and oversized inputs fail closed.
+- Preserve universal newline semantics by canonicalizing CRLF and CR notes to LF after decoding,
+  keeping report content stable and portable across producer platforms.
+- Keep JSON report publication transactional for real notes-input failures: return a sanitized
+  schema-valid generation rejection, remove staging residue, and preserve any prior report.
+- Add regular, non-regular, invalid-encoding, oversized, symbolic-link, canonical-newline, and
+  prior-destination regression coverage.
+
+## 0.57.28 - 2026-08-04
+
+### Safe report destinations and unified bounded diagram ingestion
+
+- Refuse symbolic-link and non-regular HTML report destinations before loading or generation in
+  both human and JSON modes, preserving the link, its target, directories, and governed analysis.
+- Keep the final report path unresolved during atomic replacement so a link can never redirect the
+  verified staged artifact to a different file; a link introduced after validation is replaced as
+  a directory entry rather than followed.
+- Make structured destination rejections use the existing schema-valid
+  `report.invalid_destination` receipt with explicit input-validation and prior-preservation state.
+- Unify diagram verification and custom report-diagram imports on one symbolic-link-safe,
+  consumption-bounded binary JSON reader, closing the remaining precheck/unbounded-read path.
+- Add directory, symbolic-link target-preservation, human/JSON behavior, oversized import, and
+  diagram-link regression coverage.
+
+## 0.57.27 - 2026-08-04
+
+### Attributable verifier receipts and bounded diagram consumption
+
+- Add exact `verifier.name` and `verifier.version` provenance to every current HTML-report,
+  diagram-bundle, and assurance-work-queue verification verdict, including structured rejection
+  envelopes, so stored CI evidence identifies the implementation that issued it.
+- Publish the shared verifier-provenance shape in all three public JSON schemas while retaining
+  compatibility with genuine older v1 verdicts that predate the additive field.
+- Replace diagram verification's size precheck plus unbounded text read with one bounded binary
+  read at consumption time, preventing concurrent file growth from bypassing the availability
+  boundary.
+- Add success, rejection, public-schema, and oversized-stream regression coverage.
+
+## 0.57.26 - 2026-08-04
+
+### Transactional verified HTML report publication
+
+- Make `sfmea report ANALYSIS --json` generate into a private sibling, verify complete document
+  integrity and exact analysis binding there, and atomically publish only after a valid verdict.
+- Preserve an existing destination byte-for-byte and remove staging residue when analysis loading,
+  generation, verification, or final publication fails.
+- Emit schema-valid, sanitized JSON for every structured-mode failure phase, including invalid
+  destinations, missing or malformed analysis, generator failures, verifier failures, and atomic
+  replacement failures; JSON mode never exposes unexpected exception detail on stderr.
+- Add explicit `published/complete` and `not_published` receipt state, phase, prior-destination
+  observation, and preservation status with schema constraints that reject contradictory claims.
+- Refuse to use the governed analysis JSON itself as the HTML destination.
+
+## 0.57.25 - 2026-08-04
+
+### Verified HTML report generation receipts
+
+- Add `sfmea report ANALYSIS --json` to generate the self-contained HTML report, immediately verify
+  its complete document/payload integrity and exact governed-analysis binding, and emit the public
+  `html-report-verification` verdict without human progress noise.
+- Return nonzero with a schema-valid, sanitized stdout verdict when post-generation verification
+  cannot complete; unexpected verifier details are not copied into CI output.
+- Replace report verifier size prechecks plus unbounded reads with a single consumption-time
+  bounded binary read, closing file-growth races at the availability boundary.
+- Preserve existing human report output and standalone `report-verify` behavior.
+- Add matched generation-receipt, path binding, injected verifier failure, stderr isolation,
+  schema validation, and bounded-read coverage.
+
+## 0.57.24 - 2026-08-04
+
+### Verified export receipts and stronger target recognition
+
+- Make `publication-catalog --output FILE --json` emit the schema-backed catalog-verification
+  verdict for the exact exported path, giving CI one atomic export-and-receipt operation.
+- Require a forced-refresh target to pass format, integrity-metadata, and complete structural
+  envelope checks; a file that merely spoofs the catalog format no longer qualifies.
+- Strengthen failure-entry structural checks across closed fields, scalar types, phase arrays,
+  uniqueness, and allowed phase vocabulary before exact taxonomy comparison.
+- Preserve the ability to repair structurally recognized drifted catalogs whose digest or exact
+  content is invalid, while continuing to refuse unrelated or malformed targets.
+- Add JSON export-receipt, format-spoofing, malformed nested value, and path-binding coverage.
+
+## 0.57.23 - 2026-08-04
+
+### Atomic publication catalog export
+
+- Add `sfmea publication-catalog --output FILE` for deterministic UTF-8 catalog export without
+  shell redirection, including parent-directory creation and atomic sibling replacement.
+- Protect existing files by default; `--force` replaces only a regular, recognized publication
+  catalog and refuses symbolic links, directories, malformed JSON, and unrelated files.
+- Verify staged catalog content before publication, remove temporary residue on failure, and leave
+  the previous catalog byte-for-byte unchanged when atomic replacement fails.
+- Reject conflicting `--verify`/`--output` modes and `--force` without an output destination.
+- Add export, refresh, unrelated-file preservation, option-validation, and injected replacement
+  failure coverage.
+
+## 0.57.22 - 2026-08-04
+
+### Bounded publication catalog verification
+
+- Add `sfmea publication-catalog --verify FILE` with concise human output, nonzero rejection
+  status, and schema-backed `--json` verdicts for CI and offline evidence capture.
+- Verify bounded regular UTF-8 JSON input, format, integrity metadata, structure, canonical digest,
+  and exact equality with the taxonomy shipped by the verifier using stable error codes.
+- Publish `publication-failure-catalog-verification` as the fourteenth public schema and embed it
+  in current review packages, expanding the governed package inventory to 42 files.
+- Preserve the former thirteen-schema package profile as an explicit supported compatibility
+  generation alongside earlier profiles.
+- Add success, drift, and unavailable-input verifier coverage plus exact verdict/schema and
+  current/legacy package checks.
+
+## 0.57.21 - 2026-08-04
+
+### Self-describing catalog integrity
+
+- Declare `algorithm: sha256` and `canonicalization: json-sort-keys-compact-utf8` directly in the
+  publication failure catalog so consumers can recompute its content address without prose-only
+  knowledge.
+- Bind failed receipts to the same semantics through `publication.catalog_algorithm` and
+  `publication.catalog_canonicalization` alongside the catalog digest.
+- Include the integrity semantics in the canonical catalog payload, so changing either declaration
+  also changes the content address.
+- Prohibit integrity declarations on published receipts and add negative coverage for missing,
+  unsupported, and independently altered metadata.
+
+## 0.57.20 - 2026-08-04
+
+### Content-addressed publication taxonomy
+
+- Add a deterministic `content_sha256` to `publication-catalog --json`, computed over the
+  canonical catalog document without the digest field.
+- Add the matching `publication.catalog_sha256` to every not-published receipt so archived
+  results bind to the exact remediation taxonomy rather than only its format family.
+- Constrain both digest fields to the catalog derived from the immutable runtime taxonomy and
+  expose the digest in human catalog output for operational verification.
+- Prohibit catalog digests on published receipts and add negative coverage for missing,
+  mismatched, or independently altered digest claims.
+
+## 0.57.19 - 2026-08-04
+
+### Self-identifying publication failure receipts
+
+- Add the canonical `publication.failure_rule_id` directly to every not-published receipt so
+  automation can correlate the primary failure with findings without traversing diagnostic text.
+- Add `publication.catalog_format` so stored receipts retain the exact taxonomy contract used to
+  interpret their code, action, and retry policy.
+- Bind catalog format and rule identity to failure code, phase, action, retry policy, and the
+  matching error finding in the review-package verification schema.
+- Prohibit catalog and failure-rule metadata on successful and post-publication-verification
+  receipts, and add negative coverage for missing or mismatched identities.
+
+## 0.57.18 - 2026-08-04
+
+### Explicit publication retry safety
+
+- Add a catalog-defined `publication.retry_policy` to every not-published receipt so orchestration
+  can distinguish retry-after-remediation from failures requiring manual diagnostics.
+- Classify input, destination, and generation failures as `after_remediation`; classify internal
+  failures as `manual_diagnostics` to prevent blind retry loops.
+- Bind retry policy exactly to failure code, phase, next action, and stable finding in both the
+  receipt schema and publication-failure catalog schema.
+- Prohibit retry policy on successful and post-publication-verification receipts.
+- Show retry policy in human catalog output and add negative coverage for missing, mismatched, and
+  published-state retry claims.
+
+## 0.57.17 - 2026-08-04
+
+### Discoverable publication failure catalog
+
+- Add `sfmea publication-catalog` with concise human output and schema-validated `--json` output
+  for failure codes, stable rule IDs, valid phases, safe messages, and remediation actions.
+- Publish a new `publication-failure-catalog` JSON Schema and embed the exact catalog as an
+  annotation in the review-package verification schema for offline integration discovery.
+- Expand current review packages to 13 content-addressed public schemas and 41 verified artifacts.
+- Preserve the former 12-schema profile as an explicit supported compatibility generation.
+- Add exact catalog-schema coverage, CLI human/JSON coverage, annotation parity, package/archive
+  inventory checks, and current/previous profile verification.
+
+## 0.57.16 - 2026-08-04
+
+### Single-source publication remediation contract
+
+- Centralize publication failure code, rule ID, valid phases, path-safe message, and remediation
+  action in one immutable catalog shared by runtime classification and JSON Schema generation.
+- Add `publication.next_action` to every not-published receipt, giving automation an explicit
+  remediation command category without interpreting human text.
+- Enforce exact failure-code/phase/next-action/finding relationships and prohibit both failure
+  metadata fields on published receipts.
+- Validate taxonomy uniqueness, phase membership, rule naming, and remediation completeness at
+  module load so future contract drift fails immediately.
+- Add schema-catalog parity and negative coverage for mismatched remediation actions and
+  published receipts that improperly claim an action.
+
+## 0.57.15 - 2026-08-04
+
+### Enforceable publication failure taxonomy
+
+- Add a first-class `publication.failure_code` to every not-published package receipt so
+  automation does not need to traverse findings or parse messages for the primary outcome.
+- Constrain analysis-load failures to analysis input categories and generation failures to
+  destination/generation categories, with internal failure valid in either phase.
+- Require each failure code to have a matching error-level finding with the corresponding stable
+  `package.publication.*` rule ID.
+- Prohibit `failure_code` on successful and post-publication-verification receipts.
+- Add negative schema coverage for published failure claims and failure-code/finding mismatches.
+
+## 0.57.14 - 2026-08-04
+
+### Provenanced, path-safe automation diagnostics
+
+- Add required `verifier` name/version provenance to every package verification and publication
+  verdict, including early failures that cannot read an analysis or create an artifact.
+- Replace the generic pre-publication failure rule with stable categories for missing, unreadable,
+  or invalid analysis input; unavailable destinations; rejected generation; and internal failure.
+- Remove raw exception text from JSON publication findings so local paths, operating-system
+  details, and sensitive internal messages are not copied into CI logs or orchestration records.
+- Preserve remediation value through bounded category-specific messages, publication phase, output
+  identity, and nonzero exit status.
+- Add schema and CLI coverage for verifier provenance, malformed JSON, permission failures,
+  destination conflict, and internal failure redaction.
+
+## 0.57.13 - 2026-08-04
+
+### Content-addressed package receipts
+
+- Add `manifest_sha256` to successful directory and ZIP verification verdicts, binding a
+  detached receipt to the exact manifest that commits the complete package file set.
+- Define both `manifest_sha256` and `archive_sha256` in the public verification schema; require
+  every valid verdict to carry a manifest digest and every valid ZIP verdict to carry its archive
+  digest.
+- Compute the manifest digest from the same bounded byte snapshot used for JSON parsing, avoiding
+  an identity/parsing time-of-check gap.
+- Require error and warning counts to agree qualitatively with their finding arrays, rejecting
+  zero-count verdicts that contain that finding level and positive-count verdicts that omit it.
+- Add digest recomputation and negative schema coverage for missing identities and contradictory
+  finding/count claims.
+
+## 0.57.12 - 2026-08-04
+
+### Core verification verdict consistency
+
+- Added universal JSON Schema invariants connecting `valid`, `checked_files`, and the error count
+  for package verification and publication receipts.
+- Require every valid verdict to report at least one checked file and zero errors.
+- Require every invalid verdict to report at least one error, preventing schema-valid rejection
+  envelopes that provide no machine-readable failure signal.
+- Added isolated negative coverage for error-count and checked-file contradictions while keeping
+  publication-state contradiction tests independently coherent.
+
+## 0.57.11 - 2026-08-04
+
+### Publication receipt consistency invariants
+
+- Added JSON Schema cross-field constraints tying receipt validity, checked-file count,
+  publication status, and publication phase into one coherent claim.
+- Require valid receipts to be `published/complete`.
+- Require not-published receipts to be invalid, report zero checked files, and use only the
+  `analysis_load` or `generation` phase; require post-publication rejection to be
+  invalid and `published/post_publication_verification`.
+- Added negative schema coverage for four contradictory receipt combinations while retaining
+  valid current receipts and publication-free standalone verifier compatibility.
+
+## 0.57.10 - 2026-08-04
+
+### Explicit package publication state
+
+- Added an optional schema-defined `publication` object to package receipts so automation can
+  distinguish `published` from `not_published` without interpreting messages or filesystem state.
+- Classify receipt phases as `analysis_load`, `generation`, `complete`, or
+  `post_publication_verification`.
+- Mark post-publication verification rejection as published-but-invalid, while input and
+  generation failures explicitly confirm that no new package was published.
+- Added exact phase/state assertions for successful directory/ZIP output, missing input,
+  destination conflict, sanitized runtime failure, and injected post-publication rejection.
+
+## 0.57.9 - 2026-08-04
+
+### Always-structured package automation failures
+
+- Extended `sfmea package --json` to emit the public review-package verification envelope when
+  publication fails before an artifact exists, instead of switching to plaintext stderr.
+- Represent missing analyses, malformed JSON, destination conflicts, filesystem failures, and
+  internal publication rejection with `package.publication_failed`, zero checked files, the
+  requested container/path, and a remediation-oriented notice.
+- Preserve actionable bounded messages for expected input/operational failures while sanitizing
+  unexpected `RuntimeError` details.
+- Added schema-validation coverage for missing input, existing-destination conflict, sanitized
+  runtime failure, successful directory/ZIP receipts, and injected post-publication rejection.
+
 ## 0.57.8 - 2026-08-04
 
 ### Machine-readable package publication receipt

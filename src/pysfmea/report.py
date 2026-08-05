@@ -27,10 +27,22 @@ from .assurance import (
 )
 from .config import DEFAULT_CONFIG, normalize_config
 from .guidance import guidance_traceability
-from .integrity import canonical_json_sha256
+from .integrity import (
+    MAX_GOVERNED_JSON_DEPTH,
+    MAX_GOVERNED_JSON_NODES,
+    bounded_json_structure_metrics,
+    canonical_json_sha256,
+)
 from .interchange import cyclonedx_document, sarif_document
 from .manifest import current_audit_manifest
 from .model import calculate_rpn, utc_now
+from .publication import (
+    PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+    PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
+    PUBLICATION_FAILURE_CATALOG_FORMAT,
+    PUBLICATION_FAILURE_CATALOG_SHA256,
+    classify_publication_failure,
+)
 from .sfta import SFTA_GAP_FIELDS, build_sfta, export_sfta, sfta_gap_rows
 from .validation import validate_analysis
 from .version import __version__
@@ -150,6 +162,8 @@ REVIEW_PACKAGE_SCHEMA_FILES = {
     "pysfmea-diagram-bundle.schema.json",
     "pysfmea-diagram-bundle-verification.schema.json",
     "pysfmea-html-report-verification.schema.json",
+    "pysfmea-publication-failure-catalog.schema.json",
+    "pysfmea-publication-failure-catalog-verification.schema.json",
     "pysfmea-schema-bundle-verification.schema.json",
     "pysfmea-schema-catalog.schema.json",
     "pysfmea-review-package-manifest.schema.json",
@@ -161,8 +175,8 @@ REVIEW_PACKAGE_ALL_FILES = REVIEW_PACKAGE_ALLOWED_FILES | {"manifest.json"}
 MAX_ARCHIVE_ENTRIES = 100
 MAX_ARCHIVE_FILE_BYTES = 100_000_000
 MAX_ARCHIVE_TOTAL_BYTES = 500_000_000
-MAX_ANALYSIS_JSON_DEPTH = 100
-MAX_ANALYSIS_JSON_NODES = 2_000_000
+MAX_ANALYSIS_JSON_DEPTH = MAX_GOVERNED_JSON_DEPTH
+MAX_ANALYSIS_JSON_NODES = MAX_GOVERNED_JSON_NODES
 REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
 REVIEW_PACKAGE_VERIFICATION_FORMAT = "pysfmea-review-package-verification-1"
 ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = (
@@ -1540,8 +1554,8 @@ def _sha256_file_bounded(path: Path, *, limit: int) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
-def _read_bounded_utf8(path: Path, *, limit: int) -> str:
-    """Read UTF-8 text while enforcing the byte limit during I/O."""
+def _read_bounded_bytes(path: Path, *, limit: int) -> bytes:
+    """Read bytes while enforcing the limit during I/O."""
 
     raw = bytearray()
     with path.open("rb") as source:
@@ -1549,8 +1563,14 @@ def _read_bounded_utf8(path: Path, *, limit: int) -> str:
             raw.extend(chunk)
             if len(raw) > limit:
                 raise ValueError(f"file exceeds the {limit}-byte verification limit")
+    return bytes(raw)
+
+
+def _read_bounded_utf8(path: Path, *, limit: int) -> str:
+    """Read UTF-8 text while enforcing the byte limit during I/O."""
+
     try:
-        return raw.decode("utf-8")
+        return _read_bounded_bytes(path, limit=limit).decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError(f"file is not valid UTF-8: {exc}") from exc
 
@@ -1608,39 +1628,35 @@ def _verify_analysis_structure(
             }
         )
     else:
-        stack: list[tuple[Any, int]] = [(analysis, 0)]
-        while stack:
-            value, depth = stack.pop()
-            node_count += 1
-            observed_depth = max(observed_depth, depth)
-            if depth > max_depth:
-                if checks["depth_limit"]:
-                    checks["depth_limit"] = False
-                    errors.append(
-                        {
-                            "code": "analysis_structure.depth_limit",
-                            "message": (
-                                f"JSON depth exceeds the {max_depth}-level verification limit."
-                            ),
-                            "path": "analysis.json",
-                        }
-                    )
-            if node_count > max_nodes:
-                checks["node_limit"] = False
-                errors.append(
-                    {
-                        "code": "analysis_structure.node_limit",
-                        "message": (
-                            f"JSON structure exceeds the {max_nodes}-node verification limit."
-                        ),
-                        "path": "analysis.json",
-                    }
-                )
-                break
-            if isinstance(value, dict):
-                stack.extend((child, depth + 1) for child in value.values())
-            elif isinstance(value, list):
-                stack.extend((child, depth + 1) for child in value)
+        metrics = bounded_json_structure_metrics(
+            analysis,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+        )
+        node_count = int(metrics["node_count"])
+        observed_depth = int(metrics["max_depth"])
+        if not metrics["depth_within_limit"]:
+            checks["depth_limit"] = False
+            errors.append(
+                {
+                    "code": "analysis_structure.depth_limit",
+                    "message": (
+                        f"JSON depth exceeds the {max_depth}-level verification limit."
+                    ),
+                    "path": "analysis.json",
+                }
+            )
+        if not metrics["node_within_limit"]:
+            checks["node_limit"] = False
+            errors.append(
+                {
+                    "code": "analysis_structure.node_limit",
+                    "message": (
+                        f"JSON structure exceeds the {max_nodes}-node verification limit."
+                    ),
+                    "path": "analysis.json",
+                }
+            )
         contract_errors = (
             _analysis_core_contract_errors(analysis)
             if checks["node_limit"]
@@ -2792,6 +2808,50 @@ def verify_review_package(source: str | Path) -> dict[str, Any]:
         )
 
 
+def package_publication_error_result(
+    destination: str | Path,
+    error: Exception,
+    *,
+    archive: bool = False,
+    phase: str = "generation",
+) -> dict[str, Any]:
+    """Return a path-safe verification verdict for publication failures."""
+
+    supplied = Path(destination).expanduser().absolute()
+    failure = classify_publication_failure(error, phase=phase)
+    finding = {
+        "rule_id": failure.rule_id,
+        "level": "error",
+        "message": failure.message,
+        "path": "",
+    }
+    result = _package_verification_result(
+        supplied,
+        [finding],
+        0,
+        "",
+        container="zip" if archive else "directory",
+    )
+    result["notice"] = (
+        "Publication did not complete and this verdict does not describe a newly "
+        "published package; use the stable publication failure identity and catalog "
+        "metadata for remediation and retry decisions."
+    )
+    result["publication"] = {
+        "status": "not_published",
+        "phase": phase,
+        "catalog_format": PUBLICATION_FAILURE_CATALOG_FORMAT,
+        "catalog_algorithm": PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+        "catalog_canonicalization": PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
+        "catalog_sha256": PUBLICATION_FAILURE_CATALOG_SHA256,
+        "failure_code": failure.code,
+        "failure_rule_id": failure.rule_id,
+        "next_action": failure.next_action,
+        "retry_policy": failure.retry_policy,
+    }
+    return result
+
+
 def _verify_review_package(source: str | Path) -> dict[str, Any]:
     """Verify a review package without trusting paths or package content."""
 
@@ -2814,10 +2874,16 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
         add("package.manifest_missing", "error", "A regular manifest.json file is required.")
         return _package_verification_result(package, findings, 0, "")
     try:
-        if manifest_path.stat().st_size > 5_000_000:
-            raise ValueError("manifest exceeds the 5 MB limit")
-        manifest = _read_bounded_json_object(manifest_path, limit=5_000_000)
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        manifest_raw = _read_bounded_bytes(manifest_path, limit=5_000_000)
+        manifest = json.loads(manifest_raw.decode("utf-8"))
+        manifest_sha256 = hashlib.sha256(manifest_raw).hexdigest()
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as exc:
         add("package.manifest_invalid", "error", f"Manifest cannot be read: {exc}")
         return _package_verification_result(package, findings, 0, "")
     if not isinstance(manifest, dict):
@@ -2837,7 +2903,9 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
             "error",
             f"Manifest files must be a list with at most {MAX_ARCHIVE_ENTRIES} entries.",
         )
-        return _package_verification_result(package, findings, 0, package_format)
+        result = _package_verification_result(package, findings, 0, package_format)
+        result["manifest_sha256"] = manifest_sha256
+        return result
 
     schema_catalog_declaration = manifest.get("schema_catalog")
     schema_bundle_declared = schema_catalog_declaration is not None
@@ -3553,6 +3621,7 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
         "portable": bool(manifest.get("portable", False)),
         "source_analysis": str(manifest.get("source_analysis", "")),
     }
+    result["manifest_sha256"] = manifest_sha256
     return result
 
 
@@ -3568,6 +3637,7 @@ def _package_verification_result(
     warnings = sum(value["level"] == "warning" for value in findings)
     return {
         "verification_format": REVIEW_PACKAGE_VERIFICATION_FORMAT,
+        "verifier": {"name": "PySFMEA", "version": __version__},
         "package": str(package),
         "container": container,
         "format": package_format,

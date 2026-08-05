@@ -98,11 +98,28 @@ sfmea schema assurance-work-queue -o assurance-work-queue.schema.json
 sfmea schema --bundle offline-contracts
 sfmea schema --verify-bundle offline-contracts
 sfmea schema --verify-bundle offline-contracts --json
+sfmea publication-catalog
+sfmea publication-catalog --json
+sfmea publication-catalog --output publication-catalog.json
+sfmea publication-catalog --output publication-catalog.json --json
+sfmea publication-catalog --verify publication-catalog.json
+sfmea publication-catalog --verify publication-catalog.json --json
 ```
 
 The catalog publishes deterministic SHA-256 identifiers for self-contained JSON Schema
 Draft 2020-12 documents. See [docs/SCHEMAS.md](docs/SCHEMAS.md) for compatibility and
 semantic-validation boundaries.
+The focused publication catalog provides human and schema-validated JSON discovery for package
+failure codes, valid phases, stable findings, and remediation actions.
+`--output FILE` publishes deterministic UTF-8 JSON through a verified temporary sibling and atomic
+replacement. Existing files are protected; `--force` refreshes only a recognized catalog and
+will not replace unrelated, malformed, non-file, or symbolic-link content.
+Add `--json` to receive the schema-backed verification verdict for the exact exported file instead
+of human progress text. Forced refresh requires the existing file to have the supported format,
+integrity metadata, and complete structural envelope; the format string alone is insufficient.
+`--verify FILE` performs bounded regular-file, UTF-8 JSON, structure, digest, and exact-taxonomy
+verification. JSON mode emits the public catalog-verification verdict and returns nonzero when the
+received catalog is unavailable, malformed, drifted, or not the catalog shipped by that verifier.
 
 ## Quick start
 
@@ -120,6 +137,32 @@ system context, analysis revision and ground rules, review team, catalogs, mappi
 and optional coverage evidence before a governed scan. It rejects an untouched
 generated example template rather than presenting placeholder inputs as ready. Use
 `--json` in automation.
+
+Project configuration is consumed as an identity-revalidated regular non-symbolic-link UTF-8 TOML
+file under a 5 MB byte limit. Relative coverage and organizational guidance paths are normalized against the
+configuration directory without resolving their final entry, preserving link identity for each
+downstream safety check. `sfmea init` publishes templates atomically, refuses linked/non-file
+destinations, and preserves prior content if forced replacement cannot complete.
+
+Repository scanning does not import or execute Python code. Each Python source or test-evidence
+file must be a regular non-symbolic-link file and is read through a 20 MB consumption boundary
+using its PEP 263 encoding declaration. Source discovery stops explicitly at 100,000 selected
+files; the optional textual test-reference index stops at 10,000 files or 100 MB. Rejected files
+remain visible through repository-inventory state and stable scan warnings while other files
+continue through analysis. Baseline calculation reuses the same source-file byte boundary.
+
+Dependency evidence is also treated as untrusted repository input. PySFMEA reads pyproject,
+requirements/constraints include chains, and supported lockfiles once through a regular-file,
+non-symbolic-link boundary: 20 MB per file, 1,000 attempted files, and 100 MB total. Requirement
+text must be UTF-8, include paths must remain inside the repository, and supported pyproject
+dependency containers must have their declared TOML shapes. The exact accepted bytes provide both
+the manifest SHA-256 and parsed dependency claims; rejected content produces stable warnings.
+
+The complete repository inventory hashes regular non-linked artifacts through a separate 20 MB
+per-artifact and 500 MB aggregate consumption budget. Non-regular filesystem objects are never
+opened. If the aggregate budget is exhausted, metadata and already-authorized semantic analysis
+continue, but the inventory records a digest-protected unresolved region and is explicitly marked
+truncated. File and excluded/opaque-region traversal are each capped at 100,000 records.
 
 `sfmea status` is the read-only workflow cockpit. It auto-discovers configuration and
 analysis files in the repository root or `.artifacts`, classifies the current lifecycle
@@ -189,6 +232,14 @@ sfmea scan C:\path\to\python-repo -o C:\path\to\python-repo\sfmea-analysis.json
 When `-o` is omitted, the analysis is written to
 `REPOSITORY/sfmea-analysis.json`, independent of the caller's working directory.
 
+Governed analysis JSON is consumed from a regular non-symbolic-link file through a 100 MB
+byte limit with inspected/opened/final identity checks. Parsing requires duplicate-free,
+finite UTF-8 JSON and applies the same iterative 100-level/2,000,000-node contract used by
+package verification before migrations or derived-state work. Saves serialize through the
+same byte limit, retain final-path identity, revalidate the destination immediately before
+atomic replacement, preserve prior content on rejection, and remove private staging residue.
+The browser reviewer's revision fingerprint uses the same bounded streaming file contract.
+
 Open the review workspace:
 
 ```powershell
@@ -253,7 +304,30 @@ preparing a review handoff:
 sfmea report sfmea-analysis.json `
   --notes engineering-review-notes.md `
   -o .artifacts\sfmea-report.html
+sfmea report sfmea-analysis.json `
+  -o .artifacts\sfmea-report.html `
+  --json
 ```
+
+Engineering notes must be a regular, non-symbolic-link UTF-8 file. PySFMEA applies the
+two-megabyte limit to bytes consumed from the open stream and canonicalizes CRLF/CR to LF after
+decoding. Missing, linked, malformed, or oversized notes fail before publication; JSON mode emits
+a sanitized generation rejection and preserves any previous report. PDF generation inherits the
+same notes boundary through the self-contained HTML renderer. Browser output is consumed through
+a 250 MB regular-file boundary, copied into a flushed and independently verified private sibling,
+and atomically published only if the final destination is still the same regular file (or remains
+absent). Linked destinations, renderer identity changes, concurrent replacements, and failed
+publication preserve the previous report and remove staging residue.
+
+With `--json`, report generation writes a private sibling, verifies whole-document and
+embedded-payload integrity against the exact loaded analysis, and atomically publishes only after
+that verdict passes. The public receipt identifies `published/complete` or the precise
+`not_published` phase and records whether a pre-existing destination was preserved. Missing input,
+generation, verification, and publication failures remain sanitized, schema-valid JSON on stdout
+with a nonzero status, so CI does not need a fragile generation-then-verification sequence. The
+analysis JSON itself is never accepted as the HTML destination. Existing destination directories,
+symbolic links, and other non-regular objects are rejected before generation; PySFMEA never
+resolves an output link and overwrites its target.
 
 Verify the complete standalone document and optionally require an exact analysis match:
 
@@ -264,6 +338,12 @@ sfmea report-verify .artifacts\sfmea-report.html `
   --analysis sfmea-analysis.json `
   --json
 ```
+
+Current report, diagram-bundle, and assurance-work-queue JSON verification verdicts include the
+exact PySFMEA verifier name and package version. Persist this field with CI evidence so a later
+review can distinguish the artifact's producer from the implementation that performed the
+verification. The public v1 schemas keep this additive field optional only so genuine older
+receipts remain readable.
 
 Without `--analysis`, integrity is checked but the binding is explicitly reported as not
 checked. Reports generated before whole-document protection remain identifiable as legacy
@@ -357,11 +437,17 @@ sfmea report sfmea-analysis.json `
 Use `sfmea diagram --type TYPE` to export generated models for reuse by other
 renderers or engineering tools. The complete schema, limits, import formats, and
 example state diagram are documented in [Canonical diagrams](docs/DIAGRAMS.md).
+Custom diagram inputs use the same five-megabyte consumption-time bound and symbolic-link refusal
+as standalone diagram verification, so report generation cannot bypass the verifier's ingestion
+boundary.
 
 To add an organization-controlled or licensed standard without modifying PySFMEA,
 configure a governed JSON guidance pack. The schema, integrity behavior, licensing
 boundary, and complete example are documented in
 [Organizational guidance packs](docs/GUIDANCE_PACKS.md).
+Configured packs must be regular, non-symbolic-link UTF-8 JSON files. Their five-megabyte limit is
+enforced on bytes consumed from the open stream, and provenance hashes those exact validated bytes
+before any source, locator, or rule mapping can influence findings.
 
 The implementation-to-acceptance audit is maintained in
 [Workbench requirements traceability](docs/REQUIREMENTS_TRACEABILITY.md); it identifies
@@ -372,7 +458,7 @@ explicit.
 snapshot, resolved context, repository coverage, adapter-run provenance, CSV and
 Markdown worksheets, inventory, architecture, traceability,
 coverage, validation, summary, audit history, the exact offline public-schema catalog,
-twelve self-contained assurance, diagram, workflow, package, catalog, signature, and verifier
+fourteen self-contained assurance, diagram, workflow, package, catalog, signature, and verifier
 schema documents, a standalone `assurance-work.json` hardening queue,
 and a SHA-256 manifest. A non-empty destination is protected unless `--force` is supplied.
 The manifest explicitly declares `analysis_diagnostics_projection_v1`,
@@ -396,7 +482,56 @@ directory containing unrecognized files, protecting reviewer-added material.
 `pysfmea-review-package-verification-1` verdict as `verify-package --json` after publication.
 This gives CI a single machine-readable receipt with the resolved path, container, artifact
 count, capabilities, state binding, and every nested projection check; an invalid receipt returns
-a nonzero exit status.
+a nonzero exit status. Pre-publication failures use the same public schema with stable
+`package.publication.*` rule IDs, zero checked files, and the requested output identity, so JSON-mode
+automation never needs to fall back to parsing stderr. Expected operational details are bounded;
+unexpected runtime details are sanitized. Every verdict identifies the `PySFMEA` verifier and
+exact tool version. Pre-publication findings use stable categories for missing, unreadable, or
+invalid analysis input; unavailable destinations; rejected generation; and internal failures.
+Their messages never echo raw exception text, preventing machine-local paths or sensitive runtime
+details from leaking into CI logs while preserving phase and remediation semantics.
+Not-published receipts expose the primary category directly as `publication.failure_code`. The
+schema restricts each code to its valid phase and requires a matching error finding; published
+receipts cannot carry a failure code. Automation can therefore switch on one bounded field while
+retaining the richer finding for human review.
+Each failed receipt also carries `publication.failure_rule_id` and
+`publication.catalog_format`. `publication.catalog_sha256` content-addresses the exact catalog
+used by the producer. These fields bind a stored result directly to its canonical
+`package.publication.*` rule and `pysfmea-publication-failure-catalog-1` taxonomy without requiring
+the consumer to infer either value from the failure code or search the findings array.
+The digest equals SHA-256 of the catalog's canonical UTF-8 JSON after removing
+`content_sha256`: keys sorted, no insignificant whitespace, and non-ASCII text retained. The
+human and JSON catalog commands expose the same digest for offline comparison.
+The catalog declares these rules programmatically as `algorithm: sha256` and
+`canonicalization: json-sort-keys-compact-utf8`; failed receipts repeat them as
+`catalog_algorithm` and `catalog_canonicalization`. Both declarations are included in the hashed
+catalog content, preventing a digest from being detached from its interpretation method.
+Each failure also provides `publication.next_action`, such as `provide_analysis`,
+`repair_analysis`, or `choose_writable_destination`. Failure code, phase, action, rule ID, and
+path-safe message come from one immutable catalog used by both runtime classification and public
+schema generation, preventing producer/contract drift.
+`publication.retry_policy` is `after_remediation` for input, destination, and rejected-generation
+failures, and `manual_diagnostics` for internal failures. Neither value authorizes an automatic
+retry: consumers must complete the named action or diagnostic review before invoking publication
+again. Published receipts cannot carry retry metadata.
+Catalog format, algorithm, canonicalization, and digest, plus rule identity, failure code, phase,
+action, and retry policy, are one schema-bound tuple; altering any member independently makes the
+receipt invalid.
+Package receipts also carry a schema-defined `publication` state. `published/complete` identifies
+a successful handoff, `not_published/analysis_load` and `not_published/generation` are safe retry
+states, and `published/post_publication_verification` tells automation that an artifact became
+visible but failed the final receipt check and must not be handed off.
+The public schema enforces these combinations across `valid`, `checked_files`, status, and phase:
+a producer cannot issue a schema-valid receipt that simultaneously claims success and
+non-publication, completion and failure, or checked files for an output that was never published.
+The same contract also requires valid package verdicts to report at least one checked file and
+zero errors, and invalid verdicts to report one or more errors. This prevents a consumer from
+receiving a schema-valid success with no verification work or a rejection with no failure signal.
+Every valid verdict carries `manifest_sha256`, a content address for the exact bounded manifest
+bytes that were parsed and verified. Valid ZIP verdicts additionally require `archive_sha256`,
+so a stored or transmitted receipt can be matched to both the package contents and its precise
+container without trusting a path. Error and warning count presence is also reconciled with the
+corresponding finding levels, preventing internally contradictory diagnostic envelopes.
 `--portable` keeps repository-relative source evidence while removing machine-local
 absolute repository, configuration, coverage, trace, and source-analysis paths from
 the packaged snapshot. The governed working analysis is not modified.
@@ -486,6 +621,13 @@ signed statement binds the exact ZIP bytes—or, for a directory, its manifest
 bytes—to the package format, project, baseline, schema version, generation time,
 signer label, and signing time. Verification requires both `--signature` and an
 explicitly trusted `--public-key`; it reports the SHA-256 fingerprint of that key.
+Private/public keys and detached envelopes must be regular non-symbolic-link files and
+are consumed under one-megabyte byte limits with inspected/opened identity checks. The
+verified package manifest is independently reread under a 10 MB limit and must retain
+the exact digest established by a fresh package verification; caller-supplied or stale
+verification results cannot bypass this step. Signature publication is atomic and
+refuses a destination whose identity changes before replacement. Exact ZIP-container
+bytes are rehashed through a 550 MB streaming boundary and reconciled to the fresh verdict.
 Use your approved key-generation, storage, rotation, revocation, and release process.
 This proves possession of the matching private key, not that the signer was authorized
 or that the SFMEA was technically approved.
@@ -497,7 +639,9 @@ verification against the exact package and a separately trusted public key.
 For offline CI integrations, `sfmea schema --bundle DIRECTORY` atomically exports the catalog
 and every contract in one operation. `sfmea schema --verify-bundle DIRECTORY` independently
 checks the complete known profile, root-level regular-file boundary, JSON structure, identities,
-and catalog digests. Use `--json` for the stable machine verdict. Refreshing a non-empty bundle
+and catalog digests. Every allowed entry is read once with a two-megabyte consumption-time bound
+and explicit UTF-8 JSON decoding; oversized or linked entries remain structured rejections. Use
+`--json` for the stable machine verdict. Refreshing a non-empty bundle
 requires `--force` and is refused if the directory contains unrecognized or non-file entries.
 
 Check whether the review meets the configured completeness gates:
@@ -536,6 +680,12 @@ sfmea scan . --coverage-json coverage.json -o sfmea-analysis.json
 ```
 
 Coverage is evidence of observed execution, not proof that a detection control is effective.
+Coverage JSON is treated as untrusted evidence input: PySFMEA reads at most 100 MB, refuses
+symbolic links and non-files, validates UTF-8 JSON, ignores paths outside the analyzed repository,
+and accepts only typed positive line/source coordinates and nonzero branch destinations. Unsafe
+paths, malformed records, and
+duplicate normalized file keys are omitted and reported as stable `CoverageError` warnings; they do
+not abort the rest of the repository scan.
 
 ## Interface contracts
 
@@ -551,6 +701,13 @@ Contracts use the normal `path:qualified-name` mapping syntax. For example,
 `openapi.json:Interface contract *` can allocate an API contract to a subsystem,
 requirements, hazards, and configured system interfaces. Those mappings seed the
 contract worksheet and participate in context-change revalidation.
+
+Contract files are consumed as untrusted evidence through a regular-file, non-symbolic-link
+boundary: 20 MB per file, 1,000 discovered files, and 100 MB total. Paths must remain inside the
+repository and text must be UTF-8. JSON roots and nested extraction containers are type-checked;
+malformed structure is reported without aborting the scan. Operation and data-type extraction is
+limited during traversal to 500 distinct values per category, and the exact accepted bytes remain
+represented by their SHA-256 even when semantic extraction is rejected or truncated.
 
 ## Runtime evidence and sequences
 
@@ -568,6 +725,13 @@ occurred; they do not establish path completeness. Imports retain their file has
 source baseline, timestamp, mapping counts, mapping method, and audit event. Reimporting
 the same trace is idempotent. Code-file plus function attributes resolve otherwise
 ambiguous span names, and the CLI reports mapped and unmapped totals.
+
+Trace ingestion requires a regular non-symbolic-link file, applies the 100 MB limit to bytes
+consumed from the opened stream, and decodes bounded UTF-8 JSON with an object or array root. The
+simple/OTLP walker is iterative and type-safe, caps each import at 50,000 spans, and limits nested
+attribute normalization to 32 levels. Empty, malformed, linked, oversized, or excessively nested
+inputs leave the analysis unchanged. Runtime spans, edges, import provenance, history, and summary
+are committed together; an unexpected finalization failure restores the complete prior analysis.
 
 ## Grounded machine discovery
 
@@ -621,7 +785,11 @@ new **unreviewed** worksheet record. Generated content cannot set ratings,
 disposition, workflow status, approval, or closure fields, and it cannot overwrite an
 existing record. Suggestions record provider/model identity, prompt version, source
 baseline, evidence IDs, uncertainties, questions, response hash, and review history.
-Proposed suggestions become stale after a baseline change.
+Provider requests are capped at 3 MB and responses at 10 MB; nested JSON is strict, bounded by
+depth and node count, and must match the exact discovery or summary field set. Generated text,
+lists, identities, and per-component suggestion counts also have explicit limits. Discovery stages
+every requested component before committing, and acceptance rolls back completely if worksheet
+materialization fails. Proposed suggestions become stale after a baseline change.
 
 ## Executable assurance checklist
 
@@ -768,6 +936,10 @@ every declared generated file still matches its starting hash. Publication moves
 queue to a temporary sibling backup, atomically installs the regenerated queue, and restores
 the prior queue if installation fails. Any edited or removed generated file causes a closed
 failure; verify the queue and generate into a new destination instead of risking test work.
+The operation carries forward the exact bounded manifest snapshot it verified, rechecks the
+queue immediately before replacement, and requires the manifest identity to remain unchanged.
+A concurrent but independently valid queue replacement is refused, the current queue is
+preserved, and staged output is removed.
 If replaying the selection finds no pending obligations, verification labels the queue a
 `retirement_candidate`. Workflow status recommends the guarded archive command rather than
 a refresh that must fail:
@@ -786,13 +958,22 @@ provisional retirement record so the active path remains unchanged. The operatio
 the manifest and generated files rather than deleting the audit record. Scaffold verification
 checks the retirement-record digest and its queue, prior-manifest, and archive-path bindings;
 archived queues are immutable and cannot later be refreshed or replaced in place.
+Archive performs the same publication-boundary identity comparison before writing its retirement
+record, so concurrent queue replacement leaves both the active source and retirement state
+untouched.
 
 Verification distinguishes an invalid manifest, materially changed verification contracts,
 and an analysis whose unrelated state advanced while every selected contract remained
 current. It replays the saved selection and emits an obligation-level diff for added,
 removed, and changed contracts, including the exact fields responsible. Placeholder edits
 are reported as informational because test implementation is expected; they become governed
-when registered against an obligation.
+when registered against an obligation. Verification consumes the manifest and optional
+retirement record through a 64 MiB byte boundary and streams generated-file hashes through
+an independent 64 MiB boundary. Manifest and retirement inputs must be regular,
+non-symbolic-link files; malformed UTF-8, concurrent growth beyond a boundary, and broken
+retirement links fail closed as structured verification findings. Generated files are never
+followed through links: an unavailable, linked, or oversized placeholder is reported separately
+as changed and cannot pass the untouched-file precondition for guarded refresh or archival.
 
 The generated pytest cases fail intentionally until an engineer implements the recorded
 stimulus, oracles, and acceptance criteria. Empty, skipped, or assertion-free tests cannot
@@ -801,6 +982,12 @@ not evidence by itself. Verification and closure require current execution artif
 proof that the failure was triggered, acceptance-criterion evaluation, independent review,
 and any required approval. `assurance-review` can govern planning states but cannot directly
 set `verified`, `accepted_risk`, or `closed`.
+
+The emitted pytest module remains self-contained, but collection does not trust its adjacent
+manifest blindly. It requires a regular non-symbolic-link file, consumes at most 64 MiB from the
+opened binary stream, decodes explicit UTF-8 JSON, checks the object/format/integrity envelope,
+and requires a usable obligation list before parameterization. Unsafe or malformed manifests stop
+collection with a bounded remediation message rather than being followed or buffered without limit.
 
 Each derived obligation carries a canonical verification-contract digest. Editing the
 governed failure condition, operating context, effects, controls, safe/degraded/recovery
@@ -847,9 +1034,15 @@ sfmea assurance-evidence-import sfmea-analysis.json VO-... `
 The versioned import manifest identifies the current `baseline_id`, repository revision,
 test path and SHA-256, shell-free `command_argv`, outcome, environment, dependency-lock
 metadata, and one or more manifest-relative artifacts with optional SHA-256 claims. Import
-is idempotent, rejects traversal and symlinks, enforces size limits, re-hashes and copies the
-artifacts, and labels them `externally_supplied_unattested`. An organization may therefore
-apply its own CI attestation policy without PySFMEA silently treating the import as trusted.
+is idempotent and rejects traversal, symbolic links, non-files, malformed UTF-8 JSON, excessive
+manifest bytes, per-artifact bytes, and aggregate evidence bytes. Limits are enforced while bytes
+are consumed rather than from a pre-read size observation. Every artifact is first streamed into a
+bounded hash and then copied through an independently bounded hashing stream; a source that changes
+between validation and copy is refused and private staging is removed. Imported test registration
+and evidence recording occur only after successful publication. A recording failure restores the
+complete prior analysis and removes the new evidence directory. Accepted imports remain labeled
+`externally_supplied_unattested`, allowing an organization to apply its own CI attestation policy
+without PySFMEA silently treating the import as trusted.
 
 Finally, a different identity evaluates every original acceptance criterion:
 
@@ -864,7 +1057,8 @@ sfmea assurance-evidence-review sfmea-analysis.json EXEC-... `
   --rationale "Failure stimulus occurred and each criterion is supported by intact evidence."
 ```
 
-The review verifies the execution statement and every artifact again. `sufficient` is
+The review verifies the execution statement and every artifact again through the same regular-file,
+link-safe, consumption-time byte boundaries. `sufficient` is
 rejected unless the run passed, the intended stimulus was observed, all criteria pass, the
 baseline is current, all hashes are intact, and the reviewer is independent. Verification
 still does not close the finding or accept residual risk.

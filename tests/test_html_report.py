@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -10,6 +11,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from jsonschema import Draft202012Validator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -18,6 +22,7 @@ from pysfmea.html_report import (
     HTML_REPORT_FORMAT,
     MAX_REPORT_ASSURANCE_OBLIGATIONS,
     MAX_REPORT_SFTA_GAPS_PER_CLASS,
+    _read_bounded_report_notes,
     _report_sfta_projection,
     build_html_report_data,
     export_html_report,
@@ -27,6 +32,7 @@ from pysfmea.report import analysis_state_sha256
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
 from pysfmea.store import save_analysis
+from pysfmea.version import __version__
 
 
 class HtmlReportTests(unittest.TestCase):
@@ -355,6 +361,93 @@ class HtmlReportTests(unittest.TestCase):
         self.assertRegex(output.getvalue(), r"\([\d,]+ records; \d+\.\d MiB\)")
         self.assertIn("<title>Review report</title>", report_path.read_text(encoding="utf-8"))
 
+        json_report = self.root / "analysis-json-report.html"
+        json_output = io.StringIO()
+        json_error = io.StringIO()
+        with contextlib.redirect_stdout(json_output):
+            with contextlib.redirect_stderr(json_error):
+                result = main(
+                    [
+                        "report",
+                        str(analysis_path),
+                        "--output",
+                        str(json_report),
+                        "--json",
+                    ]
+                )
+        self.assertEqual(result, 0)
+        self.assertEqual(json_error.getvalue(), "")
+        generation_receipt = json.loads(json_output.getvalue())
+        self.assertTrue(generation_receipt["valid"])
+        self.assertEqual(generation_receipt["status"], "matched")
+        self.assertTrue(generation_receipt["binding_requested"])
+        self.assertTrue(generation_receipt["binding_checked"])
+        self.assertEqual(
+            generation_receipt["verifier"],
+            {"name": "PySFMEA", "version": __version__},
+        )
+        self.assertEqual(Path(generation_receipt["path"]), json_report)
+        self.assertEqual(generation_receipt["publication"]["status"], "published")
+        self.assertEqual(generation_receipt["publication"]["phase"], "complete")
+        self.assertFalse(generation_receipt["publication"]["destination_existed"])
+        self.assertFalse(
+            generation_receipt["publication"]["prior_destination_preserved"]
+        )
+        generation_validator = Draft202012Validator(
+            schema_document("html-report-verification")
+        )
+        generation_validator.validate(generation_receipt)
+        contradictory_receipt = json.loads(json.dumps(generation_receipt))
+        contradictory_receipt["publication"]["status"] = "not_published"
+        contradictory_receipt["publication"]["phase"] = "generation"
+        self.assertFalse(generation_validator.is_valid(contradictory_receipt))
+        contradictory_receipt = json.loads(json.dumps(generation_receipt))
+        contradictory_receipt["publication"]["prior_destination_preserved"] = True
+        self.assertFalse(generation_validator.is_valid(contradictory_receipt))
+
+        rejected_report = self.root / "rejected-report.html"
+        rejected_report.write_text("trusted prior report", encoding="utf-8")
+        rejected_output = io.StringIO()
+        rejected_error = io.StringIO()
+        with patch(
+            "pysfmea.cli.verify_html_report_file",
+            side_effect=RuntimeError("sensitive injected verifier detail"),
+        ):
+            with contextlib.redirect_stdout(rejected_output):
+                with contextlib.redirect_stderr(rejected_error):
+                    result = main(
+                        [
+                            "report",
+                            str(analysis_path),
+                            "--output",
+                            str(rejected_report),
+                            "--json",
+                        ]
+                    )
+        self.assertEqual(result, 1)
+        self.assertEqual(rejected_error.getvalue(), "")
+        rejected_receipt = json.loads(rejected_output.getvalue())
+        self.assertFalse(rejected_receipt["valid"])
+        self.assertEqual(
+            rejected_receipt["errors"][0]["code"],
+            "report.post_generation_verification_failed",
+        )
+        self.assertNotIn("sensitive injected", rejected_output.getvalue())
+        self.assertEqual(rejected_receipt["publication"]["status"], "not_published")
+        self.assertEqual(rejected_receipt["publication"]["phase"], "verification")
+        self.assertTrue(rejected_receipt["publication"]["destination_existed"])
+        self.assertTrue(
+            rejected_receipt["publication"]["prior_destination_preserved"]
+        )
+        self.assertEqual(
+            rejected_report.read_text(encoding="utf-8"),
+            "trusted prior report",
+        )
+        self.assertFalse(list(self.root.glob(".rejected-report.html.*.tmp")))
+        Draft202012Validator(
+            schema_document("html-report-verification")
+        ).validate(rejected_receipt)
+
         verification_output = io.StringIO()
         with contextlib.redirect_stdout(verification_output):
             result = main(
@@ -415,6 +508,22 @@ class HtmlReportTests(unittest.TestCase):
             "report.verification_failed",
         )
 
+        oversized_report = self.root / "oversized-report.html"
+        oversized_report.write_bytes(b"x" * 11)
+        oversized_output = io.StringIO()
+        with patch("pysfmea.html_report.MAX_HTML_REPORT_VERIFY_BYTES", 10):
+            with contextlib.redirect_stdout(oversized_output):
+                result = main(
+                    ["report-verify", str(oversized_report), "--json"]
+                )
+        self.assertEqual(result, 1)
+        oversized_verification = json.loads(oversized_output.getvalue())
+        self.assertFalse(oversized_verification["valid"])
+        self.assertIn(
+            "10-byte verification limit",
+            oversized_verification["errors"][0]["message"],
+        )
+
         input_error_output = io.StringIO()
         with contextlib.redirect_stdout(input_error_output):
             result = main(
@@ -431,6 +540,238 @@ class HtmlReportTests(unittest.TestCase):
         self.assertTrue(input_error["binding_requested"])
         self.assertFalse(input_error["binding_checked"])
         self.assertEqual(input_error["errors"][0]["code"], "analysis.load_failed")
+
+    def test_report_notes_are_bounded_regular_utf8_files(self) -> None:
+        notes = self.root / "notes.md"
+        notes.write_text("# Review\n\nBounded notes.\n", encoding="utf-8")
+        self.assertEqual(
+            _read_bounded_report_notes(notes),
+            "# Review\n\nBounded notes.\n",
+        )
+
+        notes_directory = self.root / "notes-directory"
+        notes_directory.mkdir()
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            _read_bounded_report_notes(notes_directory)
+
+        invalid_utf8 = self.root / "invalid-notes.md"
+        invalid_utf8.write_bytes(b"\xff\xfe")
+        with self.assertRaisesRegex(ValueError, "not valid UTF-8"):
+            _read_bounded_report_notes(invalid_utf8)
+
+        oversized = self.root / "oversized-notes.md"
+        oversized.write_bytes(b"x" * 11)
+        with patch("pysfmea.html_report.MAX_NOTES_BYTES", 10):
+            with self.assertRaisesRegex(ValueError, "exceeds 10 bytes"):
+                _read_bounded_report_notes(oversized)
+
+        linked_notes = self.root / "linked-notes.md"
+        try:
+            linked_notes.symlink_to(notes)
+        except OSError:
+            linked_notes = None
+        if linked_notes is not None:
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                _read_bounded_report_notes(linked_notes)
+
+    def test_json_report_publication_is_transactional_and_structured(self) -> None:
+        analysis_path = self.root / "analysis.json"
+        save_analysis(analysis_path, self.analysis)
+        verification_schema = schema_document("html-report-verification")
+
+        def run_json_report(*arguments: str) -> tuple[int, dict[str, object], str]:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                with contextlib.redirect_stderr(stderr):
+                    result = main(["report", *arguments, "--json"])
+            receipt = json.loads(stdout.getvalue())
+            Draft202012Validator(verification_schema).validate(receipt)
+            return result, receipt, stderr.getvalue()
+
+        result, receipt, stderr = run_json_report(
+            str(analysis_path), "--output", str(analysis_path)
+        )
+        self.assertEqual(result, 2)
+        self.assertEqual(stderr, "")
+        self.assertEqual(receipt["errors"][0]["code"], "report.invalid_destination")
+        self.assertEqual(receipt["publication"]["phase"], "input_validation")
+        self.assertTrue(receipt["publication"]["prior_destination_preserved"])
+        preserved_analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+        self.assertEqual(preserved_analysis["project"]["name"], "Checkout <Service>")
+
+        directory_output = self.root / "report-directory"
+        directory_output.mkdir()
+        result, receipt, stderr = run_json_report(
+            str(analysis_path), "--output", str(directory_output)
+        )
+        self.assertEqual(result, 2)
+        self.assertEqual(stderr, "")
+        self.assertEqual(receipt["errors"][0]["code"], "report.invalid_destination")
+        self.assertIn("regular file", receipt["errors"][0]["message"])
+        self.assertTrue(directory_output.is_dir())
+        human_error = io.StringIO()
+        with contextlib.redirect_stderr(human_error):
+            result = main(
+                ["report", str(analysis_path), "--output", str(directory_output)]
+            )
+        self.assertEqual(result, 2)
+        self.assertIn("regular file", human_error.getvalue())
+
+        mocked_link_output = self.root / "mocked-link-report.html"
+        mocked_link_output.write_text("trusted mocked link", encoding="utf-8")
+        with patch("pysfmea.cli.Path.is_symlink", return_value=True):
+            result, receipt, stderr = run_json_report(
+                str(analysis_path), "--output", str(mocked_link_output)
+            )
+        self.assertEqual(result, 2)
+        self.assertEqual(stderr, "")
+        self.assertIn("symbolic link", receipt["errors"][0]["message"])
+        self.assertEqual(
+            mocked_link_output.read_text(encoding="utf-8"),
+            "trusted mocked link",
+        )
+
+        symlink_target = self.root / "trusted-symlink-target.html"
+        symlink_target.write_text("trusted symlink target", encoding="utf-8")
+        symlink_output = self.root / "report-symlink.html"
+        try:
+            symlink_output.symlink_to(symlink_target)
+        except OSError:
+            symlink_output = None
+        if symlink_output is not None:
+            result, receipt, stderr = run_json_report(
+                str(analysis_path), "--output", str(symlink_output)
+            )
+            self.assertEqual(result, 2)
+            self.assertEqual(stderr, "")
+            self.assertEqual(
+                receipt["errors"][0]["code"], "report.invalid_destination"
+            )
+            self.assertIn("symbolic link", receipt["errors"][0]["message"])
+            self.assertTrue(symlink_output.is_symlink())
+            self.assertEqual(
+                symlink_target.read_text(encoding="utf-8"),
+                "trusted symlink target",
+            )
+
+        race_target = self.root / "race-target.html"
+        race_target.write_text("trusted race target", encoding="utf-8")
+        race_output = self.root / "race-report.html"
+        race_state = {"linked": False}
+        published_destinations: list[Path] = []
+
+        def verify_then_insert_link(
+            staged: str | Path, *, analysis: dict[str, object]
+        ) -> dict[str, object]:
+            verification = verify_html_report_file(staged, analysis=analysis)
+            try:
+                race_output.symlink_to(race_target)
+            except OSError:
+                return verification
+            race_state["linked"] = True
+            return verification
+
+        def capture_atomic_replace(source: str | Path, destination: str | Path) -> None:
+            published_destinations.append(Path(destination))
+            os.replace(source, destination)
+
+        with patch(
+            "pysfmea.cli.verify_html_report_file",
+            side_effect=verify_then_insert_link,
+        ):
+            with patch(
+                "pysfmea.cli.atomic_replace",
+                side_effect=capture_atomic_replace,
+            ):
+                result, receipt, stderr = run_json_report(
+                    str(analysis_path), "--output", str(race_output)
+                )
+        self.assertEqual(result, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(receipt["publication"]["status"], "published")
+        self.assertEqual(published_destinations, [race_output.absolute()])
+        if race_state["linked"]:
+            self.assertFalse(race_output.is_symlink())
+            self.assertIn("<!doctype html>", race_output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                race_target.read_text(encoding="utf-8"),
+                "trusted race target",
+            )
+
+        missing_output = self.root / "missing-input-report.html"
+        result, receipt, stderr = run_json_report(
+            str(self.root / "missing-analysis.json"),
+            "--output",
+            str(missing_output),
+        )
+        self.assertEqual(result, 2)
+        self.assertEqual(stderr, "")
+        self.assertEqual(receipt["errors"][0]["code"], "report.analysis_load_failed")
+        self.assertEqual(receipt["publication"]["phase"], "analysis_load")
+        self.assertFalse(receipt["publication"]["prior_destination_preserved"])
+        self.assertFalse(missing_output.exists())
+
+        missing_notes_output = self.root / "missing-notes-report.html"
+        missing_notes_output.write_text("trusted notes report", encoding="utf-8")
+        result, receipt, stderr = run_json_report(
+            str(analysis_path),
+            "--notes",
+            str(self.root / "missing-notes.md"),
+            "--output",
+            str(missing_notes_output),
+        )
+        self.assertEqual(result, 1)
+        self.assertEqual(stderr, "")
+        self.assertEqual(receipt["errors"][0]["code"], "report.generation_failed")
+        self.assertEqual(receipt["publication"]["phase"], "generation")
+        self.assertTrue(receipt["publication"]["prior_destination_preserved"])
+        self.assertEqual(
+            missing_notes_output.read_text(encoding="utf-8"),
+            "trusted notes report",
+        )
+
+        generation_output = self.root / "generation-report.html"
+        generation_output.write_text("trusted generation report", encoding="utf-8")
+        with patch(
+            "pysfmea.cli.export_html_report",
+            side_effect=RuntimeError("sensitive generation detail"),
+        ):
+            result, receipt, stderr = run_json_report(
+                str(analysis_path), "--output", str(generation_output)
+            )
+        self.assertEqual(result, 1)
+        self.assertEqual(stderr, "")
+        self.assertEqual(receipt["errors"][0]["code"], "report.generation_failed")
+        self.assertEqual(receipt["publication"]["phase"], "generation")
+        self.assertTrue(receipt["publication"]["prior_destination_preserved"])
+        self.assertNotIn("sensitive generation", json.dumps(receipt))
+        self.assertEqual(
+            generation_output.read_text(encoding="utf-8"),
+            "trusted generation report",
+        )
+        self.assertFalse(list(self.root.glob(".generation-report.html.*.tmp")))
+
+        publication_output = self.root / "publication-report.html"
+        publication_output.write_text("trusted publication report", encoding="utf-8")
+        with patch(
+            "pysfmea.cli.atomic_replace",
+            side_effect=OSError("sensitive publication detail"),
+        ):
+            result, receipt, stderr = run_json_report(
+                str(analysis_path), "--output", str(publication_output)
+            )
+        self.assertEqual(result, 1)
+        self.assertEqual(stderr, "")
+        self.assertEqual(receipt["errors"][0]["code"], "report.publication_failed")
+        self.assertEqual(receipt["publication"]["phase"], "publication")
+        self.assertTrue(receipt["publication"]["prior_destination_preserved"])
+        self.assertNotIn("sensitive publication", json.dumps(receipt))
+        self.assertEqual(
+            publication_output.read_text(encoding="utf-8"),
+            "trusted publication report",
+        )
+        self.assertFalse(list(self.root.glob(".publication-report.html.*.tmp")))
 
     def test_embedded_javascript_parses_when_node_is_available(self) -> None:
         node = shutil.which("node")

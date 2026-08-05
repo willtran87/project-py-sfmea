@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -43,6 +44,72 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _read_json_object_bounded(path: Path, *, limit: int, label: str) -> dict[str, Any]:
+    """Read one regular UTF-8 JSON object under a consumption-time byte limit."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be a regular non-symbolic-link file")
+    try:
+        with path.open("rb") as source_file:
+            raw = source_file.read(limit + 1)
+    except OSError as exc:
+        raise ValueError(f"{label} could not be read safely") from exc
+    if len(raw) > limit:
+        raise ValueError(f"{label} exceeds the {limit}-byte consumption limit")
+    try:
+        loaded = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError(f"{label} is not valid bounded UTF-8 JSON") from exc
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{label} root must be an object")
+    return loaded
+
+
+def _sha256_file_bounded(path: Path, *, limit: int, label: str) -> tuple[str, int]:
+    """Hash a regular file while enforcing the limit on bytes actually consumed."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be a regular non-symbolic-link file")
+    digest = hashlib.sha256()
+    consumed = 0
+    try:
+        with path.open("rb") as source_file:
+            while chunk := source_file.read(1024 * 1024):
+                consumed += len(chunk)
+                if consumed > limit:
+                    raise ValueError(f"{label} exceeds the {limit}-byte consumption limit")
+                digest.update(chunk)
+    except OSError as exc:
+        raise ValueError(f"{label} could not be read safely") from exc
+    return digest.hexdigest(), consumed
+
+
+def _copy_file_bounded(
+    source: Path,
+    destination: Path,
+    *,
+    limit: int,
+    label: str,
+) -> tuple[str, int]:
+    """Copy and hash one source stream without exceeding the artifact byte limit."""
+
+    if source.is_symlink() or not source.is_file():
+        raise ValueError(f"{label} must be a regular non-symbolic-link file")
+    digest = hashlib.sha256()
+    consumed = 0
+    try:
+        with source.open("rb") as source_file, destination.open("xb") as target_file:
+            while chunk := source_file.read(1024 * 1024):
+                consumed += len(chunk)
+                if consumed > limit:
+                    raise ValueError(f"{label} exceeds the {limit}-byte consumption limit")
+                target_file.write(chunk)
+                digest.update(chunk)
+    except OSError as exc:
+        raise ValueError(f"{label} could not be copied safely") from exc
+    return digest.hexdigest(), consumed
 
 
 def _inside(root: Path, value: Path) -> bool:
@@ -648,18 +715,13 @@ def import_execution_evidence(
 
     if not initiated_by.strip():
         raise ValueError("evidence import requires an initiating identity")
-    source_manifest = Path(manifest_path).expanduser().resolve()
-    if (
-        not source_manifest.is_file()
-        or source_manifest.is_symlink()
-        or source_manifest.stat().st_size > MAX_IMPORT_MANIFEST_BYTES
-    ):
-        raise ValueError("evidence manifest must be a regular file within the size limit")
-    try:
-        supplied = json.loads(source_manifest.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ValueError("evidence manifest is not valid UTF-8 JSON") from exc
-    if not isinstance(supplied, dict) or supplied.get("schema_version") != "1.0":
+    source_manifest = Path(manifest_path).expanduser().absolute()
+    supplied = _read_json_object_bounded(
+        source_manifest,
+        limit=MAX_IMPORT_MANIFEST_BYTES,
+        label="evidence manifest",
+    )
+    if supplied.get("schema_version") != "1.0":
         raise ValueError("evidence manifest must be an object with schema_version 1.0")
     obligation = _obligation(analysis, obligation_id)
     baseline = analysis.get("project", {}).get("baseline", {})
@@ -682,29 +744,35 @@ def import_execution_evidence(
         raise ValueError("imported evidence must identify the repository-relative test path")
     root = _repository_root(analysis)
     test_path = _test_file(root, str(test["path"]))
-    test_sha = _sha256_file(test_path)
+    test_sha, _test_size = _sha256_file_bounded(
+        test_path,
+        limit=MAX_TEST_BYTES,
+        label="imported assurance test",
+    )
     if test.get("sha256") != test_sha:
         raise ValueError("imported evidence test hash does not match the current test source")
     automation = obligation.get("automation", {})
-    if automation.get("implementation_status") != "implemented":
-        register_test_implementation(
-            analysis,
-            obligation_id,
-            test_path=test_path.relative_to(root).as_posix(),
-            author=initiated_by,
-            origin="imported",
-        )
-        automation = obligation["automation"]
-    if (
+    registration_required = automation.get("implementation_status") != "implemented"
+    if not registration_required and (
         automation.get("implemented_test_path") != test_path.relative_to(root).as_posix()
         or automation.get("test_sha256") != test_sha
     ):
         raise ValueError("imported evidence does not match the registered test implementation")
+    implementation_origin = (
+        "imported"
+        if registration_required
+        else str(automation.get("implementation_origin", "imported"))
+    )
+    implemented_by = (
+        initiated_by.strip()
+        if registration_required
+        else str(automation.get("implemented_by", initiated_by))
+    )
     supplied_artifacts = supplied.get("artifacts")
     if not isinstance(supplied_artifacts, list) or not supplied_artifacts:
         raise ValueError("imported evidence must include at least one artifact")
     source_root = source_manifest.parent.resolve()
-    sources: list[tuple[str, Path, str]] = []
+    sources: list[tuple[str, Path, str, int]] = []
     total_bytes = 0
     for index, artifact in enumerate(supplied_artifacts, start=1):
         if not isinstance(artifact, dict):
@@ -715,20 +783,24 @@ def import_execution_evidence(
         relative = Path(str(artifact.get("path", "")))
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"artifact {index} path must be manifest-relative")
-        source = (source_root / relative).resolve()
-        if not _inside(source_root, source) or not source.is_file() or source.is_symlink():
+        candidate = (source_root / relative).absolute()
+        if candidate.is_symlink() or not candidate.is_file():
             raise ValueError(f"artifact {index} path is missing or unsafe")
-        size = source.stat().st_size
-        if size > MAX_IMPORTED_ARTIFACT_BYTES:
-            raise ValueError(f"artifact {index} exceeds the per-artifact size limit")
+        source = candidate.resolve()
+        if not _inside(source_root, source):
+            raise ValueError(f"artifact {index} path is missing or unsafe")
+        actual_sha, size = _sha256_file_bounded(
+            source,
+            limit=MAX_IMPORTED_ARTIFACT_BYTES,
+            label=f"artifact {index}",
+        )
         total_bytes += size
         if total_bytes > MAX_IMPORTED_EVIDENCE_BYTES:
             raise ValueError("imported evidence exceeds the total size limit")
-        actual_sha = _sha256_file(source)
         claimed_sha = str(artifact.get("sha256", ""))
         if claimed_sha and claimed_sha != actual_sha:
             raise ValueError(f"artifact {index} digest does not match its manifest claim")
-        sources.append((kind.casefold(), source, actual_sha))
+        sources.append((kind.casefold(), source, actual_sha, size))
     supplied_digest = hashlib.sha256(
         json.dumps(supplied, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -749,11 +821,20 @@ def import_execution_evidence(
     preview.mkdir(parents=True, exist_ok=False)
     artifacts: list[dict[str, Any]] = []
     try:
-        for index, (kind, source, actual_sha) in enumerate(sources, start=1):
+        copied_total = 0
+        for index, (kind, source, actual_sha, source_size) in enumerate(sources, start=1):
             suffix = source.suffix[:16] if re.fullmatch(r"\.[A-Za-z0-9._-]+", source.suffix) else ""
             destination = preview / f"artifact-{index:03d}-{kind}{suffix}"
-            shutil.copyfile(source, destination)
-            if _sha256_file(destination) != actual_sha:
+            copied_sha, copied_size = _copy_file_bounded(
+                source,
+                destination,
+                limit=MAX_IMPORTED_ARTIFACT_BYTES,
+                label=f"artifact {index}",
+            )
+            copied_total += copied_size
+            if copied_total > MAX_IMPORTED_EVIDENCE_BYTES:
+                raise ValueError("imported evidence exceeds the total size limit during copy")
+            if copied_sha != actual_sha or copied_size != source_size:
                 raise ValueError(f"artifact {index} changed while it was imported")
             artifacts.append(_artifact(execution_id, kind, destination, preview))
         at = utc_now()
@@ -778,8 +859,8 @@ def import_execution_evidence(
             "test": {
                 "path": test_path.relative_to(root).as_posix(),
                 "sha256": test_sha,
-                "origin": automation.get("implementation_origin", "imported"),
-                "implemented_by": automation.get("implemented_by", initiated_by),
+                "origin": implementation_origin,
+                "implemented_by": implemented_by,
             },
             "command_argv": command_argv,
             "test_command_argv": command_argv,
@@ -806,13 +887,29 @@ def import_execution_evidence(
     except Exception:
         shutil.rmtree(preview, ignore_errors=True)
         raise
-    _record_collected_execution(
-        analysis,
-        obligation,
-        contract,
-        artifacts,
-        event="external_execution_evidence_imported",
-    )
+    analysis_snapshot = copy.deepcopy(analysis)
+    try:
+        if registration_required:
+            register_test_implementation(
+                analysis,
+                obligation_id,
+                test_path=test_path.relative_to(root).as_posix(),
+                author=initiated_by,
+                origin="imported",
+            )
+            obligation = _obligation(analysis, obligation_id)
+        _record_collected_execution(
+            analysis,
+            obligation,
+            contract,
+            artifacts,
+            event="external_execution_evidence_imported",
+        )
+    except Exception:
+        analysis.clear()
+        analysis.update(analysis_snapshot)
+        shutil.rmtree(run_directory, ignore_errors=True)
+        raise
     return contract
 
 
@@ -820,12 +917,19 @@ def _verify_execution_manifest(execution: dict[str, Any]) -> tuple[bool, str]:
     """Verify the on-disk execution statement against its recorded canonical digest."""
 
     directory = Path(str(execution.get("evidence_directory", ""))).resolve()
-    manifest = (directory / "execution.json").resolve()
-    if not _inside(directory, manifest) or not manifest.is_file() or manifest.is_symlink():
+    candidate = (directory / "execution.json").absolute()
+    if candidate.is_symlink() or not candidate.is_file():
+        return False, "execution manifest is missing or unsafe"
+    manifest = candidate.resolve()
+    if not _inside(directory, manifest):
         return False, "execution manifest is missing or unsafe"
     try:
-        on_disk = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        on_disk = _read_json_object_bounded(
+            manifest,
+            limit=MAX_IMPORT_MANIFEST_BYTES,
+            label="execution manifest",
+        )
+    except ValueError:
         return False, "execution manifest is unreadable or invalid JSON"
     expected = str(on_disk.pop("execution_manifest_sha256", ""))
     canonical = json.dumps(on_disk, sort_keys=True, separators=(",", ":")).encode(
@@ -860,13 +964,24 @@ def _verify_artifacts(
         if not artifact:
             errors.append(f"missing artifact record: {artifact_id}")
             continue
-        path = (directory / str(artifact.get("path", ""))).resolve()
-        if not _inside(directory, path) or not path.is_file() or path.is_symlink():
+        candidate = (directory / str(artifact.get("path", ""))).absolute()
+        if candidate.is_symlink() or not candidate.is_file():
             errors.append(f"artifact path is missing or unsafe: {artifact_id}")
             continue
-        if path.stat().st_size != artifact.get("bytes") or _sha256_file(path) != artifact.get(
-            "sha256"
-        ):
+        path = candidate.resolve()
+        if not _inside(directory, path):
+            errors.append(f"artifact path is missing or unsafe: {artifact_id}")
+            continue
+        try:
+            actual_sha, actual_size = _sha256_file_bounded(
+                path,
+                limit=MAX_IMPORTED_ARTIFACT_BYTES,
+                label=f"artifact {artifact_id}",
+            )
+        except ValueError:
+            errors.append(f"artifact content changed: {artifact_id}")
+            continue
+        if actual_size != artifact.get("bytes") or actual_sha != artifact.get("sha256"):
             errors.append(f"artifact content changed: {artifact_id}")
     return not errors, errors
 

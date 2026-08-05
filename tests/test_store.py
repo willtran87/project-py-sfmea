@@ -14,6 +14,7 @@ from pysfmea.report import analysis_state_sha256
 from pysfmea.scanner import scan_repository
 from pysfmea.store import (
     AnalysisRevisionConflictError,
+    analysis_file_sha256,
     load_analysis,
     save_analysis,
     update_item_review,
@@ -21,6 +22,130 @@ from pysfmea.store import (
 
 
 class StoreTests(unittest.TestCase):
+    def test_analysis_ingestion_is_bounded_identity_safe_and_shape_limited(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "code.py").write_text(
+                "def act(value):\n    return value\n", encoding="utf-8"
+            )
+            path = root / "analysis.json"
+            save_analysis(path, scan_repository(root))
+
+            with mock.patch("pysfmea.store.MAX_ANALYSIS_BYTES", 10):
+                with self.assertRaisesRegex(ValueError, "10-byte import limit"):
+                    load_analysis(path)
+                with self.assertRaisesRegex(ValueError, "10-byte hash limit"):
+                    analysis_file_sha256(path)
+
+            path.write_bytes(b"\xff\xfe")
+            with self.assertRaisesRegex(ValueError, "valid bounded UTF-8 JSON"):
+                load_analysis(path)
+            path.write_text("{", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "valid bounded UTF-8 JSON"):
+                load_analysis(path)
+            path.write_text(
+                '{"schema_version":"0.6","schema_version":"0.6"}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate object key"):
+                load_analysis(path)
+            path.write_text(
+                '{"schema_version":"0.6","value":NaN}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "non-finite number"):
+                load_analysis(path)
+
+            path.write_text('{"a":{"b":{"c":1}}}', encoding="utf-8")
+            with mock.patch("pysfmea.store.MAX_ANALYSIS_JSON_DEPTH", 2):
+                with self.assertRaisesRegex(ValueError, "2-level depth limit"):
+                    load_analysis(path)
+            path.write_text('{"a":[1,2]}', encoding="utf-8")
+            with mock.patch("pysfmea.store.MAX_ANALYSIS_JSON_NODES", 2):
+                with self.assertRaisesRegex(ValueError, "2-node limit"):
+                    load_analysis(path)
+
+            directory = root / "analysis-directory"
+            directory.mkdir()
+            with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
+                load_analysis(directory)
+
+            path.write_text('{"schema_version":"0.6"}', encoding="utf-8")
+            with mock.patch("pysfmea.store.Path.is_symlink", return_value=True):
+                with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
+                    load_analysis(path)
+            with mock.patch("pysfmea.store.os.path.samestat", return_value=False):
+                with self.assertRaisesRegex(ValueError, "changed during safe open"):
+                    load_analysis(path)
+            with mock.patch(
+                "pysfmea.store.os.open",
+                side_effect=PermissionError("sensitive host detail"),
+            ):
+                with self.assertRaisesRegex(PermissionError, "could not be read safely") as error:
+                    load_analysis(path)
+            self.assertNotIn("sensitive host detail", str(error.exception))
+
+    def test_analysis_publication_is_bounded_race_safe_and_prior_preserving(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "code.py").write_text(
+                "def act(value):\n    return value\n", encoding="utf-8"
+            )
+            analysis = scan_repository(root)
+            path = root / "analysis.json"
+            save_analysis(path, analysis)
+            prior = path.read_bytes()
+
+            bounded_output = root / "bounded-output.json"
+            with mock.patch("pysfmea.store.MAX_ANALYSIS_BYTES", 10):
+                with self.assertRaisesRegex(ValueError, "10-byte output limit"):
+                    save_analysis(bounded_output, analysis)
+            self.assertFalse(bounded_output.exists())
+            self.assertEqual(
+                list(root.glob(f".{bounded_output.name}.*.tmp")),
+                [],
+            )
+
+            with mock.patch("pysfmea.store.MAX_ANALYSIS_JSON_NODES", 1):
+                with self.assertRaisesRegex(ValueError, "1-node limit"):
+                    save_analysis(path, analysis)
+            self.assertEqual(path.read_bytes(), prior)
+
+            analysis["invalid_nonfinite"] = float("nan")
+            with self.assertRaisesRegex(ValueError, "Out of range float values"):
+                save_analysis(path, analysis)
+            analysis.pop("invalid_nonfinite")
+            self.assertEqual(path.read_bytes(), prior)
+            self.assertEqual(list(root.glob(f".{path.name}.*.tmp")), [])
+
+            directory = root / "destination-directory"
+            directory.mkdir()
+            with self.assertRaisesRegex(ValueError, "regular file path"):
+                save_analysis(directory, analysis)
+            with mock.patch("pysfmea.store.Path.is_symlink", return_value=True):
+                with self.assertRaisesRegex(ValueError, "must not be a symbolic link"):
+                    save_analysis(path, analysis)
+
+            with mock.patch(
+                "pysfmea.store.os.replace",
+                side_effect=OSError("injected publication failure"),
+            ):
+                with self.assertRaisesRegex(OSError, "injected publication failure"):
+                    save_analysis(path, analysis)
+            self.assertEqual(path.read_bytes(), prior)
+            self.assertEqual(list(root.glob(f".{path.name}.*.tmp")), [])
+
+            with mock.patch(
+                "pysfmea.store.os.path.samestat",
+                side_effect=[True, True, True, False],
+            ):
+                with self.assertRaisesRegex(
+                    AnalysisRevisionConflictError, "changed before atomic replacement"
+                ):
+                    save_analysis(path, analysis)
+            self.assertEqual(path.read_bytes(), prior)
+            self.assertEqual(list(root.glob(f".{path.name}.*.tmp")), [])
+
     def test_atomic_save_refuses_to_replace_a_newer_disk_revision(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -29,6 +29,7 @@ from pysfmea.report import analysis_state_sha256
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
 from pysfmea.store import save_analysis
+from pysfmea.version import __version__
 
 
 def custom_state_diagram() -> dict[str, object]:
@@ -271,6 +272,10 @@ class DiagramTests(unittest.TestCase):
         self.assertEqual(cli_verification["status"], "matched")
         self.assertTrue(cli_verification["binding_requested"])
         self.assertTrue(cli_verification["binding_checked"])
+        self.assertEqual(
+            cli_verification["verifier"],
+            {"name": "PySFMEA", "version": __version__},
+        )
         verification_schema = schema_document("diagram-bundle-verification")
         self.assertLessEqual(
             set(verification_schema["required"]), set(cli_verification)
@@ -308,6 +313,29 @@ class DiagramTests(unittest.TestCase):
             set(invalid_verification["unchecked_checks"]),
             {"content_integrity", "diagram_schema", "analysis_binding"},
         )
+        self.assertEqual(
+            invalid_verification["verifier"],
+            {"name": "PySFMEA", "version": __version__},
+        )
+
+        oversized_bundle = self.root / "oversized-bundle.json"
+        oversized_bundle.write_bytes(b"x" * 11)
+        with patch("pysfmea.diagrams.MAX_DIAGRAM_FILE_BYTES", 10):
+            with self.assertRaisesRegex(ValueError, "exceeds 10 bytes"):
+                verify_diagram_bundle_file(oversized_bundle)
+            with self.assertRaisesRegex(ValueError, "exceeds 10 bytes"):
+                load_diagram_files([oversized_bundle])
+
+        linked_bundle = self.root / "linked-bundle.json"
+        try:
+            linked_bundle.symlink_to(output)
+        except OSError:
+            linked_bundle = None
+        if linked_bundle is not None:
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                verify_diagram_bundle_file(linked_bundle)
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                load_diagram_files([linked_bundle])
 
         input_error_output = io.StringIO()
         with contextlib.redirect_stdout(input_error_output):

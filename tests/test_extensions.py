@@ -28,9 +28,17 @@ from pysfmea.discovery import (
     discover_suggestions,
     evaluate_candidates,
     evidence_packets,
+    generate_summary,
     review_suggestion,
 )
 from pysfmea.integrity import canonical_json_sha256
+from pysfmea.publication import (
+    PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+    PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
+    PUBLICATION_FAILURE_CATALOG_FORMAT,
+    PUBLICATION_FAILURE_CATALOG_SHA256,
+    PUBLICATION_FAILURES,
+)
 from pysfmea.readiness import repository_readiness
 from pysfmea.report import (
     REVIEW_PACKAGE_SCHEMA_FILES,
@@ -45,6 +53,7 @@ from pysfmea.scanner import scan_repository
 from pysfmea.schemas import REVIEW_PACKAGE_VERIFICATION_FORMAT, schema_document
 from pysfmea.signing import sign_review_package, verify_review_signature
 from pysfmea.store import load_analysis, merge_rescan, save_analysis
+from pysfmea.version import __version__
 from pysfmea.visuals import (
     coverage_metrics,
     export_coverage,
@@ -245,6 +254,80 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(len(self.analysis["runtime_evidence"]["imports"]), 1)
         self.assertEqual(len(self.analysis["history"]), history_count)
         self.assertEqual(self.analysis["summary"]["runtime_mapped_spans"], 2)
+
+    def test_runtime_trace_import_is_bounded_link_safe_and_transactional(self) -> None:
+        trace_path = self.root / "bounded-trace.json"
+        payload = {
+            "spans": [
+                {"trace_id": "T1", "span_id": "S1", "name": "checkout"},
+                {
+                    "trace_id": "T1",
+                    "span_id": "S2",
+                    "parent_span_id": "S1",
+                    "name": "charge",
+                },
+            ]
+        }
+        trace_bytes = json.dumps(payload).encode("utf-8")
+        trace_path.write_bytes(trace_bytes)
+        original_analysis = copy.deepcopy(self.analysis)
+
+        with patch("pysfmea.runtime.MAX_RUNTIME_TRACE_BYTES", 10):
+            with self.assertRaisesRegex(ValueError, "10-byte import limit"):
+                import_runtime_trace(self.analysis, trace_path)
+        self.assertEqual(self.analysis, original_analysis)
+
+        trace_path.write_bytes(b"\xff\xfe")
+        with self.assertRaisesRegex(ValueError, "valid bounded UTF-8 JSON"):
+            import_runtime_trace(self.analysis, trace_path)
+        trace_path.write_text("1", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "root must be an object or array"):
+            import_runtime_trace(self.analysis, trace_path)
+        trace_path.write_bytes(trace_bytes)
+
+        with patch("pysfmea.runtime.Path.is_symlink", return_value=True):
+            with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
+                import_runtime_trace(self.analysis, trace_path)
+        with self.assertRaisesRegex(ValueError, "500 printable"):
+            import_runtime_trace(self.analysis, trace_path, label="x" * 501)
+        with patch("pysfmea.runtime.MAX_SPANS_PER_IMPORT", 1):
+            with self.assertRaisesRegex(ValueError, "exceeds 1 spans"):
+                import_runtime_trace(self.analysis, trace_path)
+        self.assertEqual(self.analysis, original_analysis)
+
+        trace_path.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "no recognizable spans"):
+            import_runtime_trace(self.analysis, trace_path)
+        self.assertEqual(self.analysis, original_analysis)
+
+        trace_path.write_text(
+            json.dumps(
+                {
+                    "spans": [
+                        {
+                            "trace_id": "T1",
+                            "span_id": "S1",
+                            "name": "checkout",
+                            "attributes": {"a": {"b": {"c": {"d": 1}}}},
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        with patch("pysfmea.runtime.MAX_RUNTIME_ATTRIBUTE_DEPTH", 2):
+            with self.assertRaisesRegex(ValueError, "nesting exceeds 2 levels"):
+                import_runtime_trace(self.analysis, trace_path)
+        self.assertEqual(self.analysis, original_analysis)
+
+        trace_path.write_bytes(trace_bytes)
+        with patch(
+            "pysfmea.runtime.refresh_summary",
+            side_effect=RuntimeError("summary refresh failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "summary refresh failed"):
+                import_runtime_trace(self.analysis, trace_path)
+        self.assertEqual(self.analysis, original_analysis)
 
     def test_review_package_bounds_analysis_structure_before_projection(self) -> None:
         node_verdict = _verify_analysis_structure(
@@ -467,7 +550,7 @@ class ExtensionTests(unittest.TestCase):
             }.issubset(names)
         )
         self.assertTrue(REVIEW_PACKAGE_SCHEMA_FILES.issubset(names))
-        self.assertEqual(manifest["schema_catalog"]["schema_count"], 12)
+        self.assertEqual(manifest["schema_catalog"]["schema_count"], 14)
         self.assertEqual(
             manifest["capabilities"],
             [
@@ -1223,9 +1306,224 @@ class ExtensionTests(unittest.TestCase):
                 ).validate(receipt)
                 self.assertTrue(receipt["valid"])
                 self.assertEqual(receipt["container"], container)
-                self.assertEqual(receipt["checked_files"], 40)
+                self.assertEqual(receipt["checked_files"], 42)
                 self.assertEqual(len(receipt["capabilities"]), 9)
                 self.assertEqual(Path(receipt["package"]), destination.resolve())
+                self.assertEqual(
+                    receipt["publication"],
+                    {"status": "published", "phase": "complete"},
+                )
+                self.assertEqual(
+                    receipt["verifier"],
+                    {"name": "PySFMEA", "version": __version__},
+                )
+                if container == "zip":
+                    with zipfile.ZipFile(destination) as bundle:
+                        manifest_raw = bundle.read("manifest.json")
+                    self.assertEqual(
+                        receipt["archive_sha256"],
+                        hashlib.sha256(destination.read_bytes()).hexdigest(),
+                    )
+                else:
+                    manifest_raw = (destination / "manifest.json").read_bytes()
+                    self.assertNotIn("archive_sha256", receipt)
+                self.assertEqual(
+                    receipt["manifest_sha256"],
+                    hashlib.sha256(manifest_raw).hexdigest(),
+                )
+
+        receipt_validator = Draft202012Validator(
+            schema_document("review-package-verification")
+        )
+        contradictory_receipts = (
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "not_published",
+                    "phase": "generation",
+                },
+            },
+            {
+                "valid": False,
+                "checked_files": 40,
+                "counts": {"error": 1, "warning": 0},
+                "publication": {"status": "published", "phase": "complete"},
+            },
+            {
+                "valid": False,
+                "checked_files": 1,
+                "counts": {"error": 1, "warning": 0},
+                "publication": {
+                    "status": "not_published",
+                    "phase": "analysis_load",
+                },
+            },
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "published",
+                    "phase": "post_publication_verification",
+                },
+            },
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "published",
+                    "phase": "complete",
+                    "catalog_algorithm": PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+                },
+            },
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "published",
+                    "phase": "complete",
+                    "catalog_canonicalization": (
+                        PUBLICATION_FAILURE_CATALOG_CANONICALIZATION
+                    ),
+                },
+            },
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "published",
+                    "phase": "complete",
+                    "catalog_sha256": PUBLICATION_FAILURE_CATALOG_SHA256,
+                },
+            },
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "published",
+                    "phase": "complete",
+                    "catalog_format": PUBLICATION_FAILURE_CATALOG_FORMAT,
+                },
+            },
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "published",
+                    "phase": "complete",
+                    "failure_rule_id": "package.publication.internal_failure",
+                },
+            },
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "published",
+                    "phase": "complete",
+                    "failure_code": "internal_failure",
+                },
+            },
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "published",
+                    "phase": "complete",
+                    "next_action": "collect_diagnostics",
+                },
+            },
+            {
+                "valid": True,
+                "checked_files": 40,
+                "publication": {
+                    "status": "published",
+                    "phase": "complete",
+                    "retry_policy": "manual_diagnostics",
+                },
+            },
+        )
+        for contradiction in contradictory_receipts:
+            with self.subTest(contradiction=contradiction):
+                malformed_receipt = copy.deepcopy(receipt)
+                malformed_receipt.update(contradiction)
+                self.assertTrue(list(receipt_validator.iter_errors(malformed_receipt)))
+
+        core_contradictions = (
+            {"valid": True, "checked_files": 40, "error_count": 1},
+            {"valid": True, "checked_files": 0, "error_count": 0},
+            {"valid": False, "checked_files": 40, "error_count": 0},
+        )
+        for contradiction in core_contradictions:
+            with self.subTest(core_contradiction=contradiction):
+                malformed_receipt = copy.deepcopy(receipt)
+                malformed_receipt.pop("publication")
+                malformed_receipt["valid"] = contradiction["valid"]
+                malformed_receipt["checked_files"] = contradiction["checked_files"]
+                malformed_receipt["counts"]["error"] = contradiction["error_count"]
+                self.assertTrue(list(receipt_validator.iter_errors(malformed_receipt)))
+
+        identity_contradictions = (
+            "verifier",
+            "manifest_sha256",
+            "archive_sha256",
+        )
+        for missing_field in identity_contradictions:
+            with self.subTest(missing_identity=missing_field):
+                malformed_receipt = copy.deepcopy(receipt)
+                malformed_receipt.pop(missing_field)
+                self.assertTrue(list(receipt_validator.iter_errors(malformed_receipt)))
+
+        finding_contradictions = (
+            {
+                "valid": True,
+                "error_count": 0,
+                "warning_count": 0,
+                "findings": [
+                    {
+                        "rule_id": "package.unreported_error",
+                        "level": "error",
+                        "message": "Injected error finding.",
+                        "path": "manifest.json",
+                    }
+                ],
+            },
+            {
+                "valid": False,
+                "error_count": 1,
+                "warning_count": 0,
+                "findings": [],
+            },
+            {
+                "valid": True,
+                "error_count": 0,
+                "warning_count": 1,
+                "findings": [],
+            },
+            {
+                "valid": True,
+                "error_count": 0,
+                "warning_count": 0,
+                "findings": [
+                    {
+                        "rule_id": "package.unreported_warning",
+                        "level": "warning",
+                        "message": "Injected warning finding.",
+                        "path": "manifest.json",
+                    }
+                ],
+            },
+        )
+        for contradiction in finding_contradictions:
+            with self.subTest(finding_contradiction=contradiction):
+                malformed_receipt = copy.deepcopy(receipt)
+                malformed_receipt.pop("publication")
+                malformed_receipt["valid"] = contradiction["valid"]
+                malformed_receipt["counts"] = {
+                    "error": contradiction["error_count"],
+                    "warning": contradiction["warning_count"],
+                }
+                malformed_receipt["findings"] = contradiction["findings"]
+                self.assertTrue(list(receipt_validator.iter_errors(malformed_receipt)))
 
         rejected_destination = self.root / "rejected-receipt-package"
 
@@ -1267,9 +1565,291 @@ class ExtensionTests(unittest.TestCase):
         ).validate(rejected_receipt)
         self.assertFalse(rejected_receipt["valid"])
         self.assertEqual(
+            rejected_receipt["publication"],
+            {
+                "status": "published",
+                "phase": "post_publication_verification",
+            },
+        )
+        self.assertEqual(
             rejected_receipt["findings"][-1]["rule_id"],
             "package.post_publication_receipt_invalid",
         )
+
+        malformed_analysis = self.root / "malformed-analysis.json"
+        malformed_analysis.write_text("{not-json", encoding="utf-8")
+        failure_cases = (
+            (
+                "missing-analysis",
+                [
+                    "package",
+                    str(self.root / "missing-analysis.json"),
+                    "-o",
+                    str(self.root / "missing-analysis-package.zip"),
+                    "--json",
+                ],
+                "zip",
+                "analysis_load",
+                "package.publication.analysis_missing",
+            ),
+            (
+                "malformed-analysis",
+                [
+                    "package",
+                    str(malformed_analysis),
+                    "-o",
+                    str(self.root / "malformed-analysis-package.zip"),
+                    "--json",
+                ],
+                "zip",
+                "analysis_load",
+                "package.publication.analysis_invalid",
+            ),
+            (
+                "destination-conflict",
+                [
+                    "package",
+                    str(analysis_path),
+                    "-o",
+                    str(self.root / "receipt-package"),
+                    "--json",
+                ],
+                "directory",
+                "generation",
+                "package.publication.generation_rejected",
+            ),
+        )
+        for case, argv, container, phase, rule_id in failure_cases:
+            with self.subTest(case=case):
+                failure_output = io.StringIO()
+                failure_error = io.StringIO()
+                with contextlib.redirect_stdout(failure_output):
+                    with contextlib.redirect_stderr(failure_error):
+                        self.assertEqual(main(argv), 2)
+                self.assertEqual(failure_error.getvalue(), "")
+                failure = json.loads(failure_output.getvalue())
+                Draft202012Validator(
+                    schema_document("review-package-verification")
+                ).validate(failure)
+                self.assertFalse(failure["valid"])
+                self.assertEqual(failure["container"], container)
+                self.assertEqual(failure["checked_files"], 0)
+                self.assertEqual(
+                    failure["findings"][0]["rule_id"],
+                    rule_id,
+                )
+                self.assertNotIn(str(self.root), failure["findings"][0]["message"])
+                self.assertEqual(
+                    failure["verifier"],
+                    {"name": "PySFMEA", "version": __version__},
+                )
+                self.assertEqual(
+                    failure["publication"],
+                    {
+                        "status": "not_published",
+                        "phase": phase,
+                        "catalog_format": PUBLICATION_FAILURE_CATALOG_FORMAT,
+                        "catalog_algorithm": PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+                        "catalog_canonicalization": (
+                            PUBLICATION_FAILURE_CATALOG_CANONICALIZATION
+                        ),
+                        "catalog_sha256": PUBLICATION_FAILURE_CATALOG_SHA256,
+                        "failure_code": rule_id.rsplit(".", 1)[-1],
+                        "failure_rule_id": rule_id,
+                        "next_action": PUBLICATION_FAILURES[
+                            rule_id.rsplit(".", 1)[-1]
+                        ].next_action,
+                        "retry_policy": PUBLICATION_FAILURES[
+                            rule_id.rsplit(".", 1)[-1]
+                        ].retry_policy,
+                    },
+                )
+                mismatched_failure = copy.deepcopy(failure)
+                mismatched_failure["publication"]["failure_code"] = (
+                    "internal_failure"
+                )
+                self.assertTrue(
+                    list(receipt_validator.iter_errors(mismatched_failure))
+                )
+                mismatched_rule = copy.deepcopy(failure)
+                mismatched_rule["publication"]["failure_rule_id"] = (
+                    "package.publication.internal_failure"
+                )
+                self.assertTrue(
+                    list(receipt_validator.iter_errors(mismatched_rule))
+                )
+                mismatched_catalog = copy.deepcopy(failure)
+                mismatched_catalog["publication"]["catalog_format"] = (
+                    "pysfmea-publication-failure-catalog-0"
+                )
+                self.assertTrue(
+                    list(receipt_validator.iter_errors(mismatched_catalog))
+                )
+                mismatched_algorithm = copy.deepcopy(failure)
+                mismatched_algorithm["publication"]["catalog_algorithm"] = "sha1"
+                self.assertTrue(
+                    list(receipt_validator.iter_errors(mismatched_algorithm))
+                )
+                mismatched_canonicalization = copy.deepcopy(failure)
+                mismatched_canonicalization["publication"][
+                    "catalog_canonicalization"
+                ] = "unspecified"
+                self.assertTrue(
+                    list(
+                        receipt_validator.iter_errors(
+                            mismatched_canonicalization
+                        )
+                    )
+                )
+                mismatched_digest = copy.deepcopy(failure)
+                mismatched_digest["publication"]["catalog_sha256"] = "0" * 64
+                self.assertTrue(
+                    list(receipt_validator.iter_errors(mismatched_digest))
+                )
+                for required_identity in (
+                    "catalog_format",
+                    "catalog_algorithm",
+                    "catalog_canonicalization",
+                    "catalog_sha256",
+                    "failure_rule_id",
+                ):
+                    with self.subTest(
+                        case=case, missing_identity=required_identity
+                    ):
+                        missing_identity = copy.deepcopy(failure)
+                        missing_identity["publication"].pop(required_identity)
+                        self.assertTrue(
+                            list(receipt_validator.iter_errors(missing_identity))
+                        )
+                mismatched_action = copy.deepcopy(failure)
+                mismatched_action["publication"]["next_action"] = (
+                    "collect_diagnostics"
+                )
+                self.assertTrue(
+                    list(receipt_validator.iter_errors(mismatched_action))
+                )
+                mismatched_retry = copy.deepcopy(failure)
+                mismatched_retry["publication"]["retry_policy"] = (
+                    "manual_diagnostics"
+                )
+                self.assertTrue(
+                    list(receipt_validator.iter_errors(mismatched_retry))
+                )
+
+        runtime_output = io.StringIO()
+        with patch(
+            "pysfmea.cli.export_review_package",
+            side_effect=RuntimeError("sensitive internal detail"),
+        ):
+            with contextlib.redirect_stdout(runtime_output):
+                self.assertEqual(
+                    main(
+                        [
+                            "package",
+                            str(analysis_path),
+                            "-o",
+                            str(self.root / "runtime-failure-package"),
+                            "--json",
+                        ]
+                    ),
+                    2,
+                )
+        runtime_failure = json.loads(runtime_output.getvalue())
+        Draft202012Validator(
+            schema_document("review-package-verification")
+        ).validate(runtime_failure)
+        self.assertEqual(
+            runtime_failure["findings"][0]["rule_id"],
+            "package.publication.internal_failure",
+        )
+        self.assertNotIn(
+            "sensitive internal detail",
+            runtime_failure["findings"][0]["message"],
+        )
+        self.assertEqual(
+            runtime_failure["publication"],
+            {
+                "status": "not_published",
+                "phase": "generation",
+                "catalog_format": PUBLICATION_FAILURE_CATALOG_FORMAT,
+                "catalog_algorithm": PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+                "catalog_canonicalization": (
+                    PUBLICATION_FAILURE_CATALOG_CANONICALIZATION
+                ),
+                "catalog_sha256": PUBLICATION_FAILURE_CATALOG_SHA256,
+                "failure_code": "internal_failure",
+                "failure_rule_id": "package.publication.internal_failure",
+                "next_action": "collect_diagnostics",
+                "retry_policy": "manual_diagnostics",
+            },
+        )
+
+        permission_cases = (
+            (
+                "analysis-unreadable",
+                "pysfmea.cli.load_analysis",
+                self.root / "permission-analysis-package",
+                "analysis_load",
+                "package.publication.analysis_unreadable",
+            ),
+            (
+                "destination-unavailable",
+                "pysfmea.cli.export_review_package",
+                self.root / "permission-destination-package",
+                "generation",
+                "package.publication.destination_unavailable",
+            ),
+        )
+        for case, target, destination, phase, rule_id in permission_cases:
+            with self.subTest(case=case):
+                permission_output = io.StringIO()
+                with patch(target, side_effect=PermissionError("sensitive local path")):
+                    with contextlib.redirect_stdout(permission_output):
+                        self.assertEqual(
+                            main(
+                                [
+                                    "package",
+                                    str(analysis_path),
+                                    "-o",
+                                    str(destination),
+                                    "--json",
+                                ]
+                            ),
+                            2,
+                        )
+                permission_failure = json.loads(permission_output.getvalue())
+                Draft202012Validator(
+                    schema_document("review-package-verification")
+                ).validate(permission_failure)
+                self.assertEqual(
+                    permission_failure["findings"][0]["rule_id"], rule_id
+                )
+                self.assertNotIn(
+                    "sensitive local path",
+                    permission_failure["findings"][0]["message"],
+                )
+                self.assertEqual(
+                    permission_failure["publication"],
+                    {
+                        "status": "not_published",
+                        "phase": phase,
+                        "catalog_format": PUBLICATION_FAILURE_CATALOG_FORMAT,
+                        "catalog_algorithm": PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+                        "catalog_canonicalization": (
+                            PUBLICATION_FAILURE_CATALOG_CANONICALIZATION
+                        ),
+                        "catalog_sha256": PUBLICATION_FAILURE_CATALOG_SHA256,
+                        "failure_code": rule_id.rsplit(".", 1)[-1],
+                        "failure_rule_id": rule_id,
+                        "next_action": PUBLICATION_FAILURES[
+                            rule_id.rsplit(".", 1)[-1]
+                        ].next_action,
+                        "retry_policy": PUBLICATION_FAILURES[
+                            rule_id.rsplit(".", 1)[-1]
+                        ].retry_policy,
+                    },
+                )
+        self.assertTrue(verify_review_package(self.root / "receipt-package")["valid"])
 
     def test_review_package_withholds_failed_internal_verification(self) -> None:
         destination = export_review_package(
@@ -1352,7 +1932,7 @@ class ExtensionTests(unittest.TestCase):
         )
         verified = verify_review_package(destination)
         self.assertTrue(verified["valid"])
-        self.assertEqual(verified["checked_files"], 40)
+        self.assertEqual(verified["checked_files"], 42)
         self.assertEqual(
             verified["verification_format"], REVIEW_PACKAGE_VERIFICATION_FORMAT
         )
@@ -1420,7 +2000,7 @@ class ExtensionTests(unittest.TestCase):
         with contextlib.redirect_stdout(human_output):
             self.assertEqual(main(["verify-package", str(destination)]), 0)
         self.assertIn(
-            "Schema catalog: valid=True, schemas=12", human_output.getvalue()
+            "Schema catalog: valid=True, schemas=14", human_output.getvalue()
         )
         self.assertIn(
             "Analysis structure: valid=True, nodes=", human_output.getvalue()
@@ -2065,7 +2645,7 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_package(archive)
         self.assertTrue(verified["valid"])
         self.assertEqual(verified["container"], "zip")
-        self.assertEqual(verified["checked_files"], 40)
+        self.assertEqual(verified["checked_files"], 42)
         self.assertTrue(verified["schema_catalog"]["valid"])
         self.assertEqual(
             verified["capabilities"],
@@ -2133,6 +2713,8 @@ class ExtensionTests(unittest.TestCase):
                     "pysfmea-diagram-bundle.schema.json",
                     "pysfmea-diagram-bundle-verification.schema.json",
                     "pysfmea-html-report-verification.schema.json",
+                    "pysfmea-publication-failure-catalog.schema.json",
+                    "pysfmea-publication-failure-catalog-verification.schema.json",
                     "pysfmea-schema-bundle-verification.schema.json",
                     "pysfmea-schema-catalog.schema.json",
                     "pysfmea-review-package-manifest.schema.json",
@@ -2259,6 +2841,146 @@ class ExtensionTests(unittest.TestCase):
         self.assertTrue(
             verified["signature"]["key_fingerprint"].startswith("sha256:")
         )
+
+        with self.assertRaisesRegex(ValueError, "4096-character limit"):
+            sign_review_package(archive, private_path, "x" * 4097)
+        with patch("pysfmea.signing.MAX_PASSPHRASE_BYTES", 4):
+            with self.assertRaisesRegex(ValueError, "4-byte limit"):
+                sign_review_package(
+                    archive,
+                    private_path,
+                    "Bounded passphrase",
+                    passphrase=b"12345",
+                )
+
+        with patch("pysfmea.signing.MAX_KEY_BYTES", 10):
+            with self.assertRaisesRegex(ValueError, "10-byte limit"):
+                sign_review_package(
+                    archive,
+                    private_path,
+                    "Bounded private key",
+                    destination=self.root / "bounded-private-key.sig.json",
+                    passphrase=b"test-passphrase",
+                )
+            bounded_public = verify_review_signature(
+                archive, signature_path, public_path
+            )
+        self.assertIn(
+            "signature.input_invalid",
+            {value["rule_id"] for value in bounded_public["findings"]},
+        )
+        self.assertNotIn(str(self.root), bounded_public["findings"][-1]["message"])
+
+        with patch("pysfmea.signing.MAX_SIGNATURE_BYTES", 10):
+            bounded_signature = verify_review_signature(
+                archive, signature_path, public_path
+            )
+        self.assertIn(
+            "signature.input_invalid",
+            {value["rule_id"] for value in bounded_signature["findings"]},
+        )
+
+        invalid_utf8_signature = self.root / "invalid-utf8.sig.json"
+        invalid_utf8_signature.write_bytes(b"\xff\xfe")
+        invalid_utf8 = verify_review_signature(
+            archive, invalid_utf8_signature, public_path
+        )
+        self.assertIn(
+            "signature.input_invalid",
+            {value["rule_id"] for value in invalid_utf8["findings"]},
+        )
+
+        with patch("pysfmea.signing.os.path.samestat", return_value=False):
+            changed_input = verify_review_signature(
+                archive, signature_path, public_path
+            )
+        self.assertIn(
+            "signature.input_invalid",
+            {value["rule_id"] for value in changed_input["findings"]},
+        )
+
+        with patch("pysfmea.signing.MAX_MANIFEST_BYTES", 10):
+            bounded_manifest = verify_review_signature(
+                archive, signature_path, public_path
+            )
+        self.assertIn(
+            "signature.package_changed",
+            {value["rule_id"] for value in bounded_manifest["findings"]},
+        )
+
+        with patch("pysfmea.signing.MAX_SIGNED_ARCHIVE_BYTES", 10):
+            bounded_archive = verify_review_signature(
+                archive, signature_path, public_path
+            )
+        self.assertIn(
+            "signature.package_changed",
+            {value["rule_id"] for value in bounded_archive["findings"]},
+        )
+
+        stale_verdict = verify_review_package(archive)
+        mutated_archive = self.root / "mutated-signed-review.zip"
+        mutated_archive.write_bytes(archive.read_bytes())
+        with zipfile.ZipFile(mutated_archive, "a") as bundle:
+            bundle.writestr("unexpected.txt", "unmanifested content")
+        stale_bypass = verify_review_signature(
+            mutated_archive,
+            signature_path,
+            public_path,
+            package_verification=stale_verdict,
+        )
+        self.assertIn(
+            "signature.package_invalid",
+            {value["rule_id"] for value in stale_bypass["findings"]},
+        )
+
+        atomic_destination = self.root / "atomic-signature.json"
+        atomic_destination.write_text("prior signature content\n", encoding="utf-8")
+        with patch(
+            "pysfmea.signing.os.replace",
+            side_effect=OSError("injected publication failure"),
+        ):
+            with self.assertRaisesRegex(ValueError, "could not be published safely"):
+                sign_review_package(
+                    archive,
+                    private_path,
+                    "Atomic publication",
+                    destination=atomic_destination,
+                    passphrase=b"test-passphrase",
+                    overwrite=True,
+                )
+        self.assertEqual(
+            atomic_destination.read_text(encoding="utf-8"),
+            "prior signature content\n",
+        )
+        self.assertEqual(
+            list(self.root.glob(f".{atomic_destination.name}.*.tmp")),
+            [],
+        )
+
+        race_destination = self.root / "raced-signature.json"
+        race_destination.write_text("prior raced content\n", encoding="utf-8")
+        with patch(
+            "pysfmea.signing.os.path.samestat",
+            side_effect=[True, True, True, False],
+        ):
+            with self.assertRaisesRegex(ValueError, "changed before publication"):
+                sign_review_package(
+                    archive,
+                    private_path,
+                    "Identity-checked publication",
+                    destination=race_destination,
+                    passphrase=b"test-passphrase",
+                    overwrite=True,
+                )
+        self.assertEqual(
+            race_destination.read_text(encoding="utf-8"),
+            "prior raced content\n",
+        )
+        self.assertEqual(
+            list(self.root.glob(f".{race_destination.name}.*.tmp")),
+            [],
+        )
+
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
                 main(
@@ -2333,6 +3055,26 @@ class ExtensionTests(unittest.TestCase):
             self.analysis,
             self.root / "unsigned-directory",
         )
+        directory_signature = sign_review_package(
+            directory,
+            private_path,
+            "Directory package signer",
+            destination=self.root / "directory-package.sig.json",
+            passphrase=b"test-passphrase",
+        )
+        verified_directory_signature = verify_review_signature(
+            directory,
+            directory_signature,
+            public_path,
+        )
+        self.assertTrue(verified_directory_signature["valid"])
+        directory_envelope = json.loads(
+            directory_signature.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            directory_envelope["statement"]["subject"]["digest_scope"],
+            "manifest_bytes",
+        )
         with self.assertRaisesRegex(ValueError, "outside the package directory"):
             sign_review_package(
                 directory,
@@ -2352,6 +3094,45 @@ class ExtensionTests(unittest.TestCase):
             OpenAICompatibleProvider(
                 "https://user:secret@example.com/v1/chat/completions", "model"
             ).generate(payload, task="test")
+        with patch("pysfmea.discovery.MAX_PROVIDER_REQUEST_BYTES", 1):
+            with self.assertRaisesRegex(ValueError, "3 MB safety limit"):
+                OpenAICompatibleProvider(
+                    "http://127.0.0.1:9999/v1/chat/completions", "model"
+                ).generate(payload, task="test")
+
+    def test_provider_strictly_decodes_nested_response_json(self) -> None:
+        envelope = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"suggestions":[],"suggestions":[]}'
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+        class FakeResponse:
+            def __enter__(self) -> FakeResponse:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self, limit: int) -> bytes:
+                self.limit = limit
+                return envelope
+
+        class FakeOpener:
+            def open(self, request: object, *, timeout: int) -> FakeResponse:
+                return FakeResponse()
+
+        with patch("pysfmea.discovery.urllib.request.build_opener", return_value=FakeOpener()):
+            with self.assertRaisesRegex(ValueError, "duplicate object key"):
+                OpenAICompatibleProvider(
+                    "http://127.0.0.1:9999/v1/chat/completions", "model"
+                ).generate({"component": {"evidence_id": "CMP-1"}}, task="test")
 
     def test_grounded_suggestion_review_and_baseline_invalidation(self) -> None:
         self.analysis["guidance"]["active_profiles"] = ["core_sfmea", "security"]
@@ -2428,6 +3209,190 @@ class ExtensionTests(unittest.TestCase):
                 scope="service.py:checkout",
                 limit=1,
             )
+
+    def test_machine_discovery_is_closed_bounded_and_transactional(self) -> None:
+        class SequencedProvider:
+            name = "transaction-provider"
+            model = "transaction-model"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate(
+                self, payload: dict[str, Any], *, task: str
+            ) -> dict[str, Any]:
+                self.calls += 1
+                if self.calls == 2:
+                    return {"suggestions": "invalid"}
+                return {
+                    "suggestions": [
+                        {
+                            "failure_mode": "A transactionally staged proposal.",
+                            "evidence_ids": [payload["component"]["evidence_id"]],
+                        }
+                    ]
+                }
+
+        original = copy.deepcopy(self.analysis)
+        with self.assertRaisesRegex(ValueError, "suggestions must be a list"):
+            discover_suggestions(
+                self.analysis, SequencedProvider(), scope="service.py:*", limit=2
+            )
+        self.assertEqual(self.analysis, original)
+
+        class UnknownFieldProvider(StaticProvider):
+            def generate(
+                self, payload: dict[str, Any], *, task: str
+            ) -> dict[str, Any]:
+                result = super().generate(payload, task=task)
+                result["suggestions"][0]["hidden_reasoning"] = "must not be retained"
+                result["suggestions"][0]["citation_ids"] = []
+                return result
+
+        with self.assertRaisesRegex(ValueError, "unsupported fields"):
+            discover_suggestions(
+                self.analysis,
+                UnknownFieldProvider(),
+                scope="service.py:checkout",
+                limit=1,
+            )
+        self.assertEqual(self.analysis, original)
+
+        deeply_nested: dict[str, Any] = {"suggestions": []}
+        cursor = deeply_nested
+        for _ in range(60):
+            child: dict[str, Any] = {}
+            cursor["nested"] = child
+            cursor = child
+
+        class DeepProvider:
+            name = "deep-provider"
+            model = "deep-model"
+
+            def generate(
+                self, payload: dict[str, Any], *, task: str
+            ) -> dict[str, Any]:
+                return deeply_nested
+
+        with self.assertRaisesRegex(ValueError, "depth limit"):
+            discover_suggestions(
+                self.analysis, DeepProvider(), scope="service.py:checkout", limit=1
+            )
+        self.assertEqual(self.analysis, original)
+
+        with patch("pysfmea.discovery.MAX_PROVIDER_RESPONSE_BYTES", 10):
+            with self.assertRaisesRegex(ValueError, "byte safety limit"):
+                discover_suggestions(
+                    self.analysis,
+                    StaticProvider(),
+                    scope="service.py:checkout",
+                    limit=1,
+                )
+        self.assertEqual(self.analysis, original)
+
+        class TooManyProvider:
+            name = "many-provider"
+            model = "many-model"
+
+            def generate(
+                self, payload: dict[str, Any], *, task: str
+            ) -> dict[str, Any]:
+                return {"suggestions": [{} for _ in range(26)]}
+
+        with self.assertRaisesRegex(ValueError, "25-suggestion"):
+            discover_suggestions(
+                self.analysis,
+                TooManyProvider(),
+                scope="service.py:checkout",
+                limit=1,
+            )
+        self.assertEqual(self.analysis, original)
+
+    def test_suggestion_materialization_rolls_back_on_failure(self) -> None:
+        class CitationlessProvider(StaticProvider):
+            def generate(
+                self, payload: dict[str, Any], *, task: str
+            ) -> dict[str, Any]:
+                result = super().generate(payload, task=task)
+                result["suggestions"][0]["citation_ids"] = []
+                return result
+
+        suggestion = discover_suggestions(
+            self.analysis,
+            CitationlessProvider(),
+            scope="service.py:checkout",
+            limit=1,
+        )[0]
+        original = copy.deepcopy(self.analysis)
+        with patch(
+            "pysfmea.discovery.update_item_review",
+            side_effect=RuntimeError("injected materialization failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected materialization"):
+                review_suggestion(
+                    self.analysis,
+                    suggestion["id"],
+                    decision="accept",
+                    reviewer="Jordan",
+                    rationale="Exercise rollback.",
+                )
+        self.assertEqual(self.analysis, original)
+
+    def test_machine_summary_response_is_closed_bounded_and_side_effect_free(
+        self,
+    ) -> None:
+        class SummaryProvider:
+            name = "summary-provider"
+            model = "summary-model"
+
+            def __init__(self, response: dict[str, Any]) -> None:
+                self.response = response
+
+            def generate(
+                self, payload: dict[str, Any], *, task: str
+            ) -> dict[str, Any]:
+                return self.response
+
+        original = copy.deepcopy(self.analysis)
+        with self.assertRaisesRegex(ValueError, "must contain only"):
+            generate_summary(
+                self.analysis,
+                SummaryProvider(
+                    {
+                        "summary": "Grounded summary.",
+                        "evidence_ids": [],
+                        "uncertainties": [],
+                        "decision": "accept",
+                    }
+                ),
+            )
+        self.assertEqual(self.analysis, original)
+
+        with self.assertRaisesRegex(ValueError, "character limit"):
+            generate_summary(
+                self.analysis,
+                SummaryProvider(
+                    {
+                        "summary": "x" * 20_001,
+                        "evidence_ids": [],
+                        "uncertainties": [],
+                    }
+                ),
+            )
+        self.assertEqual(self.analysis, original)
+
+        record = generate_summary(
+            self.analysis,
+            SummaryProvider(
+                {
+                    "summary": "The indexed findings require engineering review.",
+                    "evidence_ids": [],
+                    "uncertainties": ["Runtime behavior was not supplied."],
+                }
+            ),
+        )
+        self.assertEqual(len(record["response_hash"]), 64)
+        self.assertEqual(record["prompt_version"], "sfmea-grounded-discovery-3")
 
     def test_framework_metadata_summary_and_evaluation_hook(self) -> None:
         (self.root / "api.py").write_text(

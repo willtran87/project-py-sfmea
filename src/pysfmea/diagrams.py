@@ -2053,15 +2053,9 @@ def load_diagram_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
     diagrams: list[dict[str, Any]] = []
     ids: set[str] = set()
     for source in paths:
-        path = Path(source).expanduser().resolve()
-        if not path.is_file():
-            raise ValueError(f"diagram file does not exist: {path}")
-        if path.stat().st_size > MAX_DIAGRAM_FILE_BYTES:
-            raise ValueError(f"diagram file exceeds {MAX_DIAGRAM_FILE_BYTES} bytes: {path}")
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError(f"diagram file is not valid UTF-8 JSON: {path}: {exc}") from exc
+        path, payload, _ = _read_bounded_diagram_json(
+            source, label="diagram file"
+        )
         if isinstance(payload, dict) and payload.get(
             "schema_version"
         ) == DIAGRAM_BUNDLE_SCHEMA and (
@@ -2089,6 +2083,30 @@ def load_diagram_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
             if len(diagrams) > MAX_DIAGRAMS:
                 raise ValueError(f"diagram imports exceed {MAX_DIAGRAMS} diagrams")
     return diagrams
+
+
+def _read_bounded_diagram_json(
+    source: str | Path, *, label: str
+) -> tuple[Path, Any, int]:
+    """Read one regular diagram JSON file with a consumption-time byte bound."""
+
+    candidate = Path(source).expanduser()
+    if candidate.is_symlink():
+        raise ValueError(f"{label} must not be a symbolic link: {candidate}")
+    path = candidate.resolve()
+    if not path.is_file():
+        raise ValueError(f"{label} must be a regular file: {path}")
+    try:
+        with path.open("rb") as source_file:
+            raw = source_file.read(MAX_DIAGRAM_FILE_BYTES + 1)
+        if len(raw) > MAX_DIAGRAM_FILE_BYTES:
+            raise ValueError(
+                f"{label} exceeds {MAX_DIAGRAM_FILE_BYTES} bytes: {path}"
+            )
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not valid UTF-8 JSON: {path}: {exc}") from exc
+    return path, payload, len(raw)
 
 
 def diagram_bundle(
@@ -2216,19 +2234,9 @@ def verify_diagram_bundle_file(
 ) -> dict[str, Any]:
     """Verify a bounded bundle file, its diagram schemas, and optional analysis binding."""
 
-    candidate = Path(source).expanduser()
-    if candidate.is_symlink():
-        raise ValueError(f"diagram bundle must not be a symbolic link: {candidate}")
-    path = candidate.resolve()
-    if not path.is_file():
-        raise ValueError(f"diagram bundle must be a regular file: {path}")
-    size = path.stat().st_size
-    if size > MAX_DIAGRAM_FILE_BYTES:
-        raise ValueError(f"diagram bundle exceeds {MAX_DIAGRAM_FILE_BYTES} bytes: {path}")
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"diagram bundle is not valid UTF-8 JSON: {path}: {exc}") from exc
+    path, payload, size = _read_bounded_diagram_json(
+        source, label="diagram bundle"
+    )
     if not isinstance(payload, dict):
         raise ValueError("diagram bundle root must be an object")
     verification = verify_diagram_bundle_integrity(payload, analysis=analysis)
@@ -2242,6 +2250,7 @@ def verify_diagram_bundle_file(
         raise ValueError("diagram bundle contains duplicate diagram IDs")
     return {
         "format": DIAGRAM_BUNDLE_VERIFICATION_FORMAT,
+        "verifier": {"name": "PySFMEA", "version": __version__},
         "path": str(path),
         "bytes": size,
         "valid": True,

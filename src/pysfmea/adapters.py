@@ -39,7 +39,7 @@ class AdapterDescriptor:
 
 
 BUILTIN_ADAPTERS = (
-    AdapterDescriptor("python.repository_discoverer", "discoverer", "1", ("python_source", "test_inventory", "bounded_walk", "symlink_rejection"), "repository-path-1", "repository-inventory-1", "deterministic"),
+    AdapterDescriptor("python.repository_discoverer", "discoverer", "2", ("python_source", "test_inventory", "bounded_walk", "symlink_rejection", "non_regular_refusal", "consumption_bounded_hashing", "aggregate_hash_limit"), "repository-path-1", "repository-inventory-1", "deterministic"),
     AdapterDescriptor("python.ast_parser", "parser", "1", ("functions", "methods", "classes", "lambdas", "module_initialization"), "python-source-1", "python-ast-facts-1", "deterministic"),
     AdapterDescriptor("python.failure_rule_analyzer", "analyzer", "2", ("guideword_screening", "failure_taxonomy", "source_localization"), "python-ast-facts-1", "sfmea-candidates-1", "heuristic"),
     AdapterDescriptor("human.manual_finding", "analyzer", "1", ("reviewer_authored_failure_mode", "human_provenance"), "reviewer-input-1", "sfmea-candidates-1", "human_supplied"),
@@ -52,8 +52,8 @@ BUILTIN_ADAPTERS = (
     AdapterDescriptor("python.security_boundary_analyzer", "analyzer", "1", ("subprocess_boundaries", "masked_failures", "untrusted_input_signals"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
     AdapterDescriptor("python.complexity_analyzer", "analyzer", "1", ("complexity", "loops", "resource_exhaustion_signals"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
     AdapterDescriptor("python.call_graph", "graph_provider", "3", ("static_calls", "transitive_upstream_impact", "bounded_failure_cascade_projection", "path_inventory_completeness", "path_and_depth_truncation", "runtime_relation_corroboration", "ordered_calls"), "python-ast-facts-1", "static-call-graph-3", "heuristic"),
-    AdapterDescriptor("python.dependency_inventory", "analyzer", "1", ("declared_dependencies", "manifest_hashes", "included_requirements"), "repository-inventory-1", "dependency-inventory-1", "deterministic"),
-    AdapterDescriptor("contracts.local_schema", "analyzer", "1", ("openapi", "swagger", "json_schema", "protobuf"), "repository-inventory-1", "interface-contract-inventory-1", "deterministic"),
+    AdapterDescriptor("python.dependency_inventory", "analyzer", "2", ("declared_dependencies", "manifest_hashes", "included_requirements", "single_snapshot_parsing", "bounded_recursive_ingestion", "link_and_containment_checks"), "repository-inventory-1", "dependency-inventory-1", "deterministic"),
+    AdapterDescriptor("contracts.local_schema", "analyzer", "2", ("openapi", "swagger", "json_schema", "protobuf", "bounded_contract_ingestion", "typed_fail_soft_extraction", "bounded_semantic_projection"), "repository-inventory-1", "interface-contract-inventory-1", "deterministic"),
     AdapterDescriptor("coverage.py_json", "evidence_provider", "1", ("line_coverage", "branch_coverage", "function_mapping"), "coveragepy-json", "coverage-evidence-1", "observed"),
     AdapterDescriptor("runtime.json_trace", "evidence_provider", "1", ("simple_spans", "opentelemetry_spans", "observed_edges"), "runtime-trace-json-1", "runtime-evidence-1", "observed"),
     AdapterDescriptor("guidance.curated_registry", "guideline_pack", "1", ("versioned_sources", "exact_locators", "typed_rule_mappings"), "guidance-pack-1", "guidance-traceability-1", "human_supplied"),
@@ -66,7 +66,7 @@ BUILTIN_ADAPTERS = (
     AdapterDescriptor("export.json_schema_catalog", "exporter", "1", ("json_schema_2020_12", "content_addressed_catalog", "offline_contract_discovery", "atomic_publication"), "schema-name-1", "json-schema-draft-2020-12", "deterministic"),
     AdapterDescriptor("export.sarif", "exporter", "1", ("sarif_2_1_0",), "sfmea-analysis-0.6", "sarif-2.1.0", "deterministic"),
     AdapterDescriptor("export.cyclonedx", "exporter", "1", ("cyclonedx_1_6", "declared_inventory"), "dependency-inventory-1", "cyclonedx-1.6", "deterministic"),
-    AdapterDescriptor("llm.openai_compatible", "llm_provider", "1", ("grounded_discovery", "grounded_summary", "schema_constrained_output"), "evidence-packet-2", "model-suggestion-2", "model_generated", lifecycle="optional", isolation="remote_explicit_opt_in", deterministic=False),
+    AdapterDescriptor("llm.openai_compatible", "llm_provider", "2", ("grounded_discovery", "grounded_summary", "strict_bounded_json", "closed_schema_output", "evidence_and_citation_allowlists", "transactional_materialization"), "evidence-packet-3", "model-suggestion-3", "model_generated", lifecycle="optional", isolation="remote_explicit_opt_in", deterministic=False),
 )
 
 

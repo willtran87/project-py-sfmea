@@ -29,12 +29,23 @@ from .diagrams import (
 )
 from .html_report import HTML_REPORT_VERIFICATION_FORMAT
 from .integrity import canonical_json_sha256
+from .publication import (
+    PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+    PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
+    PUBLICATION_FAILURE_CATALOG_FORMAT,
+    PUBLICATION_FAILURE_CATALOG_NOTICE,
+    PUBLICATION_FAILURE_CATALOG_SHA256,
+    PUBLICATION_FAILURE_CATALOG_VERIFICATION_FORMAT,
+    PUBLICATION_FAILURES,
+    publication_failure_catalog,
+)
 from .signing import SIGNATURE_FORMAT, STATEMENT_FORMAT
 from .workflow import WORKFLOW_STATUS_FORMAT
 
 JSON_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 SCHEMA_CATALOG_FORMAT = "pysfmea-schema-catalog-1"
 SCHEMA_BUNDLE_VERIFICATION_FORMAT = "pysfmea-schema-bundle-verification-1"
+MAX_SCHEMA_BUNDLE_FILE_BYTES = 2_000_000
 REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
 REVIEW_PACKAGE_VERIFICATION_FORMAT = "pysfmea-review-package-verification-1"
 ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = (
@@ -525,6 +536,19 @@ def _verification_schema(
         ],
         "properties": {
             "format": {"const": format_name},
+            "verifier": {
+                "type": "object",
+                "required": ["name", "version"],
+                "properties": {
+                    "name": {"const": "PySFMEA"},
+                    "version": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                    },
+                },
+                "additionalProperties": False,
+            },
             "path": {"type": "string", "minLength": 1},
             "valid": {"type": "boolean"},
             "status": {
@@ -561,7 +585,7 @@ def _verification_schema(
 
 
 def _html_report_verification_schema() -> dict[str, Any]:
-    return _verification_schema(
+    schema = _verification_schema(
         name="html-report-verification",
         format_name=HTML_REPORT_VERIFICATION_FORMAT,
         title="PySFMEA HTML report verification verdict",
@@ -578,6 +602,100 @@ def _html_report_verification_schema() -> dict[str, Any]:
             "analysis_state",
         ),
     )
+    schema["properties"]["publication"] = {
+        "type": "object",
+        "required": [
+            "status",
+            "phase",
+            "destination_existed",
+            "prior_destination_preserved",
+        ],
+        "properties": {
+            "status": {"enum": ["published", "not_published"]},
+            "phase": {
+                "enum": [
+                    "input_validation",
+                    "analysis_load",
+                    "generation",
+                    "verification",
+                    "publication",
+                    "complete",
+                ]
+            },
+            "destination_existed": {"type": "boolean"},
+            "prior_destination_preserved": {"type": "boolean"},
+        },
+        "allOf": [
+            {
+                "if": {
+                    "properties": {"status": {"const": "published"}},
+                    "required": ["status"],
+                },
+                "then": {
+                    "properties": {
+                        "phase": {"const": "complete"},
+                        "prior_destination_preserved": {"const": False},
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {"status": {"const": "not_published"}},
+                    "required": ["status"],
+                },
+                "then": {
+                    "properties": {
+                        "phase": {
+                            "enum": [
+                                "input_validation",
+                                "analysis_load",
+                                "generation",
+                                "verification",
+                                "publication",
+                            ]
+                        }
+                    }
+                },
+            },
+        ],
+        "additionalProperties": False,
+    }
+    schema["allOf"] = [
+        {
+            "if": {
+                "required": ["publication"],
+                "properties": {
+                    "publication": {
+                        "properties": {"status": {"const": "published"}},
+                        "required": ["status"],
+                    }
+                },
+            },
+            "then": {
+                "properties": {
+                    "valid": {"const": True},
+                    "status": {"const": "matched"},
+                    "binding_requested": {"const": True},
+                    "binding_checked": {"const": True},
+                }
+            },
+        },
+        {
+            "if": {
+                "required": ["publication"],
+                "properties": {
+                    "publication": {
+                        "properties": {
+                            "status": {"const": "not_published"}
+                        },
+                        "required": ["status"],
+                    }
+                },
+            },
+            "then": {"properties": {"valid": {"const": False}}},
+        },
+    ]
+    return schema
 
 
 def _diagram_bundle_verification_schema() -> dict[str, Any]:
@@ -824,7 +942,204 @@ def _review_package_manifest_schema() -> dict[str, Any]:
     }
 
 
+def _publication_failure_catalog_schema() -> dict[str, Any]:
+    failure = {
+        "type": "object",
+        "required": [
+            "code",
+            "rule_id",
+            "phases",
+            "next_action",
+            "retry_policy",
+            "message",
+        ],
+        "properties": {
+            "code": {"enum": sorted(PUBLICATION_FAILURES)},
+            "rule_id": {"type": "string", "minLength": 1},
+            "phases": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"enum": ["analysis_load", "generation"]},
+            },
+            "next_action": {"type": "string", "minLength": 1},
+            "retry_policy": {
+                "enum": ["after_remediation", "manual_diagnostics"]
+            },
+            "message": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+    return {
+        "$schema": JSON_SCHEMA_DRAFT,
+        "$id": _schema_id("publication-failure-catalog"),
+        "title": "PySFMEA package-publication failure and remediation catalog",
+        "description": (
+            "Deterministic discovery contract for package-publication failure codes, "
+            "valid phases, stable findings, and next actions."
+        ),
+        "type": "object",
+        "required": [
+            "format",
+            "algorithm",
+            "canonicalization",
+            "failures",
+            "notice",
+            "content_sha256",
+        ],
+        "properties": {
+            "format": {"const": PUBLICATION_FAILURE_CATALOG_FORMAT},
+            "algorithm": {"const": PUBLICATION_FAILURE_CATALOG_ALGORITHM},
+            "canonicalization": {
+                "const": PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
+            },
+            "content_sha256": {
+                "const": PUBLICATION_FAILURE_CATALOG_SHA256,
+            },
+            "failures": {
+                "type": "array",
+                "minItems": len(PUBLICATION_FAILURES),
+                "maxItems": len(PUBLICATION_FAILURES),
+                "uniqueItems": True,
+                "items": failure,
+                "allOf": [
+                    {
+                        "contains": {
+                            "properties": {
+                                "code": {"const": item.code},
+                                "rule_id": {"const": item.rule_id},
+                                "phases": {"const": list(item.phases)},
+                                "next_action": {"const": item.next_action},
+                                "retry_policy": {"const": item.retry_policy},
+                                "message": {"const": item.message},
+                            },
+                            "required": [
+                                "code",
+                                "rule_id",
+                                "phases",
+                                "next_action",
+                                "retry_policy",
+                                "message",
+                            ],
+                        },
+                        "minContains": 1,
+                        "maxContains": 1,
+                    }
+                    for item in PUBLICATION_FAILURES.values()
+                ],
+            },
+            "notice": {"const": PUBLICATION_FAILURE_CATALOG_NOTICE},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _publication_failure_catalog_verification_schema() -> dict[str, Any]:
+    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    check_names = (
+        "json_object",
+        "format",
+        "integrity_metadata",
+        "structure",
+        "content_integrity",
+        "canonical_catalog",
+    )
+    checks = {
+        "type": "object",
+        "required": list(check_names),
+        "properties": {name: {"type": "boolean"} for name in check_names},
+        "additionalProperties": False,
+    }
+    error = {
+        "type": "object",
+        "required": ["code", "message", "path"],
+        "properties": {
+            "code": {
+                "enum": [
+                    "publication_catalog.input",
+                    *[f"publication_catalog.{name}" for name in check_names],
+                ]
+            },
+            "message": {"type": "string", "minLength": 1},
+            "path": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+    passing_checks = {
+        "required": list(check_names),
+        "properties": {name: {"const": True} for name in check_names},
+    }
+    return {
+        "$schema": JSON_SCHEMA_DRAFT,
+        "$id": _schema_id("publication-failure-catalog-verification"),
+        "title": "PySFMEA publication failure catalog verification verdict",
+        "description": (
+            "Bounded exact-taxonomy and canonical-content verification for received "
+            "publication failure catalogs."
+        ),
+        "type": "object",
+        "required": [
+            "format",
+            "source",
+            "valid",
+            "checks",
+            "errors",
+            "catalog_format",
+            "declared_content_sha256",
+            "failure_count",
+            "notice",
+        ],
+        "properties": {
+            "format": {
+                "const": PUBLICATION_FAILURE_CATALOG_VERIFICATION_FORMAT
+            },
+            "source": {"type": "string", "minLength": 1},
+            "valid": {"type": "boolean"},
+            "checks": checks,
+            "errors": {"type": "array", "items": error, "maxItems": 10},
+            "catalog_format": {"type": "string", "maxLength": 256},
+            "declared_content_sha256": {
+                "type": "string",
+                "maxLength": 256,
+            },
+            "actual_content_sha256": digest,
+            "failure_count": {"type": "integer", "minimum": 0, "maximum": 10_000},
+            "notice": {"type": "string", "minLength": 1},
+        },
+        "allOf": [
+            {
+                "if": {"properties": {"valid": {"const": True}}},
+                "then": {
+                    "required": ["actual_content_sha256"],
+                    "properties": {
+                        "checks": passing_checks,
+                        "errors": {"maxItems": 0},
+                        "catalog_format": {
+                            "const": PUBLICATION_FAILURE_CATALOG_FORMAT
+                        },
+                        "declared_content_sha256": {
+                            "const": PUBLICATION_FAILURE_CATALOG_SHA256
+                        },
+                        "actual_content_sha256": {
+                            "const": PUBLICATION_FAILURE_CATALOG_SHA256
+                        },
+                        "failure_count": {"const": len(PUBLICATION_FAILURES)},
+                    },
+                },
+                "else": {"properties": {"errors": {"minItems": 1}}},
+            },
+            {
+                "if": {"properties": {"checks": passing_checks}},
+                "then": {"properties": {"valid": {"const": True}}},
+                "else": {"properties": {"valid": {"const": False}}},
+            },
+        ],
+        "additionalProperties": False,
+    }
+
+
 def _review_package_verification_schema() -> dict[str, Any]:
+    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
     queue_verdict = _assurance_work_queue_verification_schema()
     for metadata_field in ("$schema", "$id", "title", "description"):
         queue_verdict.pop(metadata_field, None)
@@ -1180,9 +1495,11 @@ def _review_package_verification_schema() -> dict[str, Any]:
             "Stable verdict envelope for success and rejection results. Successful "
             "results may add binding, schema-catalog, archive, and signature details."
         ),
+        "x-pysfmea-publication-failure-catalog": publication_failure_catalog(),
         "type": "object",
         "required": [
             "verification_format",
+            "verifier",
             "package",
             "container",
             "format",
@@ -1194,11 +1511,68 @@ def _review_package_verification_schema() -> dict[str, Any]:
         ],
         "properties": {
             "verification_format": {"const": REVIEW_PACKAGE_VERIFICATION_FORMAT},
+            "verifier": {
+                "type": "object",
+                "required": ["name", "version"],
+                "properties": {
+                    "name": {"const": "PySFMEA"},
+                    "version": {"type": "string", "minLength": 1, "maxLength": 128},
+                },
+                "additionalProperties": False,
+            },
             "package": {"type": "string", "minLength": 1},
             "container": {"enum": ["directory", "zip"]},
             "format": {"type": "string"},
             "valid": {"type": "boolean"},
             "checked_files": {"type": "integer", "minimum": 0},
+            "manifest_sha256": digest,
+            "archive_sha256": digest,
+            "publication": {
+                "type": "object",
+                "required": ["status", "phase"],
+                "properties": {
+                    "status": {"enum": ["published", "not_published"]},
+                    "phase": {
+                        "enum": [
+                            "analysis_load",
+                            "generation",
+                            "complete",
+                            "post_publication_verification",
+                        ]
+                    },
+                    "catalog_format": {
+                        "const": PUBLICATION_FAILURE_CATALOG_FORMAT,
+                    },
+                    "catalog_algorithm": {
+                        "const": PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+                    },
+                    "catalog_canonicalization": {
+                        "const": PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
+                    },
+                    "catalog_sha256": {
+                        "const": PUBLICATION_FAILURE_CATALOG_SHA256,
+                    },
+                    "failure_code": {
+                        "enum": sorted(PUBLICATION_FAILURES),
+                    },
+                    "failure_rule_id": {
+                        "enum": sorted(
+                            failure.rule_id
+                            for failure in PUBLICATION_FAILURES.values()
+                        )
+                    },
+                    "next_action": {
+                        "enum": sorted(
+                            failure.next_action
+                            for failure in PUBLICATION_FAILURES.values()
+                        )
+                    },
+                    "retry_policy": {
+                        "enum": ["after_remediation", "manual_diagnostics"]
+                    },
+                },
+                "additionalProperties": False,
+            },
             "capabilities": {
                 "type": "array",
                 "uniqueItems": True,
@@ -1288,6 +1662,224 @@ def _review_package_verification_schema() -> dict[str, Any]:
             "findings": {"type": "array", "items": finding},
             "notice": {"type": "string", "minLength": 1},
         },
+        "allOf": [
+            {
+                "if": {"properties": {"valid": {"const": True}}},
+                "then": {
+                    "required": ["manifest_sha256"],
+                    "properties": {
+                        "checked_files": {"minimum": 1},
+                        "counts": {
+                            "properties": {"error": {"const": 0}}
+                        },
+                        "findings": {
+                            "not": {
+                                "contains": {
+                                    "required": ["level"],
+                                    "properties": {"level": {"const": "error"}},
+                                }
+                            }
+                        },
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "counts": {
+                            "properties": {"error": {"minimum": 1}}
+                        },
+                        "findings": {
+                            "contains": {
+                                "required": ["level"],
+                                "properties": {"level": {"const": "error"}},
+                            },
+                            "minContains": 1,
+                        },
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {
+                        "counts": {
+                            "properties": {"warning": {"const": 0}}
+                        }
+                    }
+                },
+                "then": {
+                    "properties": {
+                        "findings": {
+                            "not": {
+                                "contains": {
+                                    "required": ["level"],
+                                    "properties": {"level": {"const": "warning"}},
+                                }
+                            }
+                        }
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "findings": {
+                            "contains": {
+                                "required": ["level"],
+                                "properties": {"level": {"const": "warning"}},
+                            },
+                            "minContains": 1,
+                        }
+                    }
+                },
+            },
+            {
+                "if": {
+                    "required": ["valid", "container"],
+                    "properties": {
+                        "valid": {"const": True},
+                        "container": {"const": "zip"},
+                    },
+                },
+                "then": {"required": ["archive_sha256"]},
+            },
+            {
+                "if": {"required": ["publication"]},
+                "then": {
+                    "oneOf": [
+                        {
+                            "properties": {
+                                "valid": {"const": True},
+                                "publication": {
+                                    "not": {
+                                        "anyOf": [
+                                            {"required": ["failure_code"]},
+                                            {"required": ["failure_rule_id"]},
+                                            {"required": ["catalog_format"]},
+                                            {"required": ["catalog_algorithm"]},
+                                            {
+                                                "required": [
+                                                    "catalog_canonicalization"
+                                                ]
+                                            },
+                                            {"required": ["catalog_sha256"]},
+                                            {"required": ["next_action"]},
+                                            {"required": ["retry_policy"]},
+                                        ]
+                                    },
+                                    "properties": {
+                                        "status": {"const": "published"},
+                                        "phase": {"const": "complete"},
+                                    }
+                                },
+                            }
+                        },
+                        {
+                            "properties": {
+                                "valid": {"const": False},
+                                "checked_files": {"const": 0},
+                                "publication": {
+                                    "required": [
+                                        "failure_code",
+                                        "failure_rule_id",
+                                        "catalog_format",
+                                        "catalog_algorithm",
+                                        "catalog_canonicalization",
+                                        "catalog_sha256",
+                                        "next_action",
+                                        "retry_policy",
+                                    ],
+                                    "properties": {
+                                        "status": {"const": "not_published"},
+                                    },
+                                },
+                            }
+                        },
+                        {
+                            "properties": {
+                                "valid": {"const": False},
+                                "publication": {
+                                    "not": {
+                                        "anyOf": [
+                                            {"required": ["failure_code"]},
+                                            {"required": ["failure_rule_id"]},
+                                            {"required": ["catalog_format"]},
+                                            {"required": ["catalog_algorithm"]},
+                                            {
+                                                "required": [
+                                                    "catalog_canonicalization"
+                                                ]
+                                            },
+                                            {"required": ["catalog_sha256"]},
+                                            {"required": ["next_action"]},
+                                            {"required": ["retry_policy"]},
+                                        ]
+                                    },
+                                    "properties": {
+                                        "status": {"const": "published"},
+                                        "phase": {
+                                            "const": "post_publication_verification"
+                                        },
+                                    }
+                                },
+                            }
+                        },
+                    ]
+                },
+            },
+            *[
+                {
+                    "if": {
+                        "required": ["publication"],
+                        "properties": {
+                            "publication": {
+                                "required": ["failure_code"],
+                                "properties": {
+                                    "failure_code": {"const": failure.code}
+                                },
+                            }
+                        },
+                    },
+                    "then": {
+                        "properties": {
+                            "findings": {
+                                "contains": {
+                                    "required": ["rule_id", "level"],
+                                    "properties": {
+                                        "rule_id": {"const": failure.rule_id},
+                                        "level": {"const": "error"},
+                                    },
+                                },
+                                "minContains": 1,
+                            },
+                            "publication": {
+                                "properties": {
+                                    "phase": {"enum": list(failure.phases)},
+                                    "catalog_format": {
+                                        "const": PUBLICATION_FAILURE_CATALOG_FORMAT
+                                    },
+                                    "catalog_algorithm": {
+                                        "const": PUBLICATION_FAILURE_CATALOG_ALGORITHM
+                                    },
+                                    "catalog_canonicalization": {
+                                        "const": PUBLICATION_FAILURE_CATALOG_CANONICALIZATION
+                                    },
+                                    "catalog_sha256": {
+                                        "const": PUBLICATION_FAILURE_CATALOG_SHA256
+                                    },
+                                    "failure_rule_id": {
+                                        "const": failure.rule_id
+                                    },
+                                    "next_action": {
+                                        "const": failure.next_action
+                                    },
+                                    "retry_policy": {
+                                        "const": failure.retry_policy
+                                    },
+                                }
+                            },
+                        }
+                    },
+                }
+                for failure in PUBLICATION_FAILURES.values()
+            ],
+        ],
         "additionalProperties": True,
     }
 
@@ -1429,6 +2021,10 @@ _SCHEMA_BUILDERS = {
     "diagram-bundle": _diagram_bundle_schema,
     "diagram-bundle-verification": _diagram_bundle_verification_schema,
     "html-report-verification": _html_report_verification_schema,
+    "publication-failure-catalog": _publication_failure_catalog_schema,
+    "publication-failure-catalog-verification": (
+        _publication_failure_catalog_verification_schema
+    ),
     "schema-bundle-verification": _schema_bundle_verification_schema,
     "schema-catalog": _schema_catalog_schema,
     "review-package-manifest": _review_package_manifest_schema,
@@ -1443,6 +2039,8 @@ _SCHEMA_DESCRIPTIONS = {
     "diagram-bundle": "Generated, state-bound and digest-declaring diagram bundle.",
     "diagram-bundle-verification": "Diagram verification success and rejection verdicts.",
     "html-report-verification": "HTML report verification success and rejection verdicts.",
+    "publication-failure-catalog": "Package-publication failure phases, findings, and remediation actions.",
+    "publication-failure-catalog-verification": "Publication catalog integrity and exact-taxonomy verdicts.",
     "schema-bundle-verification": "Offline schema-set verification success and rejection verdicts.",
     "schema-catalog": "Content-addressed discovery catalog for public contracts.",
     "review-package-manifest": "Checksum, provenance, binding, and file inventory declaration.",
@@ -1457,6 +2055,8 @@ SCHEMA_FILENAMES = {
     "diagram-bundle": "pysfmea-diagram-bundle.schema.json",
     "diagram-bundle-verification": "pysfmea-diagram-bundle-verification.schema.json",
     "html-report-verification": "pysfmea-html-report-verification.schema.json",
+    "publication-failure-catalog": "pysfmea-publication-failure-catalog.schema.json",
+    "publication-failure-catalog-verification": "pysfmea-publication-failure-catalog-verification.schema.json",
     "schema-bundle-verification": "pysfmea-schema-bundle-verification.schema.json",
     "schema-catalog": "pysfmea-schema-catalog.schema.json",
     "review-package-manifest": "pysfmea-review-package-manifest.schema.json",
@@ -1556,6 +2156,12 @@ def verify_schema_bundle_documents(
     signed_names = self_describing_names | {"detached-signature"}
     workflow_names = signed_names | {"workflow-status"}
     work_queue_names = workflow_names | {"assurance-work-queue"}
+    work_queue_verification_names = work_queue_names | {
+        "assurance-work-queue-verification"
+    }
+    publication_catalog_names = work_queue_verification_names | {
+        "publication-failure-catalog"
+    }
     supported_name_sets = {
         base_names,
         frozenset(package_names),
@@ -1563,6 +2169,8 @@ def verify_schema_bundle_documents(
         frozenset(signed_names),
         frozenset(workflow_names),
         frozenset(work_queue_names),
+        frozenset(work_queue_verification_names),
+        frozenset(publication_catalog_names),
         frozenset(_SCHEMA_BUILDERS),
     }
     catalog_names = frozenset(by_name)
@@ -1696,9 +2304,13 @@ def verify_schema_bundle_path(source: str | Path) -> dict[str, Any]:
             add("schema.file_type", "Schema-bundle entries must be regular files.", name)
             continue
         try:
-            if entry.stat().st_size > 2_000_000:
-                raise ValueError("file exceeds the 2 MB limit")
-            document = json.loads(entry.read_text(encoding="utf-8"))
+            with entry.open("rb") as schema_file:
+                raw = schema_file.read(MAX_SCHEMA_BUNDLE_FILE_BYTES + 1)
+            if len(raw) > MAX_SCHEMA_BUNDLE_FILE_BYTES:
+                raise ValueError(
+                    f"file exceeds the {MAX_SCHEMA_BUNDLE_FILE_BYTES}-byte limit"
+                )
+            document = json.loads(raw.decode("utf-8"))
             if not isinstance(document, dict):
                 raise ValueError("JSON root is not an object")
             documents[name] = document

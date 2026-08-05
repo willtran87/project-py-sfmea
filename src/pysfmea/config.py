@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import copy
+import os
+import stat
+import tempfile
 import tomllib
 from pathlib import Path
 from typing import Any
+
+MAX_CONFIG_BYTES = 5_000_000
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "project": {
@@ -299,24 +304,60 @@ confidence = "project"
 def load_config(path: str | Path | None) -> tuple[dict[str, Any], Path | None]:
     if path is None:
         return normalize_config({}), None
-    config_path = Path(path).expanduser().resolve()
-    with config_path.open("rb") as handle:
-        supplied = tomllib.load(handle)
+    config_path = Path(os.path.abspath(Path(path).expanduser()))
+    if config_path.is_symlink():
+        raise ValueError("configuration must be a regular non-symbolic-link file")
+    try:
+        inspected = config_path.lstat()
+    except OSError as exc:
+        raise ValueError("configuration could not be read safely") from exc
+    if not stat.S_ISREG(inspected.st_mode):
+        raise ValueError("configuration must be a regular non-symbolic-link file")
+    resolved_config_path = config_path.parent.resolve() / config_path.name
+    descriptor: int | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(config_path, flags)
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(inspected, opened):
+            raise ValueError("configuration changed during safe open")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            raw = handle.read(MAX_CONFIG_BYTES + 1)
+    except ValueError:
+        raise
+    except OSError as exc:
+        raise ValueError("configuration could not be read safely") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if len(raw) > MAX_CONFIG_BYTES:
+        raise ValueError(
+            f"configuration exceeds the {MAX_CONFIG_BYTES}-byte import limit"
+        )
+    try:
+        supplied = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as exc:
+        raise ValueError("configuration is not valid bounded UTF-8 TOML") from exc
     config = normalize_config(supplied)
+
+    def configured_input_path(value: str) -> str:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = resolved_config_path.parent / candidate
+        return os.path.abspath(candidate)
+
     coverage_path = config["scan"].get("coverage_json", "")
     if coverage_path:
-        candidate = Path(coverage_path)
-        if not candidate.is_absolute():
-            config["scan"]["coverage_json"] = str((config_path.parent / candidate).resolve())
+        config["scan"]["coverage_json"] = configured_input_path(coverage_path)
     config["analysis"]["guidance_packs"] = [
-        str(
-            Path(value).expanduser().resolve()
-            if Path(value).is_absolute()
-            else (config_path.parent / value).resolve()
-        )
+        configured_input_path(value)
         for value in config["analysis"].get("guidance_packs", [])
     ]
-    return config, config_path
+    return config, resolved_config_path
 
 
 def normalize_config(supplied: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -480,11 +521,49 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
 
 
 def write_config_template(path: str | Path, *, overwrite: bool = False) -> Path:
-    destination = Path(path).expanduser().resolve()
-    if destination.exists() and not overwrite:
-        raise ValueError(f"configuration already exists: {destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(CONFIG_TEMPLATE, encoding="utf-8", newline="\n")
+    destination = Path(os.path.abspath(Path(path).expanduser()))
+    if destination.is_symlink():
+        raise ValueError("configuration destination must not be a symbolic link")
+    if destination.exists():
+        if not destination.is_file():
+            raise ValueError("configuration destination must be a regular file path")
+        if not overwrite:
+            raise ValueError(f"configuration already exists: {destination}")
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ValueError("configuration destination could not be prepared safely") from exc
+    staging: Path | None = None
+    try:
+        descriptor, staging_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=destination.parent,
+        )
+        staging = Path(staging_name)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(CONFIG_TEMPLATE)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if destination.is_symlink():
+            raise ValueError("configuration destination must not be a symbolic link")
+        if destination.exists():
+            if not destination.is_file():
+                raise ValueError("configuration destination must be a regular file path")
+            if not overwrite:
+                raise ValueError(f"configuration already exists: {destination}")
+        os.replace(staging, destination)
+        staging = None
+    except ValueError:
+        raise
+    except OSError as exc:
+        raise ValueError("configuration template could not be published safely") from exc
+    finally:
+        if staging is not None:
+            try:
+                staging.unlink(missing_ok=True)
+            except OSError:
+                pass
     return destination
 
 

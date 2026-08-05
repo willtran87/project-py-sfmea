@@ -16,6 +16,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import pysfmea.assurance as assurance_module
 from pysfmea.assurance import (
     archive_pytest_scaffold,
     assurance_progress,
@@ -46,6 +47,7 @@ from pysfmea.report import (
 from pysfmea.scanner import scan_repository
 from pysfmea.store import load_analysis, merge_rescan, save_analysis, update_item_review
 from pysfmea.validation import validate_analysis
+from pysfmea.version import __version__
 
 
 class AssuranceRegisterTests(unittest.TestCase):
@@ -105,12 +107,14 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertEqual(standalone["status"], "valid_binding_not_checked")
         self.assertIsNone(standalone["checks"]["analysis_state"])
 
-        matched = verify_assurance_work_queue_file(
-            queue_path, analysis=self.analysis
-        )
+        matched = verify_assurance_work_queue_file(queue_path, analysis=self.analysis)
         self.assertTrue(matched["valid"])
         self.assertEqual(matched["status"], "matched")
         self.assertTrue(all(matched["checks"].values()))
+        self.assertEqual(
+            matched["verifier"],
+            {"name": "PySFMEA", "version": __version__},
+        )
 
         older_producer = json.loads(json.dumps(queue))
         older_producer["generator"]["version"] = "0.46.0"
@@ -340,6 +344,10 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertIn("pytest.fail", generated_test)
         self.assertNotIn("pytest.skip", generated_test)
         self.assertIn("failed its SHA-256 integrity check", generated_test)
+        self.assertIn('path.open("rb")', generated_test)
+        self.assertIn("MAX_MANIFEST_BYTES + 1", generated_test)
+        self.assertIn("regular non-symbolic-link file", generated_test)
+        self.assertNotIn(".read_text(encoding=\"utf-8\")", generated_test)
         for name in ("README.md", "test_sfmea_assurance.py"):
             self.assertEqual(
                 manifest["generated_files"][name]["sha256"],
@@ -387,6 +395,30 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertFalse(tampered["valid"])
         self.assertEqual(tampered["status"], "invalid")
         self.assertFalse(tampered["checks"]["manifest_integrity"])
+
+        test_path.write_text(
+            generated_test.replace(
+                "MAX_MANIFEST_BYTES = 64 * 1024 * 1024",
+                "MAX_MANIFEST_BYTES = 10",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "10-byte collection limit"):
+            runpy.run_path(str(test_path))
+        test_path.write_text(generated_test, encoding="utf-8")
+
+        manifest_path.write_bytes(b"\xff\xfe")
+        with self.assertRaisesRegex(RuntimeError, "valid bounded UTF-8 JSON"):
+            runpy.run_path(str(test_path))
+        manifest_path.write_text("[]", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "root must be an object"):
+            runpy.run_path(str(test_path))
+        manifest_path.write_text(original_manifest_text, encoding="utf-8")
+        with mock.patch.object(Path, "is_symlink", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "regular non-symbolic-link"):
+                runpy.run_path(str(test_path))
+
         malformed = json.loads(original_manifest_text)
         malformed["obligations"] = None
         malformed.pop("manifest_sha256")
@@ -399,6 +431,8 @@ class AssuranceRegisterTests(unittest.TestCase):
             ).encode("utf-8")
         ).hexdigest()
         manifest_path.write_text(json.dumps(malformed), encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "no valid obligation list"):
+            runpy.run_path(str(test_path))
         malformed_result = verify_pytest_scaffold(self.analysis, scaffold)
         self.assertFalse(malformed_result["valid"])
         self.assertFalse(malformed_result["checks"]["obligations"])
@@ -509,7 +543,12 @@ class AssuranceRegisterTests(unittest.TestCase):
             purpose="Core failure hardening",
         )
         self.analysis["items"][0]["review"]["notes"] = "Unrelated review update."
-        refresh_pytest_scaffold(self.analysis, scaffold)
+        with mock.patch(
+            "pysfmea.assurance._read_assurance_json_object",
+            wraps=assurance_module._read_assurance_json_object,
+        ) as bounded_reads:
+            refresh_pytest_scaffold(self.analysis, scaffold)
+        self.assertEqual(bounded_reads.call_count, 2)
         refreshed = verify_pytest_scaffold(self.analysis, scaffold)
         self.assertTrue(refreshed["valid"])
         self.assertEqual(refreshed["status"], "matched")
@@ -522,11 +561,43 @@ class AssuranceRegisterTests(unittest.TestCase):
             },
         )
 
+        manifest_path = scaffold / "assurance-manifest.json"
+        preserved_manifest_bytes = manifest_path.read_bytes()
+        verified_manifest = json.loads(preserved_manifest_bytes)
+        raced_manifest = json.loads(json.dumps(verified_manifest))
+        raced_manifest["queue"]["owner"] = "Concurrent Queue Owner"
+        raced_manifest.pop("manifest_sha256")
+        raced_manifest["manifest_sha256"] = hashlib.sha256(
+            json.dumps(
+                raced_manifest,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        with mock.patch(
+            "pysfmea.assurance._read_assurance_json_object",
+            side_effect=[verified_manifest, raced_manifest],
+        ) as bounded_reads:
+            with self.assertRaisesRegex(ValueError, "changed after guarded refresh"):
+                refresh_pytest_scaffold(self.analysis, scaffold)
+        self.assertEqual(bounded_reads.call_count, 2)
+        self.assertEqual(manifest_path.read_bytes(), preserved_manifest_bytes)
+        self.assertFalse(
+            any(
+                value.name.startswith(scaffold.name + ".")
+                and value.name.endswith(".tmp")
+                for value in scaffold.parent.iterdir()
+            )
+        )
+
         self.analysis["items"][0]["review"]["notes"] = "Another review update."
         original_replace = os.replace
         replace_calls = 0
 
-        def fail_new_publication(source: str | os.PathLike, destination: str | os.PathLike) -> None:
+        def fail_new_publication(
+            source: str | os.PathLike, destination: str | os.PathLike
+        ) -> None:
             nonlocal replace_calls
             replace_calls += 1
             if replace_calls == 2:
@@ -539,7 +610,11 @@ class AssuranceRegisterTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "publish failed"):
                 refresh_pytest_scaffold(self.analysis, scaffold)
         self.assertTrue((scaffold / "assurance-manifest.json").is_file())
-        self.assertTrue(verify_pytest_scaffold(self.analysis, scaffold)["checks"]["manifest_integrity"])
+        self.assertTrue(
+            verify_pytest_scaffold(self.analysis, scaffold)["checks"][
+                "manifest_integrity"
+            ]
+        )
         self.assertFalse(
             any(value.name.endswith(".backup") for value in scaffold.parent.iterdir())
         )
@@ -552,6 +627,89 @@ class AssuranceRegisterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "edited or removed"):
             refresh_pytest_scaffold(self.analysis, scaffold)
         self.assertIn("implementation work", generated_test.read_text(encoding="utf-8"))
+
+    def test_scaffold_verifier_bounds_every_consumed_artifact(self) -> None:
+        scaffold = export_pytest_scaffold(
+            self.analysis,
+            self.root / "bounded-assurance-tests",
+            limit=1,
+            disposition="all",
+        )
+        manifest_path = scaffold / "assurance-manifest.json"
+        manifest_bytes = manifest_path.read_bytes()
+
+        with mock.patch(
+            "pysfmea.assurance.MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES",
+            len(manifest_bytes) - 1,
+        ):
+            oversized_manifest = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertFalse(oversized_manifest["valid"])
+        manifest_errors = [
+            value["message"]
+            for value in oversized_manifest["findings"]
+            if value["rule_id"] == "scaffold.manifest_unreadable"
+        ]
+        self.assertEqual(len(manifest_errors), 1)
+        self.assertIn("verification limit", manifest_errors[0])
+
+        manifest_path.write_bytes(b"\xff\xfe")
+        invalid_utf8 = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertFalse(invalid_utf8["valid"])
+        self.assertIn(
+            "not valid UTF-8 JSON",
+            next(
+                value["message"]
+                for value in invalid_utf8["findings"]
+                if value["rule_id"] == "scaffold.manifest_unreadable"
+            ),
+        )
+        manifest_path.write_bytes(manifest_bytes)
+
+        with mock.patch(
+            "pysfmea.assurance.MAX_ASSURANCE_SCAFFOLD_GENERATED_FILE_BYTES",
+            10,
+        ):
+            oversized_generated = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue(oversized_generated["valid"])
+        self.assertTrue(
+            all(value["exists"] for value in oversized_generated["generated_files"])
+        )
+        self.assertTrue(
+            all(
+                not value["unchanged_from_generated"]
+                for value in oversized_generated["generated_files"]
+            )
+        )
+        generated_errors = [
+            value["message"]
+            for value in oversized_generated["findings"]
+            if value["rule_id"] == "scaffold.generated_file_unreadable"
+        ]
+        self.assertEqual(len(generated_errors), 2)
+        self.assertTrue(
+            all("10-byte verification limit" in value for value in generated_errors)
+        )
+
+        retirement_path = scaffold / "retirement-record.json"
+        retirement_path.write_bytes(b"x" * (len(manifest_bytes) + 1))
+        with mock.patch(
+            "pysfmea.assurance.MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES",
+            len(manifest_bytes),
+        ):
+            oversized_retirement = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue(oversized_retirement["retirement"]["present"])
+        self.assertFalse(oversized_retirement["retirement"]["valid"])
+        self.assertFalse(oversized_retirement["valid"])
+        retirement_path.unlink()
+
+        with mock.patch("pysfmea.assurance.os.path.lexists", return_value=True):
+            broken_link = verify_pytest_scaffold(self.analysis, scaffold)
+        self.assertTrue(broken_link["retirement"]["present"])
+        self.assertFalse(broken_link["retirement"]["valid"])
+        self.assertIn(
+            "scaffold.retirement_record",
+            {value["rule_id"] for value in broken_link["findings"]},
+        )
 
     def test_scaffold_archive_preserves_a_retirement_record_atomically(self) -> None:
         finding = self.analysis["items"][0]
@@ -575,6 +733,29 @@ class AssuranceRegisterTests(unittest.TestCase):
             finding["id"],
             {"disposition": "rejected", "reviewer": "Finding Reviewer"},
         )
+        manifest_path = scaffold / "assurance-manifest.json"
+        verified_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        raced_manifest = json.loads(json.dumps(verified_manifest))
+        raced_manifest["queue"]["owner"] = "Concurrent Archive Owner"
+        raced_manifest.pop("manifest_sha256")
+        raced_manifest["manifest_sha256"] = hashlib.sha256(
+            json.dumps(
+                raced_manifest,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        with mock.patch(
+            "pysfmea.assurance._read_assurance_json_object",
+            side_effect=[verified_manifest, raced_manifest],
+        ) as bounded_reads:
+            with self.assertRaisesRegex(ValueError, "changed after guarded archive"):
+                archive_pytest_scaffold(self.analysis, scaffold)
+        self.assertEqual(bounded_reads.call_count, 2)
+        self.assertTrue(scaffold.is_dir())
+        self.assertFalse((scaffold / "retirement-record.json").exists())
+
         with mock.patch(
             "pysfmea.assurance.os.replace", side_effect=OSError("archive failed")
         ):
@@ -583,7 +764,12 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertTrue(scaffold.is_dir())
         self.assertFalse((scaffold / "retirement-record.json").exists())
 
-        archived = archive_pytest_scaffold(self.analysis, scaffold)
+        with mock.patch(
+            "pysfmea.assurance._read_assurance_json_object",
+            wraps=assurance_module._read_assurance_json_object,
+        ) as bounded_reads:
+            archived = archive_pytest_scaffold(self.analysis, scaffold)
+        self.assertEqual(bounded_reads.call_count, 2)
         self.assertFalse(scaffold.exists())
         self.assertEqual(archived.parent.name, ".sfmea-archive")
         record = json.loads(
@@ -600,7 +786,9 @@ class AssuranceRegisterTests(unittest.TestCase):
         ).hexdigest()
         self.assertEqual(supplied_digest, actual_digest)
         self.assertEqual(record["queue"]["id"], "completed-queue")
-        self.assertEqual(record["reason"], "selection_no_longer_matches_pending_obligations")
+        self.assertEqual(
+            record["reason"], "selection_no_longer_matches_pending_obligations"
+        )
         archived_verification = verify_pytest_scaffold(self.analysis, archived)
         self.assertEqual(archived_verification["lifecycle"], "archived")
         self.assertTrue(archived_verification["checks"]["manifest_integrity"])
@@ -700,9 +888,7 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertEqual(pending["planning_pending"], 1)
         self.assertFalse(pending["gates"]["plan_ready"])
         pending_work = assurance_work_queue(self.analysis)
-        self.assertEqual(
-            pending_work["items"][0]["state"], "plan_review_required"
-        )
+        self.assertEqual(pending_work["items"][0]["state"], "plan_review_required")
         self.assertFalse(pending_work["items"][0]["automation_eligible"])
         self.assertIn(
             "named assurance-plan reviewer is missing",
@@ -720,9 +906,7 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertTrue(planned["gates"]["plan_ready"])
         self.assertEqual(planned["implementation_pending"], 1)
         planned_work = assurance_work_queue(self.analysis)
-        self.assertEqual(
-            planned_work["items"][0]["state"], "ready_for_implementation"
-        )
+        self.assertEqual(planned_work["items"][0]["state"], "ready_for_implementation")
         self.assertTrue(planned_work["items"][0]["automation_eligible"])
         self.assertEqual(planned["work_queue"]["implementation_ready"], 1)
 
@@ -820,7 +1004,9 @@ class AssuranceRegisterTests(unittest.TestCase):
                 1,
             )
         self.assertIn("added=1", output.getvalue())
-        self.assertIn(expanded["contract_changes"][0]["obligation_id"], output.getvalue())
+        self.assertIn(
+            expanded["contract_changes"][0]["obligation_id"], output.getvalue()
+        )
 
         for item in (first, second):
             update_item_review(
@@ -865,9 +1051,7 @@ class AssuranceRegisterTests(unittest.TestCase):
             for value in self.analysis["assurance"]["obligations"]
             if value["finding_id"] == item["id"]
         )
-        self.assertNotEqual(
-            refreshed["provenance"]["contract_sha256"], previous_digest
-        )
+        self.assertNotEqual(refreshed["provenance"]["contract_sha256"], previous_digest)
         self.assertEqual(refreshed["assurance_status"], "reopened")
         self.assertEqual(refreshed["evidence_status"], "stale")
         self.assertIn(
@@ -885,9 +1069,7 @@ class AssuranceRegisterTests(unittest.TestCase):
                 "acceptance_approved_by": "",
             }
         )
-        self.analysis["assurance"]["obligations"][-1][
-            "assurance_status"
-        ] = "candidate"
+        self.analysis["assurance"]["obligations"][-1]["assurance_status"] = "candidate"
         rules = {
             value["rule_id"] for value in validate_analysis(self.analysis)["findings"]
         }
@@ -1003,9 +1185,7 @@ class AssuranceRegisterTests(unittest.TestCase):
     def test_execution_evidence_requires_independent_criterion_review(self) -> None:
         obligation = self.analysis["assurance"]["obligations"][0]
         test_path = self.root / "test_assurance_control.py"
-        test_path.write_text(
-            "def test_control():\n    assert True\n", encoding="utf-8"
-        )
+        test_path.write_text("def test_control():\n    assert True\n", encoding="utf-8")
         register_test_implementation(
             self.analysis,
             obligation["id"],
@@ -1030,9 +1210,7 @@ class AssuranceRegisterTests(unittest.TestCase):
         recorded_vcs = self.analysis["project"]["baseline"].get("vcs", {})
         with (
             mock.patch("pysfmea.execution._resolve_engine", return_value="fake-docker"),
-            mock.patch(
-                "pysfmea.execution._git_state", return_value=recorded_vcs
-            ),
+            mock.patch("pysfmea.execution._git_state", return_value=recorded_vcs),
             mock.patch(
                 "pysfmea.execution.subprocess.run",
                 return_value=SimpleNamespace(
@@ -1058,9 +1236,7 @@ class AssuranceRegisterTests(unittest.TestCase):
 
         criterion_results = {
             index: "pass"
-            for index, _value in enumerate(
-                obligation["acceptance_criteria"], start=1
-            )
+            for index, _value in enumerate(obligation["acceptance_criteria"], start=1)
         }
         with self.assertRaisesRegex(ValueError, "independent"):
             review_execution_evidence(
@@ -1084,8 +1260,138 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertTrue(review["artifact_integrity_valid"])
         self.assertEqual(obligation["evidence_status"], "sufficient")
         self.assertEqual(obligation["assurance_status"], "verified")
-        rules = {value["rule_id"] for value in validate_analysis(self.analysis)["findings"]}
+        rules = {
+            value["rule_id"] for value in validate_analysis(self.analysis)["findings"]
+        }
         self.assertNotIn("assurance.unsupported_verification", rules)
+
+    def test_external_evidence_import_is_bounded_link_safe_and_transactional(
+        self,
+    ) -> None:
+        obligation = self.analysis["assurance"]["obligations"][0]
+        test_path = self.root / "test_external_boundary.py"
+        test_path.write_text("def test_control():\n    assert True\n", encoding="utf-8")
+        source = self.root / "external-boundary"
+        source.mkdir()
+        log = source / "pytest.log"
+        log.write_text("bounded external execution evidence\n", encoding="utf-8")
+        manifest = {
+            "schema_version": "1.0",
+            "baseline_id": self.analysis["project"]["baseline"]["id"],
+            "repository_revision": self.analysis["project"]["baseline"]
+            .get("vcs", {})
+            .get("revision", ""),
+            "test": {
+                "path": test_path.name,
+                "sha256": hashlib.sha256(test_path.read_bytes()).hexdigest(),
+            },
+            "command_argv": ["python", "-m", "pytest", test_path.name],
+            "status": "passed",
+            "artifacts": [
+                {
+                    "kind": "execution_log",
+                    "path": log.name,
+                    "sha256": hashlib.sha256(log.read_bytes()).hexdigest(),
+                }
+            ],
+        }
+        manifest_path = source / "manifest.json"
+        manifest_bytes = json.dumps(manifest).encode("utf-8")
+        manifest_path.write_bytes(manifest_bytes)
+        evidence_root = self.root / "managed-boundary-evidence"
+        original_analysis = json.loads(json.dumps(self.analysis))
+
+        with mock.patch(
+            "pysfmea.execution.MAX_IMPORT_MANIFEST_BYTES",
+            10,
+        ):
+            with self.assertRaisesRegex(ValueError, "10-byte consumption limit"):
+                import_execution_evidence(
+                    self.analysis,
+                    obligation["id"],
+                    manifest_path=manifest_path,
+                    evidence_root=evidence_root,
+                    initiated_by="Boundary Importer",
+                )
+        manifest_path.write_bytes(b"\xff\xfe")
+        with self.assertRaisesRegex(ValueError, "valid bounded UTF-8 JSON"):
+            import_execution_evidence(
+                self.analysis,
+                obligation["id"],
+                manifest_path=manifest_path,
+                evidence_root=evidence_root,
+                initiated_by="Boundary Importer",
+            )
+        manifest_path.write_bytes(manifest_bytes)
+        with mock.patch("pysfmea.execution.Path.is_symlink", return_value=True):
+            with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
+                import_execution_evidence(
+                    self.analysis,
+                    obligation["id"],
+                    manifest_path=manifest_path,
+                    evidence_root=evidence_root,
+                    initiated_by="Boundary Importer",
+                )
+
+        def artifact_link_only(path: Path) -> bool:
+            return path.name == log.name
+
+        with mock.patch(
+            "pysfmea.execution.Path.is_symlink",
+            autospec=True,
+            side_effect=artifact_link_only,
+        ):
+            with self.assertRaisesRegex(ValueError, "artifact 1 path is missing or unsafe"):
+                import_execution_evidence(
+                    self.analysis,
+                    obligation["id"],
+                    manifest_path=manifest_path,
+                    evidence_root=evidence_root,
+                    initiated_by="Boundary Importer",
+                )
+        with mock.patch(
+            "pysfmea.execution.MAX_IMPORTED_ARTIFACT_BYTES",
+            10,
+        ):
+            with self.assertRaisesRegex(ValueError, "10-byte consumption limit"):
+                import_execution_evidence(
+                    self.analysis,
+                    obligation["id"],
+                    manifest_path=manifest_path,
+                    evidence_root=evidence_root,
+                    initiated_by="Boundary Importer",
+                )
+        with mock.patch(
+            "pysfmea.execution._copy_file_bounded",
+            side_effect=ValueError("artifact changed during bounded copy"),
+        ):
+            with self.assertRaisesRegex(ValueError, "bounded copy"):
+                import_execution_evidence(
+                    self.analysis,
+                    obligation["id"],
+                    manifest_path=manifest_path,
+                    evidence_root=evidence_root,
+                    initiated_by="Boundary Importer",
+                )
+        self.assertEqual(self.analysis, original_analysis)
+        self.assertFalse(
+            evidence_root.exists() and any(evidence_root.iterdir())
+        )
+
+        with mock.patch(
+            "pysfmea.execution._record_collected_execution",
+            side_effect=RuntimeError("recording failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "recording failed"):
+                import_execution_evidence(
+                    self.analysis,
+                    obligation["id"],
+                    manifest_path=manifest_path,
+                    evidence_root=evidence_root,
+                    initiated_by="Boundary Importer",
+                )
+        self.assertEqual(self.analysis, original_analysis)
+        self.assertFalse(evidence_root.exists() and any(evidence_root.iterdir()))
 
     def test_external_evidence_is_copied_hashed_idempotent_and_unreviewed(self) -> None:
         obligation = self.analysis["assurance"]["obligations"][0]
@@ -1139,7 +1445,9 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertEqual(execution["import_trust"], "externally_supplied_unattested")
         self.assertEqual(len(self.analysis["assurance"]["executions"]), 1)
         self.assertEqual(obligation["evidence_status"], "collected_unreviewed")
-        copied = Path(execution["evidence_directory"]) / "artifact-001-execution_log.log"
+        copied = (
+            Path(execution["evidence_directory"]) / "artifact-001-execution_log.log"
+        )
         self.assertEqual(copied.read_bytes(), log.read_bytes())
         statement = Path(execution["evidence_directory"]) / "execution.json"
         saved = json.loads(statement.read_text(encoding="utf-8"))
@@ -1149,6 +1457,17 @@ class AssuranceRegisterTests(unittest.TestCase):
             index: "pass"
             for index, _value in enumerate(obligation["acceptance_criteria"], start=1)
         }
+        with mock.patch("pysfmea.execution.MAX_IMPORT_MANIFEST_BYTES", 10):
+            with self.assertRaisesRegex(ValueError, "intact artifacts"):
+                review_execution_evidence(
+                    self.analysis,
+                    execution["id"],
+                    reviewer="Independent Reviewer",
+                    decision="sufficient",
+                    rationale="Managed evidence must remain consumption bounded.",
+                    stimulus_observed=True,
+                    criterion_results=criteria,
+                )
         with self.assertRaisesRegex(ValueError, "intact artifacts"):
             review_execution_evidence(
                 self.analysis,

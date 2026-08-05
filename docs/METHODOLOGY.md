@@ -4,6 +4,21 @@
 
 PySFMEA automates repository decomposition, evidence gathering, candidate generation, persistence, and reporting. It does not automate acceptance of failure modes, consequence analysis, risk acceptance, or approval.
 
+## Governed analysis persistence
+
+The analysis JSON is the editable source of truth. Loading consumes at most 100 MB from a
+regular non-symbolic-link file and reconciles its inspected, opened, and final identity plus
+size/change metadata. Strict UTF-8 JSON rejects duplicate object keys and non-finite numbers;
+an iterative 100-level/2,000,000-node check runs before schema migration or derived-state
+materialization. Package verification uses the same shared structure metric.
+
+Saving applies the structure limit before bounded UTF-8 serialization, preserves the final
+destination path instead of resolving through it, and compares the original destination
+identity/change metadata immediately before atomic replacement. Revision-conditioned saves
+add a bounded identity-stable streaming digest. Rejected output, concurrent replacement, and
+filesystem failure preserve the prior governed file and remove the private sibling stage.
+No-op timestamp reconciliation and browser-review ETags use the same bounded input contract.
+
 ## Guidance traceability and citations
 
 PySFMEA carries a versioned, hashed guidance catalog in every newly saved analysis. The
@@ -185,11 +200,11 @@ the strength of the runtime-to-source correlation.
 
 ## Machine-assisted discovery boundary
 
-Machine discovery consumes bounded evidence packets rather than unrestricted repository content. Each packet assigns citation IDs to the component, existing candidates, requirements, hazards, interfaces, and runtime relations. Repository-derived strings are explicitly treated as untrusted data, not prompt instructions.
+Machine discovery consumes bounded evidence packets rather than unrestricted repository content. Each packet assigns citation IDs to the component, existing candidates, requirements, hazards, interfaces, and runtime relations. Repository-derived strings are explicitly treated as untrusted data, not prompt instructions. Provider requests stop at 3 MB and responses at 10 MB; both network and programmatic providers pass a strict 50-level/100,000-node JSON boundary before response hashing or semantic use. Network envelopes and nested content reject duplicate keys, non-finite numbers, and malformed UTF-8 JSON.
 
-Generated suggestions are stored separately from SFMEA worksheet items. The response schema prohibits severity, occurrence, detection, disposition, workflow status, approval, and closure fields. Suggestions must cite supplied evidence IDs, may cite only supplied guidance IDs, and record uncertainties and questions. Unknown evidence or guidance IDs reject the provider response instead of being silently retained. Provider, model, prompt version, baseline, timestamp, response hash, and review history are retained. Duplicate failure-mode text for the same component is suppressed.
+Generated suggestions are stored separately from SFMEA worksheet items. The response schema is closed: unknown fields and severity, occurrence, detection, disposition, workflow status, approval, or closure fields are rejected. Suggestions have bounded text and list fields, stop at 25 per component packet, must cite supplied evidence IDs, may cite only supplied guidance IDs, and record uncertainties and questions. Unknown evidence or guidance IDs reject the provider response instead of being silently retained. Provider, model, prompt version, baseline, timestamp, response hash, and review history are retained. Duplicate failure-mode text for the same component is suppressed. All requested component responses validate before any suggestion/history/summary mutation is committed.
 
-A reviewer may reject a suggestion or materialize it as a new unreviewed worksheet item. Materialization does not accept the failure mode into the governed analysis and never overwrites an existing item. Proposed suggestions and generated summaries are invalidated when the repository/configuration baseline changes.
+A reviewer may reject a suggestion or materialize it as a new unreviewed worksheet item. Materialization does not accept the failure mode into the governed analysis and never overwrites an existing item. Any failed materialization restores the complete pre-review analysis rather than leaving a partly accepted proposal or manual item. Generated summaries use the same bounded exact-field response contract and retain a response digest. Proposed suggestions and generated summaries are invalidated when the repository/configuration baseline changes.
 
 ## Failure Mode Assurance Matrix
 
@@ -368,6 +383,12 @@ signature stays outside the package so it does not invalidate the manifest or be
 self-referential. Verification is meaningful only when the supplied public key has
 been obtained through a separately trusted process; key custody, revocation,
 authorization, and formal engineering approval remain organizational controls.
+Key and envelope files are consumed through bounded, regular-file, final-link-safe
+reads with opened-file identity checks. Signature verification always reruns package
+integrity verification, then requires the bounded manifest bytes to match that exact
+verification digest. Detached-signature publication revalidates its destination at
+the atomic replacement boundary and preserves prior content on rejected publication.
+Exact ZIP bytes receive an additional identity-checked 550 MB streaming reconciliation.
 
 Portable-package mode operates on a copy and removes machine-local absolute path
 prefixes from the package snapshot and manifest. Relative source locations, hashes,

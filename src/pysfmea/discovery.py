@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import fnmatch
 import hashlib
 import json
@@ -18,13 +19,24 @@ from .guidance import (
     guidance_bundle,
     selected_sources_from_bundle,
 )
+from .integrity import bounded_json_structure_metrics
 from .model import stable_id, utc_now
 from .store import add_manual_item, refresh_summary, update_item_review
 from .visuals import coverage_metrics
 
-PROMPT_VERSION = "sfmea-grounded-discovery-2"
+PROMPT_VERSION = "sfmea-grounded-discovery-3"
+MAX_PROVIDER_REQUEST_BYTES = 3_000_000
 MAX_PROVIDER_RESPONSE_BYTES = 10_000_000
 MAX_EVIDENCE_PACKET_BYTES = 2_000_000
+MAX_PROVIDER_RESPONSE_DEPTH = 50
+MAX_PROVIDER_RESPONSE_NODES = 100_000
+MAX_GENERATED_SUGGESTIONS = 25
+MAX_GENERATED_TEXT_CHARS = 20_000
+MAX_GENERATED_LIST_ITEMS = 100
+MAX_GENERATED_ID_ITEMS = 500
+MAX_PROVIDER_IDENTITY_CHARS = 500
+MAX_ENDPOINT_CHARS = 4096
+MAX_API_KEY_CHARS = 16_384
 ALLOWED_CONTENT_FIELDS = {
     "failure_class",
     "guideword",
@@ -55,6 +67,116 @@ FORBIDDEN_GENERATED_FIELDS = {
     "approved_by",
     "approval_date",
 }
+ALLOWED_SUGGESTION_FIELDS = ALLOWED_CONTENT_FIELDS | {
+    "evidence_ids",
+    "citation_ids",
+    "uncertainties",
+    "questions",
+    "confidence",
+}
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, entry in pairs:
+        if key in value:
+            raise ValueError("LLM response JSON contains a duplicate object key")
+        value[key] = entry
+    return value
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"LLM response JSON contains a non-finite number: {value}")
+
+
+def _bounded_json_bytes(value: Any, *, label: str, limit: int) -> bytes:
+    metrics = bounded_json_structure_metrics(
+        value,
+        max_depth=MAX_PROVIDER_RESPONSE_DEPTH,
+        max_nodes=MAX_PROVIDER_RESPONSE_NODES,
+    )
+    if not metrics["depth_within_limit"]:
+        raise ValueError(
+            f"{label} exceeds the {MAX_PROVIDER_RESPONSE_DEPTH}-level depth limit"
+        )
+    if not metrics["node_within_limit"]:
+        raise ValueError(
+            f"{label} exceeds the {MAX_PROVIDER_RESPONSE_NODES}-node limit"
+        )
+    try:
+        encoded = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"{label} must contain only bounded JSON values") from exc
+    if len(encoded) > limit:
+        raise ValueError(f"{label} exceeds the {limit}-byte safety limit")
+    return encoded
+
+
+def _decode_provider_json(raw: bytes | str, *, label: str) -> dict[str, Any]:
+    encoded = raw.encode("utf-8") if isinstance(raw, str) else raw
+    if len(encoded) > MAX_PROVIDER_RESPONSE_BYTES:
+        raise ValueError("LLM response exceeds the 10 MB safety limit")
+    try:
+        value = json.loads(
+            encoded.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError(f"{label} is not valid bounded UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    _bounded_json_bytes(value, label=label, limit=MAX_PROVIDER_RESPONSE_BYTES)
+    return value
+
+
+def _validate_provider_result(value: Any) -> tuple[dict[str, Any], bytes]:
+    if not isinstance(value, dict):
+        raise ValueError("LLM response content must be a JSON object")
+    encoded = _bounded_json_bytes(
+        value,
+        label="LLM response content",
+        limit=MAX_PROVIDER_RESPONSE_BYTES,
+    )
+    return value, encoded
+
+
+def _provider_identity(provider: SuggestionProvider) -> tuple[str, str]:
+    name = str(provider.name).strip()
+    model = str(provider.model).strip()
+    if not name or len(name) > MAX_PROVIDER_IDENTITY_CHARS:
+        raise ValueError("LLM provider name is missing or exceeds its length limit")
+    if not model or len(model) > MAX_PROVIDER_IDENTITY_CHARS:
+        raise ValueError("LLM model identifier is missing or exceeds its length limit")
+    return name, model
+
+
+def _bounded_string_list(
+    value: Any,
+    *,
+    label: str,
+    max_items: int = MAX_GENERATED_LIST_ITEMS,
+) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
+        raise ValueError(f"{label} must be a string list")
+    if len(value) > max_items:
+        raise ValueError(f"{label} exceeds the {max_items}-item limit")
+    normalized = []
+    for entry in value:
+        stripped = entry.strip()
+        if len(stripped) > MAX_GENERATED_TEXT_CHARS:
+            raise ValueError(
+                f"{label} contains text exceeding the {MAX_GENERATED_TEXT_CHARS}-character limit"
+            )
+        if stripped:
+            normalized.append(stripped)
+    return list(dict.fromkeys(normalized))
 
 
 class SuggestionProvider(Protocol):
@@ -78,6 +200,8 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 def _validate_provider_endpoint(endpoint: str) -> bool:
     """Validate the provider URL and return whether it is an explicit loopback endpoint."""
 
+    if len(endpoint) > MAX_ENDPOINT_CHARS:
+        raise ValueError("LLM endpoint exceeds the 4096-character limit")
     try:
         parsed = urllib.parse.urlsplit(endpoint)
         port = parsed.port
@@ -109,11 +233,14 @@ class OpenAICompatibleProvider:
 
     def generate(self, payload: dict[str, Any], *, task: str) -> dict[str, Any]:
         loopback = _validate_provider_endpoint(self.endpoint)
-        if not self.model.strip():
-            raise ValueError("LLM model identifier must not be blank")
+        _provider_identity(self)
         if not 1 <= self.timeout_seconds <= 600:
             raise ValueError("LLM timeout must be from 1 through 600 seconds")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.api_key_env):
+            raise ValueError("LLM API key environment variable name is invalid")
         api_key = os.environ.get(self.api_key_env, "")
+        if len(api_key) > MAX_API_KEY_CHARS:
+            raise ValueError("LLM API key exceeds the configured safety limit")
         if "\r" in api_key or "\n" in api_key:
             raise ValueError("LLM API key contains invalid newline characters")
         if not api_key and not loopback:
@@ -144,9 +271,17 @@ class OpenAICompatibleProvider:
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        request_bytes = json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        if len(request_bytes) > MAX_PROVIDER_REQUEST_BYTES:
+            raise ValueError("LLM request exceeds the 3 MB safety limit")
         request = urllib.request.Request(
             self.endpoint,
-            data=json.dumps(request_payload).encode("utf-8"),
+            data=request_bytes,
             headers=headers,
             method="POST",
         )
@@ -154,19 +289,20 @@ class OpenAICompatibleProvider:
             opener = urllib.request.build_opener(_NoRedirectHandler())
             with opener.open(request, timeout=self.timeout_seconds) as response:
                 raw_response = response.read(MAX_PROVIDER_RESPONSE_BYTES + 1)
-                if len(raw_response) > MAX_PROVIDER_RESPONSE_BYTES:
-                    raise ValueError("LLM response exceeds the 10 MB safety limit")
-                body = json.loads(raw_response.decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                body = _decode_provider_json(raw_response, label="LLM response envelope")
+        except (urllib.error.URLError, TimeoutError) as exc:
             raise ValueError(f"LLM request failed: {exc}") from exc
         try:
             content = body["choices"][0]["message"]["content"]
-            result = json.loads(content) if isinstance(content, str) else content
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            result = (
+                _decode_provider_json(content, label="LLM response content")
+                if isinstance(content, str)
+                else content
+            )
+        except (KeyError, IndexError, TypeError) as exc:
             raise ValueError("LLM response does not contain valid JSON message content") from exc
-        if not isinstance(result, dict):
-            raise ValueError("LLM response content must be a JSON object")
-        return result
+        validated, _encoded = _validate_provider_result(result)
+        return validated
 
 
 _SECRET_PATTERNS = (
@@ -331,13 +467,16 @@ def evidence_packets(
             },
         }
         packet = _redact_payload(packet)
-        encoded = json.dumps(packet, ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
-        if len(encoded) > MAX_EVIDENCE_PACKET_BYTES:
+        try:
+            _bounded_json_bytes(
+                packet,
+                label="evidence packet",
+                limit=MAX_EVIDENCE_PACKET_BYTES,
+            )
+        except ValueError as exc:
             raise ValueError(
                 f"evidence packet for {reference} exceeds the 2 MB safety limit; narrow project context"
-            )
+            ) from exc
         packets.append(packet)
         if len(packets) >= limit:
             break
@@ -356,42 +495,60 @@ def _validate_generated_suggestion(
     forbidden = set(raw) & FORBIDDEN_GENERATED_FIELDS
     if forbidden:
         raise ValueError("generated suggestion contains prohibited decision fields: " + ", ".join(sorted(forbidden)))
-    content = {field: raw.get(field, [] if field in LIST_CONTENT_FIELDS else "") for field in ALLOWED_CONTENT_FIELDS}
+    unknown_fields = set(raw) - ALLOWED_SUGGESTION_FIELDS
+    if unknown_fields:
+        raise ValueError(
+            "generated suggestion contains unsupported fields: "
+            + ", ".join(sorted(unknown_fields))
+        )
+    content = {
+        field: raw.get(field, [] if field in LIST_CONTENT_FIELDS else "")
+        for field in ALLOWED_CONTENT_FIELDS
+    }
     for field in LIST_CONTENT_FIELDS:
-        if not isinstance(content[field], list) or not all(isinstance(value, str) for value in content[field]):
-            raise ValueError(f"generated suggestion {field} must be a string list")
-        content[field] = [value.strip() for value in content[field] if value.strip()]
+        content[field] = _bounded_string_list(
+            content[field], label=f"generated suggestion {field}"
+        )
     for field in ALLOWED_CONTENT_FIELDS - LIST_CONTENT_FIELDS:
         if not isinstance(content[field], str):
             raise ValueError(f"generated suggestion {field} must be a string")
         content[field] = content[field].strip()
+        if len(content[field]) > MAX_GENERATED_TEXT_CHARS:
+            raise ValueError(
+                f"generated suggestion {field} exceeds the "
+                f"{MAX_GENERATED_TEXT_CHARS}-character limit"
+            )
     if not content["failure_mode"]:
         raise ValueError("generated suggestion requires a failure_mode")
     evidence_ids = raw.get("evidence_ids", [])
-    if not isinstance(evidence_ids, list) or not all(isinstance(value, str) for value in evidence_ids):
-        raise ValueError("generated suggestion evidence_ids must be a string list")
+    evidence_ids = _bounded_string_list(
+        evidence_ids,
+        label="generated suggestion evidence_ids",
+        max_items=MAX_GENERATED_ID_ITEMS,
+    )
     unknown = set(evidence_ids) - set(packet["allowed_evidence_ids"])
     if unknown:
         raise ValueError("generated suggestion cites unknown evidence IDs: " + ", ".join(sorted(unknown)))
     if not evidence_ids:
         raise ValueError("generated suggestion must cite at least one supplied evidence ID")
     citation_ids = raw.get("citation_ids", [])
-    if not isinstance(citation_ids, list) or not all(
-        isinstance(value, str) for value in citation_ids
-    ):
-        raise ValueError("generated suggestion citation_ids must be a string list")
+    citation_ids = _bounded_string_list(
+        citation_ids,
+        label="generated suggestion citation_ids",
+        max_items=MAX_GENERATED_ID_ITEMS,
+    )
     unknown_citations = set(citation_ids) - set(packet.get("allowed_citation_ids", []))
     if unknown_citations:
         raise ValueError(
             "generated suggestion cites unknown guidance IDs: "
             + ", ".join(sorted(unknown_citations))
         )
-    citation_ids = list(dict.fromkeys(citation_ids))
-    uncertainties = raw.get("uncertainties", [])
-    questions = raw.get("questions", [])
-    for field, values in (("uncertainties", uncertainties), ("questions", questions)):
-        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-            raise ValueError(f"generated suggestion {field} must be a string list")
+    uncertainties = _bounded_string_list(
+        raw.get("uncertainties", []), label="generated suggestion uncertainties"
+    )
+    questions = _bounded_string_list(
+        raw.get("questions", []), label="generated suggestion questions"
+    )
     confidence = raw.get("confidence", "low")
     if confidence not in {"low", "medium", "high"}:
         raise ValueError("generated suggestion confidence must be low, medium, or high")
@@ -405,9 +562,10 @@ def discover_suggestions(
     scope: str = "*",
     limit: int = 25,
 ) -> list[dict[str, Any]]:
-    """Generate grounded proposals without modifying any reviewer-owned item fields."""
+    """Generate grounded proposals transactionally without changing reviewer fields."""
 
-    created = []
+    provider_name, provider_model = _provider_identity(provider)
+    created: list[dict[str, Any]] = []
     existing_keys = {
         (suggestion.get("component_id", ""), _normalize_text(suggestion.get("content", {}).get("failure_mode")))
         for suggestion in analysis.get("suggestions", [])
@@ -421,15 +579,23 @@ def discover_suggestions(
         )
     baseline_id = analysis.get("project", {}).get("baseline", {}).get("id", "")
     for packet in evidence_packets(analysis, scope=scope, limit=limit):
-        response = provider.generate(packet, task="discover_failure_modes")
+        response, response_bytes = _validate_provider_result(
+            provider.generate(packet, task="discover_failure_modes")
+        )
+        if set(response) != {"suggestions"}:
+            raise ValueError(
+                "LLM discovery response must contain only the suggestions field"
+            )
         values = response.get("suggestions", [])
         if not isinstance(values, list):
             raise ValueError("LLM discovery response suggestions must be a list")
-        response_hash = hashlib.sha256(
-            json.dumps(response, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
+        if len(values) > MAX_GENERATED_SUGGESTIONS:
+            raise ValueError(
+                "LLM discovery response exceeds the 25-suggestion per-packet limit"
+            )
+        response_hash = hashlib.sha256(response_bytes).hexdigest()
         component_id = packet["component"]["evidence_id"]
-        for raw in values[:25]:
+        for raw in values:
             (
                 content,
                 evidence_ids,
@@ -455,8 +621,8 @@ def discover_suggestions(
                 "questions": questions,
                 "confidence": confidence,
                 "provenance": {
-                    "provider": provider.name,
-                    "model": provider.model,
+                    "provider": provider_name,
+                    "model": provider_model,
                     "prompt_version": PROMPT_VERSION,
                     "baseline_id": baseline_id,
                     "created_at": created_at,
@@ -468,29 +634,52 @@ def discover_suggestions(
                 "materialized_item_id": "",
                 "history": [{"event": "generated", "at": created_at}],
             }
-            analysis.setdefault("suggestions", []).append(suggestion)
             created.append(suggestion)
             existing_keys.add(key)
     if created:
-        analysis.setdefault("history", []).append(
-            {
-                "event": "machine_suggestions_generated",
-                "at": utc_now(),
-                "provider": provider.name,
-                "model": provider.model,
-                "prompt_version": PROMPT_VERSION,
-                "baseline_id": baseline_id,
-                "suggestion_ids": [value["id"] for value in created],
-            }
-        )
-    refresh_summary(analysis)
+        had_suggestions = "suggestions" in analysis
+        had_history = "history" in analysis
+        had_summary = "summary" in analysis
+        prior_suggestions = copy.deepcopy(analysis.get("suggestions"))
+        prior_history = copy.deepcopy(analysis.get("history"))
+        prior_summary = copy.deepcopy(analysis.get("summary"))
+        try:
+            analysis.setdefault("suggestions", []).extend(created)
+            analysis.setdefault("history", []).append(
+                {
+                    "event": "machine_suggestions_generated",
+                    "at": utc_now(),
+                    "provider": provider_name,
+                    "model": provider_model,
+                    "prompt_version": PROMPT_VERSION,
+                    "baseline_id": baseline_id,
+                    "suggestion_ids": [value["id"] for value in created],
+                }
+            )
+            refresh_summary(analysis)
+        except Exception:
+            for key, previous in (
+                ("suggestions", prior_suggestions),
+                ("history", prior_history),
+                ("summary", prior_summary),
+            ):
+                existed = {
+                    "suggestions": had_suggestions,
+                    "history": had_history,
+                    "summary": had_summary,
+                }[key]
+                if not existed:
+                    analysis.pop(key, None)
+                else:
+                    analysis[key] = previous
+            raise
     return created
 
 
-def review_suggestion(
+def _review_suggestion_mutation(
     analysis: dict[str, Any], suggestion_id: str, *, decision: str, reviewer: str, rationale: str
 ) -> dict[str, Any]:
-    """Accept into an unreviewed worksheet record or reject a machine proposal."""
+    """Apply one already-transactionally-guarded suggestion decision."""
 
     if decision not in {"accept", "reject"}:
         raise ValueError("suggestion decision must be accept or reject")
@@ -572,6 +761,31 @@ def review_suggestion(
     return suggestion
 
 
+def review_suggestion(
+    analysis: dict[str, Any],
+    suggestion_id: str,
+    *,
+    decision: str,
+    reviewer: str,
+    rationale: str,
+) -> dict[str, Any]:
+    """Accept or reject a proposal with full in-memory rollback on failure."""
+
+    snapshot = copy.deepcopy(analysis)
+    try:
+        return _review_suggestion_mutation(
+            analysis,
+            suggestion_id,
+            decision=decision,
+            reviewer=reviewer,
+            rationale=rationale,
+        )
+    except Exception:
+        analysis.clear()
+        analysis.update(snapshot)
+        raise
+
+
 def deterministic_summary(analysis: dict[str, Any], *, group_by: str = "project", key: str = "") -> dict[str, Any]:
     if group_by not in {"project", "subsystem", "hazard", "component"}:
         raise ValueError("summary grouping must be project, subsystem, hazard, or component")
@@ -636,24 +850,45 @@ def deterministic_summary(analysis: dict[str, Any], *, group_by: str = "project"
 def generate_summary(
     analysis: dict[str, Any], provider: SuggestionProvider, *, group_by: str = "project", key: str = ""
 ) -> dict[str, Any]:
+    provider_name, provider_model = _provider_identity(provider)
     evidence = deterministic_summary(analysis, group_by=group_by, key=key)
-    response = provider.generate(
-        {
-            "summary_evidence": evidence,
-            "requested_output": {"summary": "grounded narrative", "evidence_ids": [], "uncertainties": []},
+    payload = {
+        "summary_evidence": evidence,
+        "requested_output": {
+            "summary": "grounded narrative",
+            "evidence_ids": [],
+            "uncertainties": [],
         },
-        task="summarize_sfmea",
+    }
+    _bounded_json_bytes(
+        payload,
+        label="summary evidence packet",
+        limit=MAX_EVIDENCE_PACKET_BYTES,
     )
+    response, response_bytes = _validate_provider_result(
+        provider.generate(payload, task="summarize_sfmea")
+    )
+    if set(response) != {"summary", "evidence_ids", "uncertainties"}:
+        raise ValueError(
+            "LLM summary response must contain only summary, evidence_ids, and uncertainties"
+        )
     if not isinstance(response.get("summary"), str):
         raise ValueError("LLM summary response requires a summary string")
+    summary_text = response["summary"].strip()
+    if not summary_text:
+        raise ValueError("LLM summary response requires a non-blank summary")
+    if len(summary_text) > MAX_GENERATED_TEXT_CHARS:
+        raise ValueError(
+            f"LLM summary exceeds the {MAX_GENERATED_TEXT_CHARS}-character limit"
+        )
     known_evidence_ids = {
         value["evidence_id"] for value in evidence["evidence_records"]
     }
-    response_evidence_ids = response.get("evidence_ids", [])
-    if not isinstance(response_evidence_ids, list) or not all(
-        isinstance(value, str) for value in response_evidence_ids
-    ):
-        raise ValueError("LLM summary evidence_ids must be a string list")
+    response_evidence_ids = _bounded_string_list(
+        response.get("evidence_ids", []),
+        label="LLM summary evidence_ids",
+        max_items=MAX_GENERATED_ID_ITEMS,
+    )
     unknown_evidence_ids = set(response_evidence_ids) - known_evidence_ids
     if unknown_evidence_ids:
         raise ValueError(
@@ -662,28 +897,44 @@ def generate_summary(
         )
     record = {
         **evidence,
-        "id": stable_id("SUM", group_by, key, evidence["baseline_id"], response["summary"]),
-        "summary": response["summary"].strip(),
+        "id": stable_id("SUM", group_by, key, evidence["baseline_id"], summary_text),
+        "summary": summary_text,
         "evidence_ids": response_evidence_ids,
-        "uncertainties": response.get("uncertainties", []),
-        "provider": provider.name,
-        "model": provider.model,
+        "uncertainties": _bounded_string_list(
+            response.get("uncertainties", []), label="LLM summary uncertainties"
+        ),
+        "provider": provider_name,
+        "model": provider_model,
         "prompt_version": PROMPT_VERSION,
+        "response_hash": hashlib.sha256(response_bytes).hexdigest(),
         "stale": False,
     }
-    if not all(isinstance(value, str) for value in record["evidence_ids"] + record["uncertainties"]):
-        raise ValueError("LLM summary evidence_ids and uncertainties must be string lists")
-    analysis.setdefault("generated_summaries", []).append(record)
-    analysis.setdefault("history", []).append(
-        {
-            "event": "machine_summary_generated",
-            "at": record["generated_at"],
-            "summary_id": record["id"],
-            "provider": provider.name,
-            "model": provider.model,
-            "baseline_id": record["baseline_id"],
-        }
-    )
+    had_summaries = "generated_summaries" in analysis
+    had_history = "history" in analysis
+    prior_summaries = copy.deepcopy(analysis.get("generated_summaries"))
+    prior_history = copy.deepcopy(analysis.get("history"))
+    try:
+        analysis.setdefault("generated_summaries", []).append(record)
+        analysis.setdefault("history", []).append(
+            {
+                "event": "machine_summary_generated",
+                "at": record["generated_at"],
+                "summary_id": record["id"],
+                "provider": provider_name,
+                "model": provider_model,
+                "baseline_id": record["baseline_id"],
+            }
+        )
+    except Exception:
+        if not had_summaries:
+            analysis.pop("generated_summaries", None)
+        else:
+            analysis["generated_summaries"] = prior_summaries
+        if not had_history:
+            analysis.pop("history", None)
+        else:
+            analysis["history"] = prior_history
+        raise
     return record
 
 

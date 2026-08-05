@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import stat
 import tempfile
 import uuid
 from datetime import date
@@ -24,12 +25,21 @@ from .assurance import (
 from .config import DEFAULT_CONFIG, normalize_config
 from .execution import EXECUTION_STATUSES
 from .guidance import ensure_guidance_traceability
+from .integrity import (
+    MAX_GOVERNED_JSON_DEPTH,
+    MAX_GOVERNED_JSON_NODES,
+    bounded_json_structure_metrics,
+)
 from .manifest import create_run_manifest
 from .model import SCHEMA_VERSION, calculate_rpn, empty_review, utc_now, validate_rating
 from .repository_inventory import legacy_repository_inventory
 from .sfta import build_sfta
 from .system_context import build_system_context
 from .version import __version__
+
+MAX_ANALYSIS_BYTES = 100_000_000
+MAX_ANALYSIS_JSON_DEPTH = MAX_GOVERNED_JSON_DEPTH
+MAX_ANALYSIS_JSON_NODES = MAX_GOVERNED_JSON_NODES
 
 EDITABLE_REVIEW_FIELDS = {
     "disposition",
@@ -83,11 +93,187 @@ class AnalysisRevisionConflictError(RuntimeError):
     """The governed analysis changed before an atomic replacement."""
 
 
-def _file_sha256(path: Path) -> str:
+def _same_file_state(first: os.stat_result, second: os.stat_result) -> bool:
+    common = bool(
+        os.path.samestat(first, second)
+        and first.st_size == second.st_size
+        and first.st_mtime_ns == second.st_mtime_ns
+    )
+    # Windows path and descriptor stat calls can expose different creation-time
+    # precision for the same file. Identity, size, and modification time remain
+    # comparable; POSIX retains the additional metadata-change-time check.
+    return common and (os.name == "nt" or first.st_ctime_ns == second.st_ctime_ns)
+
+
+def _input_path(path: str | Path) -> Path:
+    return Path(os.path.abspath(Path(path).expanduser()))
+
+
+def _inspect_regular_file(path: Path, label: str) -> os.stat_result:
+    if path.is_symlink():
+        raise ValueError(f"{label} must be a regular non-symbolic-link file")
+    try:
+        inspected = path.lstat()
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"{label} is unavailable") from exc
+    except PermissionError as exc:
+        raise PermissionError(f"{label} could not be read safely") from exc
+    except OSError as exc:
+        raise OSError(f"{label} could not be read safely") from exc
+    if not stat.S_ISREG(inspected.st_mode):
+        raise ValueError(f"{label} must be a regular non-symbolic-link file")
+    return inspected
+
+
+def _read_analysis_bytes(path: Path) -> bytes:
+    inspected = _inspect_regular_file(path, "analysis input")
+    descriptor: int | None = None
+    opened_before: os.stat_result | None = None
+    opened_after: os.stat_result | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened_before = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_before.st_mode) or not _same_file_state(
+            inspected, opened_before
+        ):
+            raise ValueError("analysis input changed during safe open")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            raw = handle.read(MAX_ANALYSIS_BYTES + 1)
+            opened_after = os.fstat(handle.fileno())
+    except ValueError:
+        raise
+    except FileNotFoundError as exc:
+        raise FileNotFoundError("analysis input is unavailable") from exc
+    except PermissionError as exc:
+        raise PermissionError("analysis input could not be read safely") from exc
+    except OSError as exc:
+        raise OSError("analysis input could not be read safely") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if len(raw) > MAX_ANALYSIS_BYTES:
+        raise ValueError(
+            f"analysis input exceeds the {MAX_ANALYSIS_BYTES}-byte import limit"
+        )
+    if (
+        opened_before is None
+        or opened_after is None
+        or not _same_file_state(opened_before, opened_after)
+    ):
+        raise ValueError("analysis input changed while it was being read")
+    try:
+        current = path.lstat()
+    except OSError as exc:
+        raise ValueError("analysis input changed while it was being read") from exc
+    if not _same_file_state(opened_after, current):
+        raise ValueError("analysis input changed while it was being read")
+    return raw
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, entry in pairs:
+        if key in value:
+            raise ValueError(f"analysis JSON contains a duplicate object key: {key}")
+        value[key] = entry
+    return value
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"analysis JSON contains a non-finite number: {value}")
+
+
+def _enforce_analysis_json_shape(value: Any) -> None:
+    metrics = bounded_json_structure_metrics(
+        value,
+        max_depth=MAX_ANALYSIS_JSON_DEPTH,
+        max_nodes=MAX_ANALYSIS_JSON_NODES,
+    )
+    if not metrics["depth_within_limit"]:
+        raise ValueError(
+            f"analysis JSON exceeds the {MAX_ANALYSIS_JSON_DEPTH}-level depth limit"
+        )
+    if not metrics["node_within_limit"]:
+        raise ValueError(
+            f"analysis JSON exceeds the {MAX_ANALYSIS_JSON_NODES}-node limit"
+        )
+
+
+def _decode_analysis_object(raw: bytes) -> dict[str, Any]:
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("analysis input is not valid bounded UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("analysis file root must be a JSON object")
+    _enforce_analysis_json_shape(value)
+    return value
+
+
+def analysis_file_sha256(path: str | Path) -> str:
+    """Hash one stable regular analysis file under the persisted-analysis limit."""
+
+    source = _input_path(path)
+    inspected = _inspect_regular_file(source, "analysis input")
+    descriptor: int | None = None
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
+    consumed = 0
+    opened_before: os.stat_result | None = None
+    opened_after: os.stat_result | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(source, flags)
+        opened_before = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_before.st_mode) or not _same_file_state(
+            inspected, opened_before
+        ):
+            raise ValueError("analysis input changed during safe open")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            while chunk := handle.read(1024 * 1024):
+                consumed += len(chunk)
+                if consumed > MAX_ANALYSIS_BYTES:
+                    raise ValueError(
+                        "analysis input exceeds the "
+                        f"{MAX_ANALYSIS_BYTES}-byte hash limit"
+                    )
+                digest.update(chunk)
+            opened_after = os.fstat(handle.fileno())
+    except ValueError:
+        raise
+    except FileNotFoundError as exc:
+        raise FileNotFoundError("analysis input is unavailable") from exc
+    except PermissionError as exc:
+        raise PermissionError("analysis input could not be hashed safely") from exc
+    except OSError as exc:
+        raise OSError("analysis input could not be hashed safely") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if (
+        opened_before is None
+        or opened_after is None
+        or not _same_file_state(opened_before, opened_after)
+    ):
+        raise ValueError("analysis input changed while it was being hashed")
+    try:
+        current = source.lstat()
+    except OSError as exc:
+        raise ValueError("analysis input changed while it was being hashed") from exc
+    if not _same_file_state(opened_after, current):
+        raise ValueError("analysis input changed while it was being hashed")
     return digest.hexdigest()
 
 
@@ -114,11 +300,8 @@ ALLOWED_STATUSES = {"draft", "in_review", "action_required", "verified", "closed
 
 
 def load_analysis(path: str | Path) -> dict[str, Any]:
-    source = Path(path)
-    with source.open("r", encoding="utf-8") as handle:
-        analysis = json.load(handle)
-    if not isinstance(analysis, dict):
-        raise ValueError("analysis file root must be a JSON object")
+    source = _input_path(path)
+    analysis = _decode_analysis_object(_read_analysis_bytes(source))
     if analysis.get("schema_version") == "0.1":
         analysis = _migrate_01_to_02(analysis)
     if analysis.get("schema_version") == "0.2":
@@ -504,6 +687,37 @@ def _migrate_05_to_06(analysis: dict[str, Any]) -> dict[str, Any]:
     return analysis
 
 
+def _analysis_destination_snapshot(path: Path) -> os.stat_result | None:
+    if path.is_symlink():
+        raise ValueError("analysis destination must not be a symbolic link")
+    try:
+        snapshot = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError("analysis destination could not be inspected safely") from exc
+    if not stat.S_ISREG(snapshot.st_mode):
+        raise ValueError("analysis destination must be a regular file path")
+    return snapshot
+
+
+class _BoundedUtf8Writer:
+    def __init__(self, handle: Any, limit: int) -> None:
+        self.handle = handle
+        self.limit = limit
+        self.written = 0
+
+    def write(self, value: str) -> int:
+        raw = value.encode("utf-8")
+        if self.written + len(raw) > self.limit:
+            raise ValueError(
+                f"serialized analysis exceeds the {self.limit}-byte output limit"
+            )
+        self.handle.write(raw)
+        self.written += len(raw)
+        return len(value)
+
+
 def save_analysis(
     path: str | Path,
     analysis: dict[str, Any],
@@ -512,29 +726,35 @@ def save_analysis(
 ) -> None:
     """Atomically save an analysis to avoid truncation on interrupted writes."""
 
-    destination = Path(path).expanduser().resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = _input_path(path)
+    destination_snapshot = _analysis_destination_snapshot(destination)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ValueError("analysis destination could not be prepared safely") from exc
     ensure_guidance_traceability(analysis, refresh=True)
     refresh_assurance_register(analysis, analysis.get("assurance", {}))
     analysis["sfta"] = build_sfta(analysis)
     refresh_summary(analysis)
     _reconcile_last_saved_at(destination, analysis)
+    _enforce_analysis_json_shape(analysis)
     _validate_analysis_structure(analysis)
     descriptor, temp_name = tempfile.mkstemp(
-        prefix=destination.name + ".",
+        prefix=f".{destination.name}.",
         suffix=".tmp",
         dir=str(destination.parent),
     )
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(analysis, handle, indent=2, ensure_ascii=False)
-            handle.write("\n")
+        with os.fdopen(descriptor, "wb") as handle:
+            writer = _BoundedUtf8Writer(handle, MAX_ANALYSIS_BYTES)
+            json.dump(analysis, writer, indent=2, ensure_ascii=False, allow_nan=False)
+            writer.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
         if expected_sha256 is not None:
             try:
-                current_sha256 = _file_sha256(destination)
-            except OSError as exc:
+                current_sha256 = analysis_file_sha256(destination)
+            except (OSError, ValueError) as exc:
                 raise AnalysisRevisionConflictError(
                     "governed analysis disappeared before atomic replacement"
                 ) from exc
@@ -542,6 +762,23 @@ def save_analysis(
                 raise AnalysisRevisionConflictError(
                     "governed analysis changed before atomic replacement"
                 )
+        try:
+            current_snapshot = _analysis_destination_snapshot(destination)
+        except ValueError as exc:
+            raise AnalysisRevisionConflictError(
+                "governed analysis changed before atomic replacement"
+            ) from exc
+        if destination_snapshot is None:
+            unchanged = current_snapshot is None
+        else:
+            unchanged = bool(
+                current_snapshot is not None
+                and _same_file_state(destination_snapshot, current_snapshot)
+            )
+        if not unchanged:
+            raise AnalysisRevisionConflictError(
+                "governed analysis changed before atomic replacement"
+            )
         os.replace(temp_name, destination)
     except Exception:
         try:
@@ -569,12 +806,8 @@ def _reconcile_last_saved_at(
         summary.setdefault("last_saved_at", utc_now())
         return
     try:
-        with destination.open("r", encoding="utf-8") as handle:
-            previous = json.load(handle)
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        summary["last_saved_at"] = utc_now()
-        return
-    if not isinstance(previous, dict):
+        previous = _decode_analysis_object(_read_analysis_bytes(destination))
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
         summary["last_saved_at"] = utc_now()
         return
     previous_summary = previous.get("summary", {})

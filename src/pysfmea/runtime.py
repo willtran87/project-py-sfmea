@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -11,22 +12,42 @@ from .model import utc_now
 from .store import refresh_summary
 
 MAX_SPANS_PER_IMPORT = 50_000
+MAX_RUNTIME_TRACE_BYTES = 100_000_000
+MAX_RUNTIME_ATTRIBUTE_DEPTH = 32
 
 
-def _attribute_value(value: Any) -> Any:
+def _attribute_value(value: Any, *, depth: int = 0) -> Any:
+    if depth > MAX_RUNTIME_ATTRIBUTE_DEPTH:
+        raise ValueError(
+            f"runtime trace attribute nesting exceeds {MAX_RUNTIME_ATTRIBUTE_DEPTH} levels"
+        )
+    if isinstance(value, list):
+        return [_attribute_value(entry, depth=depth + 1) for entry in value]
     if not isinstance(value, dict):
         return value
     for key in ("stringValue", "intValue", "doubleValue", "boolValue"):
         if key in value:
             return value[key]
     if "arrayValue" in value:
-        return [_attribute_value(entry) for entry in value["arrayValue"].get("values", [])]
-    return value
+        array_value = value["arrayValue"]
+        if not isinstance(array_value, dict):
+            return []
+        values = array_value.get("values", [])
+        if not isinstance(values, list):
+            return []
+        return [_attribute_value(entry, depth=depth + 1) for entry in values]
+    return {
+        str(key): _attribute_value(entry, depth=depth + 1)
+        for key, entry in value.items()
+    }
 
 
 def _attributes(values: Any) -> dict[str, Any]:
     if isinstance(values, dict):
-        return dict(values)
+        return {
+            str(key): _attribute_value(value)
+            for key, value in values.items()
+        }
     if not isinstance(values, list):
         return {}
     result = {}
@@ -44,15 +65,61 @@ def _iter_spans(payload: Any) -> Iterable[dict[str, Any]]:
         return
     if not isinstance(payload, dict):
         return
-    if isinstance(payload.get("spans"), list):
-        yield from _iter_spans(payload["spans"])
-    for resource in payload.get("resourceSpans", []):
-        resource_attributes = _attributes(resource.get("resource", {}).get("attributes", []))
-        scopes = resource.get("scopeSpans", resource.get("instrumentationLibrarySpans", []))
+    spans = payload.get("spans", [])
+    if isinstance(spans, list):
+        for span in spans:
+            if isinstance(span, dict):
+                yield span
+    resources = payload.get("resourceSpans", [])
+    if not isinstance(resources, list):
+        return
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        resource_value = resource.get("resource", {})
+        resource_attributes = _attributes(
+            resource_value.get("attributes", [])
+            if isinstance(resource_value, dict)
+            else []
+        )
+        scopes = resource.get(
+            "scopeSpans",
+            resource.get("instrumentationLibrarySpans", []),
+        )
+        if not isinstance(scopes, list):
+            continue
         for scope in scopes:
-            for span in scope.get("spans", []):
+            if not isinstance(scope, dict):
+                continue
+            scope_spans = scope.get("spans", [])
+            if not isinstance(scope_spans, list):
+                continue
+            for span in scope_spans:
                 if isinstance(span, dict):
                     yield {**span, "_resource_attributes": resource_attributes}
+
+
+def _read_runtime_trace(path: Path) -> tuple[Any, bytes]:
+    """Read regular runtime JSON under the limit applied to bytes consumed."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("runtime trace must be a regular non-symbolic-link file")
+    try:
+        with path.open("rb") as source_file:
+            raw = source_file.read(MAX_RUNTIME_TRACE_BYTES + 1)
+    except OSError as exc:
+        raise ValueError("runtime trace could not be read safely") from exc
+    if len(raw) > MAX_RUNTIME_TRACE_BYTES:
+        raise ValueError(
+            f"runtime trace exceeds the {MAX_RUNTIME_TRACE_BYTES}-byte import limit"
+        )
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("runtime trace is not valid bounded UTF-8 JSON") from exc
+    if not isinstance(payload, (dict, list)):
+        raise ValueError("runtime trace root must be an object or array")
+    return payload, raw
 
 
 def _component_lookup(analysis: dict[str, Any]) -> dict[str, str]:
@@ -116,15 +183,22 @@ def import_runtime_trace(
 ) -> dict[str, Any]:
     """Import simple or OTLP JSON spans and derive parent-child evidence edges."""
 
-    path = Path(source).expanduser().resolve()
-    raw = path.read_bytes()
-    if len(raw) > 100_000_000:
-        raise ValueError("runtime trace exceeds the 100 MB import limit")
-    payload = json.loads(raw.decode("utf-8"))
+    label = label.strip()
+    if len(label) > 500 or any(ord(value) < 32 for value in label):
+        raise ValueError("runtime trace label must be at most 500 printable characters")
+    path = Path(source).expanduser().absolute()
+    payload, raw = _read_runtime_trace(path)
     digest = hashlib.sha256(raw).hexdigest()
-    evidence = analysis.setdefault(
-        "runtime_evidence", {"imports": [], "spans": [], "edges": []}
-    )
+    supplied_evidence = analysis.get("runtime_evidence")
+    if supplied_evidence is None:
+        evidence: dict[str, Any] = {"imports": [], "spans": [], "edges": []}
+    elif not isinstance(supplied_evidence, dict) or not all(
+        isinstance(supplied_evidence.get(key), list)
+        for key in ("imports", "spans", "edges")
+    ):
+        raise ValueError("analysis runtime evidence container is malformed")
+    else:
+        evidence = supplied_evidence
     existing_import = next(
         (record for record in evidence["imports"] if record.get("sha256") == digest),
         None,
@@ -137,7 +211,7 @@ def import_runtime_trace(
         if index >= MAX_SPANS_PER_IMPORT:
             raise ValueError(f"runtime trace exceeds {MAX_SPANS_PER_IMPORT} spans")
         attributes = {
-            **span.get("_resource_attributes", {}),
+            **_attributes(span.get("_resource_attributes", {})),
             **_attributes(span.get("attributes", {})),
         }
         name = str(span.get("name") or attributes.get("code.function.name") or "unnamed span")
@@ -193,17 +267,16 @@ def import_runtime_trace(
         )
     existing = {(span.get("trace_id"), span.get("span_id")) for span in evidence["spans"]}
     new_spans = [span for span in normalized if (span["trace_id"], span["span_id"]) not in existing]
-    evidence["spans"].extend(new_spans)
     existing_edges = {
         (edge.get("trace_id"), edge.get("source_span_id"), edge.get("target_span_id"))
         for edge in evidence["edges"]
     }
-    evidence["edges"].extend(
+    new_edges = [
         edge
         for edge in edges
         if (edge["trace_id"], edge["source_span_id"], edge["target_span_id"])
         not in existing_edges
-    )
+    ]
     imported_at = utc_now()
     import_record = {
         "id": "TRACE-" + digest[:12].upper(),
@@ -223,9 +296,22 @@ def import_runtime_trace(
         "duplicate": False,
         "notice": "Observed traces demonstrate captured executions only; they do not prove path completeness.",
     }
-    evidence["imports"].append(import_record)
-    analysis.setdefault("history", []).append(
-        {"event": "runtime_trace_import", "at": imported_at, **import_record}
-    )
-    refresh_summary(analysis)
+    history = analysis.get("history")
+    if history is not None and not isinstance(history, list):
+        raise ValueError("analysis history container is malformed")
+    analysis_snapshot = copy.deepcopy(analysis)
+    try:
+        if supplied_evidence is None:
+            analysis["runtime_evidence"] = evidence
+        evidence["spans"].extend(new_spans)
+        evidence["edges"].extend(new_edges)
+        evidence["imports"].append(import_record)
+        analysis.setdefault("history", []).append(
+            {"event": "runtime_trace_import", "at": imported_at, **import_record}
+        )
+        refresh_summary(analysis)
+    except Exception:
+        analysis.clear()
+        analysis.update(analysis_snapshot)
+        raise
     return import_record

@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.architecture import architecture_graph, export_architecture
 from pysfmea.config import load_config, write_config_template
 from pysfmea.discovery import evidence_packets
+from pysfmea.guidance import load_organizational_guidance_pack
 from pysfmea.model import calculate_rpn
 from pysfmea.report import export_audit, export_csv, export_inventory, export_markdown
-from pysfmea.scanner import scan_repository
+from pysfmea.repository_inventory import build_repository_inventory
+from pysfmea.scanner import _load_coverage, scan_repository
 from pysfmea.store import add_manual_item, merge_rescan, update_item_review
 
 SAMPLE_SOURCE = """
@@ -420,6 +424,45 @@ class ScannerTests(unittest.TestCase):
             "ORG-CIT-EX-OMISSION", packets[0]["allowed_citation_ids"]
         )
 
+        loaded = load_organizational_guidance_pack(pack_path)
+        raw = pack_path.read_bytes()
+        self.assertEqual(loaded["provenance"]["bytes"], len(raw))
+        self.assertEqual(
+            loaded["provenance"]["sha256"],
+            hashlib.sha256(raw).hexdigest(),
+        )
+
+        pack_directory = self.root / "guidance-directory"
+        pack_directory.mkdir()
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            load_organizational_guidance_pack(pack_directory)
+
+        invalid_utf8 = self.root / "invalid-guidance.json"
+        invalid_utf8.write_bytes(b"\xff\xfe")
+        with self.assertRaisesRegex(ValueError, "UTF-8 JSON"):
+            load_organizational_guidance_pack(invalid_utf8)
+
+        oversized = self.root / "oversized-guidance.json"
+        oversized.write_bytes(b"x" * 11)
+        with patch(
+            "pysfmea.guidance.MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES", 10
+        ):
+            with self.assertRaisesRegex(ValueError, "10-byte safety limit"):
+                load_organizational_guidance_pack(oversized)
+
+        with patch("pysfmea.guidance.Path.is_symlink", return_value=True):
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                load_organizational_guidance_pack(pack_path)
+
+        linked_pack = self.root / "linked-guidance.json"
+        try:
+            linked_pack.symlink_to(pack_path)
+        except OSError:
+            linked_pack = None
+        if linked_pack is not None:
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                load_organizational_guidance_pack(linked_pack)
+
     def test_faa_failure_classes_and_configured_scope(self) -> None:
         (self.root / "device.py").write_text(
             "import math\nimport serial\nimport sys\n\ndef control(port, value):\n"
@@ -507,6 +550,384 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(updated["source_change"], "changed")
         self.assertTrue(updated["review"]["revalidation_required"])
 
+    def test_dependency_manifest_ingestion_is_bounded_link_safe_and_aggregate_limited(
+        self,
+    ) -> None:
+        constraints = self.root / "constraints"
+        constraints.mkdir()
+        base = constraints / "base.txt"
+        base.write_text("critical-lib==1.0\n", encoding="utf-8")
+        invalid = constraints / "invalid.txt"
+        invalid.write_bytes(b"invalid-lib==1.0\n\xff")
+        requirements = self.root / "requirements.txt"
+        requirements.write_text(
+            "requests==2.32.0\n"
+            "-r constraints/base.txt\n"
+            "-r constraints/invalid.txt\n"
+            "-r ../outside.txt\n",
+            encoding="utf-8",
+        )
+        (self.root / "uv.lock").write_bytes(b"x" * 256)
+        pipfile = self.root / "Pipfile"
+        pipfile.write_text("requests = '*'\n", encoding="utf-8")
+        original_is_symlink = Path.is_symlink
+
+        def marked_link(path: Path) -> bool:
+            return path.name == pipfile.name or original_is_symlink(path)
+
+        with (
+            patch("pysfmea.scanner.MAX_DEPENDENCY_MANIFEST_BYTES", 128),
+            patch(
+                "pysfmea.scanner.Path.is_symlink",
+                autospec=True,
+                side_effect=marked_link,
+            ),
+        ):
+            analysis = scan_repository(self.root)
+
+        dependencies = {
+            entry["name"]: entry for entry in analysis["context"]["dependencies"]
+        }
+        self.assertIn("requests", dependencies)
+        self.assertIn("critical-lib", dependencies)
+        self.assertIn("manifest:requirements.txt", dependencies)
+        self.assertIn("manifest:constraints/base.txt", dependencies)
+        self.assertEqual(
+            dependencies["manifest:constraints/invalid.txt"]["specification"],
+            f"sha256:{hashlib.sha256(invalid.read_bytes()).hexdigest()}",
+        )
+        self.assertNotIn("manifest:uv.lock", dependencies)
+        self.assertNotIn("manifest:Pipfile", dependencies)
+        warnings = {
+            (warning["path"], warning["message"])
+            for warning in analysis["warnings"]
+            if warning["type"] == "DependencyError"
+        }
+        self.assertIn(
+            ("uv.lock", "Dependency manifest exceeds the 128-byte analysis limit"),
+            warnings,
+        )
+        self.assertIn(
+            ("constraints/invalid.txt", "Dependency manifest is not valid UTF-8 text"),
+            warnings,
+        )
+        self.assertIn(
+            ("Pipfile", "Dependency manifest must be a regular non-symbolic-link file"),
+            warnings,
+        )
+        self.assertTrue(
+            any(message == "Dependency manifest resolves outside the repository" for _, message in warnings)
+        )
+
+        with patch("pysfmea.scanner.MAX_DEPENDENCY_MANIFEST_FILES", 1):
+            file_limited = scan_repository(self.root)
+        file_limited_names = {
+            entry["name"] for entry in file_limited["context"]["dependencies"]
+        }
+        self.assertIn("requests", file_limited_names)
+        self.assertNotIn("critical-lib", file_limited_names)
+        self.assertTrue(
+            any(
+                warning["type"] == "DependencyError"
+                and warning["message"]
+                == "Dependency manifest discovery reached the 1-file limit"
+                for warning in file_limited["warnings"]
+            )
+        )
+
+        with patch(
+            "pysfmea.scanner.MAX_DEPENDENCY_MANIFEST_TOTAL_BYTES",
+            len(requirements.read_bytes()),
+        ):
+            aggregate_limited = scan_repository(self.root)
+        self.assertTrue(
+            any(
+                warning["path"] == "constraints/base.txt"
+                and warning["type"] == "DependencyError"
+                and "aggregate limit" in warning["message"]
+                for warning in aggregate_limited["warnings"]
+            )
+        )
+        aggregate_names = {
+            entry["name"] for entry in aggregate_limited["context"]["dependencies"]
+        }
+        self.assertIn("requests", aggregate_names)
+        self.assertNotIn("critical-lib", aggregate_names)
+
+    def test_pyproject_dependency_shape_and_encoding_fail_closed(self) -> None:
+        pyproject = self.root / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "invalid-shape"\ndependencies = "requests"\n',
+            encoding="utf-8",
+        )
+        malformed = scan_repository(self.root)
+        malformed_names = {
+            entry["name"] for entry in malformed["context"]["dependencies"]
+        }
+        self.assertIn("manifest:pyproject.toml", malformed_names)
+        self.assertNotIn("requests", malformed_names)
+        self.assertTrue(
+            any(
+                warning["path"] == "pyproject.toml"
+                and warning["type"] == "DependencyError"
+                and warning["message"]
+                == "Dependency manifest is not valid supported TOML"
+                for warning in malformed["warnings"]
+            )
+        )
+
+        pyproject.write_bytes(b"\xff\xfe")
+        invalid_encoding = scan_repository(self.root)
+        invalid_names = {
+            entry["name"] for entry in invalid_encoding["context"]["dependencies"]
+        }
+        self.assertIn("manifest:pyproject.toml", invalid_names)
+        self.assertTrue(
+            any(
+                warning["path"] == "pyproject.toml"
+                and warning["type"] == "DependencyError"
+                and warning["message"] == "Dependency manifest is not valid UTF-8 TOML"
+                for warning in invalid_encoding["warnings"]
+            )
+        )
+
+    def test_contract_ingestion_is_bounded_link_safe_and_type_safe(self) -> None:
+        openapi = self.root / "openapi.json"
+        openapi.write_text("[]", encoding="utf-8")
+        invalid_schema = self.root / "invalid.schema.json"
+        invalid_schema.write_bytes(b"\xff\xfe")
+        many = self.root / "many.proto"
+        many.write_text(
+            "service Example { rpc First(Request) returns (Reply); "
+            "rpc Second(Request) returns (Reply); }\n"
+            "message Request {}\nmessage Reply {}\n",
+            encoding="utf-8",
+        )
+        oversized = self.root / "oversized.proto"
+        oversized.write_bytes(b"x" * 256)
+        linked = self.root / "linked.proto"
+        linked.write_text("message Linked {}\n", encoding="utf-8")
+        escaped = self.root / "escaped.proto"
+        escaped.write_text("message Escaped {}\n", encoding="utf-8")
+        original_is_symlink = Path.is_symlink
+        original_resolve = Path.resolve
+
+        def marked_link(path: Path) -> bool:
+            return path.name == linked.name or original_is_symlink(path)
+
+        def redirected_contract(path: Path, strict: bool = False) -> Path:
+            if path.name == escaped.name:
+                return self.root.parent / "outside.proto"
+            return original_resolve(path, strict=strict)
+
+        with (
+            patch("pysfmea.scanner.MAX_CONTRACT_BYTES", 160),
+            patch("pysfmea.scanner.MAX_CONTRACT_ENTITIES", 1),
+            patch(
+                "pysfmea.scanner.Path.is_symlink",
+                autospec=True,
+                side_effect=marked_link,
+            ),
+            patch(
+                "pysfmea.scanner.Path.resolve",
+                autospec=True,
+                side_effect=redirected_contract,
+            ),
+        ):
+            analysis = scan_repository(self.root)
+
+        contracts = {
+            contract["path"]: contract for contract in analysis["context"]["contracts"]
+        }
+        self.assertEqual(
+            set(contracts),
+            {"invalid.schema.json", "many.proto", "openapi.json"},
+        )
+        self.assertEqual(
+            contracts["invalid.schema.json"]["sha256"],
+            hashlib.sha256(invalid_schema.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(len(contracts["many.proto"]["operations"]), 1)
+        self.assertEqual(len(contracts["many.proto"]["data_types"]), 1)
+        self.assertEqual(contracts["openapi.json"]["operations"], [])
+        warnings = {
+            (warning["path"], warning["type"]): warning["message"]
+            for warning in analysis["warnings"]
+        }
+        self.assertEqual(
+            warnings[("openapi.json", "ContractError")],
+            "Contract JSON has malformed or unsupported structure",
+        )
+        self.assertEqual(
+            warnings[("invalid.schema.json", "ContractError")],
+            "Contract is not valid UTF-8 text",
+        )
+        self.assertEqual(
+            warnings[("oversized.proto", "ContractTooLarge")],
+            "Contract exceeds the 160-byte analysis limit",
+        )
+        self.assertEqual(
+            warnings[("linked.proto", "ContractBoundary")],
+            "Contract must be a regular non-symbolic-link file",
+        )
+        self.assertEqual(
+            warnings[("escaped.proto", "OutsideRepository")],
+            "Contract resolves outside the repository",
+        )
+        self.assertIn(
+            "1-entity per-category limit",
+            warnings[("many.proto", "ContractLimit")],
+        )
+
+        with patch("pysfmea.scanner.MAX_CONTRACT_FILES", 1):
+            file_limited = scan_repository(self.root)
+        self.assertEqual(len(file_limited["context"]["contracts"]), 1)
+        self.assertTrue(
+            any(
+                warning["type"] == "ContractLimit"
+                and warning["message"] == "Contract discovery reached the 1-file analysis limit"
+                for warning in file_limited["warnings"]
+            )
+        )
+
+        with patch("pysfmea.scanner.MAX_CONTRACT_TOTAL_BYTES", 1):
+            aggregate_limited = scan_repository(self.root)
+        self.assertEqual(aggregate_limited["context"]["contracts"], [])
+        self.assertTrue(
+            any(
+                warning["type"] == "ContractLimit"
+                and warning["message"]
+                == "Contract ingestion exceeds the 1-byte aggregate limit"
+                for warning in aggregate_limited["warnings"]
+            )
+        )
+
+    def test_repository_inventory_hashing_is_consumption_bounded_and_accounted(self) -> None:
+        inventory_root = self.root / "inventory-case"
+        inventory_root.mkdir()
+        a_path = inventory_root / "a.txt"
+        a_path.write_bytes(b"a" * 6)
+        (inventory_root / "b.txt").write_bytes(b"b" * 6)
+        (inventory_root / "c.txt").write_bytes(b"c" * 6)
+
+        with (
+            patch("pysfmea.repository_inventory.MAX_HASH_BYTES", 10),
+            patch("pysfmea.repository_inventory.MAX_TOTAL_HASH_BYTES", 10),
+        ):
+            inventory = build_repository_inventory(
+                inventory_root,
+                selected_python_paths=set(),
+                parsed_python_paths=set(),
+                include_tests=False,
+            )
+
+        entries = {entry["path"]: entry for entry in inventory["entries"]}
+        self.assertEqual(
+            entries["a.txt"]["sha256"],
+            hashlib.sha256(a_path.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(entries["b.txt"]["sha256"], "")
+        self.assertEqual(entries["b.txt"]["analysis_depth"], "metadata_only")
+        self.assertEqual(entries["c.txt"]["sha256"], "")
+        self.assertTrue(inventory["truncated"])
+        self.assertTrue(
+            any(
+                region["path"] == "./"
+                and region["status"] == "unresolved"
+                and "10-byte aggregate safety limit" in region["reason"]
+                for region in inventory["regions"]
+            )
+        )
+        material = {
+            key: inventory[key] for key in ("entries", "regions", "truncated")
+        }
+        self.assertEqual(
+            inventory["inventory_sha256"],
+            hashlib.sha256(
+                json.dumps(material, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+        )
+
+        oversized_root = self.root / "oversized-inventory"
+        oversized_root.mkdir()
+        (oversized_root / "large.bin").write_bytes(b"x" * 11)
+        with (
+            patch("pysfmea.repository_inventory.MAX_HASH_BYTES", 10),
+            patch("pysfmea.repository_inventory.MAX_TOTAL_HASH_BYTES", 100),
+        ):
+            oversized = build_repository_inventory(
+                oversized_root,
+                selected_python_paths=set(),
+                parsed_python_paths=set(),
+                include_tests=False,
+            )
+        oversized_entry = oversized["entries"][0]
+        self.assertEqual(oversized_entry["status"], "opaque")
+        self.assertEqual(oversized_entry["analysis_depth"], "metadata_only")
+        self.assertEqual(oversized_entry["sha256"], "")
+        self.assertIn("10-byte hashing and analysis limit", oversized_entry["reason"])
+
+        linked_root = self.root / "linked-inventory"
+        linked_root.mkdir()
+        linked = linked_root / "linked.txt"
+        linked.write_text("linked", encoding="utf-8")
+        original_is_symlink = Path.is_symlink
+
+        def marked_link(path: Path) -> bool:
+            return path.name == linked.name or original_is_symlink(path)
+
+        with patch(
+            "pysfmea.repository_inventory.Path.is_symlink",
+            autospec=True,
+            side_effect=marked_link,
+        ):
+            linked_inventory = build_repository_inventory(
+                linked_root,
+                selected_python_paths=set(),
+                parsed_python_paths=set(),
+                include_tests=False,
+            )
+        self.assertEqual(linked_inventory["entries"][0]["status"], "opaque")
+        self.assertEqual(linked_inventory["entries"][0]["analysis_depth"], "none")
+
+        nonregular_root = self.root / "nonregular-inventory"
+        nonregular_root.mkdir()
+        (nonregular_root / "device.bin").write_bytes(b"not-opened")
+        with patch("pysfmea.repository_inventory.stat.S_ISREG", return_value=False):
+            nonregular = build_repository_inventory(
+                nonregular_root,
+                selected_python_paths=set(),
+                parsed_python_paths=set(),
+                include_tests=False,
+            )
+        self.assertEqual(nonregular["entries"][0]["status"], "opaque")
+        self.assertEqual(nonregular["entries"][0]["analysis_depth"], "none")
+        self.assertEqual(
+            nonregular["entries"][0]["reason"],
+            "Non-regular repository artifact is not opened or hashed.",
+        )
+
+        region_root = self.root / "region-inventory"
+        region_root.mkdir()
+        (region_root / ".a").mkdir()
+        (region_root / ".b").mkdir()
+        with patch("pysfmea.repository_inventory.MAX_REGIONS", 1):
+            region_limited = build_repository_inventory(
+                region_root,
+                selected_python_paths=set(),
+                parsed_python_paths=set(),
+                include_tests=False,
+            )
+        self.assertTrue(region_limited["truncated"])
+        self.assertTrue(
+            any(
+                "1 regions" in region["reason"]
+                for region in region_limited["regions"]
+            )
+        )
+
     def test_exclude_private(self) -> None:
         analysis = scan_repository(self.root, include_private=False)
         self.assertNotIn("_private_helper", {entry["qualname"] for entry in analysis["components"]})
@@ -527,6 +948,123 @@ class ScannerTests(unittest.TestCase):
         self.assertTrue(
             any(warning["type"] == "OutsideRepository" for warning in analysis["warnings"])
         )
+
+    def test_python_source_and_test_evidence_ingestion_is_bounded_and_encoded(self) -> None:
+        (self.root / "encoded.py").write_bytes(
+            b"# -*- coding: latin-1 -*-\ndef encoded():\n    return 'caf\xe9'\n"
+        )
+        (self.root / "oversized.py").write_text(
+            "def oversized():\n    return True\n" + ("#" * 2_000),
+            encoding="utf-8",
+        )
+        (self.root / "invalid_encoding.py").write_bytes(
+            b"# coding: unavailable-codec\ndef invalid_encoding():\n    return True\n"
+        )
+        (self.root / "tests" / "test_oversized.py").write_text(
+            "calculate_total\n" + ("#" * 2_000),
+            encoding="utf-8",
+        )
+
+        with patch("pysfmea.scanner.MAX_PYTHON_SOURCE_BYTES", 1_024):
+            analysis = scan_repository(self.root)
+
+        components = {component["qualname"]: component for component in analysis["components"]}
+        self.assertIn("encoded", components)
+        self.assertNotIn("oversized", components)
+        self.assertNotIn("invalid_encoding", components)
+        self.assertNotIn(
+            "tests/test_oversized.py",
+            components["calculate_total"]["test_references"],
+        )
+        warnings = {
+            (warning["path"], warning["type"]): warning["message"]
+            for warning in analysis["warnings"]
+        }
+        self.assertEqual(
+            warnings[("oversized.py", "PythonSourceError")],
+            "Python source exceeds the 1024-byte analysis limit",
+        )
+        self.assertEqual(
+            warnings[("invalid_encoding.py", "PythonSourceError")],
+            "Python source has an invalid or unsupported encoding",
+        )
+        self.assertEqual(
+            warnings[("tests/test_oversized.py", "TestEvidenceError")],
+            "Python source exceeds the 1024-byte analysis limit",
+        )
+        inventory = {
+            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+        }
+        self.assertEqual(inventory["oversized.py"]["status"], "unresolved")
+        self.assertEqual(inventory["invalid_encoding.py"]["status"], "unresolved")
+
+    def test_python_source_internal_link_is_rejected_consistently(self) -> None:
+        linked = self.root / "linked.py"
+        linked.write_text("def linked_alias():\n    return True\n", encoding="utf-8")
+        original_is_symlink = Path.is_symlink
+
+        def marked_link(path: Path) -> bool:
+            return path.name == linked.name or original_is_symlink(path)
+
+        with patch("pysfmea.scanner.Path.is_symlink", autospec=True, side_effect=marked_link):
+            analysis = scan_repository(self.root)
+
+        self.assertNotIn(
+            "linked_alias", {component["qualname"] for component in analysis["components"]}
+        )
+        self.assertTrue(
+            any(
+                warning["path"] == "linked.py"
+                and warning["type"] == "PythonSourceBoundary"
+                and "regular non-symbolic-link" in warning["message"]
+                for warning in analysis["warnings"]
+            )
+        )
+        inventory = {
+            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+        }
+        self.assertEqual(inventory["linked.py"]["status"], "opaque")
+
+    def test_test_evidence_index_has_aggregate_file_and_byte_limits(self) -> None:
+        extra_test = self.root / "tests" / "test_extra.py"
+        extra_test.write_text(
+            "from app import fetch_configuration\n\n"
+            "def test_fetch():\n    assert fetch_configuration\n",
+            encoding="utf-8",
+        )
+
+        with patch("pysfmea.scanner.MAX_TEST_EVIDENCE_FILES", 1):
+            file_limited = scan_repository(self.root)
+        self.assertTrue(
+            any(
+                warning["type"] == "TestEvidenceLimit"
+                and warning["message"] == "Test evidence indexing reached the 1-file limit"
+                for warning in file_limited["warnings"]
+            )
+        )
+        fetch = next(
+            component
+            for component in file_limited["components"]
+            if component["qualname"] == "fetch_configuration"
+        )
+        self.assertNotIn("tests/test_extra.py", fetch["test_references"])
+
+        with patch("pysfmea.scanner.MAX_TEST_EVIDENCE_BYTES", 10):
+            byte_limited = scan_repository(self.root)
+        self.assertTrue(
+            any(
+                warning["type"] == "TestEvidenceLimit"
+                and warning["message"]
+                == "Test evidence indexing exceeds the 10-byte aggregate limit"
+                for warning in byte_limited["warnings"]
+            )
+        )
+        calculate = next(
+            component
+            for component in byte_limited["components"]
+            if component["qualname"] == "calculate_total"
+        )
+        self.assertEqual(calculate["test_references"], [])
 
     def test_constructor_and_module_initialization_are_analyzed(self) -> None:
         (self.root / "startup.py").write_text(
@@ -863,12 +1401,188 @@ class ScannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown linked hazard"):
             update_item_review(analysis, custom["id"], {"linked_hazards": ["HZ-TYPO"]})
 
+    def test_coverage_ingestion_is_bounded_link_safe_and_path_strict(self) -> None:
+        coverage = self.root / "adversarial-coverage.json"
+        coverage_payload = {
+            "files": {
+                "../app.py": {
+                    "executed_lines": [7, 8, 9],
+                    "missing_lines": [],
+                },
+                "app.py": {
+                    "executed_lines": [7, "bad", True],
+                    "missing_lines": "not-a-list",
+                    "executed_branches": [[7, 8], ["bad", 9]],
+                    "missing_branches": [],
+                },
+                "./app.py": {
+                    "executed_lines": [7, 8],
+                    "missing_lines": [9],
+                },
+                "other.py": {
+                    "executed_lines": [],
+                    "missing_lines": [],
+                    "executed_branches": [[7, -1]],
+                    "missing_branches": [],
+                },
+            }
+        }
+        coverage.write_text(json.dumps(coverage_payload), encoding="utf-8")
+        indexed, warnings = _load_coverage(coverage, self.root.resolve())
+        self.assertEqual(set(indexed), {"app.py", "other.py"})
+        self.assertEqual(indexed["app.py"]["executed_lines"], [7])
+        self.assertEqual(indexed["app.py"]["missing_lines"], [])
+        self.assertEqual(indexed["other.py"]["executed_branches"], [[7, -1]])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("unsafe=1", warnings[0]["message"])
+        self.assertIn("malformed=1", warnings[0]["message"])
+        self.assertIn("duplicates=1", warnings[0]["message"])
+
+        with patch("pysfmea.scanner.MAX_COVERAGE_JSON_BYTES", 10):
+            bounded, bounded_warnings = _load_coverage(coverage, self.root.resolve())
+        self.assertEqual(bounded, {})
+        self.assertIn("10-byte import limit", bounded_warnings[0]["message"])
+
+        coverage.write_bytes(b"\xff\xfe")
+        invalid, invalid_warnings = _load_coverage(coverage, self.root.resolve())
+        self.assertEqual(invalid, {})
+        self.assertEqual(
+            invalid_warnings[0]["message"],
+            "coverage JSON is not valid bounded UTF-8 JSON",
+        )
+        coverage.write_text("[]", encoding="utf-8")
+        scalar, scalar_warnings = _load_coverage(coverage, self.root.resolve())
+        self.assertEqual(scalar, {})
+        self.assertEqual(
+            scalar_warnings[0]["message"],
+            "coverage JSON root must be an object",
+        )
+        coverage.write_text("{}", encoding="utf-8")
+        missing, missing_warnings = _load_coverage(coverage, self.root.resolve())
+        self.assertEqual(missing, {})
+        self.assertEqual(
+            missing_warnings[0]["message"],
+            "coverage JSON has no files object",
+        )
+        coverage.write_text(json.dumps(coverage_payload), encoding="utf-8")
+        with patch("pysfmea.scanner.Path.is_symlink", return_value=True):
+            linked, linked_warnings = _load_coverage(coverage, self.root.resolve())
+        self.assertEqual(linked, {})
+        self.assertIn("regular non-symbolic-link", linked_warnings[0]["message"])
+
+        analysis = scan_repository(
+            self.root,
+            config={"scan": {"coverage_json": str(coverage)}},
+        )
+        self.assertTrue(
+            any(
+                value.get("type") == "CoverageError"
+                and "unsafe=1" in value.get("message", "")
+                for value in analysis["warnings"]
+            )
+        )
+
     def test_configuration_template_round_trip(self) -> None:
         path = write_config_template(self.root / "sfmea.toml")
         config, resolved = load_config(path)
         self.assertEqual(resolved, path.resolve())
         self.assertEqual(config["risk"]["method"], "severity_only")
         self.assertEqual(config["hazards"][0]["id"], "HZ-001")
+
+    def test_configuration_ingestion_is_bounded_link_safe_and_identity_preserving(
+        self,
+    ) -> None:
+        config_path = self.root / "bounded.toml"
+        coverage_link = self.root / "coverage-link.json"
+        guidance_link = self.root / "guidance-link.json"
+        coverage_link.write_text('{"files": {}}', encoding="utf-8")
+        guidance_link.write_text("{}", encoding="utf-8")
+        config_path.write_text(
+            '[project]\nname = "Bounded configuration"\n'
+            '[scan]\ncoverage_json = "coverage-link.json"\n'
+            '[analysis]\nguidance_packs = ["guidance-link.json"]\n',
+            encoding="utf-8",
+        )
+        original_resolve = Path.resolve
+        redirected = self.root / "resolved-target.json"
+
+        def redirect_inputs(path: Path, strict: bool = False) -> Path:
+            if path.name in {coverage_link.name, guidance_link.name}:
+                return redirected
+            return original_resolve(path, strict=strict)
+
+        with patch(
+            "pysfmea.config.Path.resolve",
+            autospec=True,
+            side_effect=redirect_inputs,
+        ):
+            config, resolved = load_config(config_path)
+        self.assertEqual(resolved, config_path.resolve())
+        self.assertEqual(
+            config["scan"]["coverage_json"],
+            os.path.abspath(coverage_link),
+        )
+        self.assertEqual(
+            config["analysis"]["guidance_packs"],
+            [os.path.abspath(guidance_link)],
+        )
+        self.assertNotEqual(config["scan"]["coverage_json"], str(redirected))
+        self.assertNotEqual(config["analysis"]["guidance_packs"][0], str(redirected))
+
+        with patch("pysfmea.config.MAX_CONFIG_BYTES", 10):
+            with self.assertRaisesRegex(ValueError, "10-byte import limit"):
+                load_config(config_path)
+
+        with patch("pysfmea.config.os.path.samestat", return_value=False):
+            with self.assertRaisesRegex(ValueError, "changed during safe open"):
+                load_config(config_path)
+
+        config_path.write_bytes(b"\xff\xfe")
+        with self.assertRaisesRegex(ValueError, "valid bounded UTF-8 TOML"):
+            load_config(config_path)
+        config_path.write_text("[project\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "valid bounded UTF-8 TOML"):
+            load_config(config_path)
+
+        config_directory = self.root / "config-directory"
+        config_directory.mkdir()
+        with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
+            load_config(config_directory)
+        with self.assertRaisesRegex(ValueError, "regular file path"):
+            write_config_template(config_directory, overwrite=True)
+
+        atomic_destination = self.root / "atomic.toml"
+        atomic_destination.write_text("prior-content\n", encoding="utf-8")
+        with patch(
+            "pysfmea.config.os.replace",
+            side_effect=OSError("injected publication failure"),
+        ):
+            with self.assertRaisesRegex(ValueError, "could not be published safely"):
+                write_config_template(atomic_destination, overwrite=True)
+        self.assertEqual(
+            atomic_destination.read_text(encoding="utf-8"),
+            "prior-content\n",
+        )
+        self.assertEqual(
+            list(self.root.glob(f".{atomic_destination.name}.*.tmp")),
+            [],
+        )
+
+        config_path.write_text('[project]\nname = "Linked"\n', encoding="utf-8")
+        original_is_symlink = Path.is_symlink
+
+        def marked_link(path: Path) -> bool:
+            return path.name == config_path.name or original_is_symlink(path)
+
+        with patch(
+            "pysfmea.config.Path.is_symlink",
+            autospec=True,
+            side_effect=marked_link,
+        ):
+            with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
+                load_config(config_path)
+            with self.assertRaisesRegex(ValueError, "must not be a symbolic link"):
+                write_config_template(config_path, overwrite=True)
 
     def test_reserved_custom_rule_id_is_rejected(self) -> None:
         path = self.root / "invalid.toml"

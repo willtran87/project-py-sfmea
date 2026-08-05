@@ -6,6 +6,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import stat
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
@@ -14,7 +15,9 @@ from typing import Any
 from .guidance import DEFAULT_EXCLUDES
 
 MAX_FILES = 100_000
+MAX_REGIONS = 100_000
 MAX_HASH_BYTES = 20_000_000
+MAX_TOTAL_HASH_BYTES = 500_000_000
 
 
 def legacy_repository_inventory(reason: str) -> dict[str, Any]:
@@ -120,12 +123,19 @@ def build_repository_inventory(
 
     entries: list[dict[str, Any]] = []
     regions: list[dict[str, Any]] = []
-    truncated = False
+    walk_truncated = False
+    hash_truncated = False
+    hash_consumed = 0
+    relative_dir = "."
     for directory, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
         base = Path(directory)
         relative_dir = base.relative_to(root).as_posix()
         kept_dirs: list[str] = []
         for dirname in sorted(dirnames):
+            if len(regions) >= MAX_REGIONS:
+                walk_truncated = True
+                kept_dirs = []
+                break
             candidate = base / dirname
             rel = candidate.relative_to(root).as_posix()
             reason = ""
@@ -147,10 +157,12 @@ def build_repository_inventory(
                 kept_dirs.append(dirname)
                 continue
             regions.append({"path": rel + "/", "status": status, "reason": reason})
-        dirnames[:] = kept_dirs
+        dirnames[:] = [] if walk_truncated else kept_dirs
+        if walk_truncated:
+            break
         for filename in sorted(filenames):
             if len(entries) >= MAX_FILES:
-                truncated = True
+                walk_truncated = True
                 dirnames[:] = []
                 break
             path = base / filename
@@ -175,29 +187,93 @@ def build_repository_inventory(
                 entries.append(record)
                 continue
             try:
-                size = path.stat().st_size
-                record["size"] = size
-                if size <= MAX_HASH_BYTES:
-                    record["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
-                else:
+                metadata = path.stat()
+            except OSError:
+                record.update(
+                    status="unresolved",
+                    analysis_depth="none",
+                    reason="Artifact metadata or content could not be read safely.",
+                )
+                entries.append(record)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                record.update(
+                    status="opaque",
+                    analysis_depth="none",
+                    size=metadata.st_size,
+                    reason="Non-regular repository artifact is not opened or hashed.",
+                )
+                entries.append(record)
+                continue
+            try:
+                if hash_truncated:
+                    record["size"] = path.stat().st_size
                     record.update(
-                        status="opaque",
                         analysis_depth="metadata_only",
-                        reason=f"Artifact exceeds the {MAX_HASH_BYTES // 1_000_000} MB hashing and analysis limit.",
+                        reason="Artifact digest omitted after the aggregate hashing limit.",
                     )
-            except OSError as exc:
-                record.update(status="unresolved", analysis_depth="none", reason=str(exc))
+                else:
+                    remaining = MAX_TOTAL_HASH_BYTES - hash_consumed
+                    if remaining <= 0:
+                        hash_truncated = True
+                        record["size"] = path.stat().st_size
+                        record.update(
+                            analysis_depth="metadata_only",
+                            reason="Artifact digest omitted after the aggregate hashing limit.",
+                        )
+                    else:
+                        read_limit = min(MAX_HASH_BYTES + 1, remaining + 1)
+                        with path.open("rb") as source_file:
+                            size = os.fstat(source_file.fileno()).st_size
+                            raw = source_file.read(read_limit)
+                        record["size"] = size
+                        hash_consumed += len(raw)
+                        if len(raw) > remaining:
+                            hash_truncated = True
+                            record.update(
+                                analysis_depth="metadata_only",
+                                reason=(
+                                    "Artifact digest omitted because repository hashing reached "
+                                    "the aggregate safety limit."
+                                ),
+                            )
+                        elif len(raw) > MAX_HASH_BYTES:
+                            record.update(
+                                status="opaque",
+                                analysis_depth="metadata_only",
+                                reason=(
+                                    "Artifact exceeds the "
+                                    f"{MAX_HASH_BYTES}-byte hashing and analysis limit."
+                                ),
+                            )
+                        else:
+                            record["sha256"] = hashlib.sha256(raw).hexdigest()
+            except OSError:
+                record.update(
+                    status="unresolved",
+                    analysis_depth="none",
+                    reason="Artifact metadata or content could not be read safely.",
+                )
                 entries.append(record)
                 continue
             if _matches(rel, exclude_patterns):
                 record.update(
                     status="excluded_region",
-                    analysis_depth="metadata_and_digest",
-                    reason="Path matches a configured scan exclusion.",
+                    analysis_depth=(
+                        "metadata_and_digest" if record["sha256"] else "metadata_only"
+                    ),
+                    reason=(
+                        "Path matches a configured scan exclusion."
+                        if record["sha256"]
+                        else "Path matches a configured scan exclusion; digest unavailable under inventory safety limits."
+                    ),
                 )
             elif kind == "python_test" and not include_tests:
                 record.update(
                     status="excluded_region",
+                    analysis_depth=(
+                        "metadata_and_digest" if record["sha256"] else "metadata_only"
+                    ),
                     reason="Test source was indexed but excluded from component analysis by configuration.",
                 )
             elif kind in {"python_source", "python_test"} and rel in parsed_python_paths:
@@ -215,23 +291,46 @@ def build_repository_inventory(
                     adapter_ids=["python.repository_discoverer", "python.ast_parser"],
                 )
             elif kind in {"binary_or_generated", "unclassified"}:
+                boundary_reason = record["reason"]
                 record.update(
                     status="opaque",
-                    analysis_depth="metadata_and_digest",
-                    reason="No semantic analyzer is registered for this artifact type.",
+                    analysis_depth=(
+                        "metadata_and_digest" if record["sha256"] else "metadata_only"
+                    ),
+                    reason=(
+                        "No semantic analyzer is registered for this artifact type."
+                        if record["sha256"]
+                        else boundary_reason
+                    ),
                 )
             entries.append(record)
-        if truncated:
+        if walk_truncated:
             break
 
-    if truncated:
+    if walk_truncated:
         regions.append(
             {
                 "path": relative_dir + "/" if relative_dir != "." else "./",
                 "status": "unresolved",
-                "reason": f"Inventory stopped at the safety limit of {MAX_FILES} files.",
+                "reason": (
+                    "Inventory traversal stopped at its safety limit of "
+                    f"{MAX_FILES} files or {MAX_REGIONS} regions."
+                ),
             }
         )
+    if hash_truncated:
+        regions.append(
+            {
+                "path": "./",
+                "status": "unresolved",
+                "reason": (
+                    "Repository artifact hashing stopped at the "
+                    f"{MAX_TOTAL_HASH_BYTES}-byte aggregate safety limit; metadata and semantic "
+                    "accounting continued where safe."
+                ),
+            }
+        )
+    truncated = walk_truncated or hash_truncated
     status_counts = Counter(value["status"] for value in entries)
     status_counts.update(value["status"] for value in regions)
     kind_counts = Counter(value["kind"] for value in entries)

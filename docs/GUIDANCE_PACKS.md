@@ -13,9 +13,10 @@ guidance_profiles = ["core_sfmea"]
 guidance_packs = ["standards/company-software-assurance.json"]
 ```
 
-Paths are resolved relative to `sfmea.toml`. Each pack is size bounded, parsed as
-data, schema checked, SHA-256 hashed, and added as an automatically active `org.*`
-profile. IDs may not collide with built-in or other pack records. Pack provenance,
+Paths are resolved relative to `sfmea.toml`. Each pack must be a regular, non-symbolic-link UTF-8
+JSON file. PySFMEA reads at most five megabytes from the open stream, parses and schema-checks that
+bounded content, hashes the exact consumed bytes, and adds the pack as an automatically active
+`org.*` profile. IDs may not collide with built-in or other pack records. Pack provenance,
 source-record digests, catalog digest, profile selection digest, and per-finding
 mapping IDs are preserved in JSON, CSV, HTML, run-manifest, and review-package output.
 
@@ -78,6 +79,6 @@ relationships and strengths are closed vocabularies and are validated. A pack ca
 set `compliance_claim` to true: applicability, tailoring, conformance, waiver, and
 acceptance remain governed human decisions outside scanner inference.
 
-The pack SHA-256 proves which JSON bytes were used. If the organization is permitted
+The pack SHA-256 proves which bounded JSON bytes were used. If the organization is permitted
 to retain a document digest, it may add an `artifact` object to a source record; the
 pack should still avoid excerpts that violate its license or quote policy.

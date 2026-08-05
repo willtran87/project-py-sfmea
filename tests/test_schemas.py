@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 
@@ -27,9 +28,21 @@ from pysfmea.diagrams import (
 )
 from pysfmea.html_report import HTML_REPORT_VERIFICATION_FORMAT
 from pysfmea.integrity import canonical_json_sha256
+from pysfmea.publication import (
+    MAX_PUBLICATION_FAILURE_CATALOG_BYTES,
+    PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+    PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
+    PUBLICATION_FAILURE_CATALOG_FORMAT,
+    PUBLICATION_FAILURE_CATALOG_SHA256,
+    PUBLICATION_FAILURE_CATALOG_VERIFICATION_FORMAT,
+    PUBLICATION_FAILURES,
+    publication_failure_catalog,
+    verify_publication_failure_catalog,
+)
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import (
     JSON_SCHEMA_DRAFT,
+    MAX_SCHEMA_BUNDLE_FILE_BYTES,
     REVIEW_PACKAGE_FORMAT,
     REVIEW_PACKAGE_VERIFICATION_FORMAT,
     SCHEMA_BUNDLE_VERIFICATION_FORMAT,
@@ -40,6 +53,7 @@ from pysfmea.schemas import (
     schema_catalog,
     schema_document,
     verify_schema_bundle_documents,
+    verify_schema_bundle_path,
 )
 from pysfmea.signing import SIGNATURE_FORMAT, STATEMENT_FORMAT
 from pysfmea.workflow import WORKFLOW_STATUS_FORMAT, workflow_status
@@ -68,6 +82,8 @@ class SchemaCatalogTests(unittest.TestCase):
                 "diagram-bundle",
                 "diagram-bundle-verification",
                 "html-report-verification",
+                "publication-failure-catalog",
+                "publication-failure-catalog-verification",
                 "review-package-manifest",
                 "review-package-verification",
                 "schema-bundle-verification",
@@ -83,6 +99,308 @@ class SchemaCatalogTests(unittest.TestCase):
             self.assertEqual(entry["filename"], SCHEMA_FILENAMES[entry["name"]])
             self.assertEqual(canonical_json_sha256(document), entry["sha256"])
         Draft202012Validator(schema_document("schema-catalog")).validate(first)
+
+    def test_publication_failure_catalog_is_discoverable_and_schema_backed(self) -> None:
+        catalog = publication_failure_catalog()
+        self.assertEqual(catalog["format"], PUBLICATION_FAILURE_CATALOG_FORMAT)
+        self.assertEqual(
+            catalog["algorithm"], PUBLICATION_FAILURE_CATALOG_ALGORITHM
+        )
+        self.assertEqual(
+            catalog["canonicalization"],
+            PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
+        )
+        self.assertEqual(
+            catalog["content_sha256"], PUBLICATION_FAILURE_CATALOG_SHA256
+        )
+        catalog_content = dict(catalog)
+        catalog_content.pop("content_sha256")
+        self.assertEqual(
+            canonical_json_sha256(catalog_content),
+            catalog["content_sha256"],
+        )
+        self.assertEqual(len(catalog["failures"]), len(PUBLICATION_FAILURES))
+        Draft202012Validator(
+            schema_document("publication-failure-catalog")
+        ).validate(catalog)
+        catalog_validator = Draft202012Validator(
+            schema_document("publication-failure-catalog")
+        )
+        changed_notice = dict(catalog)
+        changed_notice["notice"] = f"{catalog['notice']} altered"
+        self.assertTrue(list(catalog_validator.iter_errors(changed_notice)))
+        changed_digest = dict(catalog)
+        changed_digest["content_sha256"] = "0" * 64
+        self.assertTrue(list(catalog_validator.iter_errors(changed_digest)))
+        changed_algorithm = dict(catalog)
+        changed_algorithm["algorithm"] = "sha1"
+        self.assertTrue(list(catalog_validator.iter_errors(changed_algorithm)))
+        changed_canonicalization = dict(catalog)
+        changed_canonicalization["canonicalization"] = "unspecified"
+        self.assertTrue(
+            list(catalog_validator.iter_errors(changed_canonicalization))
+        )
+        self.assertEqual(
+            schema_document("review-package-verification")[
+                "x-pysfmea-publication-failure-catalog"
+            ],
+            catalog,
+        )
+
+        with contextlib.redirect_stdout(io.StringIO()) as human_output:
+            self.assertEqual(main(["publication-catalog"]), 0)
+        human = human_output.getvalue()
+        self.assertIn("analysis_missing", human)
+        self.assertIn("provide_analysis", human)
+        self.assertIn(PUBLICATION_FAILURE_CATALOG_SHA256, human)
+
+        with contextlib.redirect_stdout(io.StringIO()) as json_output:
+            self.assertEqual(main(["publication-catalog", "--json"]), 0)
+        machine = json.loads(json_output.getvalue())
+        self.assertEqual(machine, catalog)
+        Draft202012Validator(
+            schema_document("publication-failure-catalog")
+        ).validate(machine)
+
+        exported_path = self.root / "catalogs" / "publication-catalog.json"
+        with contextlib.redirect_stdout(io.StringIO()) as export_output:
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--output",
+                        str(exported_path),
+                    ]
+                ),
+                0,
+            )
+        self.assertIn(str(exported_path), export_output.getvalue())
+        self.assertEqual(
+            json.loads(exported_path.read_text(encoding="utf-8")), catalog
+        )
+        receipt_path = self.root / "catalogs" / "receipt-catalog.json"
+        with contextlib.redirect_stdout(io.StringIO()) as receipt_output:
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--output",
+                        str(receipt_path),
+                        "--json",
+                    ]
+                ),
+                0,
+            )
+        export_receipt = json.loads(receipt_output.getvalue())
+        self.assertTrue(export_receipt["valid"])
+        self.assertEqual(Path(export_receipt["source"]), receipt_path)
+        Draft202012Validator(
+            schema_document("publication-failure-catalog-verification")
+        ).validate(export_receipt)
+        with contextlib.redirect_stderr(io.StringIO()) as exists_error:
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--output",
+                        str(exported_path),
+                    ]
+                ),
+                2,
+            )
+        self.assertIn("already exists", exists_error.getvalue())
+
+        drifted = dict(catalog)
+        drifted["notice"] = "Recognized catalog requiring refresh."
+        exported_path.write_text(
+            json.dumps(drifted, ensure_ascii=False), encoding="utf-8"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--output",
+                        str(exported_path),
+                        "--force",
+                    ]
+                ),
+                0,
+            )
+        self.assertEqual(
+            json.loads(exported_path.read_text(encoding="utf-8")), catalog
+        )
+
+        original = exported_path.read_bytes()
+        with patch("pysfmea.publication.os.replace", side_effect=OSError("blocked")):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    main(
+                        [
+                            "publication-catalog",
+                            "--output",
+                            str(exported_path),
+                            "--force",
+                        ]
+                    ),
+                    2,
+                )
+        self.assertEqual(exported_path.read_bytes(), original)
+        self.assertFalse(
+            any(
+                path.name.startswith(f".{exported_path.name}.")
+                and path.name.endswith(".tmp")
+                for path in exported_path.parent.iterdir()
+            )
+        )
+
+        unrelated_path = self.root / "unrelated.json"
+        unrelated = '{"format":"unrelated","keep":true}'
+        unrelated_path.write_text(unrelated, encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()) as unrelated_error:
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--output",
+                        str(unrelated_path),
+                        "--force",
+                    ]
+                ),
+                2,
+            )
+        self.assertIn("not a recognized catalog", unrelated_error.getvalue())
+        self.assertEqual(unrelated_path.read_text(encoding="utf-8"), unrelated)
+        spoofed_path = self.root / "spoofed-catalog.json"
+        spoofed = json.dumps(
+            {"format": PUBLICATION_FAILURE_CATALOG_FORMAT, "keep": True}
+        )
+        spoofed_path.write_text(spoofed, encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()) as spoofed_error:
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--output",
+                        str(spoofed_path),
+                        "--force",
+                    ]
+                ),
+                2,
+            )
+        self.assertIn("not a recognized catalog envelope", spoofed_error.getvalue())
+        self.assertEqual(spoofed_path.read_text(encoding="utf-8"), spoofed)
+        for invalid_args in (
+            ["publication-catalog", "--force"],
+            [
+                "publication-catalog",
+                "--verify",
+                str(exported_path),
+                "--output",
+                str(self.root / "conflict.json"),
+            ],
+        ):
+            with self.subTest(invalid_args=invalid_args):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(main(invalid_args), 2)
+
+        verification_schema = schema_document(
+            "publication-failure-catalog-verification"
+        )
+        verdict = verify_publication_failure_catalog(catalog)
+        self.assertEqual(
+            verdict["format"], PUBLICATION_FAILURE_CATALOG_VERIFICATION_FORMAT
+        )
+        self.assertTrue(verdict["valid"])
+        self.assertTrue(all(verdict["checks"].values()))
+        Draft202012Validator(verification_schema).validate(verdict)
+        malformed_phases = json.loads(json.dumps(catalog))
+        malformed_phases["failures"][0]["phases"] = [{}]
+        malformed_verdict = verify_publication_failure_catalog(malformed_phases)
+        self.assertFalse(malformed_verdict["valid"])
+        self.assertFalse(malformed_verdict["checks"]["structure"])
+        Draft202012Validator(verification_schema).validate(malformed_verdict)
+
+        catalog_path = self.root / "publication-catalog.json"
+        catalog_path.write_text(
+            json.dumps(catalog, ensure_ascii=False), encoding="utf-8"
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as verify_output:
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--verify",
+                        str(catalog_path),
+                        "--json",
+                    ]
+                ),
+                0,
+            )
+        file_verdict = json.loads(verify_output.getvalue())
+        self.assertTrue(file_verdict["valid"])
+        Draft202012Validator(verification_schema).validate(file_verdict)
+
+        changed_catalog = dict(catalog)
+        changed_catalog["notice"] = "Altered catalog notice."
+        catalog_path.write_text(
+            json.dumps(changed_catalog, ensure_ascii=False), encoding="utf-8"
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as rejected_output:
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--verify",
+                        str(catalog_path),
+                        "--json",
+                    ]
+                ),
+                1,
+            )
+        rejected = json.loads(rejected_output.getvalue())
+        self.assertFalse(rejected["valid"])
+        self.assertFalse(rejected["checks"]["content_integrity"])
+        self.assertFalse(rejected["checks"]["canonical_catalog"])
+        Draft202012Validator(verification_schema).validate(rejected)
+
+        with contextlib.redirect_stdout(io.StringIO()) as missing_output:
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--verify",
+                        str(self.root / "missing-catalog.json"),
+                        "--json",
+                    ]
+                ),
+                1,
+            )
+        missing = json.loads(missing_output.getvalue())
+        self.assertFalse(missing["valid"])
+        self.assertEqual(missing["errors"][0]["code"], "publication_catalog.input")
+        Draft202012Validator(verification_schema).validate(missing)
+
+        oversized_path = self.root / "oversized-catalog.json"
+        oversized_path.write_bytes(
+            b" " * (MAX_PUBLICATION_FAILURE_CATALOG_BYTES + 1)
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as oversized_output:
+            self.assertEqual(
+                main(
+                    [
+                        "publication-catalog",
+                        "--verify",
+                        str(oversized_path),
+                        "--json",
+                    ]
+                ),
+                1,
+            )
+        oversized = json.loads(oversized_output.getvalue())
+        self.assertFalse(oversized["valid"])
+        self.assertIn("bounded verification size", oversized["errors"][0]["message"])
+        Draft202012Validator(verification_schema).validate(oversized)
 
     def test_offline_bundle_verification_detects_catalog_and_schema_drift(self) -> None:
         documents = schema_bundle_documents()
@@ -176,6 +494,14 @@ class SchemaCatalogTests(unittest.TestCase):
             "document_integrity",
             html_verification["properties"]["checks"]["required"],
         )
+        for verification_schema in (
+            html_verification,
+            diagram_verification,
+            schema_document("assurance-work-queue-verification"),
+        ):
+            verifier = verification_schema["properties"]["verifier"]
+            self.assertEqual(verifier["properties"]["name"]["const"], "PySFMEA")
+            self.assertEqual(set(verifier["required"]), {"name", "version"})
         package_manifest = schema_document("review-package-manifest")
         self.assertEqual(
             package_manifest["properties"]["format"]["const"],
@@ -185,6 +511,39 @@ class SchemaCatalogTests(unittest.TestCase):
         self.assertEqual(
             package_verification["properties"]["verification_format"]["const"],
             REVIEW_PACKAGE_VERIFICATION_FORMAT,
+        )
+        publication = package_verification["properties"]["publication"]["properties"]
+        self.assertEqual(
+            publication["catalog_format"]["const"],
+            PUBLICATION_FAILURE_CATALOG_FORMAT,
+        )
+        self.assertEqual(
+            publication["catalog_algorithm"]["const"],
+            PUBLICATION_FAILURE_CATALOG_ALGORITHM,
+        )
+        self.assertEqual(
+            publication["catalog_canonicalization"]["const"],
+            PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
+        )
+        self.assertEqual(
+            publication["catalog_sha256"]["const"],
+            PUBLICATION_FAILURE_CATALOG_SHA256,
+        )
+        self.assertEqual(
+            set(publication["failure_code"]["enum"]),
+            set(PUBLICATION_FAILURES),
+        )
+        self.assertEqual(
+            set(publication["failure_rule_id"]["enum"]),
+            {failure.rule_id for failure in PUBLICATION_FAILURES.values()},
+        )
+        self.assertEqual(
+            set(publication["next_action"]["enum"]),
+            {failure.next_action for failure in PUBLICATION_FAILURES.values()},
+        )
+        self.assertEqual(
+            set(publication["retry_policy"]["enum"]),
+            {failure.retry_policy for failure in PUBLICATION_FAILURES.values()},
         )
         workflow = schema_document("workflow-status")
         self.assertEqual(
@@ -318,6 +677,67 @@ class SchemaCatalogTests(unittest.TestCase):
             )
         self.assertEqual(result, 1)
         self.assertFalse(json.loads(missing_output.getvalue())["valid"])
+
+    def test_schema_bundle_file_reads_are_bounded_and_link_safe(self) -> None:
+        self.assertEqual(MAX_SCHEMA_BUNDLE_FILE_BYTES, 2_000_000)
+        bundle = self.root / "bounded-contracts"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["schema", "--bundle", str(bundle)]), 0)
+        verdict_schema = Draft202012Validator(
+            schema_document("schema-bundle-verification")
+        )
+
+        with patch("pysfmea.schemas.MAX_SCHEMA_BUNDLE_FILE_BYTES", 10):
+            oversized = verify_schema_bundle_path(bundle)
+        self.assertFalse(oversized["valid"])
+        self.assertTrue(
+            any(
+                error["code"] == "schema.file_invalid"
+                and "10-byte limit" in error["message"]
+                for error in oversized["errors"]
+            )
+        )
+        verdict_schema.validate(oversized)
+
+        target = bundle / SCHEMA_FILENAMES["diagram"]
+        original = target.read_bytes()
+        target.write_bytes(b"\xff\xfe")
+        invalid_utf8 = verify_schema_bundle_path(bundle)
+        self.assertFalse(invalid_utf8["valid"])
+        self.assertIn(
+            "schema.file_invalid",
+            {error["code"] for error in invalid_utf8["errors"]},
+        )
+        verdict_schema.validate(invalid_utf8)
+        target.write_bytes(original)
+
+        with patch(
+            "pysfmea.schemas.Path.is_symlink",
+            autospec=True,
+            side_effect=lambda candidate: candidate.name == target.name,
+        ):
+            linked = verify_schema_bundle_path(bundle)
+        self.assertFalse(linked["valid"])
+        self.assertIn(
+            "schema.file_type", {error["code"] for error in linked["errors"]}
+        )
+        verdict_schema.validate(linked)
+
+        linked_target = bundle / SCHEMA_FILENAMES["workflow-status"]
+        linked_original = linked_target.read_bytes()
+        linked_target.unlink()
+        try:
+            linked_target.symlink_to(bundle / SCHEMA_CATALOG_FILENAME)
+        except OSError:
+            linked_target.write_bytes(linked_original)
+        else:
+            linked_verdict = verify_schema_bundle_path(bundle)
+            self.assertFalse(linked_verdict["valid"])
+            self.assertIn(
+                "schema.file_type",
+                {error["code"] for error in linked_verdict["errors"]},
+            )
+            verdict_schema.validate(linked_verdict)
 
 
 if __name__ == "__main__":

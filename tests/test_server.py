@@ -70,6 +70,9 @@ class ServerTests(unittest.TestCase):
             path = root / "analysis.json"
             save_analysis(path, scan_repository(root))
             state = _ReviewState(path)
+            with mock.patch("pysfmea.store.MAX_ANALYSIS_BYTES", 10):
+                with self.assertRaisesRegex(ValueError, "10-byte hash limit"):
+                    state._fingerprint()
             with mock.patch.object(
                 state, "_fingerprint", wraps=state._fingerprint
             ) as fingerprint:

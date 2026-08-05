@@ -5,6 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import uuid
+from os import replace as atomic_replace
+from os.path import lexists
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +69,11 @@ from .interchange import (
     sarif_document,
 )
 from .pdf_report import export_pdf_report
+from .publication import (
+    export_publication_failure_catalog,
+    publication_failure_catalog,
+    verify_publication_failure_catalog_file,
+)
 from .readiness import repository_readiness
 from .report import (
     export_audit,
@@ -75,6 +83,7 @@ from .report import (
     export_markdown,
     export_review_archive,
     export_review_package,
+    package_publication_error_result,
     verify_review_package,
 )
 from .runtime import import_runtime_trace
@@ -149,6 +158,7 @@ def _verification_error_result(
         display_path = str(source)
     return {
         "format": format_name,
+        "verifier": {"name": "PySFMEA", "version": __version__},
         "path": display_path,
         "valid": False,
         "status": "invalid",
@@ -160,6 +170,26 @@ def _verification_error_result(
         "errors": [{"code": code, "message": str(error)}],
         "notice": VERIFICATION_NOTICE,
     }
+
+
+def _html_report_publication_receipt(
+    verification: dict[str, Any],
+    *,
+    status: str,
+    phase: str,
+    destination_existed: bool,
+) -> dict[str, Any]:
+    """Attach transactional publication state to a report-generation verdict."""
+
+    verification["publication"] = {
+        "status": status,
+        "phase": phase,
+        "destination_existed": destination_existed,
+        "prior_destination_preserved": bool(
+            destination_existed and status == "not_published"
+        ),
+    }
+    return verification
 
 
 def _add_propagation_arguments(parser: argparse.ArgumentParser) -> None:
@@ -261,6 +291,28 @@ def _parser() -> argparse.ArgumentParser:
     )
     schema_command.set_defaults(handler=_schema)
 
+    publication_catalog = subparsers.add_parser(
+        "publication-catalog",
+        help="show package-publication failure codes and remediation actions",
+    )
+    publication_catalog.add_argument(
+        "--json", action="store_true", help="emit the schema-backed catalog as JSON"
+    )
+    publication_catalog.add_argument(
+        "--verify",
+        metavar="FILE",
+        help="verify a bounded catalog JSON file against the shipped taxonomy",
+    )
+    publication_catalog.add_argument(
+        "-o", "--output", help="atomically export deterministic catalog JSON"
+    )
+    publication_catalog.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing recognized catalog; valid only with --output",
+    )
+    publication_catalog.set_defaults(handler=_publication_catalog)
+
     doctor = subparsers.add_parser(
         "doctor", help="check repository and SFMEA configuration readiness"
     )
@@ -357,6 +409,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     report.add_argument("analysis", help="analysis JSON path")
     report.add_argument("-o", "--output", help="destination HTML path")
+    report.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the schema-backed verification receipt after generation",
+    )
     report.add_argument("--title", help="custom report title")
     report.add_argument(
         "--notes", help="optional UTF-8 Markdown engineering-notes file to include"
@@ -965,6 +1022,57 @@ def _schema(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publication_catalog(args: argparse.Namespace) -> int:
+    if args.verify:
+        if args.output or args.force:
+            raise ValueError("--verify cannot be combined with --output or --force")
+        result = verify_publication_failure_catalog_file(args.verify)
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            status = "valid" if result["valid"] else "invalid"
+            print(f"Publication failure catalog: {status} ({result['source']})")
+            print(
+                f"Failures: {result['failure_count']}; "
+                f"declared digest: {result['declared_content_sha256'] or 'unavailable'}"
+            )
+            for error in result["errors"]:
+                print(f"[ERROR] {error['code']}: {error['message']}")
+            print(result["notice"])
+        return 0 if result["valid"] else 1
+    if args.force and not args.output:
+        raise ValueError("--force is valid only with --output")
+    if args.output:
+        result = export_publication_failure_catalog(
+            args.output, overwrite=args.force
+        )
+        if args.json:
+            verification = verify_publication_failure_catalog_file(result)
+            print(json.dumps(verification, indent=2, ensure_ascii=False))
+        else:
+            print(f"Exported publication failure catalog: {result}")
+        return 0
+    catalog = publication_failure_catalog()
+    if args.json:
+        print(json.dumps(catalog, indent=2, ensure_ascii=False))
+        return 0
+    print(
+        "Package publication failures and remediation actions "
+        f"({catalog['format']}, {catalog['algorithm']}, "
+        f"{catalog['canonicalization']}, digest: {catalog['content_sha256']}):"
+    )
+    for failure in catalog["failures"]:
+        phases = ", ".join(failure["phases"])
+        print(
+            f"  {failure['code']} ({phases}) -> {failure['next_action']} "
+            f"[retry: {failure['retry_policy']}]\n"
+            f"    {failure['message']}\n"
+            f"    rule: {failure['rule_id']}"
+        )
+    print(catalog["notice"])
+    return 0
+
+
 def _doctor(args: argparse.Namespace) -> int:
     result = repository_readiness(args.repository, config_path=args.config)
     if args.json:
@@ -1189,12 +1297,171 @@ def _export(args: argparse.Namespace) -> int:
 
 def _html_report(args: argparse.Namespace) -> int:
     source = Path(args.analysis).expanduser().resolve()
-    analysis = load_analysis(source)
-    output = (
+    output_candidate = (
         Path(args.output)
         if args.output
         else source.with_name(source.stem + "-report.html")
     )
+    output = output_candidate.expanduser().absolute()
+    destination_existed = lexists(output)
+    destination_error = ""
+    if output.is_symlink():
+        destination_error = "HTML report destination must not be a symbolic link"
+    elif destination_existed and not output.is_file():
+        destination_error = (
+            "HTML report destination must be absent or an existing regular file"
+        )
+    elif output.resolve() == source:
+        destination_error = "HTML report destination must differ from the analysis file"
+    if destination_error:
+        error = ValueError(destination_error)
+        if not args.json:
+            raise error
+        verification = _verification_error_result(
+            format_name=HTML_REPORT_VERIFICATION_FORMAT,
+            source=str(output),
+            check_names=HTML_REPORT_VERIFICATION_CHECKS,
+            binding_requested=True,
+            code="report.invalid_destination",
+            error=error,
+        )
+        _html_report_publication_receipt(
+            verification,
+            status="not_published",
+            phase="input_validation",
+            destination_existed=destination_existed,
+        )
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+        return 2
+    try:
+        analysis = load_analysis(source)
+    except VERIFICATION_EXCEPTIONS:
+        if not args.json:
+            raise
+        verification = _verification_error_result(
+            format_name=HTML_REPORT_VERIFICATION_FORMAT,
+            source=str(output),
+            check_names=HTML_REPORT_VERIFICATION_CHECKS,
+            binding_requested=True,
+            code="report.analysis_load_failed",
+            error=ValueError(
+                "Analysis could not be loaded; no report was published."
+            ),
+        )
+        _html_report_publication_receipt(
+            verification,
+            status="not_published",
+            phase="analysis_load",
+            destination_existed=destination_existed,
+        )
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+        return 2
+
+    if args.json:
+        staged = output.with_name(
+            f".{output.name}.{uuid.uuid4().hex}.verified.tmp"
+        )
+        try:
+            try:
+                result = export_html_report(
+                    analysis,
+                    staged,
+                    title=args.title,
+                    notes=args.notes,
+                    max_records=args.max_records,
+                    diagrams=args.diagram,
+                    propagation_record_limit=args.propagation_record_limit,
+                    propagation_path_limit=args.propagation_path_limit,
+                    propagation_depth=args.propagation_depth,
+                    propagation_include_finding_ids=(
+                        args.propagation_include_finding
+                    ),
+                )
+            except VERIFICATION_EXCEPTIONS:
+                verification = _verification_error_result(
+                    format_name=HTML_REPORT_VERIFICATION_FORMAT,
+                    source=str(output),
+                    check_names=HTML_REPORT_VERIFICATION_CHECKS,
+                    binding_requested=True,
+                    code="report.generation_failed",
+                    error=ValueError(
+                        "HTML report generation did not complete; "
+                        "no report was published."
+                    ),
+                )
+                _html_report_publication_receipt(
+                    verification,
+                    status="not_published",
+                    phase="generation",
+                    destination_existed=destination_existed,
+                )
+                print(json.dumps(verification, indent=2, ensure_ascii=False))
+                return 1
+            try:
+                verification = verify_html_report_file(result, analysis=analysis)
+            except VERIFICATION_EXCEPTIONS:
+                verification = _verification_error_result(
+                    format_name=HTML_REPORT_VERIFICATION_FORMAT,
+                    source=str(output),
+                    check_names=HTML_REPORT_VERIFICATION_CHECKS,
+                    binding_requested=True,
+                    code="report.post_generation_verification_failed",
+                    error=ValueError(
+                        "Generated report verification did not complete; "
+                        "no report was published."
+                    ),
+                )
+                _html_report_publication_receipt(
+                    verification,
+                    status="not_published",
+                    phase="verification",
+                    destination_existed=destination_existed,
+                )
+                print(json.dumps(verification, indent=2, ensure_ascii=False))
+                return 1
+            verification["path"] = str(output)
+            if not verification["valid"]:
+                _html_report_publication_receipt(
+                    verification,
+                    status="not_published",
+                    phase="verification",
+                    destination_existed=destination_existed,
+                )
+                print(json.dumps(verification, indent=2, ensure_ascii=False))
+                return 1
+            try:
+                atomic_replace(result, output)
+            except VERIFICATION_EXCEPTIONS:
+                verification = _verification_error_result(
+                    format_name=HTML_REPORT_VERIFICATION_FORMAT,
+                    source=str(output),
+                    check_names=HTML_REPORT_VERIFICATION_CHECKS,
+                    binding_requested=True,
+                    code="report.publication_failed",
+                    error=ValueError(
+                        "Verified report publication did not complete; "
+                        "the prior destination was preserved."
+                    ),
+                )
+                _html_report_publication_receipt(
+                    verification,
+                    status="not_published",
+                    phase="publication",
+                    destination_existed=destination_existed,
+                )
+                print(json.dumps(verification, indent=2, ensure_ascii=False))
+                return 1
+            _html_report_publication_receipt(
+                verification,
+                status="published",
+                phase="complete",
+                destination_existed=destination_existed,
+            )
+            print(json.dumps(verification, indent=2, ensure_ascii=False))
+            return 0
+        finally:
+            staged.unlink(missing_ok=True)
+
     result = export_html_report(
         analysis,
         output,
@@ -1452,7 +1719,6 @@ def _diff(args: argparse.Namespace) -> int:
 
 def _package(args: argparse.Namespace) -> int:
     source = Path(args.analysis).expanduser().resolve()
-    analysis = load_analysis(source)
     output_has_zip_suffix = bool(
         args.output and Path(args.output).suffix.lower() == ".zip"
     )
@@ -1461,29 +1727,62 @@ def _package(args: argparse.Namespace) -> int:
         source.stem + "-review-package" + (".zip" if archive_requested else "")
     )
     output = Path(args.output) if args.output else source.with_name(default_name)
-    if archive_requested:
-        result = export_review_archive(
-            analysis,
-            output,
-            source_analysis=source,
-            overwrite=args.force,
-            portable=args.portable,
-        )
+    try:
+        analysis = load_analysis(source)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         if not args.json:
-            print(f"Created SFMEA review archive: {result}")
-    else:
-        result = export_review_package(
-            analysis,
+            raise
+        failure = package_publication_error_result(
             output,
-            source_analysis=source,
-            overwrite=args.force,
-            portable=args.portable,
+            exc,
+            archive=archive_requested,
+            phase="analysis_load",
         )
+        print(json.dumps(failure, indent=2, ensure_ascii=False))
+        return 2
+    try:
+        if archive_requested:
+            result = export_review_archive(
+                analysis,
+                output,
+                source_analysis=source,
+                overwrite=args.force,
+                portable=args.portable,
+            )
+            if not args.json:
+                print(f"Created SFMEA review archive: {result}")
+        else:
+            result = export_review_package(
+                analysis,
+                output,
+                source_analysis=source,
+                overwrite=args.force,
+                portable=args.portable,
+            )
+            if not args.json:
+                print(f"Created SFMEA review package: {result}")
+                print(f"Manifest: {result / 'manifest.json'}")
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         if not args.json:
-            print(f"Created SFMEA review package: {result}")
-            print(f"Manifest: {result / 'manifest.json'}")
+            raise
+        failure = package_publication_error_result(
+            output,
+            exc,
+            archive=archive_requested,
+            phase="generation",
+        )
+        print(json.dumps(failure, indent=2, ensure_ascii=False))
+        return 2
     if args.json:
         verification = verify_review_package(result)
+        verification["publication"] = {
+            "status": "published",
+            "phase": (
+                "complete"
+                if verification["valid"]
+                else "post_publication_verification"
+            ),
+        }
         print(json.dumps(verification, indent=2, ensure_ascii=False))
         return 0 if verification["valid"] else 1
     print(f"Next: sfmea verify-package \"{result}\"")
@@ -1491,7 +1790,6 @@ def _package(args: argparse.Namespace) -> int:
 
 
 def _verify_package(args: argparse.Namespace) -> int:
-    result = verify_review_package(args.package)
     if bool(args.signature) != bool(args.public_key):
         raise ValueError("--signature and --public-key must be supplied together")
     if args.signature:
@@ -1499,8 +1797,9 @@ def _verify_package(args: argparse.Namespace) -> int:
             args.package,
             args.signature,
             args.public_key,
-            package_verification=result,
         )
+    else:
+        result = verify_review_package(args.package)
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
