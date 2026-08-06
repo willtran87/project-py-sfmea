@@ -48,6 +48,25 @@ class FilePublicationTests(unittest.TestCase):
         self.assertEqual(destination.read_text(encoding="utf-8"), "prior")
         self.assertFalse(list(self.root.glob(".preserved.txt.*.tmp")))
 
+    def test_rejects_invalid_publication_arguments_before_staging(self) -> None:
+        destination = self.root / "invalid.txt"
+        with self.assertRaisesRegex(TypeError, "content must be bytes"):
+            atomic_publish_bytes(destination, "not bytes")  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "byte limit must be a positive integer"):
+            atomic_publish_bytes(destination, b"content", max_bytes=True)
+        with self.assertRaisesRegex(TypeError, "destination state is invalid"):
+            atomic_publish_bytes(
+                destination,
+                b"content",
+                expected_destination=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaisesRegex(TypeError, "content must be text"):
+            atomic_publish_text(destination, b"not text")  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "could not be encoded"):
+            atomic_publish_text(destination, "content", encoding="unknown-encoding")
+        self.assertFalse(destination.exists())
+        self.assertFalse(list(self.root.glob(".invalid.txt.*.tmp")))
+
     def test_rejects_symlink_without_changing_its_target(self) -> None:
         trusted = self.root / "trusted.txt"
         trusted.write_text("trusted", encoding="utf-8")
@@ -117,6 +136,98 @@ class FilePublicationTests(unittest.TestCase):
             destination.read_text(encoding="utf-8"), "concurrent owner\n"
         )
         self.assertFalse(list(self.root.glob(".reserved.json.*.tmp")))
+
+    def test_staged_verification_controls_atomic_replacement(self) -> None:
+        destination = self.root / "verified.html"
+        destination.write_text("trusted prior", encoding="utf-8")
+        observed: list[bytes] = []
+
+        def accept_staged(path: Path) -> bool:
+            observed.append(path.read_bytes())
+            return True
+
+        atomic_publish_text(
+            destination,
+            "verified replacement",
+            label="verified report",
+            staged_verifier=accept_staged,
+        )
+        self.assertEqual(observed, [b"verified replacement"])
+        self.assertEqual(
+            destination.read_text(encoding="utf-8"), "verified replacement"
+        )
+        self.assertFalse(list(self.root.glob(".verified.html.*.tmp")))
+
+    def test_failed_or_mutated_staged_verification_preserves_prior_content(
+        self,
+    ) -> None:
+        destination = self.root / "preserved-report.html"
+
+        def reject_staged(path: Path) -> bool:
+            self.assertTrue(path.is_file())
+            return False
+
+        def raise_during_verification(path: Path) -> bool:
+            self.assertTrue(path.is_file())
+            raise RuntimeError("sensitive verifier detail")
+
+        def mutate_staged(path: Path) -> bool:
+            path.write_bytes(b"corrupt")
+            return True
+
+        def replace_staged_identity(path: Path) -> bool:
+            replacement = path.with_name(path.name + ".replacement")
+            replacement.write_bytes(path.read_bytes())
+            replacement.replace(path)
+            return True
+
+        for label, verifier in (
+            ("rejected", reject_staged),
+            ("exception", raise_during_verification),
+            ("mutated", mutate_staged),
+            ("replaced", replace_staged_identity),
+        ):
+            with self.subTest(label=label):
+                destination.write_text("trusted prior", encoding="utf-8")
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "staged verified report (verification failed|changed during verification)",
+                ) as raised:
+                    atomic_publish_text(
+                        destination,
+                        "changed",
+                        label="verified report",
+                        staged_verifier=verifier,
+                    )
+                self.assertNotIn("sensitive verifier detail", str(raised.exception))
+                self.assertEqual(
+                    destination.read_text(encoding="utf-8"), "trusted prior"
+                )
+                self.assertFalse(
+                    list(self.root.glob(".preserved-report.html.*.tmp"))
+                )
+
+    def test_staged_verifier_cannot_hide_concurrent_destination_change(self) -> None:
+        destination = self.root / "concurrent-report.html"
+        destination.write_text("trusted prior", encoding="utf-8")
+
+        def replace_destination(path: Path) -> bool:
+            self.assertTrue(path.is_file())
+            destination.write_text("concurrent owner", encoding="utf-8")
+            return True
+
+        with self.assertRaisesRegex(ValueError, "changed before atomic replacement"):
+            atomic_publish_text(
+                destination,
+                "verified replacement",
+                label="verified report",
+                staged_verifier=replace_destination,
+            )
+
+        self.assertEqual(
+            destination.read_text(encoding="utf-8"), "concurrent owner"
+        )
+        self.assertFalse(list(self.root.glob(".concurrent-report.html.*.tmp")))
 
 
 if __name__ == "__main__":

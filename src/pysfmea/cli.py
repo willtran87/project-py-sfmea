@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import uuid
 from os import replace as atomic_replace
@@ -66,6 +67,7 @@ from .fault_injection import (
     load_fault_injection_plan,
     verify_fault_injection_plan,
 )
+from .file_publication import inspect_artifact_destination
 from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
 from .html_report import (
     HTML_REPORT_VERIFICATION_FORMAT,
@@ -81,11 +83,16 @@ from .interchange import (
 )
 from .pdf_report import export_pdf_report
 from .program import (
+    PROGRAM_REPORT_VERIFICATION_CHECKS,
+    PROGRAM_REPORT_VERIFICATION_FORMAT,
+    ProgramReportPublicationError,
+    export_program_report_verification,
     export_program_verification,
     program_verification_html,
     program_verification_markdown,
     seal_program_file,
     verify_assurance_program,
+    verify_program_report_file,
     write_program_template,
 )
 from .publication import (
@@ -210,6 +217,86 @@ def _html_report_publication_receipt(
         ),
     }
     return verification
+
+
+def _program_report_publication_receipt(
+    verification: dict[str, Any],
+    *,
+    status: str,
+    phase: str,
+    destination_existed: bool,
+) -> dict[str, Any]:
+    """Attach transactional publication state to a program-report verdict."""
+
+    verification["publication"] = {
+        "status": status,
+        "phase": phase,
+        "destination_existed": destination_existed,
+        "prior_destination_preserved": bool(
+            destination_existed and status == "not_published"
+        ),
+    }
+    return verification
+
+
+def _program_report_publication_error(
+    *,
+    destination: str | Path,
+    code: str,
+    message: str,
+    phase: str,
+    destination_existed: bool,
+) -> dict[str, Any]:
+    """Create a schema-backed, sanitized program-report publication failure."""
+
+    checks: dict[str, bool | None] = {
+        name: (
+            None
+            if name.startswith("program_") or name == "artifact_identity"
+            else False
+        )
+        for name in PROGRAM_REPORT_VERIFICATION_CHECKS
+    }
+    try:
+        display_path = str(Path(destination).expanduser().absolute())
+    except (OSError, RuntimeError, ValueError):
+        display_path = str(destination)
+    result: dict[str, Any] = {
+        "format": PROGRAM_REPORT_VERIFICATION_FORMAT,
+        "verifier": {"name": "PySFMEA", "version": __version__},
+        "path": display_path,
+        "bytes": 0,
+        "artifact_sha256": "",
+        "expected_artifact_sha256": "",
+        "artifact_binding_requested": False,
+        "artifact_binding_checked": False,
+        "valid": False,
+        "status": "invalid",
+        "assurance_valid": None,
+        "checks": checks,
+        "declared": {},
+        "current": {},
+        "binding_requested": True,
+        "binding_checked": False,
+        "failed_checks": sorted(
+            name for name, value in checks.items() if value is False
+        ),
+        "unchecked_checks": sorted(
+            name for name, value in checks.items() if value is None
+        ),
+        "errors": [{"code": code, "message": message, "path": display_path}],
+        "notice": (
+            "Report integrity and exact-program regeneration detect tampering and stale "
+            "conclusions; they do not authenticate an author, approve risk, or establish "
+            "certification."
+        ),
+    }
+    return _program_report_publication_receipt(
+        result,
+        status="not_published",
+        phase=phase,
+        destination_existed=destination_existed,
+    )
 
 
 def _add_propagation_arguments(parser: argparse.ArgumentParser) -> None:
@@ -751,7 +838,39 @@ def _parser() -> argparse.ArgumentParser:
     )
     program_verify.add_argument("-o", "--output", help="JSON, Markdown, or HTML verification output")
     program_verify.add_argument("--max-findings", type=int, default=50)
+    program_verify.add_argument(
+        "--publication-json",
+        action="store_true",
+        help=(
+            "emit one schema-backed transactional publication receipt; requires "
+            "--format html and --output"
+        ),
+    )
     program_verify.set_defaults(handler=_program_verify)
+
+    program_report_verify = subparsers.add_parser(
+        "program-report-verify",
+        help="verify a program HTML report and optionally regenerate its exact verdict",
+    )
+    program_report_verify.add_argument("report", help="assurance-program HTML report path")
+    program_report_verify.add_argument(
+        "--program",
+        help="optional assurance-program JSON for exact content and verdict binding",
+    )
+    program_report_verify.add_argument(
+        "--expect-sha256",
+        help="optional lowercase SHA-256 pin for the exact received HTML bytes",
+    )
+    program_report_emission = program_report_verify.add_mutually_exclusive_group()
+    program_report_emission.add_argument(
+        "--json", action="store_true", help="emit the public machine-readable verdict"
+    )
+    program_report_emission.add_argument(
+        "-o",
+        "--output",
+        help="atomically write the machine-readable verdict to this JSON file",
+    )
+    program_report_verify.set_defaults(handler=_program_report_verify)
 
     guidance = subparsers.add_parser("guidance", help="show methodology sources and limitations")
     guidance.set_defaults(handler=_guidance)
@@ -2421,11 +2540,112 @@ def _program_seal(args: argparse.Namespace) -> int:
 def _program_verify(args: argparse.Namespace) -> int:
     if args.max_findings < 1:
         raise ValueError("--max-findings must be at least 1")
-    result = verify_assurance_program(args.program)
+    if args.publication_json and (args.format != "html" or not args.output):
+        raise ValueError(
+            "--publication-json requires --format html and --output"
+        )
+    destination_state = None
+    destination_existed = False
+    if args.publication_json:
+        destination_existed = lexists(Path(args.output).expanduser().absolute())
+        try:
+            destination_state = inspect_artifact_destination(
+                args.output, label="assurance program report"
+            )
+            source = Path(args.program).expanduser().absolute().resolve(strict=True)
+            if destination_state.path == source:
+                raise ValueError(
+                    "assurance program report destination must differ from the "
+                    "assurance program file"
+                )
+        except VERIFICATION_EXCEPTIONS:
+            receipt = _program_report_publication_error(
+                destination=args.output,
+                code="program_report.invalid_destination",
+                message=(
+                    "Assurance program report destination validation failed; "
+                    "no report was published."
+                ),
+                phase="input_validation",
+                destination_existed=destination_existed,
+            )
+            print(json.dumps(receipt, indent=2, ensure_ascii=False))
+            return 2
+    try:
+        result = verify_assurance_program(args.program)
+    except VERIFICATION_EXCEPTIONS:
+        if not args.publication_json:
+            raise
+        receipt = _program_report_publication_error(
+            destination=args.output,
+            code="program_report.program_verification_failed",
+            message=(
+                "Assurance program verification did not complete; no report was "
+                "published."
+            ),
+            phase="program_verification",
+            destination_existed=destination_existed,
+        )
+        print(json.dumps(receipt, indent=2, ensure_ascii=False))
+        return 2
     if args.output:
         if args.format == "human":
             raise ValueError("--output requires --format json, markdown, or html")
-        output = export_program_verification(result, args.output, format=args.format)
+        try:
+            output = export_program_verification(
+                result,
+                args.output,
+                format=args.format,
+                expected_destination=destination_state,
+            )
+        except ProgramReportPublicationError as exc:
+            if not args.publication_json:
+                raise
+            receipt = _program_report_publication_error(
+                destination=args.output,
+                code=f"program_report.{exc.phase}_failed",
+                message=(
+                    "Assurance program report publication did not complete; "
+                    "the prior destination was preserved."
+                ),
+                phase=exc.phase,
+                destination_existed=destination_existed,
+            )
+            print(json.dumps(receipt, indent=2, ensure_ascii=False))
+            return 2
+        if args.publication_json:
+            try:
+                verification = verify_program_report_file(
+                    output, program=args.program
+                )
+            except VERIFICATION_EXCEPTIONS:
+                verification = _program_report_publication_error(
+                    destination=args.output,
+                    code="program_report.post_publication_verification_failed",
+                    message=(
+                        "Published assurance program report could not be verified."
+                    ),
+                    phase="post_publication_verification",
+                    destination_existed=destination_existed,
+                )
+                verification["publication"]["status"] = "published"
+                verification["publication"]["prior_destination_preserved"] = False
+                print(json.dumps(verification, indent=2, ensure_ascii=False))
+                return 2
+            _program_report_publication_receipt(
+                verification,
+                status="published",
+                phase=(
+                    "complete"
+                    if verification.get("valid")
+                    else "post_publication_verification"
+                ),
+                destination_existed=destination_existed,
+            )
+            print(json.dumps(verification, indent=2, ensure_ascii=False))
+            if not verification.get("valid"):
+                return 2
+            return int(verification.get("assurance_valid") is not True)
         print(f"Exported assurance program verification: {output}")
     elif args.format == "json":
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -2449,6 +2669,67 @@ def _program_verify(args: argparse.Namespace) -> int:
         remaining = len(result.get("findings", [])) - args.max_findings
         if remaining > 0:
             print(f"... {remaining} additional finding(s) omitted")
+        print(result.get("notice", ""))
+    return int(not result.get("valid", False))
+
+
+def _program_report_verify(args: argparse.Namespace) -> int:
+    receipt_destination = None
+    if args.output:
+        receipt_destination = inspect_artifact_destination(
+            args.output,
+            label="assurance program report verification receipt",
+        )
+        protected_sources = [args.report]
+        if args.program:
+            protected_sources.append(args.program)
+        for protected_source in protected_sources:
+            protected_path = Path(
+                os.path.abspath(Path(protected_source).expanduser())
+            ).resolve(strict=False)
+            if receipt_destination.path == protected_path:
+                raise ValueError(
+                    "program report verification receipt destination must differ "
+                    "from the report and assurance program files"
+                )
+    result = verify_program_report_file(
+        args.report,
+        program=args.program,
+        expected_sha256=args.expect_sha256,
+    )
+    if args.output:
+        output = export_program_report_verification(
+            result,
+            args.output,
+            expected_destination=receipt_destination,
+        )
+        print(f"Exported assurance program report verification: {output}")
+    elif args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            "Assurance program report: "
+            f"{result.get('status', 'invalid').upper()}; "
+            f"integrity={'valid' if result.get('valid') else 'invalid'}; "
+            f"assurance={'VALID' if result.get('assurance_valid') is True else 'NOT READY' if result.get('assurance_valid') is False else 'unavailable'}"
+        )
+        if result.get("binding_requested"):
+            print(
+                "Exact program binding: "
+                f"{'matched' if result.get('status') == 'matched' else 'not matched'}"
+            )
+        if result.get("artifact_binding_requested"):
+            print(
+                "Exact report SHA-256: "
+                f"{'matched' if result.get('checks', {}).get('artifact_identity') is True else 'not matched' if result.get('checks', {}).get('artifact_identity') is False else 'not checked'}"
+            )
+        for check in result.get("failed_checks", []):
+            print(f"- failed: {check}")
+        for error in result.get("errors", []):
+            print(
+                f"- {error.get('code', PROGRAM_REPORT_VERIFICATION_FORMAT)}: "
+                f"{error.get('message', 'verification failed')}"
+            )
         print(result.get("notice", ""))
     return int(not result.get("valid", False))
 

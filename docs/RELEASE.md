@@ -82,13 +82,42 @@ release scripts.
   refreshes only recognized catalogs with `--force`, and preserves prior bytes on failure.
 - Confirm JSON export emits a schema-valid path-bound verification receipt and forced refresh
   rejects format-only spoofing or malformed failure-entry structures without altering the target.
-- Confirm current packages contain 18 public schemas and 46 checked artifacts while genuine
+- Confirm current packages contain 19 public schemas and 47 checked artifacts while genuine
   twelve- through fifteen-schema packages remain compatible under the current verifier.
 - Confirm assurance-program input and verdict schemas validate current success and structured
   rejection examples, are present in offline bundles/packages, and retain historical 14-schema
   package compatibility. Confirm `program-init` binds every exact analysis state/baseline,
   `program-seal` refuses non-program files and concurrent destination replacement, and
   `program-verify` emits equivalent human/JSON/Markdown/HTML decisions.
+- Confirm program HTML reports embed one strict machine-verdict payload and unique program,
+  payload, canonical-verdict, and whole-document digests. Exercise standalone
+  `program-report-verify`, exact `--program` regeneration, shell/payload/metadata tampering,
+  stale-program mismatch, unsafe input, and public-verdict schema validation.
+- Confirm program HTML publication verifies a flushed private stage before replacement, rechecks
+  its non-link identity, size, and rendered digest after verification, refuses destination races,
+  preserves prior reports on every rejection, and removes temporary residue.
+- Confirm `program-verify --format html --output ... --publication-json` emits one schema-valid
+  exact-binding receipt for ready and not-ready programs, uses exit codes 0/1/2 for
+  ready/not-ready/publication-failure, sanitizes internal exceptions, records the failing phase,
+  preserves prior bytes, binds the exact final HTML through `artifact_sha256`, and rejects a
+  destination that aliases the source program.
+- Confirm `program-report-verify --expect-sha256` accepts the exact published digest, rejects a
+  different digest through the schema-visible `artifact_identity` check, rejects malformed pins,
+  and leaves `artifact_binding_checked` false when no readable artifact was available.
+- Confirm `program-report-verify --output` atomically writes bounded UTF-8 JSON for valid and
+  invalid verdicts, is mutually exclusive with stdout `--json`, rejects report/program source
+  collisions, detects destination races, preserves concurrent/prior bytes, and removes staging
+  residue.
+- Confirm durable program-report receipt publication rejects malformed/non-finite staged JSON and
+  a different parseable verdict, requires canonical semantic equality with the requested result,
+  rechecks staged identity/size/bytes, preserves prior output, and removes temporary files.
+- Confirm the runtime program-report verdict contract rejects extra/missing fields, mistyped
+  digests/booleans/counts/checks, unreconciled failed or unchecked lists, contradictory artifact
+  or program binding, invalid status/validity, and inconsistent publication state before staging.
+- Confirm the embedded program-verdict contract rejects open or mistyped verifier/program/finding
+  records, boolean or inconsistent counts, invalid levels/check states, validity disagreement, and
+  excess relationships/findings. Confirm a different internally valid verdict cannot satisfy the
+  staged in-memory result binding.
 - Confirm program ingestion rejects links/non-files, duplicate keys, non-finite values, malformed
   UTF-8, and byte/depth/node overflow. Confirm completed external evidence uses bounded
   identity-stable artifact reads with per-file/aggregate limits and exact SHA-256 checks.

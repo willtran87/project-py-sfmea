@@ -298,11 +298,33 @@ sfmea program-verify $program
 sfmea program-verify $program --format json -o (Join-Path $artifacts "program-verification.json")
 sfmea program-verify $program --format markdown -o (Join-Path $artifacts "program-verification.md")
 sfmea program-verify $program --format html -o (Join-Path $artifacts "program-report.html")
+$publicationReceipt = sfmea program-verify $program --format html `
+  -o (Join-Path $artifacts "program-report.html") --publication-json | ConvertFrom-Json
+sfmea program-report-verify (Join-Path $artifacts "program-report.html") `
+  --expect-sha256 $publicationReceipt.artifact_sha256 --program $program `
+  -o (Join-Path $artifacts "program-report-verification.json")
 ```
 
 The verifier consumes the program and completed evidence artifacts through bounded regular-file,
 non-link, identity-stable reads. Only digest-verified completed evidence can support timing or
-resilience. Failed evidence blocks readiness; inconclusive and unrun records remain visible but
+resilience claims. Program HTML is privately staged, self-verified, identity/digest rechecked,
+and atomically published only while the destination retains its inspected state.
+Use the publication receipt in automation: exit `0` is verified and assurance-ready, exit `1` is
+verified but not ready, and exit `2` is a publication/integrity failure. A rejected pre-replace
+operation reports whether the prior report was preserved. The report path cannot be the source
+program path. Retain `artifact_sha256` with the report to bind downstream review or archival to
+the exact published HTML bytes.
+Use `--expect-sha256` when consuming a copied, downloaded, or restored report. The verdict keeps
+artifact binding separate from exact program regeneration so automation can distinguish transport
+drift, stale program semantics, and an unreadable artifact.
+Use `--output` for durable JSON receipts. It performs bounded UTF-8 atomic publication, refuses a
+destination equal to the report or program source, and detects a concurrent receipt replacement.
+Use `--json` only when the pipeline intentionally consumes stdout; the two modes are mutually
+exclusive. Durable receipt staging is strictly parsed and canonically compared with the exact
+verdict before its identity, size, and bytes are rechecked for atomic replacement. The verdict is
+also closed-contract validated before staging, so contradictory status, checks, binding, or
+publication claims cannot be persisted through the library exporter.
+Failed evidence blocks readiness; inconclusive and unrun records remain visible but
 uncredited. It verifies analysis and artifact digests, relationship endpoints, qualified
 requirement/finding/hazard references, deadlines and observed maxima, circuit-breaker opening and
 recovery, cohort and LLM thresholds, distinct evaluation producer/reviewer identities, known

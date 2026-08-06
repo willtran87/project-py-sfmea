@@ -673,8 +673,13 @@ and place the integrity-bound artifacts inside their approved identity and recor
 
 Program input uses a 10 MB, 100-level, 500,000-node strict duplicate-free finite UTF-8 JSON
 boundary. Evidence artifacts are consumed through identity-stable regular-file reads capped at
-100 MB each and 500 MB in aggregate. Program templates, resealing, and JSON/Markdown/HTML verdict
-publication use bounded atomic final-path-safe replacement. Verification findings are capped at a
+100 MB each and 500 MB in aggregate. Program templates, resealing, and JSON/Markdown verdict
+publication use bounded atomic final-path-safe replacement. HTML verdicts additionally verify the
+embedded receipt on the private stage, then require unchanged staged identity, size, and rendered
+digest before the same destination-state-checked replacement. Receipt validation closes nested
+verifier/program/finding records, reconciles level counts and validity, and binds the stage to the
+exact requested in-memory program/verdict digests so a different self-consistent report cannot be
+substituted. Verification findings are capped at a
 public-contract-aligned 200,000 records. The searchable HTML view escapes all program-controlled
 text, loads no remote resources, and provides accessible navigation, a bounded inline repository
 topology, trusted-evidence counts, timing/resilience tables, severity filtering, and print styles.

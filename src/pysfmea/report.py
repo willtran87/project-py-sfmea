@@ -158,6 +158,7 @@ LEGACY_REVIEW_PACKAGE_FILES = REVIEW_PACKAGE_FILES - {"assurance-work.json"}
 REVIEW_PACKAGE_SCHEMA_FILES = {
     "schema-catalog.json",
     "pysfmea-assurance-program.schema.json",
+    "pysfmea-assurance-program-report-verification.schema.json",
     "pysfmea-assurance-program-verification.schema.json",
     "pysfmea-assurance-work-queue.schema.json",
     "pysfmea-assurance-work-queue-verification.schema.json",

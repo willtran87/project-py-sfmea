@@ -78,6 +78,7 @@ class SchemaCatalogTests(unittest.TestCase):
             [entry["name"] for entry in first["schemas"]],
             [
                 "assurance-program",
+                "assurance-program-report-verification",
                 "assurance-program-verification",
                 "assurance-work-queue",
                 "assurance-work-queue-verification",

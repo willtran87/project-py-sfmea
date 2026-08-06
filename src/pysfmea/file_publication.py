@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 MAX_ARTIFACT_PUBLICATION_BYTES = 256 * 1024 * 1024
 
@@ -77,8 +79,9 @@ def atomic_publish_bytes(
     max_bytes: int = MAX_ARTIFACT_PUBLICATION_BYTES,
     label: str = "artifact",
     expected_destination: ArtifactDestinationState | None = None,
+    staged_verifier: Callable[[Path], bool] | None = None,
 ) -> Path:
-    """Atomically publish bounded bytes while preserving a concurrently changed target."""
+    """Atomically publish bounded, optionally verified bytes without losing prior content."""
 
     if not isinstance(content, bytes):
         raise TypeError("artifact content must be bytes")
@@ -113,6 +116,54 @@ def atomic_publish_bytes(
         staged = temporary.lstat()
         if not stat.S_ISREG(staged.st_mode) or staged.st_size != len(content):
             raise ValueError(f"staged {label} did not preserve the rendered content")
+        if staged_verifier is not None:
+            try:
+                verified = staged_verifier(temporary)
+            except Exception as exc:
+                raise ValueError(f"staged {label} verification failed") from exc
+            if verified is not True:
+                raise ValueError(f"staged {label} verification failed")
+            staged_descriptor: int | None = None
+            try:
+                verified_stage = temporary.lstat()
+                if (
+                    not stat.S_ISREG(verified_stage.st_mode)
+                    or verified_stage.st_size != len(content)
+                    or not os.path.samestat(staged, verified_stage)
+                ):
+                    raise ValueError(f"staged {label} changed during verification")
+                flags = (
+                    os.O_RDONLY
+                    | getattr(os, "O_BINARY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0)
+                )
+                staged_descriptor = os.open(temporary, flags)
+                opened_stage = os.fstat(staged_descriptor)
+                if (
+                    not stat.S_ISREG(opened_stage.st_mode)
+                    or not os.path.samestat(verified_stage, opened_stage)
+                ):
+                    raise ValueError(f"staged {label} changed during verification")
+                with os.fdopen(staged_descriptor, "rb") as staged_file:
+                    staged_descriptor = None
+                    staged_digest = hashlib.file_digest(staged_file, "sha256").digest()
+                final_stage = temporary.lstat()
+                if not os.path.samestat(opened_stage, final_stage):
+                    raise ValueError(f"staged {label} changed during verification")
+            except ValueError:
+                raise
+            except OSError as exc:
+                raise ValueError(
+                    f"staged {label} changed during verification"
+                ) from exc
+            finally:
+                if staged_descriptor is not None:
+                    try:
+                        os.close(staged_descriptor)
+                    except OSError:
+                        pass
+            if staged_digest != hashlib.sha256(content).digest():
+                raise ValueError(f"staged {label} changed during verification")
         if not _destination_is_unchanged(target, expected.snapshot):
             raise ValueError(f"{label} destination changed before atomic replacement")
         os.replace(temporary, target)
@@ -138,6 +189,7 @@ def atomic_publish_text(
     max_bytes: int = MAX_ARTIFACT_PUBLICATION_BYTES,
     label: str = "artifact",
     expected_destination: ArtifactDestinationState | None = None,
+    staged_verifier: Callable[[Path], bool] | None = None,
 ) -> Path:
     """Encode and atomically publish a bounded deterministic text artifact."""
 
@@ -153,4 +205,5 @@ def atomic_publish_text(
         max_bytes=max_bytes,
         label=label,
         expected_destination=expected_destination,
+        staged_verifier=staged_verifier,
     )

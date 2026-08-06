@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import unicodedata
 from collections import Counter
 from datetime import datetime
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .file_publication import (
+    ArtifactDestinationState,
     atomic_publish_text,
     inspect_artifact_destination,
 )
@@ -21,6 +23,7 @@ from .json_ingestion import (
     BoundedFileSnapshotError,
     load_bounded_file_snapshot,
     load_bounded_json_document,
+    parse_bounded_json_bytes,
 )
 from .llm_quality import project_llm_quality_corpus
 from .model import utc_now
@@ -30,7 +33,28 @@ from .version import __version__
 
 PROGRAM_FORMAT = "pysfmea-assurance-program-1"
 PROGRAM_VERIFICATION_FORMAT = "pysfmea-assurance-program-verification-1"
+PROGRAM_REPORT_FORMAT = "pysfmea-assurance-program-report-1"
+PROGRAM_REPORT_VERIFICATION_FORMAT = (
+    "pysfmea-assurance-program-report-verification-1"
+)
+PROGRAM_REPORT_VERIFICATION_CHECKS = (
+    "metadata_complete",
+    "metadata_unique",
+    "report_format",
+    "payload_present",
+    "payload_json",
+    "payload_contract",
+    "payload_integrity",
+    "verification_result_integrity",
+    "payload_binding",
+    "document_integrity",
+    "artifact_identity",
+    "program_content",
+    "program_verification",
+)
 MAX_PROGRAM_BYTES = 10 * 1024 * 1024
+MAX_PROGRAM_REPORT_BYTES = 16 * 1024 * 1024
+MAX_PROGRAM_REPORT_VERIFICATION_BYTES = 1024 * 1024
 MAX_PROGRAM_DEPTH = 100
 MAX_PROGRAM_NODES = 500_000
 MAX_PROGRAM_REPOSITORIES = 100
@@ -47,6 +71,14 @@ MAX_EVALUATION_RESULT_BYTES = 20 * 1024 * 1024
 MAX_TOTAL_EVALUATION_BYTES = 200 * 1024 * 1024
 MAX_LLM_CORPUS_BYTES = 20 * 1024 * 1024
 MAX_TOTAL_LLM_CORPUS_BYTES = 200 * 1024 * 1024
+
+
+class ProgramReportPublicationError(ValueError):
+    """Stable phase-bearing failure from transactional program-report export."""
+
+    def __init__(self, phase: str, message: str) -> None:
+        super().__init__(message)
+        self.phase = phase
 
 RELATIONSHIP_KINDS = {
     "calls",
@@ -3466,6 +3498,16 @@ def program_verification_markdown(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _program_verification_state_sha256(result: dict[str, Any]) -> str:
+    """Hash verdict semantics while excluding the local source-file location."""
+
+    material = json.loads(json.dumps(result, ensure_ascii=False))
+    program = material.get("program")
+    if isinstance(program, dict):
+        program["path"] = ""
+    return canonical_json_sha256(material)
+
+
 def program_verification_html(result: dict[str, Any]) -> str:
     """Render a self-contained accessible system-level assurance report."""
 
@@ -3506,8 +3548,24 @@ def program_verification_html(result: dict[str, Any]) -> str:
         f'<tr><td>{value(name.replace("_", " "))}</td><td><span class="tag {"supported" if state is True else "error" if state is False else "unverified"}">{value("passed" if state is True else "failed" if state is False else "not checked")}</span></td></tr>'
         for name, state in result.get("checks", {}).items()
     )
+    payload = (
+        json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+    program_sha256 = str(result.get("program", {}).get("content_sha256", ""))
+    payload_sha256 = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    verification_sha256 = _program_verification_state_sha256(result)
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="pysfmea-program-report-format" content="{PROGRAM_REPORT_FORMAT}">
+<meta name="pysfmea-program-sha256" content="{value(program_sha256)}">
+<meta name="pysfmea-program-verification-sha256" content="{verification_sha256}">
+<meta name="pysfmea-program-report-payload-sha256" content="{payload_sha256}">
+<meta name="pysfmea-program-report-document-sha256" content="__PROGRAM_REPORT_DOCUMENT_SHA256__">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <title>{value(summary.get("name", "System assurance program"))}</title>
 <style>
@@ -3533,27 +3591,743 @@ table{{width:100%;border-collapse:collapse}} th,td{{padding:10px;text-align:left
 <section id="relationships"><h2>Cross-repository relationships, timing, and resilience</h2><table><thead><tr><th>ID</th><th>Source</th><th>Target</th><th>Kind</th><th>Timing</th><th>Resilience</th><th>Deadline ms</th><th>Observed max ms</th><th>Recovery ms</th><th>Evidence</th></tr></thead><tbody>{relationship_rows}</tbody></table></section>
 <section id="findings"><h2>Actionable findings</h2><div class="filters"><label for="finding-search">Search findings<br><input id="finding-search" type="search" placeholder="Code, message, or location"></label><label for="finding-level">Severity<br><select id="finding-level"><option value="">All levels</option><option value="error">Errors</option><option value="warning">Warnings</option><option value="information">Information</option></select></label></div><table><thead><tr><th>Level</th><th>Code</th><th>Message</th><th>Location</th></tr></thead><tbody>{finding_rows}</tbody></table></section>
 <section class="notice"><strong>Interpretation boundary.</strong> {value(result.get("notice"))}</section></main>
+<script id="program-verification-data" type="application/json">{payload}</script>
 <script>const q=document.getElementById('finding-search'),l=document.getElementById('finding-level');function filterFindings(){{const s=q.value.toLowerCase(),v=l.value;document.querySelectorAll('[data-filter-row]').forEach(r=>{{const level=r.querySelector('.tag')?.textContent.toLowerCase()||'';r.hidden=!r.textContent.toLowerCase().includes(s)||(v&&level!==v)}})}}q.addEventListener('input',filterFindings);l.addEventListener('change',filterFindings);</script>
 </body></html>"""
-    return document
+    document_sha256 = hashlib.sha256(
+        document.replace("__PROGRAM_REPORT_DOCUMENT_SHA256__", "").encode("utf-8")
+    ).hexdigest()
+    return document.replace("__PROGRAM_REPORT_DOCUMENT_SHA256__", document_sha256)
+
+
+def _program_report_rejection(
+    source: str | Path,
+    *,
+    binding_requested: bool,
+    message: str,
+    bytes_read: int = 0,
+    artifact_sha256: str = "",
+    expected_artifact_sha256: str = "",
+    artifact_binding_requested: bool = False,
+    artifact_binding_checked: bool = False,
+    artifact_identity: bool | None = None,
+) -> dict[str, Any]:
+    checks: dict[str, bool | None] = {
+        "metadata_complete": False,
+        "metadata_unique": False,
+        "report_format": False,
+        "payload_present": False,
+        "payload_json": False,
+        "payload_contract": False,
+        "payload_integrity": False,
+        "verification_result_integrity": False,
+        "payload_binding": False,
+        "document_integrity": False,
+        "artifact_identity": artifact_identity,
+        "program_content": None,
+        "program_verification": None,
+    }
+    return {
+        "format": PROGRAM_REPORT_VERIFICATION_FORMAT,
+        "verifier": {"name": "PySFMEA", "version": __version__},
+        "path": str(Path(os.path.abspath(Path(source).expanduser()))),
+        "bytes": bytes_read,
+        "artifact_sha256": artifact_sha256,
+        "expected_artifact_sha256": expected_artifact_sha256,
+        "artifact_binding_requested": artifact_binding_requested,
+        "artifact_binding_checked": artifact_binding_checked,
+        "valid": False,
+        "status": "invalid",
+        "assurance_valid": None,
+        "checks": checks,
+        "declared": {},
+        "current": {},
+        "binding_requested": binding_requested,
+        "binding_checked": False,
+        "failed_checks": sorted(key for key, value in checks.items() if value is False),
+        "unchecked_checks": sorted(key for key, value in checks.items() if value is None),
+        "errors": [
+            {
+                "code": "program_report.input_rejected",
+                "message": message,
+                "path": str(Path(source)),
+            }
+        ],
+        "notice": (
+            "Report integrity and exact-program regeneration detect tampering and stale "
+            "conclusions; they do not authenticate an author, approve risk, or establish "
+            "certification."
+        ),
+    }
+
+
+def _program_report_verification_contract(value: Any) -> bool:
+    """Validate the closed current program-report verification verdict contract."""
+
+    if not isinstance(value, dict):
+        return False
+    required = {
+        "format",
+        "verifier",
+        "path",
+        "bytes",
+        "artifact_sha256",
+        "expected_artifact_sha256",
+        "artifact_binding_requested",
+        "artifact_binding_checked",
+        "valid",
+        "status",
+        "assurance_valid",
+        "checks",
+        "declared",
+        "current",
+        "binding_requested",
+        "binding_checked",
+        "failed_checks",
+        "unchecked_checks",
+        "errors",
+        "notice",
+    }
+    if set(value) not in (required, required | {"publication"}):
+        return False
+    verifier = value.get("verifier")
+    checks = value.get("checks")
+    declared = value.get("declared")
+    current = value.get("current")
+    errors = value.get("errors")
+    digest = re.compile(r"^(?:[0-9a-f]{64})?$")
+    if (
+        value.get("format") != PROGRAM_REPORT_VERIFICATION_FORMAT
+        or not isinstance(verifier, dict)
+        or set(verifier) != {"name", "version"}
+        or verifier.get("name") != "PySFMEA"
+        or not isinstance(verifier.get("version"), str)
+        or not 1 <= len(verifier["version"]) <= 128
+        or not isinstance(value.get("path"), str)
+        or not value["path"]
+        or not isinstance(value.get("bytes"), int)
+        or isinstance(value["bytes"], bool)
+        or value["bytes"] < 0
+        or not isinstance(value.get("artifact_sha256"), str)
+        or not digest.fullmatch(value["artifact_sha256"])
+        or not isinstance(value.get("expected_artifact_sha256"), str)
+        or not digest.fullmatch(value["expected_artifact_sha256"])
+        or not isinstance(value.get("artifact_binding_requested"), bool)
+        or not isinstance(value.get("artifact_binding_checked"), bool)
+        or not isinstance(value.get("valid"), bool)
+        or value.get("status")
+        not in {"invalid", "mismatched", "matched", "valid_binding_not_checked"}
+        or not (
+            isinstance(value.get("assurance_valid"), bool)
+            or value.get("assurance_valid") is None
+        )
+        or not isinstance(checks, dict)
+        or set(checks) != set(PROGRAM_REPORT_VERIFICATION_CHECKS)
+        or not all(isinstance(state, bool) or state is None for state in checks.values())
+        or not isinstance(declared, dict)
+        or not isinstance(current, dict)
+        or not isinstance(value.get("binding_requested"), bool)
+        or not isinstance(value.get("binding_checked"), bool)
+        or not isinstance(errors, list)
+        or not isinstance(value.get("notice"), str)
+        or not value["notice"]
+    ):
+        return False
+    if value["bytes"] > 0 and not re.fullmatch(r"[0-9a-f]{64}", value["artifact_sha256"]):
+        return False
+    if not value["artifact_sha256"] and value["bytes"] != 0:
+        return False
+    declared_keys = {
+        "format",
+        "program_sha256",
+        "verification_result_sha256",
+        "payload_sha256",
+        "document_sha256",
+    }
+    if not set(declared).issubset(declared_keys) or not all(
+        isinstance(item, str) for item in declared.values()
+    ):
+        return False
+    for name in declared_keys - {"format"}:
+        if name in declared and not digest.fullmatch(declared[name]):
+            return False
+    failed = sorted(name for name, state in checks.items() if state is False)
+    unchecked = sorted(name for name, state in checks.items() if state is None)
+    if value.get("failed_checks") != failed or value.get("unchecked_checks") != unchecked:
+        return False
+    if not all(
+        isinstance(error, dict)
+        and {"code", "message"}.issubset(error)
+        and set(error).issubset({"code", "message", "path"})
+        and isinstance(error["code"], str)
+        and bool(error["code"])
+        and isinstance(error["message"], str)
+        and ("path" not in error or isinstance(error["path"], str))
+        for error in errors
+    ):
+        return False
+
+    artifact_requested = value["artifact_binding_requested"]
+    artifact_checked = value["artifact_binding_checked"]
+    artifact_state = checks["artifact_identity"]
+    if (
+        (not artifact_requested and (value["expected_artifact_sha256"] or artifact_checked or artifact_state is not None))
+        or (artifact_checked and (not artifact_requested or not value["expected_artifact_sha256"] or not isinstance(artifact_state, bool)))
+        or (not artifact_checked and artifact_state is not None)
+    ):
+        return False
+
+    binding_checked = value["binding_checked"]
+    binding_requested = value["binding_requested"]
+    if binding_checked:
+        current_keys = {
+            "program_path",
+            "program_sha256",
+            "verification_result_sha256",
+            "verifier",
+            "assurance_valid",
+        }
+        current_verifier = current.get("verifier")
+        if (
+            not binding_requested
+            or set(current) != current_keys
+            or not isinstance(current.get("program_path"), str)
+            or not digest.fullmatch(str(current.get("program_sha256", "!")))
+            or not digest.fullmatch(str(current.get("verification_result_sha256", "!")))
+            or not isinstance(current_verifier, dict)
+            or set(current_verifier) != {"name", "version"}
+            or current_verifier.get("name") != "PySFMEA"
+            or not isinstance(current_verifier.get("version"), str)
+            or not isinstance(current.get("assurance_valid"), bool)
+            or not isinstance(checks["program_content"], bool)
+            or not isinstance(checks["program_verification"], bool)
+        ):
+            return False
+    elif current or checks["program_content"] is not None or checks["program_verification"] is not None:
+        return False
+
+    internal_names = set(PROGRAM_REPORT_VERIFICATION_CHECKS) - {
+        "artifact_identity",
+        "program_content",
+        "program_verification",
+    }
+    internal_valid = all(checks[name] is True for name in internal_names)
+    binding_matches = (
+        checks["program_content"] is True
+        and checks["program_verification"] is True
+        if binding_checked
+        else None
+    )
+    expected_valid = internal_valid and artifact_state is not False and binding_matches is not False
+    expected_status = (
+        "invalid"
+        if not internal_valid or artifact_state is False
+        else "mismatched"
+        if binding_matches is False
+        else "matched"
+        if binding_matches is True
+        else "valid_binding_not_checked"
+    )
+    if value["valid"] is not expected_valid or value["status"] != expected_status:
+        return False
+    if value["valid"] and errors:
+        return False
+
+    publication = value.get("publication")
+    if publication is not None:
+        if (
+            not isinstance(publication, dict)
+            or set(publication)
+            != {
+                "status",
+                "phase",
+                "destination_existed",
+                "prior_destination_preserved",
+            }
+            or publication.get("status") not in {"published", "not_published"}
+            or not isinstance(publication.get("destination_existed"), bool)
+            or not isinstance(publication.get("prior_destination_preserved"), bool)
+        ):
+            return False
+        if publication["status"] == "not_published":
+            if (
+                publication.get("phase")
+                not in {"input_validation", "program_verification", "generation", "publication"}
+                or value["valid"]
+                or value["bytes"] != 0
+                or value["artifact_sha256"]
+                or publication["prior_destination_preserved"]
+                is not publication["destination_existed"]
+            ):
+                return False
+        elif (
+            publication.get("phase") == "complete"
+            and not (
+                value["valid"]
+                and value["status"] == "matched"
+                and binding_requested
+                and binding_checked
+                and not publication["prior_destination_preserved"]
+            )
+        ) or (
+            publication.get("phase") == "post_publication_verification"
+            and (value["valid"] or publication["prior_destination_preserved"])
+        ) or publication.get("phase") not in {"complete", "post_publication_verification"}:
+            return False
+    return True
+
+
+def _program_verification_payload_contract(value: Any) -> bool:
+    """Validate the closed embedded program-verification result envelope."""
+
+    if not isinstance(value, dict) or set(value) != {
+        "format",
+        "verifier",
+        "program",
+        "valid",
+        "checks",
+        "counts",
+        "summary",
+        "relationships",
+        "validation",
+        "llm_quality",
+        "findings",
+        "notice",
+    }:
+        return False
+    verifier = value.get("verifier")
+    program = value.get("program")
+    valid = value.get("valid")
+    checks = value.get("checks")
+    counts = value.get("counts")
+    relationships = value.get("relationships")
+    findings = value.get("findings")
+    notice = value.get("notice")
+    digest = re.compile(r"^(?:[0-9a-f]{64})?$")
+    if (
+        value.get("format") != PROGRAM_VERIFICATION_FORMAT
+        or not isinstance(verifier, dict)
+        or set(verifier) != {"name", "version"}
+        or verifier.get("name") != "PySFMEA"
+        or not isinstance(verifier.get("version"), str)
+        or not 1 <= len(verifier["version"]) <= 128
+        or not isinstance(program, dict)
+        or set(program) != {"path", "content_sha256"}
+        or not isinstance(program.get("path"), str)
+        or not isinstance(program.get("content_sha256"), str)
+        or not digest.fullmatch(program["content_sha256"])
+        or not isinstance(valid, bool)
+        or not isinstance(checks, dict)
+        or not all(
+            isinstance(name, str)
+            and name
+            and (isinstance(state, bool) or state is None)
+            for name, state in checks.items()
+        )
+        or not isinstance(counts, dict)
+        or set(counts) != {"errors", "warnings", "information"}
+        or not all(
+            isinstance(count, int) and not isinstance(count, bool) and count >= 0
+            for count in counts.values()
+        )
+        or not isinstance(value.get("summary"), dict)
+        or not isinstance(relationships, list)
+        or len(relationships) > MAX_PROGRAM_RELATIONSHIPS
+        or not all(isinstance(item, dict) for item in relationships)
+        or not isinstance(value.get("validation"), dict)
+        or not isinstance(value.get("llm_quality"), dict)
+        or not isinstance(findings, list)
+        or len(findings) > MAX_PROGRAM_FINDINGS
+        or not isinstance(notice, str)
+        or not notice
+    ):
+        return False
+    finding_counts = Counter()
+    for finding in findings:
+        if (
+            not isinstance(finding, dict)
+            or set(finding) != {"code", "level", "message", "location"}
+            or finding.get("level")
+            not in {"error", "warning", "information"}
+            or not isinstance(finding.get("code"), str)
+            or not finding["code"]
+            or not isinstance(finding.get("message"), str)
+            or not finding["message"]
+            or not isinstance(finding.get("location"), str)
+        ):
+            return False
+        count_key = {
+            "error": "errors",
+            "warning": "warnings",
+            "information": "information",
+        }[finding["level"]]
+        finding_counts[count_key] += 1
+    counts_match = all(
+        counts[level] == finding_counts[level]
+        for level in ("errors", "warnings", "information")
+    )
+    expected_valid = counts["errors"] == 0 and all(
+        state is not False for state in checks.values()
+    )
+    return bool(counts_match and valid is expected_valid)
+
+
+def verify_program_report_file(
+    source: str | Path,
+    *,
+    program: str | Path | None = None,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Verify a program report, optional exact program, and optional artifact pin."""
+
+    artifact_binding_requested = expected_sha256 is not None
+    expected_artifact_sha256 = expected_sha256 or ""
+    if artifact_binding_requested and not re.fullmatch(
+        r"[0-9a-f]{64}", expected_artifact_sha256
+    ):
+        return _program_report_rejection(
+            source,
+            binding_requested=program is not None,
+            message="expected assurance program report SHA-256 is invalid",
+            artifact_binding_requested=True,
+        )
+
+    try:
+        snapshot = load_bounded_file_snapshot(
+            source,
+            label="assurance program HTML report",
+            max_bytes=MAX_PROGRAM_REPORT_BYTES,
+        )
+        document = snapshot.raw.decode("utf-8")
+    except UnicodeDecodeError:
+        artifact_sha256 = hashlib.sha256(snapshot.raw).hexdigest()
+        return _program_report_rejection(
+            source,
+            binding_requested=program is not None,
+            message="assurance program HTML report is not valid UTF-8",
+            bytes_read=snapshot.size,
+            artifact_sha256=artifact_sha256,
+            expected_artifact_sha256=expected_artifact_sha256,
+            artifact_binding_requested=artifact_binding_requested,
+            artifact_binding_checked=artifact_binding_requested,
+            artifact_identity=(
+                artifact_sha256 == expected_artifact_sha256
+                if artifact_binding_requested
+                else None
+            ),
+        )
+    except (BoundedFileSnapshotError, ValueError) as exc:
+        return _program_report_rejection(
+            source,
+            binding_requested=program is not None,
+            message=str(exc),
+            expected_artifact_sha256=expected_artifact_sha256,
+            artifact_binding_requested=artifact_binding_requested,
+        )
+
+    metadata_names = {
+        "format": "pysfmea-program-report-format",
+        "program_sha256": "pysfmea-program-sha256",
+        "verification_result_sha256": "pysfmea-program-verification-sha256",
+        "payload_sha256": "pysfmea-program-report-payload-sha256",
+        "document_sha256": "pysfmea-program-report-document-sha256",
+    }
+    metadata_values = {
+        key: re.findall(
+            rf'<meta name="{re.escape(name)}" content="([^"]*)">', document
+        )
+        for key, name in metadata_names.items()
+    }
+    declared = {
+        key: values[0] if len(values) == 1 else ""
+        for key, values in metadata_values.items()
+    }
+    payload_matches = re.findall(
+        r'<script id="program-verification-data" type="application/json">(.*?)</script>',
+        document,
+        re.DOTALL,
+    )
+    payload_text = payload_matches[0] if len(payload_matches) == 1 else ""
+    payload: Any = None
+    payload_json_valid = False
+    if payload_text:
+        try:
+            payload = parse_bounded_json_bytes(
+                payload_text.encode("utf-8"),
+                label="embedded assurance program verification",
+                max_bytes=MAX_PROGRAM_REPORT_BYTES,
+                max_depth=MAX_PROGRAM_DEPTH,
+                max_nodes=MAX_PROGRAM_NODES,
+            )
+            payload_json_valid = isinstance(payload, dict)
+        except ValueError:
+            pass
+
+    digest_pattern = re.compile(r"^[0-9a-f]{64}$")
+    payload_digest = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
+    payload_result_digest = (
+        _program_verification_state_sha256(payload)
+        if isinstance(payload, dict)
+        else ""
+    )
+    embedded_program_digest = (
+        str(payload.get("program", {}).get("content_sha256", ""))
+        if isinstance(payload, dict)
+        and isinstance(payload.get("program"), dict)
+        else ""
+    )
+    document_digest = ""
+    if declared["document_sha256"]:
+        marker = (
+            '<meta name="pysfmea-program-report-document-sha256" content="'
+            + declared["document_sha256"]
+            + '">'
+        )
+        normalized = document.replace(
+            marker,
+            '<meta name="pysfmea-program-report-document-sha256" content="">',
+            1,
+        )
+        document_digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    artifact_sha256 = hashlib.sha256(snapshot.raw).hexdigest()
+    checks: dict[str, bool | None] = {
+        "metadata_complete": all(declared.values()),
+        "metadata_unique": all(len(values) == 1 for values in metadata_values.values()),
+        "report_format": declared["format"] == PROGRAM_REPORT_FORMAT,
+        "payload_present": len(payload_matches) == 1,
+        "payload_json": payload_json_valid,
+        "payload_contract": _program_verification_payload_contract(payload),
+        "payload_integrity": bool(
+            digest_pattern.fullmatch(declared["payload_sha256"])
+            and payload_digest == declared["payload_sha256"]
+        ),
+        "verification_result_integrity": bool(
+            digest_pattern.fullmatch(declared["verification_result_sha256"])
+            and payload_result_digest == declared["verification_result_sha256"]
+        ),
+        "payload_binding": bool(
+            digest_pattern.fullmatch(declared["program_sha256"])
+            and embedded_program_digest == declared["program_sha256"]
+        ),
+        "document_integrity": bool(
+            digest_pattern.fullmatch(declared["document_sha256"])
+            and document_digest == declared["document_sha256"]
+        ),
+        "artifact_identity": (
+            artifact_sha256 == expected_artifact_sha256
+            if artifact_binding_requested
+            else None
+        ),
+        "program_content": None,
+        "program_verification": None,
+    }
+    required_internal = tuple(
+        key
+        for key in checks
+        if not key.startswith("program_") and key != "artifact_identity"
+    )
+    internal_valid = all(checks[key] is True for key in required_internal)
+    current: dict[str, Any] = {}
+    binding_checked = False
+    if program is not None:
+        current_result = verify_assurance_program(program)
+        current_program_digest = str(
+            current_result.get("program", {}).get("content_sha256", "")
+        )
+        current_result_digest = _program_verification_state_sha256(current_result)
+        current = {
+            "program_path": str(Path(os.path.abspath(Path(program).expanduser()))),
+            "program_sha256": current_program_digest,
+            "verification_result_sha256": current_result_digest,
+            "verifier": current_result.get("verifier", {}),
+            "assurance_valid": bool(current_result.get("valid")),
+        }
+        checks["program_content"] = (
+            current_program_digest == declared["program_sha256"]
+        )
+        checks["program_verification"] = (
+            current_result_digest == declared["verification_result_sha256"]
+        )
+        binding_checked = True
+
+    binding_matches = (
+        checks["program_content"] is True
+        and checks["program_verification"] is True
+        if binding_checked
+        else None
+    )
+    artifact_matches = checks["artifact_identity"]
+    valid = (
+        internal_valid
+        and artifact_matches is not False
+        and binding_matches is not False
+    )
+    status = (
+        "invalid"
+        if not internal_valid or artifact_matches is False
+        else "mismatched"
+        if binding_matches is False
+        else "matched"
+        if binding_matches is True
+        else "valid_binding_not_checked"
+    )
+    failed_checks = sorted(key for key, value in checks.items() if value is False)
+    unchecked_checks = sorted(key for key, value in checks.items() if value is None)
+    return {
+        "format": PROGRAM_REPORT_VERIFICATION_FORMAT,
+        "verifier": {"name": "PySFMEA", "version": __version__},
+        "path": str(snapshot.path),
+        "bytes": snapshot.size,
+        "artifact_sha256": artifact_sha256,
+        "expected_artifact_sha256": expected_artifact_sha256,
+        "artifact_binding_requested": artifact_binding_requested,
+        "artifact_binding_checked": artifact_binding_requested,
+        "valid": valid,
+        "status": status,
+        "assurance_valid": (
+            bool(payload.get("valid")) if isinstance(payload, dict) else None
+        ),
+        "checks": checks,
+        "declared": declared,
+        "current": current,
+        "binding_requested": program is not None,
+        "binding_checked": binding_checked,
+        "failed_checks": failed_checks,
+        "unchecked_checks": unchecked_checks,
+        "errors": [],
+        "notice": (
+            "Report integrity and exact-program regeneration detect tampering and stale "
+            "conclusions; they do not authenticate an author, approve risk, or establish "
+            "certification."
+        ),
+    }
 
 
 def export_program_verification(
-    result: dict[str, Any], destination: str | Path, *, format: str
+    result: dict[str, Any],
+    destination: str | Path,
+    *,
+    format: str,
+    expected_destination: ArtifactDestinationState | None = None,
 ) -> Path:
-    """Atomically publish a JSON or Markdown program-verification view."""
+    """Atomically publish a JSON, Markdown, or HTML program-verification view."""
 
+    destination_state = expected_destination or inspect_artifact_destination(
+        destination,
+        label=(
+            "assurance program report"
+            if format == "html"
+            else "assurance program verification"
+        ),
+    )
+    program_path = result.get("program", {}).get("path")
+    if isinstance(program_path, str) and program_path:
+        try:
+            source_path = Path(os.path.abspath(Path(program_path).expanduser())).resolve(
+                strict=True
+            )
+        except OSError as exc:
+            if format == "html":
+                raise ProgramReportPublicationError(
+                    "input_validation",
+                    "assurance program source path could not be resolved safely",
+                ) from exc
+            raise ValueError(
+                "assurance program source path could not be resolved safely"
+            ) from exc
+        if destination_state.path == source_path:
+            message = "export destination must differ from the assurance program file"
+            if format == "html":
+                raise ProgramReportPublicationError("input_validation", message)
+            raise ValueError(message)
+
+    staged_verifier = None
+    publication_label = "assurance program verification"
     if format == "json":
         content = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
     elif format == "markdown":
         content = program_verification_markdown(result)
     elif format == "html":
-        content = program_verification_html(result)
+        try:
+            content = program_verification_html(result)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ProgramReportPublicationError(
+                "generation", "assurance program report generation failed"
+            ) from exc
+        publication_label = "assurance program report"
+        expected_verification_sha256 = _program_verification_state_sha256(result)
+        expected_program_sha256 = str(
+            result.get("program", {}).get("content_sha256", "")
+        )
+
+        def staged_verifier(path: Path) -> bool:
+            verification = verify_program_report_file(path)
+            declared = verification.get("declared", {})
+            return bool(
+                verification.get("valid")
+                and isinstance(declared, dict)
+                and declared.get("verification_result_sha256")
+                == expected_verification_sha256
+                and declared.get("program_sha256") == expected_program_sha256
+            )
+
     else:
         raise ValueError("program verification format must be json, markdown, or html")
+    try:
+        return atomic_publish_text(
+            destination,
+            content,
+            max_bytes=MAX_PROGRAM_BYTES,
+            label=publication_label,
+            expected_destination=destination_state,
+            staged_verifier=staged_verifier,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        if format == "html":
+            raise ProgramReportPublicationError(
+                "publication", str(exc)
+            ) from exc
+        raise
+
+
+def export_program_report_verification(
+    result: dict[str, Any],
+    destination: str | Path,
+    *,
+    expected_destination: ArtifactDestinationState | None = None,
+) -> Path:
+    """Atomically publish a bounded program-report verification verdict."""
+
+    if not _program_report_verification_contract(result):
+        raise ValueError(
+            "assurance program report verification result violates its closed contract"
+        )
+    content = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
+    expected_semantic_sha256 = canonical_json_sha256(result)
+
+    def staged_verifier(path: Path) -> bool:
+        try:
+            document = load_bounded_json_document(
+                path,
+                label="staged assurance program report verification receipt",
+                max_bytes=MAX_PROGRAM_REPORT_VERIFICATION_BYTES,
+                max_depth=MAX_PROGRAM_DEPTH,
+                max_nodes=MAX_PROGRAM_NODES,
+            )
+        except (OSError, ValueError):
+            return False
+        return bool(
+            isinstance(document.value, dict)
+            and _program_report_verification_contract(document.value)
+            and canonical_json_sha256(document.value) == expected_semantic_sha256
+        )
+
     return atomic_publish_text(
         destination,
         content,
-        max_bytes=MAX_PROGRAM_BYTES,
-        label="assurance program verification",
+        max_bytes=MAX_PROGRAM_REPORT_VERIFICATION_BYTES,
+        label="assurance program report verification receipt",
+        expected_destination=expected_destination,
+        staged_verifier=staged_verifier,
     )

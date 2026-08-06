@@ -126,6 +126,7 @@ Public interchange contracts are discoverable without network access or optional
 ```powershell
 sfmea schema --list
 sfmea schema --list --json
+sfmea schema assurance-program-report-verification -o program-report-verdict.schema.json
 sfmea schema diagram-bundle -o diagram-bundle.schema.json
 sfmea schema html-report-verification -o report-verdict.schema.json
 sfmea schema workflow-status -o workflow-status.schema.json
@@ -1356,6 +1357,16 @@ sfmea program-verify .artifacts\checkout-program.json --format json `
   -o .artifacts\checkout-program-verification.json
 sfmea program-verify .artifacts\checkout-program.json --format html `
   -o .artifacts\checkout-program-report.html
+sfmea program-verify .artifacts\checkout-program.json --format html `
+  -o .artifacts\checkout-program-report.html --publication-json
+sfmea program-report-verify .artifacts\checkout-program-report.html
+sfmea program-report-verify .artifacts\checkout-program-report.html `
+  --program .artifacts\checkout-program.json --json
+sfmea program-report-verify .artifacts\checkout-program-report.html `
+  --expect-sha256 $approvedReportSha256 --json
+sfmea program-report-verify .artifacts\checkout-program-report.html `
+  --program .artifacts\checkout-program.json `
+  -o .artifacts\checkout-program-report-verification.json
 ```
 
 The default program policy deliberately remains not ready until at least three independently
@@ -1386,10 +1397,55 @@ sample weighting while keeping every aggregate reproducible from the underlying 
 
 The HTML verdict includes a bounded repository topology, timing and circuit-breaker states,
 trusted-versus-declared evidence, verification checks, model-quality metrics, severity/search
-filters, print styling, and accessible navigation without remote assets. These defaults are policy
-starters, not certification requirements; tailor them to the approved organizational process.
-Program verification proves binding and configured gate consistency, not causal completeness,
-evidence adequacy, regulatory applicability, or risk acceptance.
+filters, print styling, and accessible navigation without remote assets. It also embeds the exact
+machine verdict and declares separate payload, canonical-verdict, program, and whole-document
+SHA-256 values. `program-report-verify` checks that receipt from one bounded, identity-stable file
+snapshot. With `--program`, it reruns the current verifier and requires both the exact program
+bytes and regenerated verdict semantics to match, exposing a stale report or verifier-semantic
+drift while ignoring only the program's local filesystem location. A
+standalone integrity pass establishes internal consistency only; these unkeyed digests do not
+authenticate the publisher. These defaults are policy starters, not certification requirements;
+tailor them to the approved organizational process. Program verification proves binding and
+configured gate consistency, not causal completeness, evidence adequacy, regulatory
+applicability, or risk acceptance.
+
+HTML publication is transactional even in ordinary human-output mode. PySFMEA writes and flushes
+a private sibling, verifies its embedded receipt, then reopens that stage without following links
+and requires unchanged identity, size, and SHA-256 before atomic replacement. A rejected verifier,
+mutated stage, concurrent destination owner, or replacement failure preserves the prior report and
+removes staging residue. JSON and Markdown program verdicts retain the shared bounded atomic
+publication boundary but do not claim an HTML receipt.
+For CI, `--publication-json` emits exactly one
+`pysfmea-assurance-program-report-verification-1` receipt after exact program-bound
+post-publication verification. Its `publication` record distinguishes `published` from
+`not_published`, records the failure phase, and states whether prior destination bytes were
+preserved. `artifact_sha256` binds the receipt to the exact final HTML bytes, complementing the
+report's normalized self-referential document digest. Exit `0` means published, verified, and
+assurance ready; exit `1` means published and
+verified but assurance not ready; exit `2` means publication or final verification failed. The
+flag requires `--format html --output`, and export refuses to overwrite the source program.
+Use `program-report-verify --expect-sha256 DIGEST` after transfer or archival restoration to
+require the exact lowercase SHA-256 recorded by an approved receipt. The machine verdict records
+whether this artifact binding was requested and actually checked; an unavailable file is never
+reported as a digest mismatch that was checked.
+For a durable verifier receipt, use `program-report-verify --output RECEIPT.json` instead of shell
+redirection. PySFMEA writes bounded UTF-8 JSON through the shared destination-state-checked atomic
+publisher, refuses to overwrite the source report or program, and preserves a concurrent or prior
+receipt on publication failure. `--output` and `--json` are mutually exclusive because the former
+writes the same machine verdict directly to disk.
+Before replacement, the receipt stage is reopened through strict bounded JSON ingestion and its
+canonical semantic digest must equal the exact in-memory verdict. The publisher then rechecks the
+stage's identity, size, and byte digest, preventing malformed JSON, non-finite values, or a
+different parseable verdict from being substituted into the durable record.
+The in-memory verdict must first satisfy the same closed current contract: exact top-level and
+check fields, typed verifier/digest/count/state values, reconciled failed and unchecked check
+lists, coherent artifact/program binding states, derived status and validity, and consistent
+publication phase/preservation claims. Invalid caller dictionaries are rejected before staging.
+The embedded verdict contract is closed through nested verifier/program records, typed check
+states and counts, bounded object relationships, exact finding fields and levels, count-to-finding
+reconciliation, and validity-to-error/check reconciliation. Staged publication also requires the
+receipt's program and semantic-verdict digests to equal the exact in-memory result requested by
+the caller, preventing substitution with a different but internally consistent report.
 
 ## Evaluation hook
 

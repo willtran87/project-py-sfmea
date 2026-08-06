@@ -7,6 +7,19 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ### Executable fault injection and quality ratchets
 
+- Add an opt-in, schema-backed transactional program-HTML publication receipt for CI. It records
+  publication phase and prior-destination preservation, separates verified-but-not-ready from
+  publication failure through exit codes, sanitizes failure details, and blocks source-program
+  overwrite. Program-report verdicts now expose the SHA-256 of the exact received HTML bytes for
+  downstream archival and review binding, and `program-report-verify --expect-sha256` can enforce
+  that approved digest after transport or restoration without conflating an unavailable file with
+  a completed mismatch check. `program-report-verify --output` now publishes durable verdict JSON
+  atomically, avoids shell-redirection encoding/truncation hazards, protects report/program
+  sources, and detects concurrent receipt replacement. Private receipt staging is also strictly
+  parsed and canonically matched to the exact requested verdict before identity/size/byte rechecks
+  and replacement. A closed runtime verdict contract now rejects contradictory caller-supplied
+  checks, bindings, status, validity, and publication state before staging.
+
 - Add three governed built-in fault-injection plugins for dependency exceptions/timeouts,
   malformed or degraded return values, and controlled failure/recovery sequences.
 - Generate content-bound, non-executable starter plans from assurance obligations; require
@@ -89,6 +102,17 @@ package; public artifact and schema identifiers carry their own explicit compati
   verdicts report declared, credited, duplicate, and fingerprinted evidence counts.
 - Add a compact visual guide with end-to-end, discovery, cascade, finding-lifecycle,
   evidence-credit, and multi-repository diagrams plus review and output matrices.
+- Make system-assurance HTML reports independently inspectable through embedded exact-verdict,
+  payload, program, and whole-document digests; add bounded standalone verification and optional
+  exact path-portable program/verdict regeneration, a CLI command, a public verdict schema, and a
+  program-module branch-coverage ratchet.
+- Verify program HTML on a private stage before publication, recheck its regular-file identity and
+  rendered digest after verification, and preserve prior output across verifier, staged-mutation,
+  destination-race, and replacement failures. Place the shared publisher under strict typing and
+  an 85% branch-coverage ratchet.
+- Close the embedded program-verdict contract through nested record/type/bound checks, reconcile
+  finding levels with declared counts and validity, and prevent a different internally consistent
+  verdict from satisfying staged publication.
 
 ## 0.58.0 - 2026-08-05
 

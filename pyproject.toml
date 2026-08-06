@@ -91,6 +91,7 @@ files = [
   "src/pysfmea/assurance_planning.py",
   "src/pysfmea/interfaces.py",
   "src/pysfmea/fault_injection.py",
+  "src/pysfmea/file_publication.py",
   "src/pysfmea/runtime.py",
   "src/pysfmea/sandbox_policy.py",
   "src/pysfmea/architecture.py",

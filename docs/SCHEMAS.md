@@ -52,6 +52,7 @@ Available names:
 | Name | Contract |
 |---|---|
 | `assurance-program` | Multi-repository analysis bindings, external requirements/evidence, temporal and circuit-breaker relationships, independent validation/model metrics, and governance policy |
+| `assurance-program-report-verification` | Standalone program-HTML integrity and optional exact-program regeneration verdicts |
 | `assurance-program-verification` | Program integrity, binding, trusted-evidence, timing/resilience, quality-gate, relationship, and governance verdicts |
 | `assurance-work-queue` | Accepted-finding work states, blockers, automation eligibility, and next actions |
 | `assurance-work-queue-verification` | Queue integrity, analysis binding, and deterministic-projection verdicts |
@@ -147,9 +148,55 @@ verdict, while unrun and inconclusive records receive no claim credit. A valid v
 that configured references, digests, thresholds, roles, and independence constraints reconcile;
 it does not authenticate an identity, approve risk, or establish certification.
 
+Program HTML carries an embedded copy of that exact machine verdict plus independent digests for
+the payload bytes, canonical verdict, source program, and normalized whole document.
+`sfmea program-report-verify REPORT --json` validates the self-contained receipt;
+`--program PROGRAM` additionally reruns program verification and requires exact content and
+verdict-semantic matches while excluding only the local program path. The public
+`assurance-program-report-verification` schema distinguishes
+`valid_binding_not_checked`, `matched`, `mismatched`, and `invalid`. Standalone integrity is useful
+for accidental-corruption detection but is not authenticity: a recipient seeking substantive
+binding should retain the program and use exact regeneration.
+`program-verify --format html --output REPORT --publication-json` adds the optional closed
+`publication` record to that same verdict. A completed publication must be exactly program-bound
+and valid; a rejected publication is invalid and records `input_validation`,
+`program_verification`, `generation`, or `publication`. A rare published artifact that fails the
+final read-back is explicitly `published` at `post_publication_verification`, never mislabeled as
+preserved. `destination_existed` and `prior_destination_preserved` reconcile for every rejection.
+Every readable report verdict carries `artifact_sha256`, the SHA-256 of the exact HTML byte
+sequence. Input/publication rejections carry an empty digest and zero bytes; a completed
+publication requires a non-empty exact-byte digest. This external receipt digest complements the
+normalized whole-document digest embedded inside the self-referential HTML.
+Supplying `program-report-verify --expect-sha256 DIGEST` populates
+`expected_artifact_sha256`, `artifact_binding_requested`, `artifact_binding_checked`, and the
+`artifact_identity` check. A mismatch makes the verdict invalid. If the report cannot be read, the
+request remains visible but `artifact_binding_checked` is false and the check is `null`; the
+verifier does not claim a comparison it could not perform.
+`program-report-verify --output RECEIPT.json` atomically writes this same schema-backed verdict as
+bounded UTF-8 JSON. It rejects report/program source collisions and destination-state races;
+invalid report verdicts are still retained with exit `1`, while receipt-publication failure exits
+`2` and preserves the prior or concurrent destination.
+The private stage is strictly parsed under byte/depth/node limits and must reproduce the canonical
+semantic digest of the exact in-memory verdict before replacement. Identity, size, and exact byte
+digest are rechecked afterward, so a malformed, non-finite, or semantically substituted stage is
+rejected and cleaned up.
+Before staging, the current producer applies a closed runtime contract that reconciles exact
+fields and types, check-derived failed/unchecked lists, artifact and program binding state,
+status/validity, and optional publication state. This prevents the atomic exporter from faithfully
+publishing an internally contradictory caller-supplied dictionary.
+Program HTML export verifies this receipt on a private sibling before publication, then requires
+the staged file to retain its regular-file identity, size, and rendered-content digest. The final
+destination must still match its inspected absent/file state immediately before atomic
+replacement. Rejection or concurrent change preserves the previous report.
+The embedded payload check enforces the closed verdict envelope, exact nested verifier/program
+records, typed check values and non-boolean counts, bounded object relationships and findings,
+closed finding fields/levels, count reconciliation, and agreement between `valid`, error count,
+and failed checks. Publication additionally requires the staged receipt's program and normalized
+verdict digests to match the exact in-memory result supplied to the renderer.
+
 ## Offline review-package use
 
-Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all eighteen
+Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all nineteen
 documents under their stable catalog filenames. The package manifest checksums every file and
 binds the catalog format, path, canonical digest, and schema count. `sfmea verify-package`
 additionally cross-checks catalog completeness, schema identities, and each canonical digest.
@@ -340,8 +387,9 @@ occur during `generation`, never publish the staged artifact, and preserve a pri
 Schema validity does not authenticate an author, approve an analysis, demonstrate control
 effectiveness, or accept residual risk.
 
-Every current `html-report-verification`, `diagram-bundle-verification`, and
-`assurance-work-queue-verification` result carries `verifier.name: PySFMEA` and the exact package
+Every current `html-report-verification`, `assurance-program-report-verification`,
+`diagram-bundle-verification`, and `assurance-work-queue-verification` result carries
+`verifier.name: PySFMEA` and the exact package
 version that issued the verdict. Their shared public envelope defines the verifier object as a
 closed name/version record. It is intentionally optional in the v1 schemas to preserve validation
 of genuine historical verdicts, but current producers populate it on both successful and rejected

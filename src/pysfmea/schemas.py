@@ -35,6 +35,7 @@ from .file_publication import atomic_publish_text
 from .html_report import HTML_REPORT_VERIFICATION_FORMAT
 from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_file
+from .program import PROGRAM_REPORT_FORMAT, PROGRAM_REPORT_VERIFICATION_FORMAT
 from .publication import (
     PUBLICATION_FAILURE_CATALOG_ALGORITHM,
     PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
@@ -687,6 +688,377 @@ def _html_report_verification_schema() -> dict[str, Any]:
                     "publication": {
                         "properties": {"status": {"const": "not_published"}},
                         "required": ["status"],
+                    }
+                },
+            },
+            "then": {"properties": {"valid": {"const": False}}},
+        },
+    ]
+    return schema
+
+
+def _assurance_program_report_verification_schema() -> dict[str, Any]:
+    schema = _verification_schema(
+        name="assurance-program-report-verification",
+        format_name=PROGRAM_REPORT_VERIFICATION_FORMAT,
+        title="PySFMEA assurance-program HTML report verification verdict",
+        check_names=(
+            "metadata_complete",
+            "metadata_unique",
+            "report_format",
+            "payload_present",
+            "payload_json",
+            "payload_contract",
+            "payload_integrity",
+            "verification_result_integrity",
+            "payload_binding",
+            "document_integrity",
+            "artifact_identity",
+            "program_content",
+            "program_verification",
+        ),
+    )
+    digest = {"type": "string", "pattern": "^(?:[0-9a-f]{64})?$"}
+    schema["required"].extend(
+        [
+            "verifier",
+            "bytes",
+            "artifact_sha256",
+            "expected_artifact_sha256",
+            "artifact_binding_requested",
+            "artifact_binding_checked",
+            "assurance_valid",
+            "declared",
+            "current",
+        ]
+    )
+    schema["properties"].update(
+        {
+            "bytes": {"type": "integer", "minimum": 0},
+            "artifact_sha256": digest,
+            "expected_artifact_sha256": digest,
+            "artifact_binding_requested": {"type": "boolean"},
+            "artifact_binding_checked": {"type": "boolean"},
+            "assurance_valid": {"type": ["boolean", "null"]},
+            "declared": {
+                "type": "object",
+                "properties": {
+                    "format": {"enum": ["", PROGRAM_REPORT_FORMAT]},
+                    "program_sha256": digest,
+                    "verification_result_sha256": digest,
+                    "payload_sha256": digest,
+                    "document_sha256": digest,
+                },
+                "additionalProperties": False,
+            },
+            "current": {
+                "type": "object",
+                "properties": {
+                    "program_path": {"type": "string"},
+                    "program_sha256": digest,
+                    "verification_result_sha256": digest,
+                    "verifier": {
+                        "type": "object",
+                        "required": ["name", "version"],
+                        "properties": {
+                            "name": {"const": "PySFMEA"},
+                            "version": {"type": "string", "minLength": 1},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "assurance_valid": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+            "publication": {
+                "type": "object",
+                "required": [
+                    "status",
+                    "phase",
+                    "destination_existed",
+                    "prior_destination_preserved",
+                ],
+                "properties": {
+                    "status": {"enum": ["published", "not_published"]},
+                    "phase": {
+                        "enum": [
+                            "input_validation",
+                            "program_verification",
+                            "generation",
+                            "publication",
+                            "post_publication_verification",
+                            "complete",
+                        ]
+                    },
+                    "destination_existed": {"type": "boolean"},
+                    "prior_destination_preserved": {"type": "boolean"},
+                },
+                "allOf": [
+                    {
+                        "if": {
+                            "required": ["status"],
+                            "properties": {"status": {"const": "published"}},
+                        },
+                        "then": {
+                            "properties": {
+                                "phase": {
+                                    "enum": [
+                                        "complete",
+                                        "post_publication_verification",
+                                    ]
+                                },
+                                "prior_destination_preserved": {"const": False},
+                            }
+                        },
+                    },
+                    {
+                        "if": {
+                            "required": ["status"],
+                            "properties": {
+                                "status": {"const": "not_published"}
+                            },
+                        },
+                        "then": {
+                            "properties": {
+                                "phase": {
+                                    "enum": [
+                                        "input_validation",
+                                        "program_verification",
+                                        "generation",
+                                        "publication",
+                                    ]
+                                }
+                            }
+                        },
+                    },
+                    {
+                        "if": {
+                            "required": ["destination_existed"],
+                            "properties": {
+                                "status": {"const": "not_published"},
+                                "destination_existed": {"const": True},
+                            },
+                        },
+                        "then": {
+                            "properties": {
+                                "prior_destination_preserved": {"const": True}
+                            }
+                        },
+                    },
+                    {
+                        "if": {
+                            "required": ["destination_existed"],
+                            "properties": {
+                                "destination_existed": {"const": False}
+                            },
+                        },
+                        "then": {
+                            "properties": {
+                                "prior_destination_preserved": {"const": False}
+                            }
+                        },
+                    },
+                ],
+                "additionalProperties": False,
+            },
+        }
+    )
+    schema["allOf"] = [
+        {
+            "if": {
+                "properties": {"artifact_binding_requested": {"const": False}}
+            },
+            "then": {
+                "properties": {
+                    "expected_artifact_sha256": {"const": ""},
+                    "artifact_binding_checked": {"const": False},
+                    "checks": {
+                        "properties": {"artifact_identity": {"type": "null"}}
+                    },
+                }
+            },
+        },
+        {
+            "if": {
+                "properties": {"artifact_binding_checked": {"const": True}}
+            },
+            "then": {
+                "properties": {
+                    "artifact_binding_requested": {"const": True},
+                    "expected_artifact_sha256": {
+                        "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "checks": {
+                        "properties": {"artifact_identity": {"type": "boolean"}}
+                    },
+                }
+            },
+        },
+        {
+            "if": {
+                "properties": {"artifact_binding_checked": {"const": False}}
+            },
+            "then": {
+                "properties": {
+                    "checks": {
+                        "properties": {"artifact_identity": {"type": "null"}}
+                    }
+                }
+            },
+        },
+        {
+            "if": {
+                "properties": {
+                    "checks": {
+                        "properties": {"artifact_identity": {"const": False}}
+                    }
+                }
+            },
+            "then": {
+                "properties": {
+                    "valid": {"const": False},
+                    "status": {"const": "invalid"},
+                    "artifact_binding_requested": {"const": True},
+                    "artifact_binding_checked": {"const": True},
+                }
+            },
+        },
+        {
+            "if": {"properties": {"binding_checked": {"const": True}}},
+            "then": {
+                "properties": {
+                    "binding_requested": {"const": True},
+                    "current": {
+                        "required": [
+                            "program_path",
+                            "program_sha256",
+                            "verification_result_sha256",
+                            "verifier",
+                            "assurance_valid",
+                        ]
+                    },
+                },
+            },
+        },
+        {
+            "if": {"properties": {"binding_checked": {"const": False}}},
+            "then": {"properties": {"current": {"maxProperties": 0}}},
+        },
+        {
+            "if": {"properties": {"status": {"const": "matched"}}},
+            "then": {
+                "properties": {
+                    "valid": {"const": True},
+                    "binding_requested": {"const": True},
+                    "binding_checked": {"const": True},
+                }
+            },
+        },
+        {
+            "if": {"properties": {"status": {"const": "mismatched"}}},
+            "then": {
+                "properties": {
+                    "valid": {"const": False},
+                    "binding_requested": {"const": True},
+                    "binding_checked": {"const": True},
+                }
+            },
+        },
+        {
+            "if": {
+                "properties": {"status": {"const": "valid_binding_not_checked"}}
+            },
+            "then": {
+                "properties": {
+                    "valid": {"const": True},
+                    "binding_requested": {"const": False},
+                    "binding_checked": {"const": False},
+                }
+            },
+        },
+        {
+            "if": {"properties": {"status": {"const": "invalid"}}},
+            "then": {"properties": {"valid": {"const": False}}},
+        },
+        {
+            "if": {"properties": {"bytes": {"minimum": 1}}},
+            "then": {
+                "properties": {
+                    "artifact_sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$",
+                    }
+                }
+            },
+        },
+        {
+            "if": {
+                "required": ["publication"],
+                "properties": {
+                    "publication": {
+                        "required": ["status", "phase"],
+                        "properties": {
+                            "status": {"const": "published"},
+                            "phase": {"const": "complete"},
+                        },
+                    }
+                },
+            },
+            "then": {
+                "properties": {
+                    "valid": {"const": True},
+                    "status": {"const": "matched"},
+                    "binding_requested": {"const": True},
+                    "binding_checked": {"const": True},
+                    "publication": {
+                        "properties": {
+                            "prior_destination_preserved": {"const": False}
+                        }
+                    },
+                }
+            },
+        },
+        {
+            "if": {
+                "required": ["publication"],
+                "properties": {
+                    "publication": {
+                        "required": ["status"],
+                        "properties": {"status": {"const": "not_published"}},
+                    }
+                },
+            },
+            "then": {"properties": {"valid": {"const": False}}},
+        },
+        {
+            "if": {
+                "required": ["publication"],
+                "properties": {
+                    "publication": {
+                        "required": ["status"],
+                        "properties": {"status": {"const": "not_published"}},
+                    }
+                },
+            },
+            "then": {
+                "properties": {
+                    "bytes": {"const": 0},
+                    "artifact_sha256": {"const": ""},
+                }
+            },
+        },
+        {
+            "if": {
+                "required": ["publication"],
+                "properties": {
+                    "publication": {
+                        "required": ["status", "phase"],
+                        "properties": {
+                            "status": {"const": "published"},
+                            "phase": {
+                                "const": "post_publication_verification"
+                            },
+                        },
                     }
                 },
             },
@@ -2941,6 +3313,9 @@ def _fault_injection_plan_verification_schema() -> dict[str, Any]:
 
 _SCHEMA_BUILDERS = {
     "assurance-program": _assurance_program_schema,
+    "assurance-program-report-verification": (
+        _assurance_program_report_verification_schema
+    ),
     "assurance-program-verification": _assurance_program_verification_schema,
     "assurance-work-queue": _assurance_work_queue_schema,
     "assurance-work-queue-verification": _assurance_work_queue_verification_schema,
@@ -2963,6 +3338,7 @@ _SCHEMA_BUILDERS = {
 }
 _SCHEMA_DESCRIPTIONS = {
     "assurance-program": "Multi-repository bindings, external requirements and trusted evidence, temporal and circuit-breaker relationships, independent validation/model quality, and governance policy.",
+    "assurance-program-report-verification": "Standalone HTML report integrity and optional exact assurance-program regeneration verdicts.",
     "assurance-program-verification": "System assurance program integrity, binding, trusted-evidence, timing/resilience, quality-gate, and governance verdicts.",
     "assurance-work-queue": "Accepted-finding hardening states, blockers, eligibility, and next actions.",
     "assurance-work-queue-verification": "Work-queue integrity, analysis binding, and semantic-projection verdicts.",
@@ -2983,6 +3359,7 @@ _SCHEMA_DESCRIPTIONS = {
 }
 SCHEMA_FILENAMES = {
     "assurance-program": "pysfmea-assurance-program.schema.json",
+    "assurance-program-report-verification": "pysfmea-assurance-program-report-verification.schema.json",
     "assurance-program-verification": "pysfmea-assurance-program-verification.schema.json",
     "assurance-work-queue": "pysfmea-assurance-work-queue.schema.json",
     "assurance-work-queue-verification": "pysfmea-assurance-work-queue-verification.schema.json",

@@ -190,7 +190,7 @@ circuit-breaker expectations.
 | Review source coverage | Inventory and coverage views | `sfmea inventory`, `sfmea coverage` | Tool and software assurance |
 | Audit NASA/FAA relationships | Citation trace | `sfmea citations` | Safety and compliance reviewers |
 | Transfer a frozen review set | Verified ZIP package | `sfmea package`, `sfmea verify-package` | Independent recipient |
-| Review system-level evidence | Program HTML/JSON/Markdown | `sfmea program-verify` | System assurance authority |
+| Review system-level evidence | Program HTML/JSON/Markdown plus exact report receipt | `sfmea program-verify`, `sfmea program-report-verify` | System assurance authority |
 
 ## Diagram portfolio
 

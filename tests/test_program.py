@@ -17,15 +17,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.cli import main
 from pysfmea.integrity import canonical_json_sha256
+from pysfmea.json_ingestion import BoundedJsonDocument
 from pysfmea.llm_quality import project_llm_quality_corpus
 from pysfmea.program import (
     PROGRAM_FORMAT,
+    ProgramReportPublicationError,
+    _program_report_verification_contract,
+    _program_verification_payload_contract,
     build_program_template,
+    export_program_report_verification,
+    export_program_verification,
     program_verification_html,
     program_verification_markdown,
     seal_program,
     seal_program_file,
     verify_assurance_program,
+    verify_program_report_file,
 )
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
@@ -864,6 +871,769 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertTrue(
             output.read_text(encoding="utf-8").startswith("<!doctype html>")
+        )
+
+    def test_program_html_report_is_self_verifying_and_exactly_program_bound(
+        self,
+    ) -> None:
+        self._write_program(self._valid_program())
+        output = self.root / "program-report.html"
+        with contextlib.redirect_stdout(io.StringIO()):
+            exit_code = main(
+                [
+                    "program-verify",
+                    str(self.program_path),
+                    "--format",
+                    "html",
+                    "-o",
+                    str(output),
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+
+        standalone = verify_program_report_file(output)
+        self.assertTrue(standalone["valid"], standalone)
+        self.assertTrue(_program_report_verification_contract(standalone))
+        self.assertEqual(
+            standalone["artifact_sha256"], hashlib.sha256(output.read_bytes()).hexdigest()
+        )
+        self.assertEqual(standalone["status"], "valid_binding_not_checked")
+        self.assertTrue(standalone["assurance_valid"])
+        self.assertIsNone(standalone["checks"]["program_content"])
+        Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        ).validate(standalone)
+
+        matched = verify_program_report_file(
+            output,
+            program=self.program_path,
+            expected_sha256=standalone["artifact_sha256"],
+        )
+        self.assertTrue(matched["valid"], matched)
+        self.assertEqual(matched["status"], "matched")
+        self.assertTrue(matched["artifact_binding_requested"])
+        self.assertTrue(matched["artifact_binding_checked"])
+        self.assertTrue(matched["checks"]["artifact_identity"])
+        self.assertTrue(all(value is True for value in matched["checks"].values()))
+        report_validator = Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        )
+        report_validator.validate(matched)
+        self.assertTrue(_program_report_verification_contract(matched))
+        contradictions = []
+        contradiction = copy.deepcopy(matched)
+        contradiction["valid"] = False
+        contradictions.append(contradiction)
+        contradiction = copy.deepcopy(matched)
+        contradiction["binding_checked"] = False
+        contradictions.append(contradiction)
+        contradiction = copy.deepcopy(matched)
+        contradiction["current"].pop("verifier")
+        contradictions.append(contradiction)
+        contradiction = copy.deepcopy(standalone)
+        contradiction["current"] = {"program_path": "unrequested.json"}
+        contradictions.append(contradiction)
+        contradiction = copy.deepcopy(matched)
+        contradiction.pop("artifact_sha256")
+        contradictions.append(contradiction)
+        contradiction = copy.deepcopy(matched)
+        contradiction["artifact_sha256"] = ""
+        contradictions.append(contradiction)
+        for contradiction in contradictions:
+            self.assertFalse(report_validator.is_valid(contradiction))
+            self.assertFalse(_program_report_verification_contract(contradiction))
+        artifact_mismatch = verify_program_report_file(
+            output,
+            expected_sha256="0" * 64,
+        )
+        self.assertFalse(artifact_mismatch["valid"])
+        self.assertEqual(artifact_mismatch["status"], "invalid")
+        self.assertTrue(artifact_mismatch["artifact_binding_checked"])
+        self.assertFalse(artifact_mismatch["checks"]["artifact_identity"])
+        report_validator.validate(artifact_mismatch)
+        self.assertTrue(_program_report_verification_contract(artifact_mismatch))
+        relocated_program = self.root / "relocated" / "program.json"
+        relocated_program.parent.mkdir()
+        relocated_program.write_bytes(self.program_path.read_bytes())
+        for analysis_path in self.analysis_paths:
+            relocated_analysis = relocated_program.parent / analysis_path.relative_to(
+                self.root
+            )
+            relocated_analysis.parent.mkdir(parents=True)
+            relocated_analysis.write_bytes(analysis_path.read_bytes())
+        for artifact in (
+            "timing-evidence.json",
+            "evaluation-result.json",
+            "llm-quality-corpus.json",
+        ):
+            (relocated_program.parent / artifact).write_bytes(
+                (self.root / artifact).read_bytes()
+            )
+        relocated = verify_program_report_file(output, program=relocated_program)
+        self.assertTrue(relocated["valid"], relocated)
+        self.assertEqual(relocated["status"], "matched")
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(
+                main(
+                    [
+                        "program-report-verify",
+                        str(output),
+                        "--program",
+                        str(self.program_path),
+                    ]
+                ),
+                0,
+            )
+        self.assertIn("MATCHED", stdout.getvalue())
+        self.assertIn("Exact program binding: matched", stdout.getvalue())
+
+        receipt_path = self.root / "program-report-verification.json"
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            receipt_exit = main(
+                [
+                    "program-report-verify",
+                    str(output),
+                    "--program",
+                    str(self.program_path),
+                    "--expect-sha256",
+                    standalone["artifact_sha256"],
+                    "--output",
+                    str(receipt_path),
+                ]
+            )
+        self.assertEqual(receipt_exit, 0)
+        persisted_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertTrue(persisted_receipt["valid"])
+        self.assertTrue(persisted_receipt["checks"]["artifact_identity"])
+        report_validator.validate(persisted_receipt)
+        self.assertIn("Exported assurance program report verification", stdout.getvalue())
+
+        report_before_collision = output.read_bytes()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            collision_exit = main(
+                [
+                    "program-report-verify",
+                    str(output),
+                    "--output",
+                    str(output),
+                ]
+            )
+        self.assertEqual(collision_exit, 2)
+        self.assertIn("destination must differ", stderr.getvalue())
+        self.assertEqual(output.read_bytes(), report_before_collision)
+
+        program_before_collision = self.program_path.read_bytes()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            program_collision_exit = main(
+                [
+                    "program-report-verify",
+                    str(output),
+                    "--program",
+                    str(self.program_path),
+                    "--output",
+                    str(self.program_path),
+                ]
+            )
+        self.assertEqual(program_collision_exit, 2)
+        self.assertEqual(self.program_path.read_bytes(), program_before_collision)
+
+        receipt_path.write_text("prior receipt", encoding="utf-8")
+        verified_result = verify_program_report_file(
+            output, program=self.program_path
+        )
+
+        def replace_receipt_during_verification(*args: object, **kwargs: object) -> dict:
+            receipt_path.write_text("concurrent receipt", encoding="utf-8")
+            return verified_result
+
+        stderr = io.StringIO()
+        with patch(
+            "pysfmea.cli.verify_program_report_file",
+            side_effect=replace_receipt_during_verification,
+        ), contextlib.redirect_stderr(stderr):
+            race_exit = main(
+                [
+                    "program-report-verify",
+                    str(output),
+                    "--output",
+                    str(receipt_path),
+                ]
+            )
+        self.assertEqual(race_exit, 2)
+        self.assertIn("destination changed", stderr.getvalue())
+        self.assertEqual(
+            receipt_path.read_text(encoding="utf-8"), "concurrent receipt"
+        )
+        self.assertFalse(
+            list(self.root.glob(".program-report-verification.json.*.tmp"))
+        )
+
+        report_bytes = output.read_bytes()
+        output.write_bytes(
+            report_bytes.replace(
+                b"Executive assurance state", b"Rewritten assurance state", 1
+            )
+        )
+        tampered = verify_program_report_file(output, program=self.program_path)
+        self.assertFalse(tampered["valid"])
+        self.assertNotEqual(
+            tampered["artifact_sha256"], standalone["artifact_sha256"]
+        )
+        self.assertEqual(
+            tampered["artifact_sha256"], hashlib.sha256(output.read_bytes()).hexdigest()
+        )
+        self.assertEqual(tampered["status"], "invalid")
+        self.assertFalse(tampered["checks"]["document_integrity"])
+        self.assertTrue(tampered["checks"]["payload_integrity"])
+        tampered_receipt = self.root / "tampered-program-report-verification.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            tampered_exit = main(
+                [
+                    "program-report-verify",
+                    str(output),
+                    "--output",
+                    str(tampered_receipt),
+                ]
+            )
+        self.assertEqual(tampered_exit, 1)
+        persisted_tampered = json.loads(
+            tampered_receipt.read_text(encoding="utf-8")
+        )
+        self.assertFalse(persisted_tampered["valid"])
+        report_validator.validate(persisted_tampered)
+
+        output.write_bytes(report_bytes)
+        changed_program = self._valid_program()
+        changed_program["purpose"] = "Changed after report generation."
+        self._write_program(seal_program(changed_program))
+        stale = verify_program_report_file(output, program=self.program_path)
+        self.assertFalse(stale["valid"])
+        self.assertEqual(stale["status"], "mismatched")
+        self.assertFalse(stale["checks"]["program_content"])
+        self.assertFalse(stale["checks"]["program_verification"])
+        report_validator.validate(stale)
+
+    def test_program_report_cli_and_unsafe_input_return_public_verdict(self) -> None:
+        missing = self.root / "missing-report.html"
+        rejected = verify_program_report_file(missing, program=self.program_path)
+        self.assertFalse(rejected["valid"])
+        self.assertEqual(rejected["artifact_sha256"], "")
+        self.assertEqual(rejected["status"], "invalid")
+        self.assertFalse(rejected["binding_checked"])
+        Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        ).validate(rejected)
+        self.assertTrue(_program_report_verification_contract(rejected))
+        pinned_missing = verify_program_report_file(
+            missing, expected_sha256="0" * 64
+        )
+        self.assertTrue(pinned_missing["artifact_binding_requested"])
+        self.assertFalse(pinned_missing["artifact_binding_checked"])
+        self.assertIsNone(pinned_missing["checks"]["artifact_identity"])
+        Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        ).validate(pinned_missing)
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = main(
+                [
+                    "program-report-verify",
+                    str(missing),
+                    "--program",
+                    str(self.program_path),
+                    "--json",
+                ]
+            )
+        self.assertEqual(exit_code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(
+            payload["format"],
+            "pysfmea-assurance-program-report-verification-1",
+        )
+
+        self._write_program(self._valid_program())
+        valid_report = self.root / "pinned-report.html"
+        valid_report.write_bytes(
+            program_verification_html(
+                verify_assurance_program(self.program_path)
+            ).encode("utf-8")
+        )
+        expected_digest = hashlib.sha256(valid_report.read_bytes()).hexdigest()
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            pinned_exit = main(
+                [
+                    "program-report-verify",
+                    str(valid_report),
+                    "--expect-sha256",
+                    expected_digest,
+                    "--json",
+                ]
+            )
+        pinned = json.loads(stdout.getvalue())
+        self.assertEqual(pinned_exit, 0)
+        self.assertTrue(pinned["checks"]["artifact_identity"])
+        Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        ).validate(pinned)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            mismatch_exit = main(
+                [
+                    "program-report-verify",
+                    str(valid_report),
+                    "--expect-sha256",
+                    "0" * 64,
+                    "--json",
+                ]
+            )
+        mismatch = json.loads(stdout.getvalue())
+        self.assertEqual(mismatch_exit, 1)
+        self.assertFalse(mismatch["valid"])
+        self.assertFalse(mismatch["checks"]["artifact_identity"])
+        Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        ).validate(mismatch)
+
+        malformed_pin = verify_program_report_file(
+            valid_report, expected_sha256="not-a-digest"
+        )
+        self.assertFalse(malformed_pin["valid"])
+        self.assertTrue(malformed_pin["artifact_binding_requested"])
+        self.assertFalse(malformed_pin["artifact_binding_checked"])
+        self.assertIsNone(malformed_pin["checks"]["artifact_identity"])
+        Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        ).validate(malformed_pin)
+
+        invalid_utf8 = self.root / "invalid-report.html"
+        invalid_utf8.write_bytes(b"\xff")
+        invalid_encoding = verify_program_report_file(invalid_utf8)
+        self.assertFalse(invalid_encoding["valid"])
+        self.assertIn("UTF-8", invalid_encoding["errors"][0]["message"])
+        self.assertEqual(invalid_encoding["bytes"], 1)
+        self.assertEqual(
+            invalid_encoding["artifact_sha256"], hashlib.sha256(b"\xff").hexdigest()
+        )
+        Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        ).validate(invalid_encoding)
+
+        self._write_program(self._valid_program())
+        result = verify_assurance_program(self.program_path)
+        report = program_verification_html(result)
+        format_meta = (
+            '<meta name="pysfmea-program-report-format" '
+            'content="pysfmea-assurance-program-report-1">'
+        )
+        duplicate_metadata = self.root / "duplicate-metadata.html"
+        duplicate_metadata.write_text(
+            report.replace(format_meta, format_meta + format_meta, 1),
+            encoding="utf-8",
+        )
+        duplicate = verify_program_report_file(duplicate_metadata)
+        self.assertFalse(duplicate["valid"])
+        self.assertFalse(duplicate["checks"]["metadata_unique"])
+
+        payload_start = report.index(
+            '<script id="program-verification-data" type="application/json">'
+        ) + len('<script id="program-verification-data" type="application/json">')
+        payload_end = report.index("</script>", payload_start)
+        malformed_payload = self.root / "malformed-payload.html"
+        malformed_payload.write_text(
+            report[:payload_start] + "{" + report[payload_end:],
+            encoding="utf-8",
+        )
+        malformed = verify_program_report_file(malformed_payload)
+        self.assertFalse(malformed["valid"])
+        self.assertFalse(malformed["checks"]["payload_json"])
+        self.assertFalse(malformed["checks"]["payload_contract"])
+        self.assertIsNone(malformed["assurance_valid"])
+
+    def test_program_report_publication_json_is_schema_backed_and_assurance_aware(
+        self,
+    ) -> None:
+        self._write_program(self._valid_program())
+        output = self.root / "published-program-report.html"
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = main(
+                [
+                    "program-verify",
+                    str(self.program_path),
+                    "--format",
+                    "html",
+                    "--output",
+                    str(output),
+                    "--publication-json",
+                ]
+            )
+        receipt = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(receipt["valid"])
+        self.assertEqual(
+            receipt["artifact_sha256"], hashlib.sha256(output.read_bytes()).hexdigest()
+        )
+        self.assertTrue(receipt["assurance_valid"])
+        self.assertEqual(receipt["status"], "matched")
+        self.assertEqual(
+            receipt["publication"],
+            {
+                "status": "published",
+                "phase": "complete",
+                "destination_existed": False,
+                "prior_destination_preserved": False,
+            },
+        )
+        validator = Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        )
+        validator.validate(receipt)
+        self.assertTrue(_program_report_verification_contract(receipt))
+        contradiction = copy.deepcopy(receipt)
+        contradiction["publication"]["status"] = "not_published"
+        contradiction["publication"]["phase"] = "publication"
+        contradiction["publication"]["prior_destination_preserved"] = False
+        self.assertFalse(validator.is_valid(contradiction))
+        self.assertFalse(_program_report_verification_contract(contradiction))
+
+        program = self._valid_program()
+        program["external_evidence"][0]["artifact"]["sha256"] = "0" * 64
+        self._write_program(seal_program(program))
+        not_ready_output = self.root / "not-ready-program-report.html"
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = main(
+                [
+                    "program-verify",
+                    str(self.program_path),
+                    "--format",
+                    "html",
+                    "--output",
+                    str(not_ready_output),
+                    "--publication-json",
+                ]
+            )
+        not_ready = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertTrue(not_ready["valid"])
+        self.assertFalse(not_ready["assurance_valid"])
+        self.assertEqual(not_ready["publication"]["status"], "published")
+        validator.validate(not_ready)
+        self.assertTrue(_program_report_verification_contract(not_ready))
+
+    def test_program_report_publication_json_preserves_prior_on_failure(self) -> None:
+        self._write_program(self._valid_program())
+        output = self.root / "preserved-program-report.html"
+        output.write_text("trusted prior report", encoding="utf-8")
+        stdout = io.StringIO()
+        with patch(
+            "pysfmea.program.program_verification_html",
+            side_effect=RuntimeError("renderer detail must not escape"),
+        ), contextlib.redirect_stdout(stdout):
+            exit_code = main(
+                [
+                    "program-verify",
+                    str(self.program_path),
+                    "--format",
+                    "html",
+                    "--output",
+                    str(output),
+                    "--publication-json",
+                ]
+            )
+        receipt = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 2)
+        self.assertFalse(receipt["valid"])
+        self.assertEqual(receipt["publication"]["status"], "not_published")
+        self.assertEqual(receipt["publication"]["phase"], "generation")
+        self.assertTrue(receipt["publication"]["destination_existed"])
+        self.assertTrue(receipt["publication"]["prior_destination_preserved"])
+        self.assertNotIn("renderer detail", stdout.getvalue())
+        self.assertEqual(output.read_text(encoding="utf-8"), "trusted prior report")
+        Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        ).validate(receipt)
+        self.assertTrue(_program_report_verification_contract(receipt))
+
+        original_program = self.program_path.read_bytes()
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            collision_exit = main(
+                [
+                    "program-verify",
+                    str(self.program_path),
+                    "--format",
+                    "html",
+                    "--output",
+                    str(self.program_path),
+                    "--publication-json",
+                ]
+            )
+        collision = json.loads(stdout.getvalue())
+        self.assertEqual(collision_exit, 2)
+        self.assertEqual(collision["publication"]["phase"], "input_validation")
+        self.assertTrue(collision["publication"]["prior_destination_preserved"])
+        self.assertEqual(self.program_path.read_bytes(), original_program)
+        Draft202012Validator(
+            schema_document("assurance-program-report-verification")
+        ).validate(collision)
+        self.assertTrue(_program_report_verification_contract(collision))
+
+        result = verify_assurance_program(self.program_path)
+        report = program_verification_html(result)
+        payload_start = report.index(
+            '<script id="program-verification-data" type="application/json">'
+        ) + len('<script id="program-verification-data" type="application/json">')
+        payload_end = report.index("</script>", payload_start)
+        empty_payload = self.root / "empty-payload.html"
+        empty_payload.write_text(
+            report[:payload_start] + "{}" + report[payload_end:],
+            encoding="utf-8",
+        )
+        empty = verify_program_report_file(empty_payload)
+        self.assertFalse(empty["valid"])
+        self.assertTrue(empty["checks"]["payload_json"])
+        self.assertFalse(empty["checks"]["payload_contract"])
+        self.assertFalse(empty["checks"]["payload_binding"])
+        self.assertFalse(empty["assurance_valid"])
+
+        document_meta_start = report.index(
+            '<meta name="pysfmea-program-report-document-sha256"'
+        )
+        document_meta_end = report.index("\n", document_meta_start) + 1
+        missing_document_metadata = self.root / "missing-document-metadata.html"
+        missing_document_metadata.write_text(
+            report[:document_meta_start] + report[document_meta_end:],
+            encoding="utf-8",
+        )
+        missing_metadata = verify_program_report_file(missing_document_metadata)
+        self.assertFalse(missing_metadata["valid"])
+        self.assertFalse(missing_metadata["checks"]["metadata_complete"])
+        self.assertFalse(missing_metadata["checks"]["metadata_unique"])
+        self.assertFalse(missing_metadata["checks"]["document_integrity"])
+
+        payload_block = report[
+            report.rfind("<script", 0, payload_start) : payload_end + len("</script>")
+        ]
+        duplicate_payload = self.root / "duplicate-payload.html"
+        duplicate_payload.write_text(
+            report[:payload_end]
+            + "</script>"
+            + payload_block
+            + report[payload_end + len("</script>") :],
+            encoding="utf-8",
+        )
+        repeated = verify_program_report_file(duplicate_payload)
+        self.assertFalse(repeated["valid"])
+        self.assertFalse(repeated["checks"]["payload_present"])
+        self.assertFalse(repeated["checks"]["payload_json"])
+
+    def test_program_report_payload_contract_rejects_each_wrong_top_level_type(
+        self,
+    ) -> None:
+        self._write_program(self._valid_program())
+        result = verify_assurance_program(self.program_path)
+        self.assertTrue(_program_verification_payload_contract(result))
+        replacements = {
+            "format": "wrong-format",
+            "verifier": [],
+            "program": [],
+            "valid": 1,
+            "checks": [],
+            "counts": [],
+            "summary": [],
+            "relationships": {},
+            "validation": [],
+            "llm_quality": [],
+            "findings": {},
+            "notice": [],
+        }
+        for field, replacement in replacements.items():
+            with self.subTest(field=field):
+                candidate = copy.deepcopy(result)
+                candidate[field] = replacement
+                self.assertFalse(_program_verification_payload_contract(candidate))
+
+        nested_mutations: list[tuple[str, object]] = []
+        candidate = copy.deepcopy(result)
+        candidate["verifier"]["unexpected"] = True
+        nested_mutations.append(("verifier fields", candidate))
+        candidate = copy.deepcopy(result)
+        candidate["program"]["content_sha256"] = "A" * 64
+        nested_mutations.append(("program digest", candidate))
+        candidate = copy.deepcopy(result)
+        candidate["checks"]["integrity"] = "passed"
+        nested_mutations.append(("check state", candidate))
+        candidate = copy.deepcopy(result)
+        candidate["counts"]["errors"] = True
+        nested_mutations.append(("boolean count", candidate))
+        candidate = copy.deepcopy(result)
+        candidate["relationships"] = ["not an object"]
+        nested_mutations.append(("relationship record", candidate))
+        candidate = copy.deepcopy(result)
+        candidate["findings"].append(
+            {
+                "code": "invalid.finding",
+                "level": "critical",
+                "message": "Invalid level.",
+                "location": "program",
+            }
+        )
+        nested_mutations.append(("finding record", candidate))
+        candidate = copy.deepcopy(result)
+        candidate["counts"]["warnings"] += 1
+        nested_mutations.append(("finding count reconciliation", candidate))
+        candidate = copy.deepcopy(result)
+        candidate["valid"] = not candidate["valid"]
+        nested_mutations.append(("validity reconciliation", candidate))
+        candidate = copy.deepcopy(result)
+        candidate["notice"] = ""
+        nested_mutations.append(("empty notice", candidate))
+        for label, candidate in nested_mutations:
+            with self.subTest(label=label):
+                self.assertFalse(_program_verification_payload_contract(candidate))
+
+        json_output = export_program_verification(
+            result, self.root / "program-verification.json", format="json"
+        )
+        markdown_output = export_program_verification(
+            result, self.root / "program-verification.md", format="markdown"
+        )
+        self.assertEqual(
+            json.loads(json_output.read_text(encoding="utf-8")), result
+        )
+        self.assertIn(
+            "# System assurance program verification",
+            markdown_output.read_text(encoding="utf-8"),
+        )
+        receipt_source = self.root / "receipt-source-program-report.html"
+        receipt_source.write_bytes(program_verification_html(result).encode("utf-8"))
+        report_receipt = verify_program_report_file(receipt_source)
+        self.assertTrue(_program_report_verification_contract(report_receipt))
+        malformed_contract_receipt = self.root / "malformed-contract-receipt.json"
+        malformed_contract_receipt.write_text(
+            "trusted prior receipt", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "violates its closed contract"):
+            export_program_report_verification(result, malformed_contract_receipt)
+        self.assertEqual(
+            malformed_contract_receipt.read_text(encoding="utf-8"),
+            "trusted prior receipt",
+        )
+        self.assertFalse(
+            list(self.root.glob(".malformed-contract-receipt.json.*.tmp"))
+        )
+        bounded_receipt = self.root / "bounded-program-report-receipt.json"
+        bounded_receipt.write_text("trusted prior receipt", encoding="utf-8")
+        with patch("pysfmea.program.MAX_PROGRAM_REPORT_VERIFICATION_BYTES", 1):
+            with self.assertRaisesRegex(ValueError, "exceeds the 1-byte"):
+                export_program_report_verification(report_receipt, bounded_receipt)
+        self.assertEqual(
+            bounded_receipt.read_text(encoding="utf-8"), "trusted prior receipt"
+        )
+        substituted_receipt = self.root / "substituted-program-report-receipt.json"
+        substituted_receipt.write_text("trusted prior receipt", encoding="utf-8")
+        with patch(
+            "pysfmea.program.load_bounded_json_document",
+            return_value=BoundedJsonDocument(
+                path=substituted_receipt,
+                value={"format": "substituted-staged-receipt"},
+                raw=b"{}",
+            ),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "staged assurance program report verification receipt verification failed",
+            ):
+                export_program_report_verification(report_receipt, substituted_receipt)
+        self.assertEqual(
+            substituted_receipt.read_text(encoding="utf-8"),
+            "trusted prior receipt",
+        )
+        self.assertFalse(
+            list(self.root.glob(".substituted-program-report-receipt.json.*.tmp"))
+        )
+
+        non_finite_receipt = self.root / "non-finite-program-report-receipt.json"
+        non_finite_receipt.write_text("trusted prior receipt", encoding="utf-8")
+        non_finite_result = copy.deepcopy(report_receipt)
+        non_finite_result["unexpected_metric"] = float("nan")
+        with self.assertRaisesRegex(
+            ValueError,
+            "violates its closed contract",
+        ):
+            export_program_report_verification(
+                non_finite_result, non_finite_receipt
+            )
+        self.assertEqual(
+            non_finite_receipt.read_text(encoding="utf-8"),
+            "trusted prior receipt",
+        )
+        self.assertFalse(
+            list(self.root.glob(".non-finite-program-report-receipt.json.*.tmp"))
+        )
+        with self.assertRaisesRegex(ValueError, "must be json, markdown, or html"):
+            export_program_verification(
+                result, self.root / "program-verification.txt", format="text"
+            )
+        original_program = self.program_path.read_bytes()
+        with self.assertRaisesRegex(
+            ProgramReportPublicationError,
+            "destination must differ from the assurance program file",
+        ) as collision:
+            export_program_verification(result, self.program_path, format="html")
+        self.assertEqual(collision.exception.phase, "input_validation")
+        self.assertEqual(self.program_path.read_bytes(), original_program)
+
+        preserved_report = self.root / "preserved-program-report.html"
+        preserved_report.write_text("trusted prior report", encoding="utf-8")
+        with patch(
+            "pysfmea.program.verify_program_report_file",
+            return_value={"valid": False},
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "staged assurance program report verification failed"
+            ):
+                export_program_verification(
+                    result, preserved_report, format="html"
+                )
+        self.assertEqual(
+            preserved_report.read_text(encoding="utf-8"), "trusted prior report"
+        )
+        self.assertFalse(
+            list(self.root.glob(".preserved-program-report.html.*.tmp"))
+        )
+
+        substituted_report = self.root / "substituted-program-report.html"
+        substituted_report.write_text("trusted prior report", encoding="utf-8")
+        altered_result = copy.deepcopy(result)
+        altered_result["notice"] = "Internally valid but not the requested verdict."
+        altered_html = program_verification_html(altered_result)
+        altered_standalone = self.root / "altered-standalone.html"
+        altered_standalone.write_bytes(altered_html.encode("utf-8"))
+        self.assertTrue(verify_program_report_file(altered_standalone)["valid"])
+        with patch(
+            "pysfmea.program.program_verification_html",
+            return_value=altered_html,
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "staged assurance program report verification failed"
+            ):
+                export_program_verification(
+                    result, substituted_report, format="html"
+                )
+        self.assertEqual(
+            substituted_report.read_text(encoding="utf-8"),
+            "trusted prior report",
+        )
+        self.assertFalse(
+            list(self.root.glob(".substituted-program-report.html.*.tmp"))
         )
 
     def test_unrun_or_failed_evidence_cannot_support_timing_or_resilience(self) -> None:
