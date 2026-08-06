@@ -25,14 +25,23 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Quality Assurance",
 ]
+dependencies = ["defusedxml>=0.7.1"]
 
 [project.optional-dependencies]
 signing = ["cryptography>=42"]
 dev = [
   "build>=1.2",
+  "hypothesis>=6.138",
   "jsonschema>=4.23",
   "pytest>=8",
   "ruff>=0.9",
+]
+quality = [
+  "bandit>=1.8",
+  "coverage[toml]>=7.10",
+  "mypy>=1.18",
+  "mutmut>=3.3",
+  "pip-audit>=2.9",
 ]
 
 [project.urls]
@@ -54,9 +63,56 @@ version = { attr = "pysfmea.version.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
 
 [tool.ruff]
 target-version = "py311"
 
 [tool.ruff.lint]
 select = ["F", "I"]
+
+[tool.coverage.run]
+branch = true
+source = ["pysfmea"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = [
+  "src/pysfmea/assurance_planning.py",
+  "src/pysfmea/interfaces.py",
+  "src/pysfmea/fault_injection.py",
+  "src/pysfmea/runtime.py",
+  "src/pysfmea/sandbox_policy.py",
+  "src/pysfmea/architecture.py",
+  "src/pysfmea/integrity.py",
+  "scripts/check_coverage_ratchets.py",
+]
+warn_unused_configs = true
+
+[tool.bandit]
+exclude_dirs = ["tests", "build", "dist"]
+
+[tool.mutmut]
+source_paths = [
+  "src/pysfmea/assurance_planning.py",
+  "src/pysfmea/fault_injection.py",
+  "src/pysfmea/runtime.py",
+  "src/pysfmea/sandbox_policy.py",
+]
+pytest_add_cli_args_test_selection = [
+  "tests/test_fault_injection.py",
+  "tests/test_runtime.py",
+  "tests/test_sandbox_policy.py",
+]
+mutate_only_covered_lines = true
+max_stack_depth = 12

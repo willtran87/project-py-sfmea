@@ -12,13 +12,18 @@ import subprocess
 import threading
 import time
 import uuid
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
+
 from .assurance import assurance_summary, ensure_assurance_register
+from .interfaces import AnalysisDocument, AssuranceObligation
 from .json_ingestion import load_bounded_json_file
 from .model import stable_id, utc_now
+from .sandbox_policy import resolve_sandbox_engine as _resolve_engine
+from .sandbox_policy import sandbox_command
 
 EXECUTION_SCHEMA_VERSION = "1.0"
 EVIDENCE_REVIEW_DECISIONS = {
@@ -131,7 +136,9 @@ def _inside(root: Path, value: Path) -> bool:
         return False
 
 
-def _obligation(analysis: dict[str, Any], obligation_id: str) -> dict[str, Any]:
+def _obligation(
+    analysis: AnalysisDocument | dict[str, Any], obligation_id: str
+) -> AssuranceObligation:
     register = ensure_assurance_register(analysis)
     value = next(
         (
@@ -245,114 +252,6 @@ def _git_state(root: Path) -> dict[str, Any]:
         if status.returncode == 0
         else "",
     }
-
-
-def _resolve_engine(engine: str) -> str:
-    if engine not in {"auto", "docker", "podman"}:
-        raise ValueError("sandbox engine must be auto, docker, or podman")
-    names = ("docker", "podman") if engine == "auto" else (engine,)
-    for name in names:
-        resolved = shutil.which(name)
-        if resolved:
-            return resolved
-    raise ValueError("no Docker or Podman executable is available for sandbox execution")
-
-
-def _pytest_command(command: list[str]) -> bool:
-    names = [Path(value).name.casefold() for value in command[:3]]
-    return bool(
-        names
-        and (
-            names[0] in {"pytest", "pytest.exe"}
-            or (len(names) >= 3 and names[1:3] == ["-m", "pytest"])
-        )
-    )
-
-
-def sandbox_command(
-    *,
-    engine_path: str,
-    container_name: str,
-    repository: Path,
-    evidence_directory: Path,
-    image: str,
-    command_argv: list[str],
-    cpus: float,
-    memory_mb: int,
-    pids_limit: int,
-) -> list[str]:
-    """Return a shell-free, locked-down Docker/Podman command argv."""
-
-    if not image.strip() or any(character.isspace() for character in image):
-        raise ValueError("sandbox image must be a non-empty image reference without whitespace")
-    if not 0.1 <= cpus <= 8:
-        raise ValueError("sandbox CPU limit must be from 0.1 through 8")
-    if not 128 <= memory_mb <= 32768:
-        raise ValueError("sandbox memory limit must be from 128 through 32768 MiB")
-    if not 16 <= pids_limit <= 1024:
-        raise ValueError("sandbox process limit must be from 16 through 1024")
-    if not command_argv or not all(
-        isinstance(value, str) and value and "\x00" not in value
-        for value in command_argv
-    ):
-        raise ValueError("sandbox command argv must contain non-empty strings")
-    command = list(command_argv)
-    if _pytest_command(command) and not any(
-        value.startswith("--junitxml") for value in command
-    ):
-        command.append("--junitxml=/evidence/junit.xml")
-    engine_name = Path(engine_path).name.casefold()
-    security = (
-        ["--security-opt", "no-new-privileges"]
-        if "podman" in engine_name
-        else ["--security-opt", "no-new-privileges:true"]
-    )
-    pull = ["--pull=never"] if "podman" in engine_name else ["--pull", "never"]
-    entrypoint, *arguments = command
-    return [
-        engine_path,
-        "run",
-        *pull,
-        "--name",
-        container_name,
-        "--rm",
-        "--network",
-        "none",
-        "--ipc",
-        "none",
-        "--read-only",
-        "--user",
-        "65534:65534",
-        "--cpus",
-        str(cpus),
-        "--memory",
-        f"{memory_mb}m",
-        "--pids-limit",
-        str(pids_limit),
-        "--cap-drop",
-        "ALL",
-        "--ulimit",
-        "nofile=1024:1024",
-        *security,
-        "--mount",
-        f"type=bind,src={repository},dst=/workspace,readonly",
-        "--mount",
-        f"type=bind,src={evidence_directory},dst=/evidence",
-        "--tmpfs",
-        "'/tmp:rw,noexec,nosuid,nodev,size=268435456'".strip("'"),
-        "--env",
-        "HOME=/tmp",
-        "--env",
-        "PYTHONDONTWRITEBYTECODE=1",
-        "--env",
-        "PYTHONUNBUFFERED=1",
-        "--workdir",
-        "/workspace",
-        "--entrypoint",
-        entrypoint,
-        image,
-        *arguments,
-    ]
 
 
 def prepare_sandbox_execution(
@@ -498,7 +397,7 @@ def _junit_summary(path: Path) -> dict[str, Any]:
         return {}
     try:
         root = ET.parse(path).getroot()
-    except (ET.ParseError, OSError):
+    except (DefusedXmlException, ET.ParseError, OSError):
         return {"parse_error": True}
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
     return {
@@ -600,10 +499,6 @@ def run_sandbox_execution(
     if run_directory.exists():
         raise ValueError(f"execution evidence destination already exists: {run_directory}")
     preview.mkdir(parents=True, exist_ok=False)
-    try:
-        os.chmod(preview, 0o777)
-    except OSError:
-        pass
     # The mount argument embeds the path, so build against the staging destination.
     argv = sandbox_command(
         engine_path=str(contract["sandbox"]["engine_path"]),

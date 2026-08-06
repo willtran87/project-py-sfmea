@@ -15,7 +15,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from pysfmea.architecture import architecture_graph, export_architecture
 from pysfmea.config import load_config, write_config_template
 from pysfmea.discovery import evidence_packets
-from pysfmea.guidance import load_organizational_guidance_pack
+from pysfmea.guidance import (
+    citations_for_rule,
+    guidance_bundle,
+    guidance_traceability,
+    load_organizational_guidance_pack,
+)
 from pysfmea.json_ingestion import load_bounded_file_snapshot
 from pysfmea.model import calculate_rpn
 from pysfmea.report import export_audit, export_csv, export_inventory, export_markdown
@@ -26,6 +31,7 @@ from pysfmea.scanner import (
     scan_repository,
 )
 from pysfmea.store import add_manual_item, merge_rescan, update_item_review
+from pysfmea.validation import validate_analysis
 
 SAMPLE_SOURCE = """
 import asyncio
@@ -83,9 +89,14 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("calculate_total", components)
         self.assertIn("fetch_configuration", components)
         self.assertIn("_private_helper", components)
-        self.assertEqual(components["calculate_total"]["test_references"], ["tests/test_app.py"])
+        self.assertEqual(
+            components["calculate_total"]["test_references"], ["tests/test_app.py"]
+        )
         signals = set(components["fetch_configuration"]["signals"])
-        self.assertTrue({"concurrency", "configuration", "external_interface", "serialization"} <= signals)
+        self.assertTrue(
+            {"concurrency", "configuration", "external_interface", "serialization"}
+            <= signals
+        )
 
         rules = {
             item["scanner"]["rule_id"]
@@ -112,7 +123,9 @@ class ScannerTests(unittest.TestCase):
         }
         self.assertIn("calculation.precision_or_range", calculate_rules)
 
-    def test_scan_extracts_circuit_breaker_semantics_without_crediting_control(self) -> None:
+    def test_scan_extracts_circuit_breaker_semantics_without_crediting_control(
+        self,
+    ) -> None:
         (self.root / "breaker.py").write_text(
             "import asyncio\n"
             "import time\n\n"
@@ -161,9 +174,7 @@ class ScannerTests(unittest.TestCase):
             value
             for value in analysis["items"]
             if value["component"]["qualname"] == "check_circuit"
-            and value["scanner"]["rule_id"].startswith(
-                "resilience.circuit_breaker_"
-            )
+            and value["scanner"]["rule_id"].startswith("resilience.circuit_breaker_")
         ]
         self.assertEqual(
             {value["scanner"]["rule_id"] for value in findings},
@@ -175,8 +186,7 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertTrue(
             all(
-                "python.resilience_control_analyzer"
-                in value["scanner"]["adapter_ids"]
+                "python.resilience_control_analyzer" in value["scanner"]["adapter_ids"]
                 for value in findings
             )
         )
@@ -203,7 +213,10 @@ class ScannerTests(unittest.TestCase):
         self.assertTrue(recovery["control_review_questions"])
         isolation = obligations["resilience.circuit_breaker_isolation"]
         self.assertTrue(
-            any("unrelated isolation key" in value for value in isolation["acceptance_criteria"])
+            any(
+                "unrelated isolation key" in value
+                for value in isolation["acceptance_criteria"]
+            )
         )
         self.assertFalse(
             any("Cooldown" in value for value in isolation["acceptance_criteria"])
@@ -214,7 +227,10 @@ class ScannerTests(unittest.TestCase):
             if value["rule_id"] == "resilience.circuit_breaker_fallback"
         )
         self.assertTrue(
-            any("Fallback/degraded output" in value for value in fallback["acceptance_criteria"])
+            any(
+                "Fallback/degraded output" in value
+                for value in fallback["acceptance_criteria"]
+            )
         )
         self.assertFalse(
             any("Cooldown" in value for value in fallback["acceptance_criteria"])
@@ -264,9 +280,7 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(
             {value["scope_qualname"] for value in controls}, {"CircuitBreaker"}
         )
-        self.assertEqual(
-            {value["member_qualname"] for value in controls}, set(members)
-        )
+        self.assertEqual({value["member_qualname"] for value in controls}, set(members))
         self.assertTrue(
             {"admission_guard", "failure_recording", "success_reset", "recovery_timer"}
             <= {role for value in controls for role in value["roles"]}
@@ -291,19 +305,21 @@ class ScannerTests(unittest.TestCase):
         self.assertFalse(
             any(
                 item["component_id"] == component["id"]
-                and item["scanner"]["rule_id"].startswith(
-                    "resilience.circuit_breaker_"
-                )
+                and item["scanner"]["rule_id"].startswith("resilience.circuit_breaker_")
                 for item in analysis["items"]
             )
         )
 
-    def test_scan_records_context_repository_coverage_and_adapter_contributions(self) -> None:
+    def test_scan_records_context_repository_coverage_and_adapter_contributions(
+        self,
+    ) -> None:
         (self.root / "README.md").write_text("# System\n", encoding="utf-8")
         (self.root / "opaque.bin").write_bytes(b"\x00\x01")
         excluded = self.root / "generated"
         excluded.mkdir()
-        (excluded / "generated.py").write_text("def hidden():\n    pass\n", encoding="utf-8")
+        (excluded / "generated.py").write_text(
+            "def hidden():\n    pass\n", encoding="utf-8"
+        )
         (self.root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
 
         analysis = scan_repository(
@@ -368,7 +384,9 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(failure_run["status"], "completed")
         self.assertEqual(failure_run["contribution_count"], len(analysis["items"]))
 
-    def test_organizational_guidance_pack_is_hashed_and_traced_to_findings(self) -> None:
+    def test_organizational_guidance_pack_is_hashed_and_traced_to_findings(
+        self,
+    ) -> None:
         pack = {
             "schema_version": "pysfmea-organizational-guidance-pack-1",
             "profile": {
@@ -412,6 +430,16 @@ class ScannerTests(unittest.TestCase):
                     "citation_id": "ORG-CIT-EX-OMISSION",
                     "relationship": "failure_taxonomy",
                     "strength": "direct",
+                    "review": {
+                        "decision": "approved",
+                        "producer": "Assurance Mapping Team",
+                        "reviewer": "Independent Safety Review Board",
+                        "authority": "EX-STD governance charter",
+                        "reviewed_at": "2026-08-01",
+                        "expires_at": "2027-08-01",
+                        "source_revision": "1.0",
+                        "rationale": "The locator directly defines omission screening.",
+                    },
                 }
             ],
         }
@@ -436,15 +464,22 @@ class ScannerTests(unittest.TestCase):
             "ORG-CIT-EX-OMISSION",
             {value["citation_id"] for value in omission["scanner"]["citations"]},
         )
+        organizational_link = next(
+            value
+            for value in omission["scanner"]["citations"]
+            if value["citation_id"] == "ORG-CIT-EX-OMISSION"
+        )
+        self.assertTrue(organizational_link["mapping_independent_approval"])
+        self.assertEqual(
+            organizational_link["mapping_review_status"], "independent_approved"
+        )
         self.assertEqual(
             analysis["run_manifest"]["resolved_inputs"]["guidance_catalog_sha256"],
             guidance["catalog_sha256"],
         )
         packets = evidence_packets(analysis, limit=2)
         self.assertTrue(packets)
-        self.assertIn(
-            "ORG-CIT-EX-OMISSION", packets[0]["allowed_citation_ids"]
-        )
+        self.assertIn("ORG-CIT-EX-OMISSION", packets[0]["allowed_citation_ids"])
 
         loaded = load_organizational_guidance_pack(pack_path)
         raw = pack_path.read_bytes()
@@ -453,6 +488,74 @@ class ScannerTests(unittest.TestCase):
             loaded["provenance"]["sha256"],
             hashlib.sha256(raw).hexdigest(),
         )
+        loaded_mapping = loaded["rule_mappings"][0]
+        self.assertEqual(loaded_mapping["review_status"], "independent_approved")
+        self.assertEqual(len(loaded_mapping["review"]["record_sha256"]), 64)
+
+        current_governance = guidance_traceability(analysis)["mapping_governance"]
+        self.assertEqual(current_governance["expired_mapping_reviews"], 0)
+        self.assertEqual(
+            current_governance["review_audit_timestamp_integrity"], "verified"
+        )
+        self.assertEqual(
+            current_governance["effective_independently_approved_mappings"], 1
+        )
+        analysis["run_manifest"]["created_at"] = "2028-08-02T00:00:00+00:00"
+        expired_governance = guidance_traceability(analysis)["mapping_governance"]
+        self.assertEqual(expired_governance["review_audit_as_of"], "2028-08-02")
+        self.assertEqual(expired_governance["expired_mapping_reviews"], 1)
+        self.assertEqual(
+            expired_governance["review_audit_timestamp_integrity"], "invalid"
+        )
+        self.assertEqual(
+            expired_governance["effective_independently_approved_mappings"], 0
+        )
+        validation_codes = {
+            finding["rule_id"] for finding in validate_analysis(analysis)["findings"]
+        }
+        self.assertIn("guidance.expired_mapping_review", validation_codes)
+
+        no_expiry = json.loads(json.dumps(pack))
+        no_expiry["rule_mappings"][0]["review"].pop("expires_at")
+        pack_path.write_text(json.dumps(no_expiry), encoding="utf-8")
+        no_expiry_loaded = load_organizational_guidance_pack(pack_path)
+        self.assertEqual(
+            no_expiry_loaded["rule_mappings"][0]["review"]["expires_at"], ""
+        )
+
+        invalid_review = json.loads(json.dumps(pack))
+        invalid_review["rule_mappings"][0]["review"]["reviewer"] = (
+            "Assurance Mapping Team"
+        )
+        pack_path.write_text(json.dumps(invalid_review), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "distinct producer and reviewer"):
+            load_organizational_guidance_pack(pack_path)
+        invalid_review["rule_mappings"][0]["review"]["reviewer"] = (
+            "Independent Safety Review Board"
+        )
+        invalid_review["rule_mappings"][0]["review"]["source_revision"] = "0.9"
+        pack_path.write_text(json.dumps(invalid_review), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "source_revision"):
+            load_organizational_guidance_pack(pack_path)
+        rejected = json.loads(json.dumps(pack))
+        rejected["rule_mappings"][0]["review"]["decision"] = "rejected"
+        rejected["rule_mappings"][0]["review"]["rationale"] = (
+            "The locator does not support this rule relationship."
+        )
+        pack_path.write_text(json.dumps(rejected), encoding="utf-8")
+        rejected_pack = load_organizational_guidance_pack(pack_path)
+        rejected_bundle = guidance_bundle(
+            ["org.example_assurance"], organizational_packs=[rejected_pack]
+        )
+        self.assertEqual(
+            citations_for_rule(
+                "functional.omission",
+                ["org.example_assurance"],
+                catalog=rejected_bundle,
+            ),
+            [],
+        )
+        pack_path.write_text(json.dumps(pack), encoding="utf-8")
 
         canonical_pack = json.dumps(pack, separators=(",", ":"))
         pack_path.write_text(
@@ -470,16 +573,16 @@ class ScannerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "non-finite number"):
                     load_organizational_guidance_pack(pack_path)
         pack_path.write_text(canonical_pack, encoding="utf-8")
-        with patch(
-            "pysfmea.guidance.MAX_ORGANIZATIONAL_GUIDANCE_PACK_NODES", 2
-        ):
+        with patch("pysfmea.guidance.MAX_ORGANIZATIONAL_GUIDANCE_PACK_NODES", 2):
             with self.assertRaisesRegex(ValueError, "2-node JSON structure limit"):
                 load_organizational_guidance_pack(pack_path)
         with patch(
             "pysfmea.json_ingestion._same_file_identity",
             side_effect=_identity_changes_once(),
         ):
-            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+            with self.assertRaisesRegex(
+                ValueError, "changed during bounded consumption"
+            ):
                 load_organizational_guidance_pack(pack_path)
 
         pack_directory = self.root / "guidance-directory"
@@ -494,9 +597,7 @@ class ScannerTests(unittest.TestCase):
 
         oversized = self.root / "oversized-guidance.json"
         oversized.write_bytes(b"x" * 11)
-        with patch(
-            "pysfmea.guidance.MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES", 10
-        ):
+        with patch("pysfmea.guidance.MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES", 10):
             with self.assertRaisesRegex(ValueError, "10-byte safety limit"):
                 load_organizational_guidance_pack(oversized)
 
@@ -542,10 +643,7 @@ class ScannerTests(unittest.TestCase):
             config={"analysis": {"included_failure_classes": ["functional"]}},
         )
         self.assertEqual(
-            {
-                item["scanner"]["failure_class"]
-                for item in functional_only["items"]
-            },
+            {item["scanner"]["failure_class"] for item in functional_only["items"]},
             {"functional"},
         )
 
@@ -603,7 +701,9 @@ class ScannerTests(unittest.TestCase):
         )
 
         merged = merge_rescan(first, scan_repository(self.root))
-        updated = next(item for item in merged["items"] if item["id"] == environment["id"])
+        updated = next(
+            item for item in merged["items"] if item["id"] == environment["id"]
+        )
         self.assertEqual(updated["source_change"], "changed")
         self.assertTrue(updated["review"]["revalidation_required"])
 
@@ -634,12 +734,15 @@ class ScannerTests(unittest.TestCase):
             )
             return build_repository_inventory(*args, **kwargs)
 
-        with patch(
-            "pysfmea.repository_inventory.load_bounded_file_snapshot",
-            wraps=load_bounded_file_snapshot,
-        ) as inventory_reader, patch(
-            "pysfmea.scanner.build_repository_inventory",
-            side_effect=replace_before_inventory,
+        with (
+            patch(
+                "pysfmea.repository_inventory.load_bounded_file_snapshot",
+                wraps=load_bounded_file_snapshot,
+            ) as inventory_reader,
+            patch(
+                "pysfmea.scanner.build_repository_inventory",
+                side_effect=replace_before_inventory,
+            ),
         ):
             analysis = scan_repository(evidence_root)
 
@@ -653,10 +756,13 @@ class ScannerTests(unittest.TestCase):
             dependency["sha256"], hashlib.sha256(requirements_raw).hexdigest()
         )
         contract_entry = analysis["context"]["contracts"][0]
-        self.assertEqual(contract_entry["sha256"], hashlib.sha256(contract_raw).hexdigest())
+        self.assertEqual(
+            contract_entry["sha256"], hashlib.sha256(contract_raw).hexdigest()
+        )
         self.assertEqual(contract_entry["operations"], ["GET /ready"])
         inventory = {
-            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+            entry["path"]: entry
+            for entry in analysis["repository_inventory"]["entries"]
         }
         self.assertEqual(
             inventory["requirements.txt"]["sha256"],
@@ -707,7 +813,9 @@ class ScannerTests(unittest.TestCase):
         update_item_review(first, environment["id"], {"disposition": "rejected"})
         (self.root / "uv.lock").write_text("version = 2\n", encoding="utf-8")
         merged = merge_rescan(first, scan_repository(self.root))
-        updated = next(item for item in merged["items"] if item["id"] == environment["id"])
+        updated = next(
+            item for item in merged["items"] if item["id"] == environment["id"]
+        )
         self.assertEqual(updated["source_change"], "changed")
         self.assertTrue(updated["review"]["revalidation_required"])
 
@@ -777,7 +885,10 @@ class ScannerTests(unittest.TestCase):
             warnings,
         )
         self.assertTrue(
-            any(message == "Dependency manifest resolves outside the repository" for _, message in warnings)
+            any(
+                message == "Dependency manifest resolves outside the repository"
+                for _, message in warnings
+            )
         )
 
         with patch("pysfmea.scanner.MAX_DEPENDENCY_MANIFEST_FILES", 1):
@@ -966,7 +1077,8 @@ class ScannerTests(unittest.TestCase):
         self.assertTrue(
             any(
                 warning["type"] == "ContractLimit"
-                and warning["message"] == "Contract discovery reached the 1-file analysis limit"
+                and warning["message"]
+                == "Contract discovery reached the 1-file analysis limit"
                 for warning in file_limited["warnings"]
             )
         )
@@ -1005,7 +1117,9 @@ class ScannerTests(unittest.TestCase):
             contracts[duplicate.name]["sha256"],
             hashlib.sha256(duplicate.read_bytes()).hexdigest(),
         )
-        self.assertEqual(contracts[duplicate.name]["bytes"], len(duplicate.read_bytes()))
+        self.assertEqual(
+            contracts[duplicate.name]["bytes"], len(duplicate.read_bytes())
+        )
         warnings = {
             warning["path"]: warning["message"]
             for warning in analysis["warnings"]
@@ -1059,7 +1173,9 @@ class ScannerTests(unittest.TestCase):
             )
         )
 
-    def test_repository_inventory_hashing_is_consumption_bounded_and_accounted(self) -> None:
+    def test_repository_inventory_hashing_is_consumption_bounded_and_accounted(
+        self,
+    ) -> None:
         inventory_root = self.root / "inventory-case"
         inventory_root.mkdir()
         a_path = inventory_root / "a.txt"
@@ -1095,9 +1211,7 @@ class ScannerTests(unittest.TestCase):
                 for region in inventory["regions"]
             )
         )
-        material = {
-            key: inventory[key] for key in ("entries", "regions", "truncated")
-        }
+        material = {key: inventory[key] for key in ("entries", "regions", "truncated")}
         self.assertEqual(
             inventory["inventory_sha256"],
             hashlib.sha256(
@@ -1218,20 +1332,21 @@ class ScannerTests(unittest.TestCase):
             )
         self.assertTrue(region_limited["truncated"])
         self.assertTrue(
-            any(
-                "1 regions" in region["reason"]
-                for region in region_limited["regions"]
-            )
+            any("1 regions" in region["reason"] for region in region_limited["regions"])
         )
 
     def test_exclude_private(self) -> None:
         analysis = scan_repository(self.root, include_private=False)
-        self.assertNotIn("_private_helper", {entry["qualname"] for entry in analysis["components"]})
+        self.assertNotIn(
+            "_private_helper", {entry["qualname"] for entry in analysis["components"]}
+        )
 
     def test_python_symlink_outside_repository_is_not_scanned(self) -> None:
         with tempfile.TemporaryDirectory() as external_temp:
             external = Path(external_temp) / "external.py"
-            external.write_text("def outside_secret():\n    return True\n", encoding="utf-8")
+            external.write_text(
+                "def outside_secret():\n    return True\n", encoding="utf-8"
+            )
             link = self.root / "linked.py"
             try:
                 os.symlink(external, link)
@@ -1239,13 +1354,19 @@ class ScannerTests(unittest.TestCase):
                 self.skipTest(f"file symlinks unavailable: {exc}")
             analysis = scan_repository(self.root)
         self.assertNotIn(
-            "outside_secret", {component["qualname"] for component in analysis["components"]}
+            "outside_secret",
+            {component["qualname"] for component in analysis["components"]},
         )
         self.assertTrue(
-            any(warning["type"] == "OutsideRepository" for warning in analysis["warnings"])
+            any(
+                warning["type"] == "OutsideRepository"
+                for warning in analysis["warnings"]
+            )
         )
 
-    def test_python_source_and_test_evidence_ingestion_is_bounded_and_encoded(self) -> None:
+    def test_python_source_and_test_evidence_ingestion_is_bounded_and_encoded(
+        self,
+    ) -> None:
         (self.root / "encoded.py").write_bytes(
             b"# -*- coding: latin-1 -*-\ndef encoded():\n    return 'caf\xe9'\n"
         )
@@ -1264,7 +1385,9 @@ class ScannerTests(unittest.TestCase):
         with patch("pysfmea.scanner.MAX_PYTHON_SOURCE_BYTES", 1_024):
             analysis = scan_repository(self.root)
 
-        components = {component["qualname"]: component for component in analysis["components"]}
+        components = {
+            component["qualname"]: component for component in analysis["components"]
+        }
         self.assertIn("encoded", components)
         self.assertNotIn("oversized", components)
         self.assertNotIn("invalid_encoding", components)
@@ -1289,7 +1412,8 @@ class ScannerTests(unittest.TestCase):
             "Python source exceeds the 1024-byte analysis limit",
         )
         inventory = {
-            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+            entry["path"]: entry
+            for entry in analysis["repository_inventory"]["entries"]
         }
         self.assertEqual(inventory["oversized.py"]["status"], "unresolved")
         self.assertEqual(inventory["invalid_encoding.py"]["status"], "unresolved")
@@ -1303,20 +1427,25 @@ class ScannerTests(unittest.TestCase):
         tests_root.mkdir()
         app = snapshot_root / "app.py"
         test_app = tests_root / "test_app.py"
-        app.write_text("def calculate(value):\n    return value * 2\n", encoding="utf-8")
+        app.write_text(
+            "def calculate(value):\n    return value * 2\n", encoding="utf-8"
+        )
         test_app.write_text(
             "from app import calculate\n\ndef test_calculate():\n"
             "    assert calculate(2) == 4\n",
             encoding="utf-8",
         )
 
-        with patch(
-            "pysfmea.scanner._read_python_source_bytes_bounded",
-            wraps=_read_python_source_bytes_bounded,
-        ) as bounded_reader, patch(
-            "pysfmea.repository_inventory.load_bounded_file_snapshot",
-            wraps=load_bounded_file_snapshot,
-        ) as inventory_reader:
+        with (
+            patch(
+                "pysfmea.scanner._read_python_source_bytes_bounded",
+                wraps=_read_python_source_bytes_bounded,
+            ) as bounded_reader,
+            patch(
+                "pysfmea.repository_inventory.load_bounded_file_snapshot",
+                wraps=load_bounded_file_snapshot,
+            ) as inventory_reader,
+        ):
             analysis = scan_repository(snapshot_root, include_tests=True)
 
         self.assertEqual(bounded_reader.call_count, 2)
@@ -1352,7 +1481,8 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertEqual(parser_run["adapter_version"], "2")
         inventory_entries = {
-            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+            entry["path"]: entry
+            for entry in analysis["repository_inventory"]["entries"]
         }
         for path in (app, test_app):
             relative = path.relative_to(snapshot_root).as_posix()
@@ -1399,11 +1529,14 @@ class ScannerTests(unittest.TestCase):
         def marked_link(path: Path) -> bool:
             return path.name == linked.name or original_is_symlink(path)
 
-        with patch("pysfmea.scanner.Path.is_symlink", autospec=True, side_effect=marked_link):
+        with patch(
+            "pysfmea.scanner.Path.is_symlink", autospec=True, side_effect=marked_link
+        ):
             analysis = scan_repository(self.root)
 
         self.assertNotIn(
-            "linked_alias", {component["qualname"] for component in analysis["components"]}
+            "linked_alias",
+            {component["qualname"] for component in analysis["components"]},
         )
         self.assertTrue(
             any(
@@ -1414,7 +1547,8 @@ class ScannerTests(unittest.TestCase):
             )
         )
         inventory = {
-            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+            entry["path"]: entry
+            for entry in analysis["repository_inventory"]["entries"]
         }
         self.assertEqual(inventory["linked.py"]["status"], "opaque")
 
@@ -1431,7 +1565,8 @@ class ScannerTests(unittest.TestCase):
         self.assertTrue(
             any(
                 warning["type"] == "TestEvidenceLimit"
-                and warning["message"] == "Test evidence indexing reached the 1-file limit"
+                and warning["message"]
+                == "Test evidence indexing reached the 1-file limit"
                 for warning in file_limited["warnings"]
             )
         )
@@ -1483,7 +1618,9 @@ class ScannerTests(unittest.TestCase):
         app = evidence_root / "app.py"
         test_app = tests_root / "test_app.py"
         excluded_test = tests_root / "excluded_test.py"
-        app.write_text("def calculate(value):\n    return value * 2\n", encoding="utf-8")
+        app.write_text(
+            "def calculate(value):\n    return value * 2\n", encoding="utf-8"
+        )
         accepted_raw = (
             b"from app import calculate\n\ndef test_calculate():\n"
             b"    assert calculate(2) == 4\n"
@@ -1500,15 +1637,19 @@ class ScannerTests(unittest.TestCase):
             )
             return build_repository_inventory(*args, **kwargs)
 
-        with patch(
-            "pysfmea.scanner._read_python_source_bytes_bounded",
-            wraps=_read_python_source_bytes_bounded,
-        ) as bounded_reader, patch(
-            "pysfmea.repository_inventory.load_bounded_file_snapshot",
-            wraps=load_bounded_file_snapshot,
-        ) as inventory_reader, patch(
-            "pysfmea.scanner.build_repository_inventory",
-            side_effect=replace_after_test_index,
+        with (
+            patch(
+                "pysfmea.scanner._read_python_source_bytes_bounded",
+                wraps=_read_python_source_bytes_bounded,
+            ) as bounded_reader,
+            patch(
+                "pysfmea.repository_inventory.load_bounded_file_snapshot",
+                wraps=load_bounded_file_snapshot,
+            ) as inventory_reader,
+            patch(
+                "pysfmea.scanner.build_repository_inventory",
+                side_effect=replace_after_test_index,
+            ),
         ):
             analysis = scan_repository(
                 evidence_root,
@@ -1525,7 +1666,8 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertEqual(component["test_references"], ["tests/test_app.py"])
         inventory = {
-            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+            entry["path"]: entry
+            for entry in analysis["repository_inventory"]["entries"]
         }
         self.assertEqual(
             inventory["tests/test_app.py"]["sha256"],
@@ -1535,7 +1677,9 @@ class ScannerTests(unittest.TestCase):
             inventory["tests/test_app.py"]["snapshot_source"],
             "test_evidence_snapshot",
         )
-        self.assertEqual(inventory["tests/excluded_test.py"]["status"], "excluded_region")
+        self.assertEqual(
+            inventory["tests/excluded_test.py"]["status"], "excluded_region"
+        )
         baseline = analysis["project"]["baseline"]
         record = [
             {
@@ -1580,18 +1724,14 @@ class ScannerTests(unittest.TestCase):
         ):
             raced = scan_repository(race_root)
         raced_component = next(
-            value
-            for value in raced["components"]
-            if value["qualname"] == "calculate"
+            value for value in raced["components"] if value["qualname"] == "calculate"
         )
         self.assertEqual(raced_component["test_references"], [])
         raced_baseline = raced["project"]["baseline"]
         self.assertEqual(raced_baseline["test_evidence_snapshot_files"], 0)
         self.assertEqual(raced_baseline["test_evidence_snapshot_rejected_files"], 1)
         self.assertEqual(
-            raced["run_manifest"]["resolved_inputs"][
-                "test_evidence_snapshot_sha256"
-            ],
+            raced["run_manifest"]["resolved_inputs"]["test_evidence_snapshot_sha256"],
             raced_baseline["test_evidence_snapshot_sha256"],
         )
         self.assertTrue(
@@ -1612,7 +1752,9 @@ class ScannerTests(unittest.TestCase):
             encoding="utf-8",
         )
         analysis = scan_repository(self.root)
-        components = {component["qualname"]: component for component in analysis["components"]}
+        components = {
+            component["qualname"]: component for component in analysis["components"]
+        }
         self.assertIn("<module initialization>", components)
         self.assertIn("Controller.__init__", components)
         self.assertIn("configuration", components["<module initialization>"]["signals"])
@@ -1628,7 +1770,9 @@ class ScannerTests(unittest.TestCase):
         )
         analysis = scan_repository(self.root)
         component = next(
-            component for component in analysis["components"] if component["qualname"] == "Command"
+            component
+            for component in analysis["components"]
+            if component["qualname"] == "Command"
         )
         self.assertEqual(component["kind"], "class_model")
         self.assertEqual(component["parameters"], ["target", "amount"])
@@ -1664,7 +1808,9 @@ class ScannerTests(unittest.TestCase):
 
         merged = merge_rescan(first, scan_repository(self.root))
         old = next(item for item in merged["items"] if item["id"] == target["id"])
-        manual_after = next(item for item in merged["items"] if item["id"] == manual["id"])
+        manual_after = next(
+            item for item in merged["items"] if item["id"] == manual["id"]
+        )
         self.assertEqual(old["source_status"], "removed")
         self.assertEqual(old["review"]["severity"], 8)
         self.assertEqual(old["review"]["disposition"], "accepted")
@@ -1679,7 +1825,9 @@ class ScannerTests(unittest.TestCase):
             if item["component"]["qualname"] == "calculate_total"
             and item["scanner"]["rule_id"] == "functional.incorrect"
         )
-        update_item_review(first, target["id"], {"disposition": "accepted", "severity": 8})
+        update_item_review(
+            first, target["id"], {"disposition": "accepted", "severity": 8}
+        )
         source = (self.root / "app.py").read_text(encoding="utf-8")
         (self.root / "app.py").write_text(
             source.replace("return value * 2", "return round(value * 2, 2)"),
@@ -1781,11 +1929,15 @@ class ScannerTests(unittest.TestCase):
         )
 
         merged = merge_rescan(first, scan_repository(self.root))
-        caller_after = next(item for item in merged["items"] if item["id"] == caller_item["id"])
+        caller_after = next(
+            item for item in merged["items"] if item["id"] == caller_item["id"]
+        )
         self.assertEqual(caller_after["source_change"], "impacted")
         self.assertTrue(caller_after["review"]["revalidation_required"])
         self.assertTrue(
-            any("chain.py:helper" in reason for reason in caller_after["change_reasons"])
+            any(
+                "chain.py:helper" in reason for reason in caller_after["change_reasons"]
+            )
         )
 
     def test_renamed_component_preserves_review_with_traceability(self) -> None:
@@ -1890,7 +2042,10 @@ class ScannerTests(unittest.TestCase):
                 {
                     "id": "CC-CONFIG",
                     "description": "A shared configuration error corrupts billing decisions.",
-                    "component_patterns": ["app.py:calculate_total", "app.py:fetch_configuration"],
+                    "component_patterns": [
+                        "app.py:calculate_total",
+                        "app.py:fetch_configuration",
+                    ],
                     "hazards": ["HZ-PRICE"],
                     "requirements": ["REQ-PRICE"],
                     "causes": ["Shared invalid configuration"],
@@ -1947,17 +2102,23 @@ class ScannerTests(unittest.TestCase):
             1,
         )
         code_components = [
-            component for component in analysis["components"] if component["kind"] != "common_cause"
+            component
+            for component in analysis["components"]
+            if component["kind"] != "common_cause"
         ]
         self.assertEqual([c["qualname"] for c in code_components], ["calculate_total"])
         component = code_components[0]
         self.assertEqual(component["coverage"]["covered_lines"], 2)
         self.assertEqual(component["coverage"]["branch_percent"], 50.0)
         custom = next(
-            item for item in analysis["items"] if item["scanner"]["rule_id"] == "domain.rounding"
+            item
+            for item in analysis["items"]
+            if item["scanner"]["rule_id"] == "domain.rounding"
         )
         self.assertEqual(custom["review"]["linked_hazards"], ["HZ-PRICE"])
-        self.assertEqual(custom["review"]["end_effect"], "Customer is charged incorrectly.")
+        self.assertEqual(
+            custom["review"]["end_effect"], "Customer is charged incorrectly."
+        )
         self.assertEqual(custom["review"]["severity"], 8)
         self.assertEqual(custom["review"]["requirement"], "REQ-PRICE")
         self.assertEqual(custom["component"]["subsystems"], ["Billing"])
@@ -2013,7 +2174,10 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(duplicate, {})
         self.assertIn("duplicate object key", duplicate_warnings[0]["message"])
 
-        for non_finite_payload in ('{"files":{},"probe":NaN}', '{"files":{},"probe":1e9999}'):
+        for non_finite_payload in (
+            '{"files":{},"probe":NaN}',
+            '{"files":{},"probe":1e9999}',
+        ):
             coverage.write_text(non_finite_payload, encoding="utf-8")
             non_finite, non_finite_warnings = _load_coverage(
                 coverage,
@@ -2024,7 +2188,9 @@ class ScannerTests(unittest.TestCase):
 
         coverage.write_text(json.dumps(coverage_payload), encoding="utf-8")
         with patch("pysfmea.scanner.MAX_COVERAGE_JSON_NODES", 2):
-            oversized, oversized_warnings = _load_coverage(coverage, self.root.resolve())
+            oversized, oversized_warnings = _load_coverage(
+                coverage, self.root.resolve()
+            )
         self.assertEqual(oversized, {})
         self.assertIn("2-node JSON structure limit", oversized_warnings[0]["message"])
 
@@ -2034,7 +2200,9 @@ class ScannerTests(unittest.TestCase):
         ):
             changed, changed_warnings = _load_coverage(coverage, self.root.resolve())
         self.assertEqual(changed, {})
-        self.assertIn("changed during bounded consumption", changed_warnings[0]["message"])
+        self.assertIn(
+            "changed during bounded consumption", changed_warnings[0]["message"]
+        )
 
         with patch("pysfmea.scanner.MAX_COVERAGE_FILE_RECORDS", 2):
             excessive_files, excessive_file_warnings = _load_coverage(
@@ -2123,12 +2291,15 @@ class ScannerTests(unittest.TestCase):
             coverage.write_text('{"files":{}}', encoding="utf-8")
             return build_repository_inventory(*args, **kwargs)
 
-        with patch(
-            "pysfmea.repository_inventory.load_bounded_file_snapshot",
-            wraps=load_bounded_file_snapshot,
-        ) as inventory_reader, patch(
-            "pysfmea.scanner.build_repository_inventory",
-            side_effect=replace_before_inventory,
+        with (
+            patch(
+                "pysfmea.repository_inventory.load_bounded_file_snapshot",
+                wraps=load_bounded_file_snapshot,
+            ) as inventory_reader,
+            patch(
+                "pysfmea.scanner.build_repository_inventory",
+                side_effect=replace_before_inventory,
+            ),
         ):
             analysis = scan_repository(coverage_root, coverage_json=coverage)
 
@@ -2143,7 +2314,8 @@ class ScannerTests(unittest.TestCase):
         accepted_digest = hashlib.sha256(accepted_raw).hexdigest()
         self.assertEqual(evidence["sha256"], accepted_digest)
         inventory = {
-            entry["path"]: entry for entry in analysis["repository_inventory"]["entries"]
+            entry["path"]: entry
+            for entry in analysis["repository_inventory"]["entries"]
         }
         self.assertEqual(inventory["coverage.json"]["sha256"], accepted_digest)
         self.assertEqual(
@@ -2315,7 +2487,9 @@ class ScannerTests(unittest.TestCase):
             if item["scanner"]["rule_id"] == "domain.privacy"
         ]
         self.assertTrue(custom)
-        self.assertTrue(all(item["scanner"]["failure_class"] == "privacy" for item in custom))
+        self.assertTrue(
+            all(item["scanner"]["failure_class"] == "privacy" for item in custom)
+        )
         with self.assertRaisesRegex(ValueError, "unknown failure classes"):
             scan_repository(
                 self.root,
@@ -2328,7 +2502,9 @@ class ScannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown configuration section"):
             load_config(path)
 
-        path.write_text("[project]\nname = 'demo'\npurpoze = 'typo'\n", encoding="utf-8")
+        path.write_text(
+            "[project]\nname = 'demo'\npurpoze = 'typo'\n", encoding="utf-8"
+        )
         with self.assertRaisesRegex(ValueError, r"unknown \[project\] field"):
             load_config(path)
 
@@ -2350,11 +2526,13 @@ class ScannerTests(unittest.TestCase):
         )
         included = scan_repository(self.root)
         self.assertIn(
-            "outer.transform", {component["qualname"] for component in included["components"]}
+            "outer.transform",
+            {component["qualname"] for component in included["components"]},
         )
         excluded = scan_repository(self.root, include_nested=False)
         self.assertNotIn(
-            "outer.transform", {component["qualname"] for component in excluded["components"]}
+            "outer.transform",
+            {component["qualname"] for component in excluded["components"]},
         )
 
     def test_named_lambdas_are_analyzed(self) -> None:
@@ -2405,7 +2583,7 @@ class ScannerTests(unittest.TestCase):
             analysis,
             item["id"],
             {
-                "notes": "=HYPERLINK(\"https://invalid.example\",\"click\")",
+                "notes": '=HYPERLINK("https://invalid.example","click")',
                 "reviewer": "@reviewer",
             },
         )
@@ -2441,7 +2619,9 @@ class ScannerTests(unittest.TestCase):
             },
         )
         graph = architecture_graph(analysis)
-        boundary_nodes = [node for node in graph["nodes"] if node["kind"] == "system_boundary"]
+        boundary_nodes = [
+            node for node in graph["nodes"] if node["kind"] == "system_boundary"
+        ]
         self.assertEqual(len(boundary_nodes), 4)
         self.assertEqual(len({node["id"] for node in boundary_nodes}), 4)
         text = export_architecture(analysis, self.root / "architecture.md").read_text(
@@ -2482,7 +2662,10 @@ class ScannerTests(unittest.TestCase):
         analysis = scan_repository(
             self.root,
             config={
-                "analysis": {"phase": "implementation", "ground_rules": ["Trace calls."]},
+                "analysis": {
+                    "phase": "implementation",
+                    "ground_rules": ["Trace calls."],
+                },
                 "system_interfaces": [
                     {
                         "id": "IF-USER",
@@ -2495,9 +2678,13 @@ class ScannerTests(unittest.TestCase):
         )
         graph = architecture_graph(analysis)
         self.assertTrue(any(edge["kind"] == "internal_call" for edge in graph["edges"]))
-        self.assertTrue(any(edge["kind"] == "system_interface" for edge in graph["edges"]))
+        self.assertTrue(
+            any(edge["kind"] == "system_interface" for edge in graph["edges"])
+        )
         calculate = next(
-            component for component in analysis["components"] if component["qualname"] == "calculate_total"
+            component
+            for component in analysis["components"]
+            if component["qualname"] == "calculate_total"
         )
         self.assertTrue(
             any(path[0] == "flow.py:checkout" for path in calculate["upstream_paths"])
@@ -2515,7 +2702,9 @@ class ScannerTests(unittest.TestCase):
         )
         analysis = scan_repository(self.root)
         first = next(
-            component for component in analysis["components"] if component["qualname"] == "first"
+            component
+            for component in analysis["components"]
+            if component["qualname"] == "first"
         )
         self.assertTrue(first["upstream_paths"])
         self.assertLessEqual(max(len(path) for path in first["upstream_paths"]), 7)
@@ -2536,9 +2725,7 @@ class ScannerTests(unittest.TestCase):
         )
 
         analysis = scan_repository(self.root)
-        components = {
-            value["qualname"]: value for value in analysis["components"]
-        }
+        components = {value["qualname"]: value for value in analysis["components"]}
         target = components["target"]
         deepest = components["chain_8"]
 
@@ -2547,14 +2734,14 @@ class ScannerTests(unittest.TestCase):
         self.assertFalse(
             target["upstream_path_analysis"]["complete_within_static_call_model"]
         )
-        self.assertGreater(
-            deepest["upstream_path_analysis"]["depth_limited_paths"], 0
-        )
+        self.assertGreater(deepest["upstream_path_analysis"]["depth_limited_paths"], 0)
         self.assertFalse(
             deepest["upstream_path_analysis"]["complete_within_static_call_model"]
         )
         target_item = next(
-            value for value in analysis["items"] if value["component_id"] == target["id"]
+            value
+            for value in analysis["items"]
+            if value["component_id"] == target["id"]
         )
         self.assertEqual(
             target_item["scanner"]["upstream_path_analysis"],
@@ -2571,7 +2758,10 @@ class ScannerTests(unittest.TestCase):
             ]
         )
         self.assertTrue(
-            any("caller-path inventory is bounded" in gap for gap in obligation["planning_gaps"])
+            any(
+                "caller-path inventory is bounded" in gap
+                for gap in obligation["planning_gaps"]
+            )
         )
         self.assertTrue(
             any(

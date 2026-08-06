@@ -17,6 +17,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pysfmea.assurance as assurance_module
+import pysfmea.execution as execution_module
 from pysfmea.assurance import (
     archive_pytest_scaffold,
     assurance_progress,
@@ -131,15 +132,15 @@ class AssuranceRegisterTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "non-finite number"):
                     verify_assurance_work_queue_file(queue_path)
         queue_path.write_text(canonical_text, encoding="utf-8")
-        with mock.patch(
-            "pysfmea.assurance.MAX_ASSURANCE_WORK_QUEUE_JSON_NODES", 2
-        ):
+        with mock.patch("pysfmea.assurance.MAX_ASSURANCE_WORK_QUEUE_JSON_NODES", 2):
             with self.assertRaisesRegex(ValueError, "2-node JSON structure limit"):
                 verify_assurance_work_queue_file(queue_path)
         with mock.patch(
             "pysfmea.json_ingestion._same_file_identity", side_effect=[True, False]
         ):
-            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+            with self.assertRaisesRegex(
+                ValueError, "changed during bounded consumption"
+            ):
                 verify_assurance_work_queue_file(queue_path)
         queue_path.write_text(canonical_text, encoding="utf-8")
 
@@ -375,7 +376,7 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertIn('path.open("rb")', generated_test)
         self.assertIn("MAX_MANIFEST_BYTES + 1", generated_test)
         self.assertIn("regular non-symbolic-link file", generated_test)
-        self.assertNotIn(".read_text(encoding=\"utf-8\")", generated_test)
+        self.assertNotIn('.read_text(encoding="utf-8")', generated_test)
         for name in ("README.md", "test_sfmea_assurance.py"):
             self.assertEqual(
                 manifest["generated_files"][name]["sha256"],
@@ -1245,12 +1246,23 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertIn("--read-only", command)
         self.assertIn("--cap-drop", command)
         self.assertIn("ALL", command)
-        self.assertIn("65534:65534", command)
+        user_index = command.index("--user")
+        self.assertRegex(command[user_index + 1], r"^\d+:\d+$")
         self.assertIn("--pull", command)
         self.assertIn("never", command)
         self.assertIn("--entrypoint", command)
         self.assertEqual(command[command.index("--entrypoint") + 1], "python")
         self.assertIn("--junitxml=/evidence/junit.xml", command)
+
+    def test_junit_summary_rejects_entity_expansion(self) -> None:
+        junit = self.root / "junit.xml"
+        junit.write_text(
+            '<!DOCTYPE testsuite [<!ENTITY x "expanded">]>'
+            '<testsuite tests="1" failures="0" errors="0" skipped="0" '
+            'time="0.1" name="&x;"/>',
+            encoding="utf-8",
+        )
+        self.assertEqual(execution_module._junit_summary(junit), {"parse_error": True})
 
     def test_execution_evidence_requires_independent_criterion_review(self) -> None:
         obligation = self.analysis["assurance"]["obligations"][0]
@@ -1394,8 +1406,7 @@ class AssuranceRegisterTests(unittest.TestCase):
             )
         manifest_path.write_bytes(manifest_bytes)
         duplicate_manifest = (
-            '{"schema_version":"ambiguous",'
-            + manifest_bytes.decode("utf-8")[1:]
+            '{"schema_version":"ambiguous",' + manifest_bytes.decode("utf-8")[1:]
         ).encode("utf-8")
         manifest_path.write_bytes(duplicate_manifest)
         with self.assertRaisesRegex(ValueError, "duplicate object key"):
@@ -1427,7 +1438,9 @@ class AssuranceRegisterTests(unittest.TestCase):
         with mock.patch(
             "pysfmea.json_ingestion._same_file_identity", side_effect=[True, False]
         ):
-            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+            with self.assertRaisesRegex(
+                ValueError, "changed during bounded consumption"
+            ):
                 import_execution_evidence(
                     self.analysis,
                     obligation["id"],
@@ -1453,7 +1466,9 @@ class AssuranceRegisterTests(unittest.TestCase):
             autospec=True,
             side_effect=artifact_link_only,
         ):
-            with self.assertRaisesRegex(ValueError, "artifact 1 path is missing or unsafe"):
+            with self.assertRaisesRegex(
+                ValueError, "artifact 1 path is missing or unsafe"
+            ):
                 import_execution_evidence(
                     self.analysis,
                     obligation["id"],
@@ -1486,9 +1501,7 @@ class AssuranceRegisterTests(unittest.TestCase):
                     initiated_by="Boundary Importer",
                 )
         self.assertEqual(self.analysis, original_analysis)
-        self.assertFalse(
-            evidence_root.exists() and any(evidence_root.iterdir())
-        )
+        self.assertFalse(evidence_root.exists() and any(evidence_root.iterdir()))
 
         with mock.patch(
             "pysfmea.execution._record_collected_execution",

@@ -60,16 +60,16 @@ class EvaluationBoundaryTests(unittest.TestCase):
         self.assertEqual(first["format"], "pysfmea-evaluation-result-1")
         self.assertEqual(first["corpus"]["format"], "pysfmea-golden-corpus-1")
         self.assertEqual(first["corpus"]["case_count"], 1)
+        self.assertEqual(first["corpus"]["call_case_count"], 0)
         self.assertEqual(len(first["corpus"]["content_sha256"]), 64)
         self.assertEqual(first["matched"], 1)
+        self.assertFalse(first["call_resolution"]["enabled"])
 
         analysis_path = self.root / "analysis.json"
         save_analysis(analysis_path, self.analysis)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
-            exit_code = main(
-                ["evaluate", str(analysis_path), str(path), "--json"]
-            )
+            exit_code = main(["evaluate", str(analysis_path), str(path), "--json"])
         cli_result = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, int(bool(cli_result["unexpected"])))
         self.assertEqual(cli_result["corpus"], first["corpus"])
@@ -157,6 +157,47 @@ class EvaluationBoundaryTests(unittest.TestCase):
                 "fields must be strings",
             ),
             ({**self.spec, "scope": ["service.py:*", "service.py:*"]}, "duplicate"),
+            ({**self.spec, "call_cases": "invalid"}, "call_cases"),
+            (
+                {
+                    **self.spec,
+                    "call_cases": [
+                        {
+                            "source": "service.py",
+                            "component": "perform",
+                            "raw_reference": "value",
+                            "reference": "value",
+                            "resolution": "lexical_name",
+                            "candidate_confidence": "certain",
+                            "line": 1,
+                            "order": 0,
+                            "awaited": False,
+                            "control_context": [],
+                        }
+                    ],
+                },
+                "candidate_confidence",
+            ),
+            (
+                {
+                    **self.spec,
+                    "call_cases": [
+                        {
+                            "source": "service.py",
+                            "component": "perform",
+                            "raw_reference": "value",
+                            "reference": "value",
+                            "resolution": "lexical_name",
+                            "candidate_confidence": "",
+                            "line": -1,
+                            "order": 0,
+                            "awaited": False,
+                            "control_context": [],
+                        }
+                    ],
+                },
+                "line must be a non-negative integer",
+            ),
         ):
             with self.subTest(message=message):
                 with self.assertRaisesRegex(ValueError, message):

@@ -27,6 +27,10 @@ from .diagrams import (
     MAX_DIAGRAMS,
     MAX_TEXT_LENGTH,
 )
+from .fault_injection import (
+    FAULT_INJECTION_PLAN_FORMAT,
+    FAULT_INJECTION_PLAN_VERIFICATION_FORMAT,
+)
 from .file_publication import atomic_publish_text
 from .html_report import HTML_REPORT_VERIFICATION_FORMAT
 from .integrity import canonical_json_sha256
@@ -52,26 +56,18 @@ MAX_SCHEMA_BUNDLE_JSON_DEPTH = 100
 MAX_SCHEMA_BUNDLE_JSON_NODES = 250_000
 REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
 REVIEW_PACKAGE_VERIFICATION_FORMAT = "pysfmea-review-package-verification-1"
-ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = (
-    "pysfmea-analysis-structure-verification-1"
-)
-ANALYSIS_DIAGNOSTICS_VERIFICATION_FORMAT = (
-    "pysfmea-analysis-diagnostics-verification-1"
-)
+ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = "pysfmea-analysis-structure-verification-1"
+ANALYSIS_DIAGNOSTICS_VERIFICATION_FORMAT = "pysfmea-analysis-diagnostics-verification-1"
 GUIDANCE_TRACEABILITY_VERIFICATION_FORMAT = (
     "pysfmea-guidance-traceability-verification-1"
 )
 SFTA_PROJECTION_VERIFICATION_FORMAT = "pysfmea-sfta-projection-verification-1"
-EVIDENCE_CATALOG_VERIFICATION_FORMAT = (
-    "pysfmea-evidence-catalog-verification-1"
-)
+EVIDENCE_CATALOG_VERIFICATION_FORMAT = "pysfmea-evidence-catalog-verification-1"
 INTERCHANGE_ARTIFACTS_VERIFICATION_FORMAT = (
     "pysfmea-interchange-artifacts-verification-1"
 )
 REVIEW_VIEWS_VERIFICATION_FORMAT = "pysfmea-review-views-verification-1"
-PACKAGE_PROVENANCE_VERIFICATION_FORMAT = (
-    "pysfmea-package-provenance-verification-1"
-)
+PACKAGE_PROVENANCE_VERIFICATION_FORMAT = "pysfmea-package-provenance-verification-1"
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
 
 
@@ -689,9 +685,7 @@ def _html_report_verification_schema() -> dict[str, Any]:
                 "required": ["publication"],
                 "properties": {
                     "publication": {
-                        "properties": {
-                            "status": {"const": "not_published"}
-                        },
+                        "properties": {"status": {"const": "not_published"}},
                         "required": ["status"],
                     }
                 },
@@ -812,9 +806,7 @@ def _schema_bundle_verification_schema() -> dict[str, Any]:
             "checks": {
                 "type": "object",
                 "required": list(check_names),
-                "properties": {
-                    name: {"type": "boolean"} for name in check_names
-                },
+                "properties": {name: {"type": "boolean"} for name in check_names},
                 "additionalProperties": False,
             },
             "schema_count": {"type": "integer", "minimum": 0, "maximum": 100},
@@ -967,9 +959,7 @@ def _publication_failure_catalog_schema() -> dict[str, Any]:
                 "items": {"enum": ["analysis_load", "generation"]},
             },
             "next_action": {"type": "string", "minLength": 1},
-            "retry_policy": {
-                "enum": ["after_remediation", "manual_diagnostics"]
-            },
+            "retry_policy": {"enum": ["after_remediation", "manual_diagnostics"]},
             "message": {"type": "string", "minLength": 1},
         },
         "additionalProperties": False,
@@ -1094,9 +1084,7 @@ def _publication_failure_catalog_verification_schema() -> dict[str, Any]:
             "notice",
         ],
         "properties": {
-            "format": {
-                "const": PUBLICATION_FAILURE_CATALOG_VERIFICATION_FORMAT
-            },
+            "format": {"const": PUBLICATION_FAILURE_CATALOG_VERIFICATION_FORMAT},
             "source": {"type": "string", "minLength": 1},
             "valid": {"type": "boolean"},
             "checks": checks,
@@ -1118,9 +1106,7 @@ def _publication_failure_catalog_verification_schema() -> dict[str, Any]:
                     "properties": {
                         "checks": passing_checks,
                         "errors": {"maxItems": 0},
-                        "catalog_format": {
-                            "const": PUBLICATION_FAILURE_CATALOG_FORMAT
-                        },
+                        "catalog_format": {"const": PUBLICATION_FAILURE_CATALOG_FORMAT},
                         "declared_content_sha256": {
                             "const": PUBLICATION_FAILURE_CATALOG_SHA256
                         },
@@ -1183,8 +1169,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
                 "type": "object",
                 "required": list(analysis_structure_check_names),
                 "properties": {
-                    name: {"type": "boolean"}
-                    for name in analysis_structure_check_names
+                    name: {"type": "boolean"} for name in analysis_structure_check_names
                 },
                 "additionalProperties": False,
             },
@@ -1330,9 +1315,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
             "checks": {
                 "type": "object",
                 "required": list(sfta_check_names),
-                "properties": {
-                    name: {"type": "boolean"} for name in sfta_check_names
-                },
+                "properties": {name: {"type": "boolean"} for name in sfta_check_names},
                 "additionalProperties": False,
             },
             "errors": {"type": "array", "items": _error_schema()},
@@ -1561,8 +1544,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
                     },
                     "failure_rule_id": {
                         "enum": sorted(
-                            failure.rule_id
-                            for failure in PUBLICATION_FAILURES.values()
+                            failure.rule_id for failure in PUBLICATION_FAILURES.values()
                         )
                     },
                     "next_action": {
@@ -1673,9 +1655,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
                     "required": ["manifest_sha256"],
                     "properties": {
                         "checked_files": {"minimum": 1},
-                        "counts": {
-                            "properties": {"error": {"const": 0}}
-                        },
+                        "counts": {"properties": {"error": {"const": 0}}},
                         "findings": {
                             "not": {
                                 "contains": {
@@ -1684,13 +1664,11 @@ def _review_package_verification_schema() -> dict[str, Any]:
                                 }
                             }
                         },
-                    }
+                    },
                 },
                 "else": {
                     "properties": {
-                        "counts": {
-                            "properties": {"error": {"minimum": 1}}
-                        },
+                        "counts": {"properties": {"error": {"minimum": 1}}},
                         "findings": {
                             "contains": {
                                 "required": ["level"],
@@ -1703,11 +1681,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
             },
             {
                 "if": {
-                    "properties": {
-                        "counts": {
-                            "properties": {"warning": {"const": 0}}
-                        }
-                    }
+                    "properties": {"counts": {"properties": {"warning": {"const": 0}}}}
                 },
                 "then": {
                     "properties": {
@@ -1757,11 +1731,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
                                             {"required": ["failure_rule_id"]},
                                             {"required": ["catalog_format"]},
                                             {"required": ["catalog_algorithm"]},
-                                            {
-                                                "required": [
-                                                    "catalog_canonicalization"
-                                                ]
-                                            },
+                                            {"required": ["catalog_canonicalization"]},
                                             {"required": ["catalog_sha256"]},
                                             {"required": ["next_action"]},
                                             {"required": ["retry_policy"]},
@@ -1770,7 +1740,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
                                     "properties": {
                                         "status": {"const": "published"},
                                         "phase": {"const": "complete"},
-                                    }
+                                    },
                                 },
                             }
                         },
@@ -1805,11 +1775,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
                                             {"required": ["failure_rule_id"]},
                                             {"required": ["catalog_format"]},
                                             {"required": ["catalog_algorithm"]},
-                                            {
-                                                "required": [
-                                                    "catalog_canonicalization"
-                                                ]
-                                            },
+                                            {"required": ["catalog_canonicalization"]},
                                             {"required": ["catalog_sha256"]},
                                             {"required": ["next_action"]},
                                             {"required": ["retry_policy"]},
@@ -1820,7 +1786,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
                                         "phase": {
                                             "const": "post_publication_verification"
                                         },
-                                    }
+                                    },
                                 },
                             }
                         },
@@ -1834,9 +1800,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
                         "properties": {
                             "publication": {
                                 "required": ["failure_code"],
-                                "properties": {
-                                    "failure_code": {"const": failure.code}
-                                },
+                                "properties": {"failure_code": {"const": failure.code}},
                             }
                         },
                     },
@@ -1867,15 +1831,9 @@ def _review_package_verification_schema() -> dict[str, Any]:
                                     "catalog_sha256": {
                                         "const": PUBLICATION_FAILURE_CATALOG_SHA256
                                     },
-                                    "failure_rule_id": {
-                                        "const": failure.rule_id
-                                    },
-                                    "next_action": {
-                                        "const": failure.next_action
-                                    },
-                                    "retry_policy": {
-                                        "const": failure.retry_policy
-                                    },
+                                    "failure_rule_id": {"const": failure.rule_id},
+                                    "next_action": {"const": failure.next_action},
+                                    "retry_policy": {"const": failure.retry_policy},
                                 }
                             },
                         }
@@ -2020,8 +1978,18 @@ def _workflow_status_schema() -> dict[str, Any]:
 def _assurance_program_schema() -> dict[str, Any]:
     digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
     nonempty = {"type": "string", "minLength": 1, "maxLength": 2_000}
-    identifier = {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^\\S+$"}
-    string_ids = {"type": "array", "maxItems": 10_000, "items": identifier, "uniqueItems": True}
+    identifier = {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "pattern": "^\\S+$",
+    }
+    string_ids = {
+        "type": "array",
+        "maxItems": 10_000,
+        "items": identifier,
+        "uniqueItems": True,
+    }
     endpoint = {
         "type": "object",
         "required": ["repository_id", "component_id"],
@@ -2034,10 +2002,19 @@ def _assurance_program_schema() -> dict[str, Any]:
         "title": "PySFMEA system assurance program",
         "type": "object",
         "required": [
-            "format", "name", "purpose", "created_at", "repositories",
-            "relationships", "requirements_sources", "external_evidence",
-            "validation_cohorts", "llm_evaluations", "governance",
-            "quality_gates", "integrity",
+            "format",
+            "name",
+            "purpose",
+            "created_at",
+            "repositories",
+            "relationships",
+            "requirements_sources",
+            "external_evidence",
+            "validation_cohorts",
+            "llm_evaluations",
+            "governance",
+            "quality_gates",
+            "integrity",
         ],
         "properties": {
             "format": {"const": "pysfmea-assurance-program-1"},
@@ -2045,36 +2022,62 @@ def _assurance_program_schema() -> dict[str, Any]:
             "purpose": nonempty,
             "created_at": nonempty,
             "repositories": {
-                "type": "array", "minItems": 1, "maxItems": 100,
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
                 "items": {
                     "type": "object",
-                    "required": ["id", "analysis", "analysis_state_sha256", "baseline_id", "role"],
+                    "required": [
+                        "id",
+                        "analysis",
+                        "analysis_state_sha256",
+                        "baseline_id",
+                        "role",
+                    ],
                     "properties": {
-                        "id": identifier, "analysis": nonempty,
-                        "analysis_state_sha256": digest, "baseline_id": nonempty,
+                        "id": identifier,
+                        "analysis": nonempty,
+                        "analysis_state_sha256": digest,
+                        "baseline_id": nonempty,
                         "role": nonempty,
                     },
                     "additionalProperties": False,
                 },
             },
             "relationships": {
-                "type": "array", "maxItems": 10_000,
+                "type": "array",
+                "maxItems": 10_000,
                 "items": {
                     "type": "object",
                     "required": ["id", "kind", "source", "target"],
                     "properties": {
                         "id": identifier,
-                        "kind": {"enum": ["calls", "publishes", "subscribes", "data_flow", "depends_on", "controls", "fallback"]},
-                        "source": endpoint, "target": endpoint,
+                        "kind": {
+                            "enum": [
+                                "calls",
+                                "publishes",
+                                "subscribes",
+                                "data_flow",
+                                "depends_on",
+                                "controls",
+                                "fallback",
+                            ]
+                        },
+                        "source": endpoint,
+                        "target": endpoint,
                         "temporal": {
                             "type": "object",
                             "properties": {
-                                "deadline_ms": {"type": "number", "exclusiveMinimum": 0},
+                                "deadline_ms": {
+                                    "type": "number",
+                                    "exclusiveMinimum": 0,
+                                },
                                 "timeout_ms": {"type": "number", "exclusiveMinimum": 0},
                                 "retry_limit": {"type": "integer", "minimum": 0},
                                 "backoff_ms": {"type": "number", "minimum": 0},
                                 "max_in_flight": {"type": "integer", "minimum": 1},
-                                "ordering": nonempty, "clock": nonempty,
+                                "ordering": nonempty,
+                                "clock": nonempty,
                             },
                             "additionalProperties": False,
                         },
@@ -2088,9 +2091,18 @@ def _assurance_program_schema() -> dict[str, Any]:
                             ],
                             "properties": {
                                 "failure_threshold": {"type": "integer", "minimum": 1},
-                                "open_state_timeout_ms": {"type": "number", "exclusiveMinimum": 0},
-                                "half_open_max_calls": {"type": "integer", "minimum": 1},
-                                "recovery_deadline_ms": {"type": "number", "exclusiveMinimum": 0},
+                                "open_state_timeout_ms": {
+                                    "type": "number",
+                                    "exclusiveMinimum": 0,
+                                },
+                                "half_open_max_calls": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                },
+                                "recovery_deadline_ms": {
+                                    "type": "number",
+                                    "exclusiveMinimum": 0,
+                                },
                             },
                             "additionalProperties": False,
                         },
@@ -2099,20 +2111,49 @@ def _assurance_program_schema() -> dict[str, Any]:
                 },
             },
             "requirements_sources": {
-                "type": "array", "maxItems": 50_000,
+                "type": "array",
+                "maxItems": 50_000,
                 "items": {
                     "type": "object",
-                    "required": ["id", "provider", "revision", "retrieved_at", "source_uri", "content_sha256", "requirements"],
+                    "required": [
+                        "id",
+                        "provider",
+                        "revision",
+                        "retrieved_at",
+                        "source_uri",
+                        "content_sha256",
+                        "requirements",
+                    ],
                     "properties": {
-                        "id": identifier, "provider": nonempty, "revision": nonempty,
-                        "retrieved_at": {"type": "string", "format": "date-time", "minLength": 1}, "source_uri": nonempty,
+                        "id": identifier,
+                        "provider": nonempty,
+                        "revision": nonempty,
+                        "retrieved_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "minLength": 1,
+                        },
+                        "source_uri": nonempty,
                         "content_sha256": digest,
                         "requirements": {
-                            "type": "array", "maxItems": 50_000,
+                            "type": "array",
+                            "maxItems": 50_000,
                             "items": {
                                 "type": "object",
-                                "required": ["id", "text", "repository_ids", "hazard_ids", "finding_ids"],
-                                "properties": {"id": identifier, "text": nonempty, "repository_ids": string_ids, "hazard_ids": string_ids, "finding_ids": string_ids},
+                                "required": [
+                                    "id",
+                                    "text",
+                                    "repository_ids",
+                                    "hazard_ids",
+                                    "finding_ids",
+                                ],
+                                "properties": {
+                                    "id": identifier,
+                                    "text": nonempty,
+                                    "repository_ids": string_ids,
+                                    "hazard_ids": string_ids,
+                                    "finding_ids": string_ids,
+                                },
                                 "additionalProperties": False,
                             },
                         },
@@ -2121,18 +2162,61 @@ def _assurance_program_schema() -> dict[str, Any]:
                 },
             },
             "external_evidence": {
-                "type": "array", "maxItems": 50_000,
+                "type": "array",
+                "maxItems": 50_000,
                 "items": {
                     "type": "object",
-                    "required": ["id", "technique", "status", "repository_ids", "relationship_ids", "finding_ids", "producer", "reviewer", "metrics", "artifact"],
+                    "required": [
+                        "id",
+                        "technique",
+                        "status",
+                        "repository_ids",
+                        "relationship_ids",
+                        "finding_ids",
+                        "producer",
+                        "reviewer",
+                        "metrics",
+                        "artifact",
+                    ],
                     "properties": {
                         "id": identifier,
-                        "technique": {"enum": ["coverage", "mutation", "property_based", "fault_injection", "concurrency", "load", "chaos", "sast", "dast", "runtime_trace", "formal_analysis", "manual_inspection"]},
-                        "status": {"enum": ["passed", "failed", "inconclusive", "not_run"]},
-                        "repository_ids": string_ids, "relationship_ids": string_ids, "finding_ids": string_ids,
+                        "technique": {
+                            "enum": [
+                                "coverage",
+                                "mutation",
+                                "property_based",
+                                "fault_injection",
+                                "concurrency",
+                                "load",
+                                "chaos",
+                                "sast",
+                                "dast",
+                                "runtime_trace",
+                                "formal_analysis",
+                                "manual_inspection",
+                            ]
+                        },
+                        "status": {
+                            "enum": ["passed", "failed", "inconclusive", "not_run"]
+                        },
+                        "repository_ids": string_ids,
+                        "relationship_ids": string_ids,
+                        "finding_ids": string_ids,
                         "producer": {"type": "string", "maxLength": 500},
                         "reviewer": {"type": "string", "maxLength": 500},
-                        "metrics": {"type": "object", "maxProperties": 100, "additionalProperties": {"type": ["number", "integer", "string", "boolean", "null"]}},
+                        "metrics": {
+                            "type": "object",
+                            "maxProperties": 100,
+                            "additionalProperties": {
+                                "type": [
+                                    "number",
+                                    "integer",
+                                    "string",
+                                    "boolean",
+                                    "null",
+                                ]
+                            },
+                        },
                         "artifact": {
                             "type": "object",
                             "properties": {"path": nonempty, "sha256": digest},
@@ -2142,7 +2226,9 @@ def _assurance_program_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                     "allOf": [
                         {
-                            "if": {"properties": {"status": {"enum": ["passed", "failed"]}}},
+                            "if": {
+                                "properties": {"status": {"enum": ["passed", "failed"]}}
+                            },
                             "then": {
                                 "properties": {
                                     "artifact": {"required": ["path", "sha256"]}
@@ -2153,36 +2239,285 @@ def _assurance_program_schema() -> dict[str, Any]:
                 },
             },
             "validation_cohorts": {
-                "type": "array", "maxItems": 2_000,
+                "type": "array",
+                "maxItems": 2_000,
                 "items": {
                     "type": "object",
-                    "required": ["id", "repository", "framework", "corpus_sha256", "case_count", "recall", "precision", "independent_reviewed", "producer", "reviewer"],
-                    "properties": {"id": identifier, "repository": nonempty, "framework": nonempty, "corpus_sha256": digest, "case_count": {"type": "integer", "minimum": 1}, "recall": {"type": "number", "minimum": 0, "maximum": 1}, "precision": {"type": "number", "minimum": 0, "maximum": 1}, "independent_reviewed": {"type": "boolean"}, "producer": nonempty, "reviewer": nonempty},
+                    "required": [
+                        "id",
+                        "repository",
+                        "framework",
+                        "corpus_sha256",
+                        "case_count",
+                        "recall",
+                        "precision",
+                        "independent_reviewed",
+                        "producer",
+                        "reviewer",
+                    ],
+                    "properties": {
+                        "id": identifier,
+                        "repository": nonempty,
+                        "framework": nonempty,
+                        "corpus_sha256": digest,
+                        "case_count": {"type": "integer", "minimum": 1},
+                        "recall": {"type": "number", "minimum": 0, "maximum": 1},
+                        "precision": {"type": "number", "minimum": 0, "maximum": 1},
+                        "matched_count": {"type": "integer", "minimum": 0},
+                        "actual_matched_count": {"type": "integer", "minimum": 0},
+                        "actual_count": {"type": "integer", "minimum": 1},
+                        "evaluation_result_format": {
+                            "const": "pysfmea-evaluation-result-1"
+                        },
+                        "evaluation_result_sha256": digest,
+                        "evaluation_verifier_version": nonempty,
+                        "evaluation_result_artifact": {
+                            "type": "object",
+                            "required": ["path", "sha256"],
+                            "properties": {"path": nonempty, "sha256": digest},
+                            "additionalProperties": False,
+                        },
+                        "call_case_count": {"type": "integer", "minimum": 0},
+                        "call_resolution_recall": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
+                        "call_resolution_precision": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
+                        "call_matched_count": {"type": "integer", "minimum": 0},
+                        "call_actual_matched_count": {
+                            "type": "integer",
+                            "minimum": 0,
+                        },
+                        "call_actual_count": {"type": "integer", "minimum": 1},
+                        "independent_reviewed": {"type": "boolean"},
+                        "producer": nonempty,
+                        "reviewer": nonempty,
+                    },
+                    "allOf": [
+                        {
+                            "if": {
+                                "required": ["call_case_count"],
+                                "properties": {"call_case_count": {"minimum": 1}},
+                            },
+                            "then": {
+                                "required": [
+                                    "call_resolution_recall",
+                                    "call_resolution_precision",
+                                ]
+                            },
+                        },
+                        {
+                            "if": {
+                                "anyOf": [
+                                    {"required": ["matched_count"]},
+                                    {"required": ["actual_matched_count"]},
+                                    {"required": ["actual_count"]},
+                                    {"required": ["evaluation_result_format"]},
+                                    {"required": ["evaluation_result_sha256"]},
+                                    {"required": ["evaluation_verifier_version"]},
+                                    {"required": ["evaluation_result_artifact"]},
+                                ]
+                            },
+                            "then": {
+                                "required": [
+                                    "matched_count",
+                                    "actual_matched_count",
+                                    "actual_count",
+                                    "evaluation_result_format",
+                                    "evaluation_result_sha256",
+                                    "evaluation_verifier_version",
+                                ]
+                            },
+                        },
+                        {
+                            "if": {
+                                "anyOf": [
+                                    {"required": ["call_matched_count"]},
+                                    {"required": ["call_actual_matched_count"]},
+                                    {"required": ["call_actual_count"]},
+                                ]
+                            },
+                            "then": {
+                                "required": [
+                                    "call_case_count",
+                                    "call_resolution_recall",
+                                    "call_resolution_precision",
+                                    "call_matched_count",
+                                    "call_actual_matched_count",
+                                    "call_actual_count",
+                                    "matched_count",
+                                    "actual_matched_count",
+                                    "actual_count",
+                                    "evaluation_result_format",
+                                    "evaluation_result_sha256",
+                                    "evaluation_verifier_version",
+                                ],
+                                "properties": {"call_case_count": {"minimum": 1}},
+                            },
+                        },
+                        {
+                            "if": {
+                                "anyOf": [
+                                    {"required": ["call_resolution_recall"]},
+                                    {"required": ["call_resolution_precision"]},
+                                ]
+                            },
+                            "then": {
+                                "required": ["call_case_count"],
+                                "properties": {"call_case_count": {"minimum": 1}},
+                            },
+                        },
+                    ],
                     "additionalProperties": False,
                 },
             },
             "llm_evaluations": {
-                "type": "array", "maxItems": 10_000,
+                "type": "array",
+                "maxItems": 10_000,
                 "items": {
                     "type": "object",
-                    "required": ["id", "provider", "model", "prompt_version", "sample_count", "grounding", "citation_accuracy", "unsupported_claim_rate", "corpus_sha256", "independent_reviewed", "producer", "reviewer"],
-                    "properties": {"id": identifier, "provider": nonempty, "model": nonempty, "prompt_version": nonempty, "sample_count": {"type": "integer", "minimum": 1}, "grounding": {"type": "number", "minimum": 0, "maximum": 1}, "citation_accuracy": {"type": "number", "minimum": 0, "maximum": 1}, "unsupported_claim_rate": {"type": "number", "minimum": 0, "maximum": 1}, "corpus_sha256": digest, "independent_reviewed": {"type": "boolean"}, "producer": nonempty, "reviewer": nonempty},
+                    "required": [
+                        "id",
+                        "provider",
+                        "model",
+                        "prompt_version",
+                        "sample_count",
+                        "grounding",
+                        "citation_accuracy",
+                        "unsupported_claim_rate",
+                        "corpus_sha256",
+                        "independent_reviewed",
+                        "producer",
+                        "reviewer",
+                    ],
+                    "properties": {
+                        "id": identifier,
+                        "provider": nonempty,
+                        "model": nonempty,
+                        "prompt_version": nonempty,
+                        "sample_count": {"type": "integer", "minimum": 1},
+                        "grounding": {"type": "number", "minimum": 0, "maximum": 1},
+                        "citation_accuracy": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
+                        "unsupported_claim_rate": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
+                        "grounded_sample_count": {"type": "integer", "minimum": 0},
+                        "citation_correct_sample_count": {
+                            "type": "integer",
+                            "minimum": 0,
+                        },
+                        "claim_count": {"type": "integer", "minimum": 1},
+                        "unsupported_claim_count": {
+                            "type": "integer",
+                            "minimum": 0,
+                        },
+                        "corpus_sha256": digest,
+                        "corpus_format": {
+                            "enum": [
+                                "pysfmea-llm-quality-corpus-1",
+                                "pysfmea-llm-quality-corpus-2",
+                            ]
+                        },
+                        "subject_bound": {"type": "boolean"},
+                        "corpus_artifact": {
+                            "type": "object",
+                            "required": ["path", "sha256"],
+                            "properties": {"path": nonempty, "sha256": digest},
+                            "additionalProperties": False,
+                        },
+                        "independent_reviewed": {"type": "boolean"},
+                        "producer": nonempty,
+                        "reviewer": nonempty,
+                    },
+                    "allOf": [
+                        {
+                            "if": {
+                                "anyOf": [
+                                    {"required": ["corpus_format"]},
+                                    {"required": ["subject_bound"]},
+                                ]
+                            },
+                            "then": {"required": ["corpus_format", "subject_bound"]},
+                        },
+                        {
+                            "if": {
+                                "anyOf": [
+                                    {"required": ["grounded_sample_count"]},
+                                    {"required": ["citation_correct_sample_count"]},
+                                    {"required": ["claim_count"]},
+                                    {"required": ["unsupported_claim_count"]},
+                                    {"required": ["corpus_artifact"]},
+                                ]
+                            },
+                            "then": {
+                                "required": [
+                                    "grounded_sample_count",
+                                    "citation_correct_sample_count",
+                                    "claim_count",
+                                    "unsupported_claim_count",
+                                ]
+                            },
+                        },
+                    ],
                     "additionalProperties": False,
                 },
             },
             "governance": {
                 "type": "object",
-                "required": ["required_roles", "independent_evidence_review", "require_program_approval", "approvals"],
+                "required": [
+                    "required_roles",
+                    "independent_evidence_review",
+                    "require_program_approval",
+                    "approvals",
+                ],
                 "properties": {
                     "required_roles": string_ids,
                     "independent_evidence_review": {"type": "boolean"},
                     "require_program_approval": {"type": "boolean"},
                     "approvals": {
-                        "type": "array", "maxItems": 50_000,
+                        "type": "array",
+                        "maxItems": 50_000,
                         "items": {
                             "type": "object",
-                            "required": ["subject_kind", "subject_id", "reviewer", "role", "decision", "at"],
-                            "properties": {"subject_kind": {"enum": ["program", "repository", "requirement", "relationship", "evidence"]}, "subject_id": nonempty, "reviewer": nonempty, "role": nonempty, "decision": {"enum": ["approved", "rejected"]}, "at": {"type": "string", "format": "date-time", "minLength": 1}},
+                            "required": [
+                                "subject_kind",
+                                "subject_id",
+                                "reviewer",
+                                "role",
+                                "decision",
+                                "at",
+                            ],
+                            "properties": {
+                                "subject_kind": {
+                                    "enum": [
+                                        "program",
+                                        "repository",
+                                        "requirement",
+                                        "relationship",
+                                        "evidence",
+                                    ]
+                                },
+                                "subject_id": nonempty,
+                                "reviewer": nonempty,
+                                "role": nonempty,
+                                "decision": {"enum": ["approved", "rejected"]},
+                                "at": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "minLength": 1,
+                                },
+                            },
                             "additionalProperties": False,
                         },
                     },
@@ -2191,14 +2526,85 @@ def _assurance_program_schema() -> dict[str, Any]:
             },
             "quality_gates": {
                 "type": "object",
-                "required": ["min_validation_repositories", "require_independent_validation", "min_recall", "min_precision", "require_temporal_evidence", "require_resilience_evidence", "min_llm_samples", "require_independent_llm_evaluation", "min_llm_grounding", "min_llm_citation_accuracy", "max_llm_unsupported_claim_rate"],
-                "properties": {"min_validation_repositories": {"type": "integer", "minimum": 0}, "require_independent_validation": {"type": "boolean"}, "min_recall": {"type": "number", "minimum": 0, "maximum": 1}, "min_precision": {"type": "number", "minimum": 0, "maximum": 1}, "require_temporal_evidence": {"type": "boolean"}, "require_resilience_evidence": {"type": "boolean"}, "min_llm_samples": {"type": "integer", "minimum": 0}, "require_independent_llm_evaluation": {"type": "boolean"}, "min_llm_grounding": {"type": "number", "minimum": 0, "maximum": 1}, "min_llm_citation_accuracy": {"type": "number", "minimum": 0, "maximum": 1}, "max_llm_unsupported_claim_rate": {"type": "number", "minimum": 0, "maximum": 1}},
+                "required": [
+                    "min_validation_repositories",
+                    "require_independent_validation",
+                    "min_recall",
+                    "min_precision",
+                    "require_temporal_evidence",
+                    "require_resilience_evidence",
+                    "min_llm_samples",
+                    "require_independent_llm_evaluation",
+                    "min_llm_grounding",
+                    "min_llm_citation_accuracy",
+                    "max_llm_unsupported_claim_rate",
+                ],
+                "properties": {
+                    "min_validation_repositories": {"type": "integer", "minimum": 0},
+                    "require_independent_validation": {"type": "boolean"},
+                    "min_recall": {"type": "number", "minimum": 0, "maximum": 1},
+                    "min_precision": {"type": "number", "minimum": 0, "maximum": 1},
+                    "require_count_backed_validation": {"type": "boolean"},
+                    "require_evaluation_result_artifacts": {"type": "boolean"},
+                    "min_micro_recall": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "min_micro_precision": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "min_call_resolution_recall": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "min_call_resolution_precision": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "min_micro_call_resolution_recall": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "min_micro_call_resolution_precision": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "require_temporal_evidence": {"type": "boolean"},
+                    "require_resilience_evidence": {"type": "boolean"},
+                    "min_llm_samples": {"type": "integer", "minimum": 0},
+                    "require_independent_llm_evaluation": {"type": "boolean"},
+                    "require_llm_count_backing": {"type": "boolean"},
+                    "require_llm_corpus_artifacts": {"type": "boolean"},
+                    "require_llm_subject_binding": {"type": "boolean"},
+                    "min_llm_grounding": {"type": "number", "minimum": 0, "maximum": 1},
+                    "min_llm_citation_accuracy": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "max_llm_unsupported_claim_rate": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                },
                 "additionalProperties": False,
             },
             "integrity": {
                 "type": "object",
                 "required": ["algorithm", "canonicalization", "content_sha256"],
-                "properties": {"algorithm": {"const": "sha256"}, "canonicalization": {"const": "json-sort-keys-compact-utf8"}, "content_sha256": digest},
+                "properties": {
+                    "algorithm": {"const": "sha256"},
+                    "canonicalization": {"const": "json-sort-keys-compact-utf8"},
+                    "content_sha256": digest,
+                },
                 "additionalProperties": False,
             },
         },
@@ -2213,18 +2619,320 @@ def _assurance_program_verification_schema() -> dict[str, Any]:
         "$id": _schema_id("assurance-program-verification"),
         "title": "PySFMEA system assurance program verification",
         "type": "object",
-        "required": ["format", "verifier", "program", "valid", "checks", "counts", "summary", "relationships", "validation", "llm_quality", "findings", "notice"],
+        "required": [
+            "format",
+            "verifier",
+            "program",
+            "valid",
+            "checks",
+            "counts",
+            "summary",
+            "relationships",
+            "validation",
+            "llm_quality",
+            "findings",
+            "notice",
+        ],
         "properties": {
             "format": {"const": "pysfmea-assurance-program-verification-1"},
-            "verifier": {"type": "object", "required": ["name", "version"], "properties": {"name": {"const": "PySFMEA"}, "version": {"type": "string", "minLength": 1}}, "additionalProperties": False},
-            "program": {"type": "object", "required": ["path", "content_sha256"], "properties": {"path": {"type": "string"}, "content_sha256": digest}, "additionalProperties": False},
+            "verifier": {
+                "type": "object",
+                "required": ["name", "version"],
+                "properties": {
+                    "name": {"const": "PySFMEA"},
+                    "version": {"type": "string", "minLength": 1},
+                },
+                "additionalProperties": False,
+            },
+            "program": {
+                "type": "object",
+                "required": ["path", "content_sha256"],
+                "properties": {"path": {"type": "string"}, "content_sha256": digest},
+                "additionalProperties": False,
+            },
             "valid": {"type": "boolean"},
-            "checks": {"type": "object", "additionalProperties": {"type": ["boolean", "null"]}},
-            "counts": {"type": "object", "required": ["errors", "warnings", "information"], "properties": {"errors": {"type": "integer", "minimum": 0}, "warnings": {"type": "integer", "minimum": 0}, "information": {"type": "integer", "minimum": 0}}, "additionalProperties": False},
-            "summary": {"type": "object"}, "relationships": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
-            "validation": {"type": "object"}, "llm_quality": {"type": "object"},
-            "findings": {"type": "array", "maxItems": 200_000, "items": {"type": "object", "required": ["code", "level", "message", "location"], "properties": {"code": {"type": "string", "minLength": 1}, "level": {"enum": ["error", "warning", "information"]}, "message": {"type": "string", "minLength": 1}, "location": {"type": "string"}}, "additionalProperties": False}},
+            "checks": {
+                "type": "object",
+                "additionalProperties": {"type": ["boolean", "null"]},
+            },
+            "counts": {
+                "type": "object",
+                "required": ["errors", "warnings", "information"],
+                "properties": {
+                    "errors": {"type": "integer", "minimum": 0},
+                    "warnings": {"type": "integer", "minimum": 0},
+                    "information": {"type": "integer", "minimum": 0},
+                },
+                "additionalProperties": False,
+            },
+            "summary": {"type": "object"},
+            "relationships": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
+            "validation": {"type": "object"},
+            "llm_quality": {"type": "object"},
+            "findings": {
+                "type": "array",
+                "maxItems": 200_000,
+                "items": {
+                    "type": "object",
+                    "required": ["code", "level", "message", "location"],
+                    "properties": {
+                        "code": {"type": "string", "minLength": 1},
+                        "level": {"enum": ["error", "warning", "information"]},
+                        "message": {"type": "string", "minLength": 1},
+                        "location": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
             "notice": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _fault_injection_plan_schema() -> dict[str, Any]:
+    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    nonempty = {"type": "string", "minLength": 1, "maxLength": 4_096}
+    plugin_ids = [
+        "builtin.raise-exception.v1",
+        "builtin.return-value.v1",
+        "builtin.sequence.v1",
+    ]
+    return {
+        "$schema": JSON_SCHEMA_DRAFT,
+        "$id": _schema_id("fault-injection-plan"),
+        "title": "PySFMEA governed fault-injection plan",
+        "description": (
+            "Closed structural contract for an obligation-bound built-in fault-injection "
+            "plan. Integrity, readiness, plugin-specific case semantics, and exact "
+            "obligation binding require the PySFMEA semantic verifier."
+        ),
+        "type": "object",
+        "required": [
+            "format",
+            "id",
+            "status",
+            "generated_at",
+            "generator",
+            "binding",
+            "plugin",
+            "case",
+            "execution",
+            "notice",
+            "integrity",
+        ],
+        "properties": {
+            "format": {"const": FAULT_INJECTION_PLAN_FORMAT},
+            "id": nonempty,
+            "status": {"enum": ["binding_required", "ready"]},
+            "generated_at": nonempty,
+            "completed_at": nonempty,
+            "generator": {
+                "type": "object",
+                "required": ["name", "version"],
+                "properties": {"name": {"const": "PySFMEA"}, "version": nonempty},
+                "additionalProperties": False,
+            },
+            "binding": {
+                "type": "object",
+                "required": [
+                    "obligation_id",
+                    "finding_id",
+                    "baseline_id",
+                    "contract_sha256",
+                ],
+                "properties": {
+                    "obligation_id": nonempty,
+                    "finding_id": nonempty,
+                    "baseline_id": nonempty,
+                    "contract_sha256": digest,
+                },
+                "additionalProperties": False,
+            },
+            "plugin": {
+                "type": "object",
+                "required": ["id", "recommended_plugin_ids"],
+                "properties": {
+                    "id": {"enum": plugin_ids},
+                    "recommended_plugin_ids": {
+                        "type": "array",
+                        "maxItems": 3,
+                        "uniqueItems": True,
+                        "items": {"enum": plugin_ids},
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "case": {
+                "type": "object",
+                "required": [
+                    "subject",
+                    "patch_target",
+                    "args",
+                    "kwargs",
+                    "fault",
+                    "expected",
+                ],
+                "properties": {
+                    "subject": {"type": "string", "maxLength": 1_000},
+                    "patch_target": {"type": "string", "maxLength": 1_000},
+                    "args": {"type": "array", "maxItems": 10_000},
+                    "kwargs": {"type": "object", "maxProperties": 10_000},
+                    "fault": {"type": "object", "maxProperties": 100},
+                    "expected": {
+                        "type": "object",
+                        "required": ["outcomes"],
+                        "properties": {
+                            "outcomes": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 32,
+                                "items": {
+                                    "type": "object",
+                                    "required": ["outcome"],
+                                    "properties": {
+                                        "outcome": {"enum": ["returns", "raises"]},
+                                        "value": {},
+                                        "exception_type": {
+                                            "enum": [
+                                                "ConnectionError",
+                                                "OSError",
+                                                "RuntimeError",
+                                                "TimeoutError",
+                                                "ValueError",
+                                            ]
+                                        },
+                                        "min_duration_ms": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                        },
+                                        "max_duration_ms": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                        },
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            }
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "execution": {
+                "type": "object",
+                "required": ["policy", "network", "scanner_execution"],
+                "properties": {
+                    "policy": {"const": "approved_sandbox_required"},
+                    "network": {"const": "deny_by_default"},
+                    "scanner_execution": {"const": False},
+                },
+                "additionalProperties": False,
+            },
+            "notice": nonempty,
+            "integrity": {
+                "type": "object",
+                "required": ["algorithm", "content_sha256"],
+                "properties": {
+                    "algorithm": {"const": "sha256"},
+                    "content_sha256": digest,
+                },
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {"properties": {"status": {"const": "ready"}}},
+                "then": {"required": ["completed_at"]},
+                "else": {"not": {"required": ["completed_at"]}},
+            }
+        ],
+    }
+
+
+def _fault_injection_plan_verification_schema() -> dict[str, Any]:
+    check = {"type": ["boolean", "null"]}
+    return {
+        "$schema": JSON_SCHEMA_DRAFT,
+        "$id": _schema_id("fault-injection-plan-verification"),
+        "title": "PySFMEA fault-injection plan verification verdict",
+        "description": "Closed success and rejection verdict for a governed fault-injection plan.",
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "status",
+            "checks",
+            "findings",
+            "plugin_id",
+            "verified_at",
+            "verifier",
+        ],
+        "properties": {
+            "format": {"const": FAULT_INJECTION_PLAN_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "status": {"enum": ["ready", "binding_required", "invalid"]},
+            "checks": {
+                "type": "object",
+                "required": [
+                    "format",
+                    "contract",
+                    "content_integrity",
+                    "plugin",
+                    "case",
+                    "execution_policy",
+                    "binding",
+                    "ready",
+                ],
+                "properties": {
+                    name: check
+                    for name in (
+                        "format",
+                        "contract",
+                        "content_integrity",
+                        "plugin",
+                        "case",
+                        "execution_policy",
+                        "binding",
+                        "ready",
+                    )
+                },
+                "additionalProperties": False,
+            },
+            "findings": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                    "type": "object",
+                    "required": ["code", "message"],
+                    "properties": {
+                        "code": {"type": "string", "minLength": 1, "maxLength": 200},
+                        "message": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4_096,
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "plugin_id": {"type": "string", "maxLength": 200},
+            "verified_at": {"type": "string", "minLength": 1},
+            "verifier": {
+                "type": "object",
+                "required": ["name", "version"],
+                "properties": {
+                    "name": {"const": "PySFMEA"},
+                    "version": {"type": "string", "minLength": 1},
+                },
+                "additionalProperties": False,
+            },
         },
         "additionalProperties": False,
     }
@@ -2239,6 +2947,8 @@ _SCHEMA_BUILDERS = {
     "diagram": _diagram_schema,
     "diagram-bundle": _diagram_bundle_schema,
     "diagram-bundle-verification": _diagram_bundle_verification_schema,
+    "fault-injection-plan": _fault_injection_plan_schema,
+    "fault-injection-plan-verification": _fault_injection_plan_verification_schema,
     "html-report-verification": _html_report_verification_schema,
     "publication-failure-catalog": _publication_failure_catalog_schema,
     "publication-failure-catalog-verification": (
@@ -2259,6 +2969,8 @@ _SCHEMA_DESCRIPTIONS = {
     "diagram": "Canonical renderer-neutral diagram model.",
     "diagram-bundle": "Generated, state-bound and digest-declaring diagram bundle.",
     "diagram-bundle-verification": "Diagram verification success and rejection verdicts.",
+    "fault-injection-plan": "Obligation-bound, integrity-declaring built-in fault-injection plan.",
+    "fault-injection-plan-verification": "Fault-injection plan integrity, readiness, closed execution policy, plugin, case, and mandatory exact binding verdicts.",
     "html-report-verification": "HTML report verification success and rejection verdicts.",
     "publication-failure-catalog": "Package-publication failure phases, findings, and remediation actions.",
     "publication-failure-catalog-verification": "Publication catalog integrity and exact-taxonomy verdicts.",
@@ -2277,6 +2989,8 @@ SCHEMA_FILENAMES = {
     "diagram": "pysfmea-diagram.schema.json",
     "diagram-bundle": "pysfmea-diagram-bundle.schema.json",
     "diagram-bundle-verification": "pysfmea-diagram-bundle-verification.schema.json",
+    "fault-injection-plan": "pysfmea-fault-injection-plan.schema.json",
+    "fault-injection-plan-verification": "pysfmea-fault-injection-plan-verification.schema.json",
     "html-report-verification": "pysfmea-html-report-verification.schema.json",
     "publication-failure-catalog": "pysfmea-publication-failure-catalog.schema.json",
     "publication-failure-catalog-verification": "pysfmea-publication-failure-catalog-verification.schema.json",
@@ -2322,7 +3036,8 @@ def schema_bundle_documents() -> dict[str, dict[str, Any]]:
     """Return the complete offline catalog and its self-contained schema documents."""
 
     documents = {
-        SCHEMA_FILENAMES[name]: schema_document(name) for name in sorted(_SCHEMA_BUILDERS)
+        SCHEMA_FILENAMES[name]: schema_document(name)
+        for name in sorted(_SCHEMA_BUILDERS)
     }
     return {SCHEMA_CATALOG_FILENAME: schema_catalog(), **documents}
 
@@ -2403,7 +3118,9 @@ def verify_schema_bundle_documents(
         frozenset(_SCHEMA_BUILDERS),
     }
     catalog_names = frozenset(by_name)
-    catalog_complete = len(by_name) == len(entries) and catalog_names in supported_name_sets
+    catalog_complete = (
+        len(by_name) == len(entries) and catalog_names in supported_name_sets
+    )
     if not catalog_complete:
         add(
             "schema.catalog_completeness",
@@ -2419,7 +3136,11 @@ def verify_schema_bundle_documents(
     supplied_files = set(documents)
     if supplied_files != expected_files:
         for filename in sorted(expected_files - supplied_files):
-            add("schema.file_missing", "Required schema-bundle file is missing.", filename)
+            add(
+                "schema.file_missing",
+                "Required schema-bundle file is missing.",
+                filename,
+            )
         for filename in sorted(supplied_files - expected_files):
             add("schema.file_unexpected", "Unexpected schema-bundle file.", filename)
 
@@ -2444,7 +3165,9 @@ def verify_schema_bundle_documents(
         actual_digest = (
             canonical_json_sha256(document) if isinstance(document, dict) else ""
         )
-        expected_digest = str(entry.get("sha256", "")) if isinstance(entry, dict) else ""
+        expected_digest = (
+            str(entry.get("sha256", "")) if isinstance(entry, dict) else ""
+        )
         digest_valid = bool(actual_digest and actual_digest == expected_digest)
         if not digest_valid:
             add(
@@ -2456,7 +3179,9 @@ def verify_schema_bundle_documents(
             {
                 "name": name,
                 "filename": filename,
-                "schema_id": document.get("$id", "") if isinstance(document, dict) else "",
+                "schema_id": document.get("$id", "")
+                if isinstance(document, dict)
+                else "",
                 "sha256": actual_digest,
                 "identity_valid": identity_valid,
                 "digest_valid": digest_valid,
@@ -2504,7 +3229,11 @@ def verify_schema_bundle_path(source: str | Path) -> dict[str, Any]:
         input_errors.append({"code": code, "message": message, "path": location})
 
     if supplied.is_symlink() or not path.is_dir():
-        add("schema.bundle_directory", "Schema bundle must be a regular directory.", str(path))
+        add(
+            "schema.bundle_directory",
+            "Schema bundle must be a regular directory.",
+            str(path),
+        )
         result = verify_schema_bundle_documents({})
         result["errors"] = input_errors + result["errors"]
         result["valid"] = False
@@ -2518,14 +3247,18 @@ def verify_schema_bundle_path(source: str | Path) -> dict[str, Any]:
         add("schema.bundle_unreadable", f"Schema bundle cannot be enumerated: {exc}")
         entries = []
     if len(entries) > 100:
-        add("schema.bundle_entry_limit", "Schema bundle contains more than 100 entries.")
+        add(
+            "schema.bundle_entry_limit", "Schema bundle contains more than 100 entries."
+        )
     for entry in entries[:101]:
         name = entry.name
         if name not in allowed:
             documents[name] = None
             continue
         if entry.is_symlink() or not entry.is_file():
-            add("schema.file_type", "Schema-bundle entries must be regular files.", name)
+            add(
+                "schema.file_type", "Schema-bundle entries must be regular files.", name
+            )
             continue
         try:
             _path, document, _size = load_bounded_json_file(
@@ -2540,7 +3273,9 @@ def verify_schema_bundle_path(source: str | Path) -> dict[str, Any]:
             documents[name] = document
         except ValueError as exc:
             documents[name] = None
-            add("schema.file_invalid", f"Schema-bundle file cannot be read: {exc}", name)
+            add(
+                "schema.file_invalid", f"Schema-bundle file cannot be read: {exc}", name
+            )
 
     result = verify_schema_bundle_documents(documents)
     if input_errors:
@@ -2551,9 +3286,7 @@ def verify_schema_bundle_path(source: str | Path) -> dict[str, Any]:
     return result
 
 
-def export_schema_bundle(
-    destination: str | Path, *, overwrite: bool = False
-) -> Path:
+def export_schema_bundle(destination: str | Path, *, overwrite: bool = False) -> Path:
     """Atomically publish the complete offline public-schema bundle."""
 
     supplied = Path(destination).expanduser().absolute()
@@ -2561,13 +3294,19 @@ def export_schema_bundle(
     documents = schema_bundle_documents()
     expected = set(documents)
     if supplied.is_symlink():
-        raise ValueError(f"schema-bundle destination must not be a symbolic link: {supplied}")
+        raise ValueError(
+            f"schema-bundle destination must not be a symbolic link: {supplied}"
+        )
     if path.exists():
         if not path.is_dir():
-            raise ValueError(f"schema-bundle destination must be a regular directory: {path}")
+            raise ValueError(
+                f"schema-bundle destination must be a regular directory: {path}"
+            )
         entries = list(path.iterdir())
         if entries and not overwrite:
-            raise ValueError(f"schema-bundle destination is not empty: {path}; use --force")
+            raise ValueError(
+                f"schema-bundle destination is not empty: {path}; use --force"
+            )
         unrecognized = {entry.name for entry in entries} - expected
         invalid_types = {
             entry.name

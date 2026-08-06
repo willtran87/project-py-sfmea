@@ -16,7 +16,9 @@ from .guidance import (
     RELATIONSHIP_TYPES,
     analysis_guidance_profiles,
     guidance_bundle,
+    mapping_review_expiry_audit,
 )
+from .integrity import verify_run_manifest_integrity
 from .model import calculate_rpn, utc_now
 from .repository_inventory import (
     SNAPSHOT_SOURCES,
@@ -69,6 +71,15 @@ def validate_analysis(
             }
         )
 
+    manifest_verification = verify_run_manifest_integrity(analysis)
+    for failure in manifest_verification["failures"]:
+        add(
+            str(failure["code"]),
+            "error",
+            str(failure["message"]),
+            field=str(failure["field"]),
+        )
+
     project_context = analysis.get("context", {}).get("project", {})
     try:
         active_guidance_profiles = analysis_guidance_profiles(analysis)
@@ -101,9 +112,7 @@ def validate_analysis(
         ]
         if "organizational_packs" in supplied_guidance:
             catalog_fields.append("organizational_packs")
-        supplied_material = {
-            key: supplied_guidance.get(key) for key in catalog_fields
-        }
+        supplied_material = {key: supplied_guidance.get(key) for key in catalog_fields}
         if supplied_guidance.get("catalog_sha256") != _digest(supplied_material):
             add(
                 "guidance.catalog_integrity_mismatch",
@@ -113,7 +122,10 @@ def validate_analysis(
             )
         elif not supplied_guidance.get("organizational_packs"):
             expected_guidance = guidance_bundle(active_guidance_profiles)
-            if supplied_guidance.get("catalog_sha256") != expected_guidance["catalog_sha256"]:
+            if (
+                supplied_guidance.get("catalog_sha256")
+                != expected_guidance["catalog_sha256"]
+            ):
                 add(
                     "guidance.catalog_drift",
                     "warning",
@@ -123,6 +135,26 @@ def validate_analysis(
     known_citations = {
         citation["id"] for citation in supplied_guidance.get("citations", [])
     }
+    review_expiry = mapping_review_expiry_audit(
+        analysis,
+        bundle=supplied_guidance,
+        active_profiles=active_guidance_profiles,
+    )
+    if review_expiry["expired_mapping_review_ids"]:
+        add(
+            "guidance.expired_mapping_review",
+            "warning",
+            f"{len(review_expiry['expired_mapping_review_ids'])} active guidance mapping "
+            f"review(s) expired before the {review_expiry['audit_as_of']} analysis audit date.",
+            field="guidance.rule_mappings.review.expires_at",
+        )
+    if review_expiry["invalid_mapping_review_expiry_ids"]:
+        add(
+            "guidance.invalid_mapping_review_expiry",
+            "error",
+            "Active guidance mapping review expiry dates must use YYYY-MM-DD.",
+            field="guidance.rule_mappings.review.expires_at",
+        )
     analysis_context = analysis.get("context", {}).get("analysis", {})
     if quality["require_project_context"]:
         for field in ("purpose", "boundary", "operating_context"):
@@ -172,7 +204,8 @@ def validate_analysis(
     repository_inventory = analysis.get("repository_inventory", {})
     if (
         not isinstance(repository_inventory, dict)
-        or repository_inventory.get("schema_version") != "pysfmea-repository-inventory-1"
+        or repository_inventory.get("schema_version")
+        != "pysfmea-repository-inventory-1"
     ):
         add(
             "coverage.missing_repository_inventory",
@@ -228,9 +261,7 @@ def validate_analysis(
                     f"{rendered}. Rescan with the current PySFMEA version.",
                     field="repository_inventory.entries",
                 )
-            expected_summary = derive_repository_inventory_summary(
-                repository_inventory
-            )
+            expected_summary = derive_repository_inventory_summary(repository_inventory)
             if expected_summary is None:
                 add(
                     "coverage.invalid_inventory_records",
@@ -331,7 +362,9 @@ def validate_analysis(
             "No cross-functional reviewers are identified.",
             field="reviewers",
         )
-    elif len({reviewer.get("role", "") for reviewer in configured_reviewer_records}) < 2:
+    elif (
+        len({reviewer.get("role", "") for reviewer in configured_reviewer_records}) < 2
+    ):
         add(
             "analysis.insufficient_review_diversity",
             "warning",
@@ -417,7 +450,9 @@ def validate_analysis(
         if isinstance(item, dict) and item.get("id")
     }
     assurance = analysis.get("assurance", {})
-    obligations = assurance.get("obligations", []) if isinstance(assurance, dict) else []
+    obligations = (
+        assurance.get("obligations", []) if isinstance(assurance, dict) else []
+    )
     executions_by_id = {
         str(value.get("id", "")): value
         for value in assurance.get("executions", [])
@@ -446,7 +481,9 @@ def validate_analysis(
                 item=item,
                 field="assurance.obligations",
             )
-        if obligation.get("baseline_id") != analysis.get("project", {}).get("baseline", {}).get("id", ""):
+        if obligation.get("baseline_id") != analysis.get("project", {}).get(
+            "baseline", {}
+        ).get("id", ""):
             add(
                 "assurance.stale_baseline",
                 "warning",
@@ -606,6 +643,20 @@ def validate_analysis(
             f"{stale_trace_imports} runtime trace import(s) were captured for an older source baseline.",
             field="runtime_evidence",
         )
+    incomplete_instrumentation = sum(
+        isinstance(value.get("instrumentation"), dict)
+        and value["instrumentation"].get("declared") is True
+        and value["instrumentation"].get("status") != "complete_declared_and_observed"
+        for value in analysis.get("runtime_evidence", {}).get("imports", [])
+    )
+    if incomplete_instrumentation:
+        add(
+            "runtime.incomplete_instrumentation_scope",
+            "warning",
+            f"{incomplete_instrumentation} runtime trace import(s) declare instrumentation "
+            "scope that was not completely observed.",
+            field="runtime_evidence",
+        )
 
     seen_component_ids: set[str] = set()
     for component in analysis.get("components", []):
@@ -655,9 +706,10 @@ def validate_analysis(
                 field="critical_functions",
             )
     for component in analysis.get("components", []):
-        if component.get("kind") == "common_cause" and len(
-            component.get("affected_component_ids", [])
-        ) < 2:
+        if (
+            component.get("kind") == "common_cause"
+            and len(component.get("affected_component_ids", [])) < 2
+        ):
             add(
                 "analysis.incomplete_common_cause",
                 "warning",
@@ -667,7 +719,12 @@ def validate_analysis(
     for item in analysis.get("items", []):
         item_id = item.get("id", "")
         if not item_id or item_id in seen_ids:
-            add("analysis.duplicate_or_missing_id", "error", "Item ID is missing or duplicated.", item=item)
+            add(
+                "analysis.duplicate_or_missing_id",
+                "error",
+                "Item ID is missing or duplicated.",
+                item=item,
+            )
         seen_ids.add(item_id)
         citation_links = item.get("scanner", {}).get("citations", [])
         if not isinstance(citation_links, list):
@@ -759,7 +816,12 @@ def validate_analysis(
                 item=item,
                 field="component_id",
             )
-        if disposition not in {"unreviewed", "accepted", "rejected", "needs_information"}:
+        if disposition not in {
+            "unreviewed",
+            "accepted",
+            "rejected",
+            "needs_information",
+        }:
             add(
                 "integrity.invalid_disposition",
                 "error",
@@ -767,7 +829,13 @@ def validate_analysis(
                 item=item,
                 field="disposition",
             )
-        if status not in {"draft", "in_review", "action_required", "verified", "closed"}:
+        if status not in {
+            "draft",
+            "in_review",
+            "action_required",
+            "verified",
+            "closed",
+        }:
             add(
                 "integrity.invalid_status",
                 "error",
@@ -828,7 +896,11 @@ def validate_analysis(
                 item=item,
                 field="revalidation_required",
             )
-        if active and review.get("reviewed_at") and not review.get("revalidation_required"):
+        if (
+            active
+            and review.get("reviewed_at")
+            and not review.get("revalidation_required")
+        ):
             fingerprint_pairs = (
                 ("validated_fingerprint", "source_fingerprint"),
                 ("validated_context_fingerprint", "context_fingerprint"),
@@ -850,7 +922,10 @@ def validate_analysis(
                     )
                     break
             current_baseline_id = baseline.get("id", "")
-            if current_baseline_id and review.get("validated_baseline_id") != current_baseline_id:
+            if (
+                current_baseline_id
+                and review.get("validated_baseline_id") != current_baseline_id
+            ):
                 add(
                     "review.stale_validation_baseline",
                     "error",
@@ -874,7 +949,11 @@ def validate_analysis(
                 item=item,
                 field="disposition",
             )
-        elif active and disposition == "rejected" and quality["require_rejection_rationale"]:
+        elif (
+            active
+            and disposition == "rejected"
+            and quality["require_rejection_rationale"]
+        ):
             if not review.get("disposition_rationale"):
                 add(
                     "review.missing_rejection_rationale",
@@ -947,7 +1026,10 @@ def validate_analysis(
             )
 
         if disposition == "accepted":
-            if not item.get("component_id") or item.get("component_id") not in component_ids:
+            if (
+                not item.get("component_id")
+                or item.get("component_id") not in component_ids
+            ):
                 add(
                     "accepted.unassigned_component",
                     "error",
@@ -968,7 +1050,9 @@ def validate_analysis(
                         item=item,
                         field=field,
                     )
-            if quality["require_requirement_for_accepted"] and not review.get("requirement"):
+            if quality["require_requirement_for_accepted"] and not review.get(
+                "requirement"
+            ):
                 add(
                     "accepted.missing_requirement",
                     "error",
@@ -976,7 +1060,9 @@ def validate_analysis(
                     item=item,
                     field="requirement",
                 )
-            if quality["require_hazard_for_accepted"] and not review.get("linked_hazards"):
+            if quality["require_hazard_for_accepted"] and not review.get(
+                "linked_hazards"
+            ):
                 add(
                     "accepted.missing_hazard",
                     "error",
@@ -984,14 +1070,11 @@ def validate_analysis(
                     item=item,
                     field="linked_hazards",
                 )
-            if (
-                quality["require_severity_for_accepted"]
-                and (
-                    (risk.get("method") == "sod_rpn" and review.get("severity") is None)
-                    or (
-                        review.get("severity") is None
-                        and not review.get("severity_category")
-                    )
+            if quality["require_severity_for_accepted"] and (
+                (risk.get("method") == "sod_rpn" and review.get("severity") is None)
+                or (
+                    review.get("severity") is None
+                    and not review.get("severity_category")
                 )
             ):
                 add(
@@ -1090,7 +1173,9 @@ def validate_analysis(
                     item=item,
                     field="owner",
                 )
-            if quality["require_target_date_for_action"] and not review.get("target_date"):
+            if quality["require_target_date_for_action"] and not review.get(
+                "target_date"
+            ):
                 add(
                     "action.missing_target_date",
                     "error",
@@ -1147,7 +1232,10 @@ def validate_analysis(
                         item=item,
                         field="approved_by",
                     )
-                elif configured_reviewers and review.get("approved_by") not in configured_reviewers:
+                elif (
+                    configured_reviewers
+                    and review.get("approved_by") not in configured_reviewers
+                ):
                     add(
                         "closure.unidentified_approver",
                         "error",
@@ -1172,8 +1260,12 @@ def validate_analysis(
                 )
             required_residual = [] if has_post_severity else ["post_action_severity"]
             if risk.get("method") == "sod_rpn":
-                required_residual.extend(["post_action_occurrence", "post_action_detection"])
-            missing_residual = [field for field in required_residual if review.get(field) is None]
+                required_residual.extend(
+                    ["post_action_occurrence", "post_action_detection"]
+                )
+            missing_residual = [
+                field for field in required_residual if review.get(field) is None
+            ]
             if missing_residual:
                 add(
                     "closure.missing_post_action_assessment",
@@ -1184,14 +1276,20 @@ def validate_analysis(
                 )
             if quality["require_rating_rationales"]:
                 residual_rationales = []
-                if has_post_severity and not review.get("post_action_severity_rationale"):
+                if has_post_severity and not review.get(
+                    "post_action_severity_rationale"
+                ):
                     residual_rationales.append("post_action_severity_rationale")
                 if risk.get("method") == "sod_rpn":
                     for rating in ("occurrence", "detection"):
-                        if review.get(f"post_action_{rating}") is not None and not review.get(
+                        if review.get(
+                            f"post_action_{rating}"
+                        ) is not None and not review.get(
                             f"post_action_{rating}_rationale"
                         ):
-                            residual_rationales.append(f"post_action_{rating}_rationale")
+                            residual_rationales.append(
+                                f"post_action_{rating}_rationale"
+                            )
                 if residual_rationales:
                     add(
                         "closure.missing_post_action_rationale",
@@ -1200,11 +1298,18 @@ def validate_analysis(
                         item=item,
                         field=residual_rationales[0],
                     )
-        if any(review.get(field) is not None for field in (
-            "post_action_severity",
-            "post_action_occurrence",
-            "post_action_detection",
-        )) and calculate_rpn(item, post_action=True) is None and risk.get("method") == "sod_rpn":
+        if (
+            any(
+                review.get(field) is not None
+                for field in (
+                    "post_action_severity",
+                    "post_action_occurrence",
+                    "post_action_detection",
+                )
+            )
+            and calculate_rpn(item, post_action=True) is None
+            and risk.get("method") == "sod_rpn"
+        ):
             add(
                 "residual.incomplete_ratings",
                 "warning",
@@ -1245,9 +1350,7 @@ def validate_analysis(
             field="system_interfaces",
         )
 
-    sfta = build_sfta(
-        analysis, legacy_id_wildcard=legacy_sfta_id_wildcard
-    )
+    sfta = build_sfta(analysis, legacy_id_wildcard=legacy_sfta_id_wildcard)
     for tree in sfta.get("trees", []):
         if tree.get("source") == "generated_placeholder":
             add(
@@ -1285,7 +1388,9 @@ def validate_analysis(
     counts = Counter(finding["level"] for finding in findings)
     return {
         "generated_at": utc_now(),
-        "counts": {level: counts.get(level, 0) for level in ("error", "warning", "information")},
+        "counts": {
+            level: counts.get(level, 0) for level in ("error", "warning", "information")
+        },
         "findings": findings,
     }
 
@@ -1308,8 +1413,10 @@ def review_queue(analysis: dict[str, Any], *, limit: int = 25) -> list[dict[str,
         findings = findings_by_item.get(item.get("id", ""), [])
         errors = sum(finding["level"] == "error" for finding in findings)
         warnings = sum(finding["level"] == "warning" for finding in findings)
-        if review.get("status") == "closed" and not errors and not review.get(
-            "revalidation_required"
+        if (
+            review.get("status") == "closed"
+            and not errors
+            and not review.get("revalidation_required")
         ):
             continue
         candidates.append(

@@ -289,9 +289,7 @@ class HtmlReportTests(unittest.TestCase):
         projected = payload["repository_inventory"]
         self.assertEqual(projected["summary_reconciliation"]["status"], "recomputed")
         self.assertEqual(projected["summary"]["files"], actual_files)
-        self.assertEqual(
-            projected["summary"]["opaque_or_unresolved"], actual_opaque
-        )
+        self.assertEqual(projected["summary"]["opaque_or_unresolved"], actual_opaque)
         self.assertIn(
             "coverage.inventory_summary_mismatch",
             {
@@ -302,15 +300,29 @@ class HtmlReportTests(unittest.TestCase):
 
         inventory["entries"][0].pop("snapshot_source")
         unavailable = build_html_report_data(self.analysis)["repository_inventory"]
-        self.assertEqual(
-            unavailable["summary_reconciliation"]["status"], "unavailable"
-        )
+        self.assertEqual(unavailable["summary_reconciliation"]["status"], "unavailable")
         self.assertEqual(unavailable["summary"], {})
+
+    def test_report_exposes_run_manifest_integrity(self) -> None:
+        payload = build_html_report_data(self.analysis)
+        self.assertTrue(payload["run_manifest_integrity"]["valid"])
+        self.analysis["run_manifest"]["created_at"] = "2030-01-01T00:00:00+00:00"
+        tampered = build_html_report_data(self.analysis)
+        self.assertFalse(tampered["run_manifest_integrity"]["valid"])
+        self.assertIn(
+            "run_manifest.content_integrity",
+            {
+                finding["rule_id"]
+                for finding in tampered["validation"]["project_findings"]
+            },
+        )
 
     def test_report_data_is_bounded_and_reports_truncation(self) -> None:
         payload = build_html_report_data(self.analysis, max_records=1)
         self.assertEqual(payload["report"]["embedded_records"], 1)
-        self.assertEqual(payload["report"]["total_records"], len(self.analysis["items"]))
+        self.assertEqual(
+            payload["report"]["total_records"], len(self.analysis["items"])
+        )
         self.assertEqual(
             payload["report"]["records_truncated"], len(self.analysis["items"]) > 1
         )
@@ -398,7 +410,9 @@ class HtmlReportTests(unittest.TestCase):
         self.assertTrue(report_path.is_file())
         self.assertIn("Created self-contained SFMEA report", output.getvalue())
         self.assertRegex(output.getvalue(), r"\([\d,]+ records; \d+\.\d MiB\)")
-        self.assertIn("<title>Review report</title>", report_path.read_text(encoding="utf-8"))
+        self.assertIn(
+            "<title>Review report</title>", report_path.read_text(encoding="utf-8")
+        )
 
         json_report = self.root / "analysis-json-report.html"
         json_output = io.StringIO()
@@ -475,17 +489,15 @@ class HtmlReportTests(unittest.TestCase):
         self.assertEqual(rejected_receipt["publication"]["status"], "not_published")
         self.assertEqual(rejected_receipt["publication"]["phase"], "verification")
         self.assertTrue(rejected_receipt["publication"]["destination_existed"])
-        self.assertTrue(
-            rejected_receipt["publication"]["prior_destination_preserved"]
-        )
+        self.assertTrue(rejected_receipt["publication"]["prior_destination_preserved"])
         self.assertEqual(
             rejected_report.read_text(encoding="utf-8"),
             "trusted prior report",
         )
         self.assertFalse(list(self.root.glob(".rejected-report.html.*.tmp")))
-        Draft202012Validator(
-            schema_document("html-report-verification")
-        ).validate(rejected_receipt)
+        Draft202012Validator(schema_document("html-report-verification")).validate(
+            rejected_receipt
+        )
 
         verification_output = io.StringIO()
         with contextlib.redirect_stdout(verification_output):
@@ -552,9 +564,7 @@ class HtmlReportTests(unittest.TestCase):
         oversized_output = io.StringIO()
         with patch("pysfmea.html_report.MAX_HTML_REPORT_VERIFY_BYTES", 10):
             with contextlib.redirect_stdout(oversized_output):
-                result = main(
-                    ["report-verify", str(oversized_report), "--json"]
-                )
+                result = main(["report-verify", str(oversized_report), "--json"])
         self.assertEqual(result, 1)
         oversized_verification = json.loads(oversized_output.getvalue())
         self.assertFalse(oversized_verification["valid"])
@@ -684,9 +694,7 @@ class HtmlReportTests(unittest.TestCase):
             )
             self.assertEqual(result, 2)
             self.assertEqual(stderr, "")
-            self.assertEqual(
-                receipt["errors"][0]["code"], "report.invalid_destination"
-            )
+            self.assertEqual(receipt["errors"][0]["code"], "report.invalid_destination")
             self.assertIn("symbolic link", receipt["errors"][0]["message"])
             self.assertTrue(symlink_output.is_symlink())
             self.assertEqual(

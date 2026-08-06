@@ -135,6 +135,40 @@ class AssuranceProgramTests(unittest.TestCase):
                 },
             }
         ]
+        evaluation_result = {
+            "format": "pysfmea-evaluation-result-1",
+            "verifier": {"name": "PySFMEA", "version": "0.59.0"},
+            "corpus": {
+                "content_sha256": "a" * 64,
+                "case_count": 100,
+                "call_case_count": 40,
+            },
+            "expected": 100,
+            "actual": 100,
+            "matched": 91,
+            "recall": 0.91,
+            "precision": 0.91,
+            "missing": [{"case": index} for index in range(9)],
+            "unexpected": [{"case": index} for index in range(9)],
+            "metrics": {
+                "duplicate_count": 0,
+                "unsupported_verification_claims": [],
+            },
+            "call_resolution": {
+                "enabled": True,
+                "expected": 40,
+                "actual": 40,
+                "matched": 36,
+                "recall": 0.9,
+                "precision": 0.9,
+                "missing": [{"case": index} for index in range(4)],
+                "unexpected": [{"case": index} for index in range(4)],
+            },
+        }
+        evaluation_artifact = self.root / "evaluation-result.json"
+        evaluation_artifact.write_text(
+            json.dumps(evaluation_result, indent=2) + "\n", encoding="utf-8"
+        )
         program["validation_cohorts"] = [
             {
                 "id": "COHORT-EXTERNAL-1",
@@ -143,12 +177,54 @@ class AssuranceProgramTests(unittest.TestCase):
                 "corpus_sha256": "a" * 64,
                 "case_count": 100,
                 "recall": 0.91,
-                "precision": 0.94,
+                "precision": 0.91,
+                "matched_count": 91,
+                "actual_matched_count": 91,
+                "actual_count": 100,
+                "evaluation_result_format": "pysfmea-evaluation-result-1",
+                "evaluation_result_sha256": canonical_json_sha256(evaluation_result),
+                "evaluation_verifier_version": "0.59.0",
+                "evaluation_result_artifact": {
+                    "path": evaluation_artifact.name,
+                    "sha256": hashlib.sha256(
+                        evaluation_artifact.read_bytes()
+                    ).hexdigest(),
+                },
+                "call_case_count": 40,
+                "call_resolution_recall": 0.9,
+                "call_resolution_precision": 0.9,
+                "call_matched_count": 36,
+                "call_actual_matched_count": 36,
+                "call_actual_count": 40,
                 "independent_reviewed": True,
                 "producer": "Benchmark team",
                 "reviewer": "Independent validation authority",
             }
         ]
+        llm_corpus = {
+            "schema_version": "pysfmea-llm-quality-corpus-2",
+            "name": "Independent LLM quality corpus",
+            "purpose": "Verify grounded and cited failure-mode summaries.",
+            "subject": {
+                "provider": "local",
+                "model": "review-model",
+                "prompt_version": "3",
+            },
+            "samples": [
+                {
+                    "id": f"S-{index + 1}",
+                    "grounded": index < 49,
+                    "citations_correct": index < 48,
+                    "claim_count": 2,
+                    "unsupported_claim_count": 0,
+                }
+                for index in range(50)
+            ],
+        }
+        llm_corpus_artifact = self.root / "llm-quality-corpus.json"
+        llm_corpus_artifact.write_text(
+            json.dumps(llm_corpus, indent=2) + "\n", encoding="utf-8"
+        )
         program["llm_evaluations"] = [
             {
                 "id": "LLM-EVAL-1",
@@ -159,7 +235,21 @@ class AssuranceProgramTests(unittest.TestCase):
                 "grounding": 0.98,
                 "citation_accuracy": 0.96,
                 "unsupported_claim_rate": 0.0,
-                "corpus_sha256": "b" * 64,
+                "grounded_sample_count": 49,
+                "citation_correct_sample_count": 48,
+                "claim_count": 100,
+                "unsupported_claim_count": 0,
+                "corpus_sha256": hashlib.sha256(
+                    llm_corpus_artifact.read_bytes()
+                ).hexdigest(),
+                "corpus_format": "pysfmea-llm-quality-corpus-2",
+                "subject_bound": True,
+                "corpus_artifact": {
+                    "path": llm_corpus_artifact.name,
+                    "sha256": hashlib.sha256(
+                        llm_corpus_artifact.read_bytes()
+                    ).hexdigest(),
+                },
                 "independent_reviewed": True,
                 "producer": "Model evaluation team",
                 "reviewer": "Independent AI assurance authority",
@@ -170,10 +260,21 @@ class AssuranceProgramTests(unittest.TestCase):
             "require_independent_validation": True,
             "min_recall": 0.8,
             "min_precision": 0.8,
+            "require_count_backed_validation": True,
+            "require_evaluation_result_artifacts": True,
+            "min_micro_recall": 0.8,
+            "min_micro_precision": 0.8,
+            "min_call_resolution_recall": 0.8,
+            "min_call_resolution_precision": 0.8,
+            "min_micro_call_resolution_recall": 0.8,
+            "min_micro_call_resolution_precision": 0.8,
             "require_temporal_evidence": True,
             "require_resilience_evidence": True,
             "min_llm_samples": 25,
             "require_independent_llm_evaluation": True,
+            "require_llm_count_backing": True,
+            "require_llm_corpus_artifacts": True,
+            "require_llm_subject_binding": True,
             "min_llm_grounding": 0.9,
             "min_llm_citation_accuracy": 0.9,
             "max_llm_unsupported_claim_rate": 0.02,
@@ -210,7 +311,9 @@ class AssuranceProgramTests(unittest.TestCase):
         )
         return self.program_path
 
-    def test_verifies_federated_program_evidence_timing_quality_and_governance(self) -> None:
+    def test_verifies_federated_program_evidence_timing_quality_and_governance(
+        self,
+    ) -> None:
         self._write_program(self._valid_program())
         result = verify_assurance_program(self.program_path)
         self.assertTrue(result["valid"], result["findings"])
@@ -227,9 +330,28 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertEqual(result["relationships"][0]["resilience_status"], "supported")
         self.assertEqual(result["summary"]["trusted_evidence"], 1)
         self.assertEqual(result["validation"]["macro_recall"], 0.91)
+        self.assertEqual(result["validation"]["micro_recall"], 0.91)
+        self.assertEqual(result["validation"]["micro_precision"], 0.91)
+        self.assertEqual(result["validation"]["count_backed_cohorts"], 1)
+        self.assertEqual(result["validation"]["verified_evaluation_artifacts"], 1)
+        self.assertGreater(result["validation"]["evaluation_artifact_bytes"], 0)
+        self.assertEqual(result["validation"]["macro_call_resolution_recall"], 0.9)
+        self.assertEqual(result["validation"]["micro_call_resolution_recall"], 0.9)
+        self.assertEqual(result["validation"]["call_cases"], 40)
         self.assertEqual(result["llm_quality"]["samples"], 50)
+        self.assertEqual(result["llm_quality"]["count_backed_evaluations"], 1)
+        self.assertEqual(result["llm_quality"]["verified_corpus_artifacts"], 1)
+        self.assertEqual(result["llm_quality"]["subject_bound_evaluations"], 1)
+        self.assertEqual(result["llm_quality"]["claim_count"], 100)
+        self.assertEqual(result["llm_quality"]["aggregation_method"], "count-backed")
         markdown = program_verification_markdown(result)
         self.assertIn("**VALID**", markdown)
+        self.assertIn("Micro recall / precision: 0.91 / 0.91", markdown)
+        self.assertIn("Count-backed cohorts: 1 of 1", markdown)
+        self.assertIn("Verified evaluation artifacts: 1 of 1", markdown)
+        self.assertIn("LLM aggregation: count-backed", markdown)
+        self.assertIn("Verified LLM corpus artifacts: 1 of 1", markdown)
+        self.assertIn("Subject-bound LLM evaluations: 1 of 1", markdown)
         self.assertIn("REL-CHECKOUT-PAYMENT", markdown)
         html = program_verification_html(result)
         self.assertIn("<!doctype html>", html)
@@ -238,9 +360,17 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("System topology", html)
         self.assertIn('role="img"', html)
         self.assertIn("Severity", html)
+        self.assertIn("micro recall", html)
+        self.assertIn("count-backed cohorts", html)
+        self.assertIn("verified evaluation artifacts", html)
+        self.assertIn("verified LLM corpus artifacts", html)
+        self.assertIn("subject-bound LLM evaluations", html)
+        self.assertIn("LLM aggregation", html)
         self.assertNotIn("https://", html)
 
-    def test_rejects_stale_analysis_deadline_failure_and_nonindependent_evidence(self) -> None:
+    def test_rejects_stale_analysis_deadline_failure_and_nonindependent_evidence(
+        self,
+    ) -> None:
         program = self._valid_program()
         program["external_evidence"][0]["reviewer"] = "CI runner"
         program["external_evidence"][0]["metrics"]["observed_max_ms"] = 700
@@ -257,7 +387,9 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("relationship.deadline_violated", codes)
         self.assertIn("governance.evidence_independence", codes)
 
-    def test_template_defaults_expose_missing_external_validation_and_approval(self) -> None:
+    def test_template_defaults_expose_missing_external_validation_and_approval(
+        self,
+    ) -> None:
         program = build_program_template(
             [("orders", self.analysis_paths[0])],
             destination=self.program_path,
@@ -282,7 +414,9 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("program.invalid_reference_array", codes)
         self.assertIn("governance.required_roles", codes)
 
-    def test_unknown_subjects_weak_quality_and_incomplete_temporal_contract_are_blocked(self) -> None:
+    def test_unknown_subjects_weak_quality_and_incomplete_temporal_contract_are_blocked(
+        self,
+    ) -> None:
         program = self._valid_program()
         program["relationships"][0]["temporal"].pop("clock")
         program["requirements_sources"][0]["requirements"][0]["finding_ids"] = [
@@ -294,6 +428,7 @@ class AssuranceProgramTests(unittest.TestCase):
         )
         program["external_evidence"][0]["finding_ids"] = ["FM-UNKNOWN"]
         program["validation_cohorts"][0]["recall"] = 0.2
+        program["validation_cohorts"][0]["call_resolution_recall"] = 0.2
         program["llm_evaluations"][0]["unsupported_claim_rate"] = 0.5
         program["governance"]["approvals"][0]["subject_kind"] = "evidence"
         program["governance"]["approvals"][0]["subject_id"] = "EVID-UNKNOWN"
@@ -306,8 +441,307 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("requirements.unknown_finding", codes)
         self.assertIn("evidence.unknown_finding", codes)
         self.assertIn("validation.recall", codes)
+        self.assertIn("validation.call_resolution_recall", codes)
         self.assertIn("llm.unsupported_claim_rate", codes)
         self.assertIn("governance.unknown_subject", codes)
+
+    def test_call_resolution_cohort_contract_fails_closed(self) -> None:
+        mutations = (
+            (
+                lambda cohort: cohort.pop("call_resolution_precision"),
+                "validation.call_metric_missing",
+            ),
+            (
+                lambda cohort: cohort.update({"call_case_count": 0}),
+                "validation.call_metric_without_cases",
+            ),
+            (
+                lambda cohort: cohort.update({"call_case_count": -1}),
+                "validation.call_case_count",
+            ),
+        )
+        for mutation, expected_code in mutations:
+            with self.subTest(expected_code=expected_code):
+                program = self._valid_program()
+                mutation(program["validation_cohorts"][0])
+                self._write_program(seal_program(program))
+                result = verify_assurance_program(self.program_path)
+                self.assertFalse(result["valid"])
+                self.assertIn(
+                    expected_code,
+                    {value["code"] for value in result["findings"]},
+                )
+
+    def test_count_backed_metrics_fail_closed_when_claims_do_not_reconcile(
+        self,
+    ) -> None:
+        program = self._valid_program()
+        program["validation_cohorts"][0]["recall"] = 0.92
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+        self.assertFalse(result["valid"])
+        codes = {value["code"] for value in result["findings"]}
+        self.assertIn("validation.metric_reconciliation", codes)
+        self.assertIn("validation.count_backing", codes)
+
+    def test_evaluation_artifact_bytes_and_projected_claims_are_verified(self) -> None:
+        program = self._valid_program()
+        artifact_path = self.root / "evaluation-result.json"
+        artifact_path.write_text(
+            artifact_path.read_text(encoding="utf-8") + " ", encoding="utf-8"
+        )
+        self._write_program(seal_program(program))
+        tampered = verify_assurance_program(self.program_path)
+        self.assertIn(
+            "validation.evaluation_artifact_digest",
+            {value["code"] for value in tampered["findings"]},
+        )
+
+        program = self._valid_program()
+        evaluation = json.loads(artifact_path.read_text(encoding="utf-8"))
+        evaluation["verifier"]["version"] = "forged-version"
+        artifact_path.write_text(
+            json.dumps(evaluation, indent=2) + "\n", encoding="utf-8"
+        )
+        cohort = program["validation_cohorts"][0]
+        cohort["evaluation_result_artifact"]["sha256"] = hashlib.sha256(
+            artifact_path.read_bytes()
+        ).hexdigest()
+        cohort["evaluation_result_sha256"] = canonical_json_sha256(evaluation)
+        self._write_program(seal_program(program))
+        forged = verify_assurance_program(self.program_path)
+        self.assertIn(
+            "validation.evaluation_artifact_claims",
+            {value["code"] for value in forged["findings"]},
+        )
+
+    def test_evaluation_artifact_aggregate_limit_fails_closed(self) -> None:
+        program = self._valid_program()
+        self._write_program(program)
+        with patch("pysfmea.program.MAX_TOTAL_EVALUATION_BYTES", 1):
+            result = verify_assurance_program(self.program_path)
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["validation"]["evaluation_artifact_bytes"], 0)
+        self.assertIn(
+            "validation.evaluation_artifact_rejected",
+            {value["code"] for value in result["findings"]},
+        )
+
+    def test_reconciliation_preserves_distinct_recall_and_precision_numerators(
+        self,
+    ) -> None:
+        program = self._valid_program()
+        cohort = program["validation_cohorts"][0]
+        cohort.update(
+            {
+                "recall": 0.9,
+                "precision": 0.8,
+                "matched_count": 90,
+                "actual_matched_count": 80,
+                "actual_count": 100,
+            }
+        )
+        cohort.pop("evaluation_result_artifact")
+        program["quality_gates"]["require_evaluation_result_artifacts"] = False
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+        self.assertTrue(result["valid"], result["findings"])
+        self.assertEqual(result["validation"]["micro_recall"], 0.9)
+        self.assertEqual(result["validation"]["micro_precision"], 0.8)
+
+    def test_micro_gate_weights_large_cohorts_by_observed_counts(self) -> None:
+        program = self._valid_program()
+        program["quality_gates"]["require_evaluation_result_artifacts"] = False
+        program["validation_cohorts"].append(
+            {
+                "id": "COHORT-EXTERNAL-2",
+                "repository": "large-independent-service",
+                "framework": "Django",
+                "corpus_sha256": "d" * 64,
+                "case_count": 900,
+                "recall": 0.5,
+                "precision": 0.5,
+                "matched_count": 450,
+                "actual_matched_count": 450,
+                "actual_count": 900,
+                "evaluation_result_format": "pysfmea-evaluation-result-1",
+                "evaluation_result_sha256": "e" * 64,
+                "evaluation_verifier_version": "0.59.0",
+                "independent_reviewed": True,
+                "producer": "External benchmark team",
+                "reviewer": "External safety authority",
+            }
+        )
+        program["quality_gates"]["min_recall"] = 0.7
+        program["quality_gates"]["min_precision"] = 0.7
+        program["quality_gates"]["min_micro_recall"] = 0.6
+        program["quality_gates"]["min_micro_precision"] = 0.6
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+        self.assertEqual(result["validation"]["macro_recall"], 0.705)
+        self.assertEqual(result["validation"]["micro_recall"], 0.541)
+        codes = {value["code"] for value in result["findings"]}
+        self.assertNotIn("validation.recall", codes)
+        self.assertIn("validation.micro_recall", codes)
+        self.assertIn("validation.micro_precision", codes)
+
+    def test_llm_claim_rate_is_aggregated_by_claim_count(self) -> None:
+        program = self._valid_program()
+        program["quality_gates"]["require_llm_corpus_artifacts"] = False
+        program["quality_gates"]["require_llm_subject_binding"] = False
+        program["quality_gates"]["max_llm_unsupported_claim_rate"] = 0.1
+        program["llm_evaluations"].append(
+            {
+                "id": "LLM-EVAL-2",
+                "provider": "local",
+                "model": "review-model-2",
+                "prompt_version": "3",
+                "sample_count": 10,
+                "grounding": 1.0,
+                "citation_accuracy": 1.0,
+                "unsupported_claim_rate": 0.5,
+                "grounded_sample_count": 10,
+                "citation_correct_sample_count": 10,
+                "claim_count": 900,
+                "unsupported_claim_count": 450,
+                "corpus_sha256": "d" * 64,
+                "independent_reviewed": True,
+                "producer": "Second model team",
+                "reviewer": "Second assurance authority",
+            }
+        )
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+        self.assertEqual(result["llm_quality"]["unsupported_claim_rate"], 0.45)
+        self.assertEqual(result["llm_quality"]["claim_count"], 1_000)
+        self.assertIn(
+            "llm.unsupported_claim_rate",
+            {value["code"] for value in result["findings"]},
+        )
+
+    def test_llm_corpus_artifact_bytes_and_claims_are_verified(self) -> None:
+        program = self._valid_program()
+        artifact_path = self.root / "llm-quality-corpus.json"
+        artifact_path.write_text(
+            artifact_path.read_text(encoding="utf-8") + " ", encoding="utf-8"
+        )
+        self._write_program(seal_program(program))
+        tampered = verify_assurance_program(self.program_path)
+        self.assertIn(
+            "llm.corpus_artifact_digest",
+            {value["code"] for value in tampered["findings"]},
+        )
+
+        program = self._valid_program()
+        corpus = json.loads(artifact_path.read_text(encoding="utf-8"))
+        corpus["samples"][0]["grounded"] = False
+        artifact_path.write_text(json.dumps(corpus) + "\n", encoding="utf-8")
+        evaluation = program["llm_evaluations"][0]
+        digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        evaluation["corpus_sha256"] = digest
+        evaluation["corpus_artifact"]["sha256"] = digest
+        self._write_program(seal_program(program))
+        forged = verify_assurance_program(self.program_path)
+        self.assertIn(
+            "llm.corpus_artifact_claims",
+            {value["code"] for value in forged["findings"]},
+        )
+
+    def test_llm_corpus_aggregate_limit_fails_closed(self) -> None:
+        program = self._valid_program()
+        self._write_program(program)
+        with patch("pysfmea.program.MAX_TOTAL_LLM_CORPUS_BYTES", 1):
+            result = verify_assurance_program(self.program_path)
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["llm_quality"]["corpus_artifact_bytes"], 0)
+        self.assertIn(
+            "llm.corpus_artifact_rejected",
+            {value["code"] for value in result["findings"]},
+        )
+
+    def test_legacy_llm_corpus_is_replayable_but_not_subject_bound(self) -> None:
+        program = self._valid_program()
+        artifact_path = self.root / "llm-quality-corpus.json"
+        corpus = json.loads(artifact_path.read_text(encoding="utf-8"))
+        corpus["schema_version"] = "pysfmea-llm-quality-corpus-1"
+        corpus.pop("subject")
+        artifact_path.write_text(json.dumps(corpus) + "\n", encoding="utf-8")
+        evaluation = program["llm_evaluations"][0]
+        digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        evaluation["corpus_sha256"] = digest
+        evaluation["corpus_artifact"]["sha256"] = digest
+        evaluation["corpus_format"] = "pysfmea-llm-quality-corpus-1"
+        evaluation["subject_bound"] = False
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+        self.assertEqual(result["llm_quality"]["verified_corpus_artifacts"], 1)
+        self.assertEqual(result["llm_quality"]["subject_bound_evaluations"], 0)
+        codes = {value["code"] for value in result["findings"]}
+        self.assertIn("llm.subject_binding", codes)
+        self.assertNotIn("llm.corpus_artifact_claims", codes)
+
+    def test_legacy_cohort_remains_compatible_when_count_gate_is_disabled(self) -> None:
+        program = self._valid_program()
+        cohort = program["validation_cohorts"][0]
+        for field in (
+            "matched_count",
+            "actual_matched_count",
+            "actual_count",
+            "evaluation_result_format",
+            "evaluation_result_sha256",
+            "evaluation_verifier_version",
+            "evaluation_result_artifact",
+            "call_matched_count",
+            "call_actual_matched_count",
+            "call_actual_count",
+        ):
+            cohort.pop(field)
+        for field in (
+            "require_count_backed_validation",
+            "require_evaluation_result_artifacts",
+            "min_micro_recall",
+            "min_micro_precision",
+            "min_micro_call_resolution_recall",
+            "min_micro_call_resolution_precision",
+        ):
+            program["quality_gates"].pop(field)
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+        self.assertTrue(result["valid"], result["findings"])
+        self.assertEqual(result["validation"]["count_backed_cohorts"], 0)
+        self.assertIsNone(result["validation"]["micro_recall"])
+
+    def test_legacy_llm_record_remains_compatible_when_new_gates_are_disabled(
+        self,
+    ) -> None:
+        program = self._valid_program()
+        evaluation = program["llm_evaluations"][0]
+        for field in (
+            "grounded_sample_count",
+            "citation_correct_sample_count",
+            "claim_count",
+            "unsupported_claim_count",
+            "corpus_artifact",
+            "corpus_format",
+            "subject_bound",
+        ):
+            evaluation.pop(field)
+        program["quality_gates"].pop("require_llm_count_backing")
+        program["quality_gates"].pop("require_llm_corpus_artifacts")
+        program["quality_gates"].pop("require_llm_subject_binding")
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+        self.assertTrue(result["valid"], result["findings"])
+        self.assertEqual(
+            result["llm_quality"]["aggregation_method"], "legacy-sample-weighted"
+        )
 
     def test_evidence_digest_and_html_content_are_safe(self) -> None:
         program = self._valid_program()
@@ -345,7 +779,9 @@ class AssuranceProgramTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(exit_code, 1)
-        self.assertTrue(output.read_text(encoding="utf-8").startswith("<!doctype html>"))
+        self.assertTrue(
+            output.read_text(encoding="utf-8").startswith("<!doctype html>")
+        )
 
     def test_unrun_or_failed_evidence_cannot_support_timing_or_resilience(self) -> None:
         program = self._valid_program()
@@ -370,7 +806,9 @@ class AssuranceProgramTests(unittest.TestCase):
             "evidence.failed", {value["code"] for value in failed["findings"]}
         )
 
-    def test_circuit_breaker_violation_and_unrelated_role_approval_are_blocked(self) -> None:
+    def test_circuit_breaker_violation_and_unrelated_role_approval_are_blocked(
+        self,
+    ) -> None:
         program = self._valid_program()
         program["external_evidence"][0]["metrics"]["half_open_recovered"] = False
         program["external_evidence"][0]["metrics"]["recovery_time_ms"] = 2_500
@@ -385,7 +823,9 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("relationship.circuit_breaker_violated", codes)
         self.assertIn("governance.roles", codes)
 
-    def test_identity_timestamp_boolean_and_closed_nested_contracts_fail_closed(self) -> None:
+    def test_identity_timestamp_boolean_and_closed_nested_contracts_fail_closed(
+        self,
+    ) -> None:
         program = self._valid_program()
         program["created_at"] = "2026-08-05"
         program["purpose"] = "assurance\u202eprogram"

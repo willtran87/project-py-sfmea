@@ -78,19 +78,59 @@ def sequence_model(
         if edge.get("kind") == "internal_call":
             adjacency[edge["source"]].append(edge["target"])
 
-    def ordered_targets(component_id: str) -> list[str]:
+    def ordered_targets(component_id: str) -> list[tuple[str, dict[str, Any]]]:
         component = components.get(component_id, {})
-        calls = component.get("ordered_calls", component.get("calls", []))
-        positions: dict[str, int] = {}
-        for index, call in enumerate(calls):
-            positions.setdefault(str(call).rsplit(".", 1)[-1], index)
-        return sorted(
-            adjacency.get(component_id, []),
-            key=lambda target: (
-                positions.get(components.get(target, {}).get("name", ""), 10_000),
-                components.get(target, {}).get("qualname", ""),
-            ),
+        targets = adjacency.get(component_id, [])
+        raw_sites = component.get("call_sites", [])
+        sites = (
+            [value for value in raw_sites if isinstance(value, dict)]
+            if isinstance(raw_sites, list)
+            else []
         )
+        if not sites:
+            sites = [
+                {
+                    "reference": str(call),
+                    "order": index,
+                    "line": 0,
+                    "control_context": [],
+                    "awaited": False,
+                }
+                for index, call in enumerate(
+                    component.get("ordered_calls", component.get("calls", []))
+                )
+            ]
+        records: list[tuple[str, dict[str, Any]]] = []
+        represented: set[str] = set()
+        for site in sites:
+            reference = str(site.get("reference", ""))
+            leaf = reference.rsplit(".", 1)[-1]
+            matches = [
+                target
+                for target in targets
+                if leaf == components.get(target, {}).get("name", "")
+                or reference.endswith(
+                    "." + str(components.get(target, {}).get("qualname", ""))
+                )
+            ]
+            for target in matches:
+                records.append((target, {**site, "_match_count": len(matches)}))
+                represented.add(target)
+        for target in targets:
+            if target not in represented:
+                records.append(
+                    (
+                        target,
+                        {
+                            "reference": components.get(target, {}).get("name", ""),
+                            "order": 10_000,
+                            "line": 0,
+                            "control_context": [],
+                            "awaited": False,
+                        },
+                    )
+                )
+        return records
 
     interactions: list[dict[str, Any]] = []
     truncation_reasons: set[str] = set()
@@ -103,7 +143,7 @@ def sequence_model(
         if len(interactions) >= max_interactions:
             truncation_reasons.add("max_interactions")
             return
-        for target_id in ordered_targets(component_id):
+        for target_id, call_site in ordered_targets(component_id):
             if len(interactions) >= max_interactions:
                 truncation_reasons.add("max_interactions")
                 return
@@ -117,6 +157,18 @@ def sequence_model(
                     "evidence": "static_ast",
                     "cycle": cycle,
                     "depth": depth,
+                    "sequence_index": call_site.get("order", 0),
+                    "source_line": call_site.get("line", 0),
+                    "control_context": call_site.get("control_context", []),
+                    "awaited": bool(call_site.get("awaited")),
+                    "confidence": (
+                        "high" if call_site.get("_match_count", 1) == 1 else "low"
+                    ),
+                    "resolution": (
+                        "static_internal_call"
+                        if call_site.get("_match_count", 1) == 1
+                        else "ambiguous_static_internal_call"
+                    ),
                 }
             )
             if not cycle:
@@ -126,58 +178,53 @@ def sequence_model(
     visited_component_ids = {root["id"]} | {
         value[key] for value in interactions for key in ("source", "target")
     }
-    external_prefixes = {
-        "aiohttp",
-        "asyncpg",
-        "boto3",
-        "grpc",
-        "httpx",
-        "kafka",
-        "motor",
-        "pika",
-        "psycopg",
-        "redis",
-        "requests",
-        "socket",
-        "sqlalchemy",
-        "subprocess",
-        "urllib",
-    }
-    seen_external: set[tuple[str, str]] = set()
+    seen_external: set[tuple[str, str, int]] = set()
     external_limit_reached = False
     for component_id in list(visited_component_ids):
         component = components.get(component_id, {})
-        internal_names = {
-            components.get(target, {}).get("name", "")
-            for target in adjacency.get(component_id, [])
-        }
-        for call in component.get("ordered_calls", component.get("calls", [])):
-            root_name = str(call).split(".", 1)[0]
-            leaf = str(call).rsplit(".", 1)[-1]
-            if leaf in internal_names or root_name not in external_prefixes:
-                continue
+        call_sites = component.get("call_sites", [])
+        for candidate in component.get("external_call_candidates", []):
+            call = str(candidate.get("reference", ""))
+            matching_sites = [
+                value
+                for value in call_sites
+                if isinstance(value, dict) and value.get("reference") == call
+            ] or [{"order": 0, "line": 0, "control_context": [], "awaited": False}]
+            for site in matching_sites:
+                if len(interactions) >= max_interactions:
+                    truncation_reasons.add("max_interactions")
+                    external_limit_reached = True
+                    break
+                external_id = "EXTCALL-" + hashlib.sha256(
+                    str(call).encode("utf-8")
+                ).hexdigest()[:12].upper()
+                edge_key = (
+                    component_id,
+                    external_id,
+                    int(site.get("order", 0)),
+                )
+                if edge_key in seen_external:
+                    continue
+                seen_external.add(edge_key)
+                interactions.append(
+                    {
+                        "source": component_id,
+                        "target": external_id,
+                        "target_label": str(call),
+                        "label": str(call),
+                        "evidence": "static_external_candidate",
+                        "cycle": False,
+                        "depth": 0,
+                        "sequence_index": site.get("order", 0),
+                        "source_line": site.get("line", 0),
+                        "control_context": site.get("control_context", []),
+                        "awaited": bool(site.get("awaited")),
+                        "confidence": candidate.get("confidence", "medium"),
+                        "resolution": candidate.get("basis", "unresolved"),
+                    }
+                )
             if len(interactions) >= max_interactions:
-                truncation_reasons.add("max_interactions")
-                external_limit_reached = True
                 break
-            external_id = "EXTCALL-" + hashlib.sha256(
-                str(call).encode("utf-8")
-            ).hexdigest()[:12].upper()
-            edge_key = (component_id, external_id)
-            if edge_key in seen_external:
-                continue
-            seen_external.add(edge_key)
-            interactions.append(
-                {
-                    "source": component_id,
-                    "target": external_id,
-                    "target_label": str(call),
-                    "label": str(call),
-                    "evidence": "static_external_call",
-                    "cycle": False,
-                    "depth": 0,
-                }
-            )
         if external_limit_reached:
             break
     if include_runtime:
@@ -202,8 +249,61 @@ def sequence_model(
                         "cycle": False,
                         "depth": 0,
                         "trace_id": edge.get("trace_id", ""),
+                        "start_time": edge.get("start_time", ""),
+                        "end_time": edge.get("end_time", ""),
+                        "timing_status": edge.get("timing_status", "unavailable"),
+                        "duration_ns": edge.get("duration_ns"),
+                        "observation_index": edge.get("observation_index"),
+                        "confidence": "observed",
+                        "resolution": "runtime_parent_child",
                     }
                 )
+    static_internal = {
+        (str(value.get("source", "")), str(value.get("target", "")))
+        for value in interactions
+        if value.get("evidence") == "static_ast"
+    }
+    observed_internal = {
+        (str(value.get("source", "")), str(value.get("target", "")))
+        for value in interactions
+        if value.get("evidence") == "observed_runtime"
+        and value.get("source") in components
+        and value.get("target") in components
+    }
+    for interaction in interactions:
+        pair = (str(interaction.get("source", "")), str(interaction.get("target", "")))
+        if interaction.get("evidence") == "static_ast":
+            interaction["observation_status"] = (
+                "runtime_corroborated" if pair in observed_internal else "not_observed"
+            )
+        elif interaction.get("evidence") == "observed_runtime":
+            interaction["static_alignment"] = (
+                "statically_predicted" if pair in static_internal else "runtime_only"
+            )
+    corroborated = static_internal & observed_internal
+    timing_statuses: dict[str, int] = {}
+    for interaction in interactions:
+        if interaction.get("evidence") != "observed_runtime":
+            continue
+        status = str(interaction.get("timing_status", "unavailable"))
+        timing_statuses[status] = timing_statuses.get(status, 0) + 1
+    reconciliation = {
+        "static_internal_relations": len(static_internal),
+        "observed_internal_relations": len(observed_internal),
+        "corroborated_relations": len(corroborated),
+        "static_not_observed_relations": len(static_internal - observed_internal),
+        "runtime_only_relations": len(observed_internal - static_internal),
+        "static_observation_coverage_percent": (
+            round(len(corroborated) * 100 / len(static_internal), 1)
+            if static_internal
+            else None
+        ),
+        "runtime_timing_statuses": dict(sorted(timing_statuses.items())),
+        "notice": (
+            "Not observed does not mean unreachable, and runtime-only does not prove the static "
+            "model is wrong; instrumentation scope and execution selection require review."
+        ),
+    }
     participant_ids: list[str] = []
     for value in [root["id"], *(entry[key] for entry in interactions for key in ("source", "target"))]:
         if value not in participant_ids:
@@ -234,7 +334,11 @@ def sequence_model(
         "limits": {"max_depth": max_depth, "max_interactions": max_interactions},
         "truncated": bool(truncation_reasons),
         "truncation_reasons": sorted(truncation_reasons),
-        "notice": "Static AST order is approximate; observed runtime edges prove only captured executions.",
+        "reconciliation": reconciliation,
+        "notice": (
+            "Static call-site order and control context are conservative possibilities, not a "
+            "path-sensitive execution proof; observed runtime edges prove only captured executions."
+        ),
     }
 
 
@@ -281,14 +385,57 @@ def export_sequence(
         )
     for interaction in model["interactions"]:
         arrow = "-->>" if interaction["evidence"] == "observed_runtime" else "->>"
-        suffix = " [observed]" if interaction["evidence"] == "observed_runtime" else " [static]"
+        suffix = (
+            " [observed]"
+            if interaction["evidence"] == "observed_runtime"
+            else " [static candidate]"
+            if interaction["evidence"] == "static_external_candidate"
+            else " [static]"
+        )
+        if interaction.get("awaited"):
+            suffix += " [await]"
+        context = interaction.get("control_context", [])
+        if context:
+            suffix += " [" + " > ".join(str(value) for value in context) + "]"
         if interaction.get("cycle"):
             suffix += " [cycle]"
+        if interaction.get("observation_status") == "runtime_corroborated":
+            suffix += " [runtime corroborated]"
+        if interaction.get("static_alignment") == "runtime_only":
+            suffix += " [runtime only]"
         lines.append(
             f'  {aliases[interaction["source"]]}{arrow}{aliases[interaction["target"]]}: '
             f'{_mermaid(interaction["label"] + suffix)}'
         )
-    lines.extend(["```", "", "## Evidence legend", "", "- `[static]`: conservative AST-derived internal or external call relation.", "- `[observed]`: imported runtime span relation."])
+    lines.extend(
+        [
+            "```",
+            "",
+            "## Evidence legend",
+            "",
+            "- `[static]`: conservative AST-resolved internal call relation.",
+            "- `[static candidate]`: unresolved or known external call requiring interface review.",
+            "- `[observed]`: imported runtime parent-child span relation.",
+            "- `[runtime corroborated]`: the same component relation appears in static and imported runtime evidence.",
+            "- `[runtime only]`: observed relation absent from the bounded static model; review instrumentation and dynamic dispatch.",
+            "- Control-context and `await` annotations are static syntax evidence, not path or scheduling proof.",
+            "",
+            "## Static/observed reconciliation",
+            "",
+            f"- Static internal relations: {model['reconciliation']['static_internal_relations']}",
+            f"- Observed internal relations: {model['reconciliation']['observed_internal_relations']}",
+            f"- Corroborated relations: {model['reconciliation']['corroborated_relations']}",
+            f"- Static relations not observed: {model['reconciliation']['static_not_observed_relations']}",
+            f"- Runtime-only relations: {model['reconciliation']['runtime_only_relations']}",
+            "- Static observation coverage: "
+            + (
+                f"{model['reconciliation']['static_observation_coverage_percent']}%"
+                if model["reconciliation"]["static_observation_coverage_percent"] is not None
+                else "not applicable (no static internal relations)"
+            ),
+            "- " + model["reconciliation"]["notice"],
+        ]
+    )
     return atomic_publish_text(
         destination,
         "\n".join(lines) + "\n",

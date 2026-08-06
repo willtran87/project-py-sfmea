@@ -134,6 +134,49 @@ def _dotted_name(node: ast.AST) -> str:
     return ""
 
 
+def _resolve_alias_reference(reference: str, aliases: dict[str, str]) -> str:
+    if not reference:
+        return ""
+    head, dot, rest = reference.partition(".")
+    mapped = aliases.get(head, head)
+    return f"{mapped}.{rest}" if dot else mapped
+
+
+def _annotation_reference(node: ast.AST | None, aliases: dict[str, str]) -> str:
+    """Return one conservative concrete type reference from an annotation."""
+
+    if node is None:
+        return ""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            parsed = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return ""
+        return _annotation_reference(parsed, aliases)
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        reference = _resolve_alias_reference(_dotted_name(node), aliases)
+        return "" if reference in {"None", "NoneType", "typing.Any", "Any"} else reference
+    if isinstance(node, ast.Subscript):
+        container = _dotted_name(node.value).rsplit(".", 1)[-1]
+        if container in {"Annotated", "ClassVar", "Final", "Optional"}:
+            value = node.slice
+            if isinstance(value, ast.Tuple) and value.elts:
+                value = value.elts[0]
+            return _annotation_reference(value, aliases)
+        return ""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        candidates = {
+            value
+            for value in (
+                _annotation_reference(node.left, aliases),
+                _annotation_reference(node.right, aliases),
+            )
+            if value
+        }
+        return next(iter(candidates)) if len(candidates) == 1 else ""
+    return ""
+
+
 def _humanize(name: str) -> str:
     value = name.strip("_").replace("_", " ") or name
     return value[:1].upper() + value[1:]
@@ -158,6 +201,10 @@ class FunctionFacts:
     parameters: list[str]
     calls: set[str] = field(default_factory=set)
     ordered_calls: list[str] = field(default_factory=list)
+    call_sites: list[dict[str, Any]] = field(default_factory=list)
+    external_call_candidates: list[dict[str, str]] = field(default_factory=list)
+    symbol_types: dict[str, str] = field(default_factory=dict)
+    symbol_type_sources: dict[str, str] = field(default_factory=dict)
     frameworks: set[str] = field(default_factory=set)
     entrypoint_types: set[str] = field(default_factory=set)
     complexity: int = 1
@@ -387,6 +434,19 @@ class _FactVisitor(ast.NodeVisitor):
     def __init__(self, facts: FunctionFacts, aliases: dict[str, str]) -> None:
         self.facts = facts
         self.aliases = aliases
+        self.control_context: list[str] = []
+        self.await_depth = 0
+
+    def _visit_with_context(self, value: ast.AST, context: str) -> None:
+        self.control_context.append(context)
+        try:
+            self.visit(value)
+        finally:
+            self.control_context.pop()
+
+    def _visit_block(self, values: list[ast.stmt], context: str) -> None:
+        for value in values:
+            self._visit_with_context(value, context)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         # Do not attribute nested function implementation to its parent.
@@ -397,12 +457,31 @@ class _FactVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         raw = _dotted_name(node.func)
-        resolved = self._resolve(raw)
+        resolved, resolution = self._resolve_with_provenance(raw)
+        # Python evaluates the callable expression and arguments before invoking the
+        # outer call. Recording after child traversal preserves that lexical order for
+        # nested calls without claiming runtime path feasibility.
+        self.visit(node.func)
+        for argument in node.args:
+            self.visit(argument)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
         if resolved:
             self.facts.calls.add(resolved)
             self.facts.ordered_calls.append(resolved)
+            self.facts.call_sites.append(
+                {
+                    "raw_reference": raw,
+                    "reference": resolved,
+                    "resolution": resolution,
+                    "line": getattr(node, "lineno", 0),
+                    "column": getattr(node, "col_offset", 0),
+                    "order": len(self.facts.call_sites),
+                    "control_context": list(self.control_context),
+                    "awaited": self.await_depth > 0,
+                }
+            )
             self._classify_call(resolved)
-        self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         resolved = self._resolve(_dotted_name(node))
@@ -423,30 +502,42 @@ class _FactVisitor(ast.NodeVisitor):
     def visit_If(self, node: ast.If) -> None:
         self.facts.complexity += 1
         self.facts.signals.add("control_logic")
-        self.generic_visit(node)
+        self._visit_with_context(node.test, f"if@{node.lineno}:condition")
+        self._visit_block(node.body, f"if@{node.lineno}:body")
+        self._visit_block(node.orelse, f"if@{node.lineno}:else")
 
     def visit_IfExp(self, node: ast.IfExp) -> None:
         self.facts.complexity += 1
         self.facts.signals.add("control_logic")
-        self.generic_visit(node)
+        self._visit_with_context(node.test, f"ifexp@{node.lineno}:condition")
+        self._visit_with_context(node.body, f"ifexp@{node.lineno}:body")
+        self._visit_with_context(node.orelse, f"ifexp@{node.lineno}:else")
 
     def visit_For(self, node: ast.For) -> None:
         self.facts.complexity += 1
         self.facts.loops += 1
         self.facts.signals.add("control_logic")
-        self.generic_visit(node)
+        self.visit(node.target)
+        self._visit_with_context(node.iter, f"for@{node.lineno}:iterator")
+        self._visit_block(node.body, f"for@{node.lineno}:body")
+        self._visit_block(node.orelse, f"for@{node.lineno}:else")
 
     def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
         self.facts.complexity += 1
         self.facts.loops += 1
         self.facts.signals.add("concurrency")
-        self.generic_visit(node)
+        self.visit(node.target)
+        self._visit_with_context(node.iter, f"async-for@{node.lineno}:iterator")
+        self._visit_block(node.body, f"async-for@{node.lineno}:body")
+        self._visit_block(node.orelse, f"async-for@{node.lineno}:else")
 
     def visit_While(self, node: ast.While) -> None:
         self.facts.complexity += 1
         self.facts.loops += 1
         self.facts.signals.add("control_logic")
-        self.generic_visit(node)
+        self._visit_with_context(node.test, f"while@{node.lineno}:condition")
+        self._visit_block(node.body, f"while@{node.lineno}:body")
+        self._visit_block(node.orelse, f"while@{node.lineno}:else")
 
     def visit_BoolOp(self, node: ast.BoolOp) -> None:
         self.facts.complexity += max(1, len(node.values) - 1)
@@ -456,7 +547,16 @@ class _FactVisitor(ast.NodeVisitor):
     def visit_Match(self, node: ast.Match) -> None:
         self.facts.complexity += max(1, len(node.cases) - 1)
         self.facts.signals.add("control_logic")
-        self.generic_visit(node)
+        self._visit_with_context(node.subject, f"match@{node.lineno}:subject")
+        for index, case in enumerate(node.cases):
+            self.visit(case.pattern)
+            if case.guard is not None:
+                self._visit_with_context(
+                    case.guard, f"match@{node.lineno}:case-{index + 1}-guard"
+                )
+            self._visit_block(
+                case.body, f"match@{node.lineno}:case-{index + 1}"
+            )
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
         self.facts.arithmetic_ops += 1
@@ -476,27 +576,68 @@ class _FactVisitor(ast.NodeVisitor):
                 self.facts.broad_handlers += 1
             if not handler.body or all(isinstance(stmt, (ast.Pass, ast.Continue)) for stmt in handler.body):
                 self.facts.silent_handlers += 1
-        self.generic_visit(node)
+        self._visit_block(node.body, f"try@{node.lineno}:body")
+        for index, handler in enumerate(node.handlers):
+            if handler.type is not None:
+                self.visit(handler.type)
+            self._visit_block(
+                handler.body,
+                f"try@{node.lineno}:handler-{index + 1}",
+            )
+        self._visit_block(node.orelse, f"try@{node.lineno}:else")
+        self._visit_block(node.finalbody, f"try@{node.lineno}:finally")
+
+    def visit_TryStar(self, node: ast.TryStar) -> None:
+        self.visit_Try(node)
 
     def visit_Await(self, node: ast.Await) -> None:
         self.facts.awaits += 1
         self.facts.signals.add("concurrency")
-        self.generic_visit(node)
+        self.await_depth += 1
+        try:
+            self.visit(node.value)
+        finally:
+            self.await_depth -= 1
 
     def visit_Raise(self, node: ast.Raise) -> None:
         self.facts.raises += 1
-        self.generic_visit(node)
+        if node.exc is not None:
+            self._visit_with_context(node.exc, f"raise@{node.lineno}:exception")
+        if node.cause is not None:
+            self._visit_with_context(node.cause, f"raise@{node.lineno}:cause")
+
+    def visit_Return(self, node: ast.Return) -> None:
+        if node.value is not None:
+            self._visit_with_context(node.value, f"return@{node.lineno}:value")
+
+    def visit_Yield(self, node: ast.Yield) -> None:
+        if node.value is not None:
+            self._visit_with_context(node.value, f"yield@{node.lineno}:value")
+
+    def visit_YieldFrom(self, node: ast.YieldFrom) -> None:
+        self._visit_with_context(node.value, f"yield-from@{node.lineno}:value")
 
     def visit_Assign(self, node: ast.Assign) -> None:
         if any(isinstance(target, (ast.Attribute, ast.Subscript)) for target in node.targets):
             self.facts.mutates_state = True
             self.facts.signals.add("state_mutation")
+        for target in node.targets:
+            self._record_assigned_type(target, node.value, "constructor_assignment")
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if isinstance(node.target, (ast.Attribute, ast.Subscript)):
             self.facts.mutates_state = True
             self.facts.signals.add("state_mutation")
+        annotated = _annotation_reference(node.annotation, self.aliases)
+        target = _dotted_name(node.target)
+        if target and annotated:
+            self.facts.symbol_types[target] = annotated
+            self.facts.symbol_type_sources[target] = "annotation"
+        elif node.value is not None:
+            self._record_assigned_type(
+                node.target, node.value, "annotated_constructor_assignment"
+            )
         self.generic_visit(node)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
@@ -505,12 +646,44 @@ class _FactVisitor(ast.NodeVisitor):
             self.facts.signals.add("state_mutation")
         self.generic_visit(node)
 
-    def _resolve(self, raw: str) -> str:
+    def _record_assigned_type(
+        self, target: ast.AST, value: ast.AST, source: str
+    ) -> None:
+        target_name = _dotted_name(target)
+        if not target_name or not isinstance(value, ast.Call):
+            return
+        constructor = _resolve_alias_reference(_dotted_name(value.func), self.aliases)
+        constructor_name = constructor.rsplit(".", 1)[-1]
+        if not constructor or not constructor_name[:1].isupper():
+            return
+        self.facts.symbol_types[target_name] = constructor
+        self.facts.symbol_type_sources[target_name] = source
+
+    def _resolve_with_provenance(self, raw: str) -> tuple[str, str]:
         if not raw:
-            return ""
-        head, dot, rest = raw.partition(".")
-        mapped = self.aliases.get(head, head)
-        return f"{mapped}.{rest}" if dot else mapped
+            return "", "unresolved"
+        typed_prefixes = sorted(
+            (
+                symbol
+                for symbol in self.facts.symbol_types
+                if raw.startswith(symbol + ".")
+            ),
+            key=len,
+            reverse=True,
+        )
+        if typed_prefixes:
+            symbol = typed_prefixes[0]
+            suffix = raw[len(symbol) + 1 :]
+            return (
+                f"{self.facts.symbol_types[symbol]}.{suffix}",
+                self.facts.symbol_type_sources.get(symbol, "type_evidence"),
+            )
+        resolved = _resolve_alias_reference(raw, self.aliases)
+        head = raw.partition(".")[0]
+        return resolved, "import_alias" if head in self.aliases else "lexical_name"
+
+    def _resolve(self, raw: str) -> str:
+        return self._resolve_with_provenance(raw)[0]
 
     def _classify_call(self, name: str) -> None:
         framework_prefixes = {
@@ -784,6 +957,20 @@ class _ModuleCollector(ast.NodeVisitor):
             decorators=decorators,
             parameters=params,
         )
+        annotated_arguments = [
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+        ]
+        if node.args.vararg:
+            annotated_arguments.append(node.args.vararg)
+        if node.args.kwarg:
+            annotated_arguments.append(node.args.kwarg)
+        for argument in annotated_arguments:
+            reference = _annotation_reference(argument.annotation, self.aliases)
+            if reference:
+                facts.symbol_types[argument.arg] = reference
+                facts.symbol_type_sources[argument.arg] = "parameter_annotation"
         if is_async:
             facts.signals.add("concurrency")
         if decorators:
@@ -796,6 +983,7 @@ class _ModuleCollector(ast.NodeVisitor):
                 "delete",
                 "command",
                 "task",
+                "shared_task",
                 "consumer",
                 "receiver",
             }
@@ -824,11 +1012,23 @@ class _ModuleCollector(ast.NodeVisitor):
                 resolved = f"{resolved_head}.{rest}" if dot else resolved_head
                 facts.calls.add(resolved)
                 facts.ordered_calls.append(resolved)
+                facts.call_sites.append(
+                    {
+                        "raw_reference": decorator,
+                        "reference": resolved,
+                        "resolution": "decorator_import_alias",
+                        "line": getattr(node, "lineno", 0),
+                        "column": getattr(node, "col_offset", 0),
+                        "order": len(facts.call_sites),
+                        "control_context": ["decorator"],
+                        "awaited": False,
+                    }
+                )
                 _FactVisitor(facts, self.aliases)._classify_call(resolved)
                 leaf = decorator.lower().rsplit(".", 1)[-1]
                 if leaf in {"get", "post", "put", "patch", "delete", "route"}:
                     facts.entrypoint_types.add("http_route")
-                elif leaf == "task":
+                elif leaf in {"task", "shared_task"}:
                     facts.entrypoint_types.add("background_task")
                 elif leaf in {"consumer", "receiver"}:
                     facts.entrypoint_types.add("event_handler")
@@ -2562,16 +2762,22 @@ def _module_suffixes(path: str) -> list[str]:
     return [".".join(parts[index:]) for index in range(len(parts)) if parts[index:]]
 
 
-def _internal_callers(facts_list: list[FunctionFacts]) -> dict[str, list[str]]:
+def _internal_call_resolution(
+    facts_list: list[FunctionFacts],
+) -> tuple[dict[str, list[str]], dict[str, set[str]]]:
     by_file_name: dict[tuple[str, str], list[FunctionFacts]] = {}
     by_full: dict[str, list[FunctionFacts]] = {}
     for target in facts_list:
         by_file_name.setdefault((target.path, target.name), []).append(target)
+        by_full.setdefault(target.qualname, []).append(target)
         for module in _module_suffixes(target.path):
             by_full.setdefault(f"{module}.{target.qualname}", []).append(target)
             by_full.setdefault(f"{module}.{target.name}", []).append(target)
 
     callers: dict[str, set[str]] = {_component_ref(target): set() for target in facts_list}
+    resolved_calls: dict[str, set[str]] = {
+        _component_ref(caller): set() for caller in facts_list
+    }
     for caller in facts_list:
         caller_ref = _component_ref(caller)
         caller_class = caller.qualname.rsplit(".", 1)[0] if "." in caller.qualname else ""
@@ -2609,7 +2815,92 @@ def _internal_callers(facts_list: list[FunctionFacts]) -> dict[str, list[str]]:
                 target_ref = _component_ref(target)
                 if target_ref != caller_ref:
                     callers[target_ref].add(caller_ref)
-    return {key: sorted(value) for key, value in callers.items()}
+                    resolved_calls[caller_ref].add(called)
+    return (
+        {key: sorted(value) for key, value in callers.items()},
+        resolved_calls,
+    )
+
+
+def _internal_callers(facts_list: list[FunctionFacts]) -> dict[str, list[str]]:
+    callers, _resolved_calls = _internal_call_resolution(facts_list)
+    return callers
+
+
+def _external_call_candidates(
+    facts: FunctionFacts, resolved_calls: set[str]
+) -> list[dict[str, str]]:
+    interface_verbs = {
+        "call",
+        "connect",
+        "consume",
+        "execute",
+        "fetch",
+        "invoke",
+        "open",
+        "publish",
+        "read",
+        "receive",
+        "request",
+        "send",
+        "write",
+    }
+    candidates: list[dict[str, str]] = []
+    for reference in sorted(facts.calls - resolved_calls):
+        root = reference.split(".", 1)[0]
+        leaf = reference.rsplit(".", 1)[-1].casefold()
+        if root in {"self", "cls"}:
+            continue
+        resolution_sources = {
+            str(site.get("resolution", "lexical_name"))
+            for site in facts.call_sites
+            if site.get("reference") == reference
+        }
+        resolution = sorted(resolution_sources)[0] if resolution_sources else "lexical_name"
+        if _matches_any(
+            reference,
+            (
+                *EXTERNAL_PREFIXES,
+                *PERSISTENCE_PREFIXES,
+                *SUBPROCESS_NAMES,
+                *HARDWARE_INTERFACE_PREFIXES,
+            ),
+        ):
+            confidence = "high"
+            basis = (
+                "typed_receiver_known_external_api"
+                if resolution in {
+                    "parameter_annotation",
+                    "annotation",
+                    "constructor_assignment",
+                    "annotated_constructor_assignment",
+                }
+                else "known_external_api"
+            )
+        elif "." in reference and leaf in interface_verbs:
+            confidence = "medium"
+            basis = (
+                "typed_unresolved_receiver_interface_verb"
+                if resolution in {
+                    "parameter_annotation",
+                    "annotation",
+                    "constructor_assignment",
+                    "annotated_constructor_assignment",
+                }
+                else "unresolved_receiver_interface_verb"
+            )
+        else:
+            continue
+        candidates.append(
+            {
+                "reference": reference,
+                "confidence": confidence,
+                "basis": basis,
+                "resolution": resolution,
+                "status": "static_candidate",
+            }
+        )
+    return candidates
 
 
 def _upstream_paths(
@@ -3253,6 +3544,10 @@ def _component_dict(
         "parameters": facts.parameters,
         "calls": sorted(facts.calls),
         "ordered_calls": facts.ordered_calls,
+        "call_sites": copy.deepcopy(facts.call_sites),
+        "external_call_candidates": copy.deepcopy(facts.external_call_candidates),
+        "symbol_types": copy.deepcopy(facts.symbol_types),
+        "symbol_type_sources": copy.deepcopy(facts.symbol_type_sources),
         "frameworks": sorted(facts.frameworks),
         "entrypoint_types": sorted(facts.entrypoint_types),
         "fan_in": fan_in,
@@ -3620,8 +3915,14 @@ def scan_repository(
             facts for facts in facts_list if _matches_pattern(_component_ref(facts), focus_patterns)
         ]
 
-    callers = _internal_callers(facts_list)
+    callers, resolved_calls = _internal_call_resolution(facts_list)
     facts_by_reference = {_component_ref(facts): facts for facts in facts_list}
+    for reference, facts in facts_by_reference.items():
+        facts.external_call_candidates = _external_call_candidates(
+            facts, resolved_calls.get(reference, set())
+        )
+        if facts.external_call_candidates:
+            facts.signals.add("external_interface_candidate")
     for target_reference, caller_references in callers.items():
         if caller_references:
             facts_by_reference[target_reference].signals.add("internal_interface")

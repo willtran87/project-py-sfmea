@@ -415,6 +415,12 @@ def architecture_diagram(analysis: dict[str, Any], *, component_limit: int = 120
 def interface_flow_diagram(analysis: dict[str, Any]) -> dict[str, Any]:
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
+    total_candidates = sum(
+        len(value.get("external_call_candidates", []))
+        for value in analysis.get("components", [])
+        if isinstance(value, dict)
+        and isinstance(value.get("external_call_candidates", []), list)
+    )
     for index, interface in enumerate(analysis.get("context", {}).get("system_interfaces", [])):
         source_label = str(interface.get("source", "Source"))
         target_label = str(interface.get("target", "Target"))
@@ -434,16 +440,83 @@ def interface_flow_diagram(analysis: dict[str, Any]) -> dict[str, Any]:
                 order=index,
             )
         )
+    candidate_count = 0
+    candidate_limit = 500
+    for component in analysis.get("components", []):
+        component_id = str(component.get("id", ""))
+        candidates = component.get("external_call_candidates", [])
+        if not component_id or not isinstance(candidates, list):
+            continue
+        for candidate in candidates:
+            if candidate_count >= candidate_limit or not isinstance(candidate, dict):
+                break
+            reference = str(candidate.get("reference", ""))
+            if not reference:
+                continue
+            candidate_count += 1
+            external_id = stable_id("external-call", reference).lower()
+            nodes.setdefault(
+                component_id,
+                _node(
+                    component_id,
+                    str(component.get("qualname", component_id)),
+                    "component",
+                    source=(
+                        f"{component.get('source', {}).get('path', '')}:"
+                        f"{component.get('source', {}).get('line', '')}"
+                    ),
+                    layer=0,
+                ),
+            )
+            nodes.setdefault(
+                external_id,
+                _node(
+                    external_id,
+                    reference,
+                    "external_interface_candidate",
+                    tags=[
+                        str(candidate.get("confidence", "medium")),
+                        str(candidate.get("basis", "unresolved")),
+                        str(candidate.get("resolution", "lexical_name")),
+                    ],
+                    layer=1,
+                ),
+            )
+            edges.append(
+                _edge(
+                    f"interface-candidate-{candidate_count}",
+                    component_id,
+                    external_id,
+                    reference,
+                    "external_interface_candidate",
+                    evidence="static_candidate",
+                    description=(
+                        f"{candidate.get('confidence', 'medium')} confidence; "
+                        f"{candidate.get('basis', 'unresolved')}; "
+                        f"resolution {candidate.get('resolution', 'lexical_name')}"
+                    ),
+                    order=len(edges),
+                )
+            )
     return normalize_diagram_model(
         {
             "id": "system-interface-flow",
             "title": "System interface flow",
             "type": "flow",
-            "description": "Configured sources, targets, and system-boundary relationships.",
-            "notice": "Direction and meaning come from configured system-interface statements.",
+            "description": "Configured boundaries plus bounded static external-call candidates.",
+            "notice": (
+                "Configured interfaces are engineer-declared; static candidates identify calls "
+                "requiring interface review and do not prove a deployed boundary."
+            ),
             "nodes": list(nodes.values()),
             "edges": edges,
-            "metadata": {"category": "interface_flow"},
+            "metadata": {
+                "category": "interface_flow",
+                "external_candidate_limit": candidate_limit,
+                "external_candidates_emitted": candidate_count,
+                "external_candidates_total": total_candidates,
+                "external_candidates_truncated": total_candidates > candidate_count,
+            },
         }
     )
 
@@ -1969,6 +2042,21 @@ def sequence_diagrams(analysis: dict[str, Any], *, limit: int = 6) -> list[dict[
                 evidence=str(interaction.get("evidence", "")),
                 order=index,
                 cycle=bool(interaction.get("cycle", False)),
+                description=json.dumps(
+                    {
+                        "confidence": interaction.get("confidence", ""),
+                        "resolution": interaction.get("resolution", ""),
+                        "source_line": int(interaction.get("source_line", 0) or 0),
+                        "awaited": bool(interaction.get("awaited", False)),
+                        "control_context": interaction.get("control_context", []),
+                        "observation_status": interaction.get("observation_status", ""),
+                        "static_alignment": interaction.get("static_alignment", ""),
+                        "timing_status": interaction.get("timing_status", ""),
+                        "duration_ns": interaction.get("duration_ns"),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
             )
             for index, interaction in enumerate(sequence.get("interactions", []))
         ]
@@ -1987,6 +2075,30 @@ def sequence_diagrams(analysis: dict[str, Any], *, limit: int = 6) -> list[dict[
                         "entrypoint": sequence.get("entrypoint", ""),
                         "truncated": bool(sequence.get("truncated")),
                         "truncation_reasons": sequence.get("truncation_reasons", []),
+                        "reconciliation_static_internal_relations": sequence.get(
+                            "reconciliation", {}
+                        ).get("static_internal_relations", 0),
+                        "reconciliation_observed_internal_relations": sequence.get(
+                            "reconciliation", {}
+                        ).get("observed_internal_relations", 0),
+                        "reconciliation_corroborated_relations": sequence.get(
+                            "reconciliation", {}
+                        ).get("corroborated_relations", 0),
+                        "reconciliation_static_not_observed_relations": sequence.get(
+                            "reconciliation", {}
+                        ).get("static_not_observed_relations", 0),
+                        "reconciliation_runtime_only_relations": sequence.get(
+                            "reconciliation", {}
+                        ).get("runtime_only_relations", 0),
+                        "reconciliation_static_observation_coverage_percent": sequence.get(
+                            "reconciliation", {}
+                        ).get("static_observation_coverage_percent"),
+                        "reconciliation_runtime_timing_statuses": [
+                            f"{key}={value}"
+                            for key, value in sequence.get("reconciliation", {})
+                            .get("runtime_timing_statuses", {})
+                            .items()
+                        ],
                     },
                 }
             )

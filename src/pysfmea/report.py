@@ -165,6 +165,8 @@ REVIEW_PACKAGE_SCHEMA_FILES = {
     "pysfmea-diagram.schema.json",
     "pysfmea-diagram-bundle.schema.json",
     "pysfmea-diagram-bundle-verification.schema.json",
+    "pysfmea-fault-injection-plan.schema.json",
+    "pysfmea-fault-injection-plan-verification.schema.json",
     "pysfmea-html-report-verification.schema.json",
     "pysfmea-publication-failure-catalog.schema.json",
     "pysfmea-publication-failure-catalog-verification.schema.json",

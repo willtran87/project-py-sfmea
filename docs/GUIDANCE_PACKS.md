@@ -70,7 +70,17 @@ mapping IDs are preserved in JSON, CSV, HTML, run-manifest, and review-package o
       "rule_selector": "functional.omission",
       "citation_id": "ORG-CIT-CSA-OMISSION",
       "relationship": "failure_taxonomy",
-      "strength": "direct"
+      "strength": "direct",
+      "review": {
+        "decision": "approved",
+        "producer": "Standards Mapping Team",
+        "reviewer": "Independent Software Safety Board",
+        "authority": "Controlled mapping-review procedure",
+        "reviewed_at": "2026-07-15",
+        "expires_at": "2027-07-15",
+        "source_revision": "4.1",
+        "rationale": "The identified locator directly requires omission review."
+      }
     }
   ]
 }
@@ -80,6 +90,22 @@ Rule selectors use the same exact or wildcard matching as built-in mappings. All
 relationships and strengths are closed vocabularies and are validated. A pack cannot
 set `compliance_claim` to true: applicability, tailoring, conformance, waiver, and
 acceptance remain governed human decisions outside scanner inference.
+
+The optional mapping `review` object is also closed and content-digested. An approved review must
+name distinct producer and reviewer identities, identify the asserted authority, bind the exact
+governed source revision, provide ISO review/expiry dates, and retain a rationale. Rejected
+mappings remain in governance output but do not contribute finding citations. PySFMEA validates
+record consistency and separation of the supplied names; it does not authenticate identities,
+authority, signatures, or organizational independence.
+
+Traceability and HTML governance views audit an approved review's optional `expires_at` against
+the persisted run-manifest creation date (falling back to the persisted scan/catalog date). They
+report raw approvals, effective unexpired/integrity-valid approvals, and expired review IDs
+separately. Validation emits `guidance.expired_mapping_review` for active expired mappings. This
+deterministic audit does not renew, revoke, or authenticate an organizational approval.
+Effective approval credit additionally requires the scan manifest's content digest and timestamp
+binding to verify. A modified or rehashed provenance timestamp remains visible for diagnosis but
+cannot keep or regain effective approval credit.
 
 The pack SHA-256 proves which bounded JSON bytes were used. If the organization is permitted
 to retain a document digest, it may add an `artifact` object to a source record; the

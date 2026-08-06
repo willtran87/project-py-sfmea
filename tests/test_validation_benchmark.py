@@ -11,6 +11,7 @@ from pysfmea.discovery import evaluate_candidates
 from pysfmea.guidance import citations_for_rule
 from pysfmea.manifest import create_run_manifest
 from pysfmea.scanner import scan_repository
+from pysfmea.visuals import sequence_model
 
 
 class ToolValidationBenchmarkTests(unittest.TestCase):
@@ -31,6 +32,19 @@ class ToolValidationBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["adapter_provenance_coverage"], 1.0)
         self.assertEqual(result["metrics"]["repository_source_accounting"], 1.0)
         self.assertEqual(result["metrics"]["unsupported_verification_claims"], [])
+        self.assertTrue(result["call_resolution"]["enabled"])
+        self.assertEqual(result["call_resolution"]["expected"], 8)
+        self.assertEqual(result["corpus"]["call_case_count"], 8)
+        self.assertEqual(result["call_resolution"]["missing"], [])
+        self.assertEqual(result["call_resolution"]["unexpected"], [])
+        self.assertEqual(result["call_resolution"]["recall"], 1.0)
+        self.assertEqual(result["call_resolution"]["precision"], 1.0)
+        self.assertEqual(
+            result["call_resolution"]["by_resolution"]["parameter_annotation"][
+                "matched"
+            ],
+            2,
+        )
 
     def test_repeated_scan_has_stable_source_and_resolved_input_digests(self) -> None:
         first = scan_repository(self.corpus / "repository")
@@ -42,6 +56,41 @@ class ToolValidationBenchmarkTests(unittest.TestCase):
         self.assertEqual(
             create_run_manifest(first)["resolved_inputs_sha256"],
             create_run_manifest(second)["resolved_inputs_sha256"],
+        )
+
+    def test_corpus_exercises_typed_interfaces_and_internal_sequences(self) -> None:
+        analysis = scan_repository(self.corpus / "repository")
+        pipeline = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value.get("source", {}).get("path") == "pipeline.py"
+        }
+        self.assertEqual(len(pipeline), 3)
+        self.assertEqual(
+            pipeline["fetch_job"]["symbol_types"]["client"], "httpx.AsyncClient"
+        )
+        typed_candidates = pipeline["fetch_job"]["external_call_candidates"]
+        self.assertTrue(
+            any(
+                value["basis"] == "typed_receiver_known_external_api"
+                for value in typed_candidates
+            )
+        )
+        self.assertEqual(
+            pipeline["fetch_job"]["called_by"], ["pipeline.py:run_pipeline"]
+        )
+        self.assertEqual(
+            pipeline["decode_response"]["called_by"], ["pipeline.py:fetch_job"]
+        )
+        sequence = sequence_model(analysis, "pipeline.py:run_pipeline")
+        self.assertEqual(sequence["reconciliation"]["static_internal_relations"], 2)
+        self.assertEqual(
+            [
+                value["label"]
+                for value in sequence["interactions"]
+                if value["evidence"] == "static_ast"
+            ],
+            ["fetch_job", "decode_response"],
         )
 
     def test_regulatory_profile_citations_are_isolated(self) -> None:

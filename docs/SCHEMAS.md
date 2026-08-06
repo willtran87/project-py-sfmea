@@ -58,6 +58,8 @@ Available names:
 | `detached-signature` | Ed25519 signature envelope, signed statement, and package subject |
 | `diagram` | Renderer-neutral `pysfmea-diagram-1` object |
 | `diagram-bundle` | Generated, integrity-declaring `pysfmea-diagram-bundle-1` object |
+| `fault-injection-plan` | Obligation-bound, integrity-declaring plan for a governed built-in fault-injection plugin |
+| `fault-injection-plan-verification` | Plan integrity, readiness, closed policy, plugin, case, and mandatory exact obligation-binding verdicts |
 | `diagram-bundle-verification` | Success, rejection, and incomplete diagram-verifier verdicts |
 | `html-report-verification` | Success, rejection, and incomplete HTML-verifier verdicts |
 | `publication-failure-catalog` | Package-publication failure codes, phases, stable findings, remediation actions, and retry policy |
@@ -107,8 +109,23 @@ or mutate those analyses. Closed, bounded collections represent cross-repository
 relationships and temporal/circuit-breaker policies, requirements-source snapshots, external
 evidence artifacts, validation cohorts, LLM quality evaluations, governance approvals, and
 configurable quality gates. Completed evidence requires an artifact path and digest. Cohort and LLM
-records include corpus digests plus distinct producer/reviewer identities; finding and hazard
-references are semantically resolved as `REPOSITORY_ID:RECORD_ID`.
+records include corpus digests plus distinct producer/reviewer identities. Converted validation
+cohorts also retain expected-side and actual-side match counts, evaluation-result format and digest,
+evaluator version, and an exact-byte artifact reference. The verifier safely consumes the retained
+JSON, reconciles its complete projection, recomputes claimed rates, reports cohort-macro and population-weighted
+micro metrics, and can require every failure-mode and call-resolution cohort to be count-backed.
+Legacy cohorts without count provenance remain schema-compatible so older programs can be read,
+but new program templates enable count-backed, retained-artifact, and micro gates. Finding and hazard references are semantically
+resolved as `REPOSITORY_ID:RECORD_ID`.
+Converted LLM evaluations preserve grounded and citation-correct sample counts plus total and
+unsupported claim counts. `corpus_artifact` binds the exact labeled JSON bytes. Default policy
+requires both count backing and artifact replay; verdicts state whether aggregation is
+`count-backed`, `legacy-sample-weighted`, or unavailable. Unsupported-claim rate is aggregated by
+claims rather than samples.
+`pysfmea-llm-quality-corpus-2` additionally binds a closed provider/model/prompt-version subject.
+Program verification reconciles that subject to the evaluation record and reports subject-bound
+coverage. Version-1 corpora remain consumable for compatibility but cannot satisfy the default
+`require_llm_subject_binding` policy.
 Program integrity hashes every field outside the integrity declaration using canonical sorted-key
 compact UTF-8 JSON. Run `sfmea program-seal` only after intentional edits.
 
@@ -123,7 +140,7 @@ it does not authenticate an identity, approve risk, or establish certification.
 
 ## Offline review-package use
 
-Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all sixteen
+Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all eighteen
 documents under their stable catalog filenames. The package manifest checksums every file and
 binds the catalog format, path, canonical digest, and schema count. `sfmea verify-package`
 additionally cross-checks catalog completeness, schema identities, and each canonical digest.
@@ -230,7 +247,7 @@ eight-contract 0.39, nine-contract 0.40–0.42, ten-contract 0.43–0.44, and el
 0.45 catalog profiles.
 Their catalog identities and declared content digests are verified using the same rules as the
 former twelve-, thirteen-, fourteen-, and fifteen-contract profiles plus the current
-sixteen-contract profile.
+sixteen-contract and current eighteen-contract profiles.
 Mixing profile generations,
 dropping one contract, duplicating a catalog name, or introducing an unknown contract remains
 invalid.

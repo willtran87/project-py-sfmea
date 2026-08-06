@@ -27,6 +27,7 @@ from .diagrams import (
 )
 from .file_publication import atomic_publish_text
 from .guidance import guidance_traceability
+from .integrity import verify_run_manifest_integrity
 from .model import calculate_rpn, utc_now
 from .report import analysis_state_sha256
 from .repository_inventory import (
@@ -104,9 +105,7 @@ def _component_groups(
     path = str((source or component.get("source", {})).get("path", ""))
     parts = [part for part in path.replace("\\", "/").split("/") if part]
     return [
-        "/".join(parts[:2])
-        if len(parts) > 1
-        else (parts[0] if parts else "Unassigned")
+        "/".join(parts[:2]) if len(parts) > 1 else (parts[0] if parts else "Unassigned")
     ]
 
 
@@ -206,21 +205,28 @@ def _report_record(
     }
 
 
-def _subsystem_summary(analysis: dict[str, Any], active: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _subsystem_summary(
+    analysis: dict[str, Any], active: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     component_groups: dict[str, set[str]] = defaultdict(set)
     mapped_requirements: dict[str, set[str]] = defaultdict(set)
     item_counts: Counter[str] = Counter()
     high_counts: Counter[str] = Counter()
 
     component_lookup = {
-        component.get("id", ""): component for component in analysis.get("components", [])
+        component.get("id", ""): component
+        for component in analysis.get("components", [])
     }
     for component in component_lookup.values():
         for group in _component_groups(component):
             component_groups[group].add(str(component.get("id", "")))
-            mapped_requirements[group].update(_text_list(component.get("requirement_ids", [])))
+            mapped_requirements[group].update(
+                _text_list(component.get("requirement_ids", []))
+            )
     for item in active:
-        component = component_lookup.get(item.get("component_id", ""), item.get("component", {}))
+        component = component_lookup.get(
+            item.get("component_id", ""), item.get("component", {})
+        )
         for group in _component_groups(component, item.get("source", {})):
             item_counts[group] += 1
             if item.get("scanner", {}).get("screening_priority") == "high":
@@ -240,7 +246,9 @@ def _subsystem_summary(analysis: dict[str, Any], active: list[dict[str, Any]]) -
     ]
 
 
-def _catalog_summary(analysis: dict[str, Any], active: list[dict[str, Any]]) -> dict[str, Any]:
+def _catalog_summary(
+    analysis: dict[str, Any], active: list[dict[str, Any]]
+) -> dict[str, Any]:
     context = analysis.get("context", {})
     items_by_requirement: Counter[str] = Counter()
     items_by_hazard: Counter[str] = Counter()
@@ -279,7 +287,9 @@ def _catalog_summary(analysis: dict[str, Any], active: list[dict[str, Any]]) -> 
     return {"requirements": requirements, "hazards": hazards}
 
 
-def _sequence_summaries(analysis: dict[str, Any], limit: int = 6) -> list[dict[str, Any]]:
+def _sequence_summaries(
+    analysis: dict[str, Any], limit: int = 6
+) -> list[dict[str, Any]]:
     candidates = [
         component
         for component in analysis.get("components", [])
@@ -414,7 +424,9 @@ def build_html_report_data(
         analysis.get("items", []),
         key=lambda item: (
             item.get("source_status", "active") != "active",
-            priority_order.get(item.get("scanner", {}).get("screening_priority", ""), 3),
+            priority_order.get(
+                item.get("scanner", {}).get("screening_priority", ""), 3
+            ),
             item.get("review", {}).get("disposition", "unreviewed") != "unreviewed",
             str(item.get("source", {}).get("path", "")),
             int(item.get("source", {}).get("line", 0) or 0),
@@ -440,14 +452,12 @@ def build_html_report_data(
     included_id_set = set(included_finding_ids)
     selected = [
         *(active_by_id[value] for value in included_finding_ids),
-        *(
-            item
-            for item in ordered
-            if str(item.get("id", "")) not in included_id_set
-        ),
+        *(item for item in ordered if str(item.get("id", "")) not in included_id_set),
     ][:max_records]
     graph = architecture_graph(analysis)
-    edge_counts = Counter(str(edge.get("kind", "unknown")) for edge in graph.get("edges", []))
+    edge_counts = Counter(
+        str(edge.get("kind", "unknown")) for edge in graph.get("edges", [])
+    )
     context = analysis.get("context", {})
     methodology = analysis.get("methodology", {})
     coverage = coverage_metrics(analysis)
@@ -509,6 +519,12 @@ def build_html_report_data(
     diagram_ids = [diagram.get("id", "") for diagram in diagrams]
     if len(diagram_ids) != len(set(diagram_ids)):
         raise ValueError("generated and imported diagram IDs must be unique")
+    runtime_imports = analysis.get("runtime_evidence", {}).get("imports", [])
+    instrumentation_statuses = Counter(
+        str(value.get("instrumentation", {}).get("status", "undeclared"))
+        for value in runtime_imports
+        if isinstance(value, dict)
+    )
     return {
         "report": {
             "generated_at": utc_now(),
@@ -533,13 +549,19 @@ def build_html_report_data(
             "baseline": analysis.get("project", {}).get("baseline", {}),
             "purpose": context.get("project", {}).get("purpose", ""),
             "boundary": context.get("project", {}).get("boundary", ""),
-            "operating_context": context.get("project", {}).get("operating_context", ""),
+            "operating_context": context.get("project", {}).get(
+                "operating_context", ""
+            ),
             "phase": context.get("analysis", {}).get("phase", ""),
             "revision": context.get("analysis", {}).get("revision", ""),
-            "ground_rules": _text_list(context.get("analysis", {}).get("ground_rules", [])),
+            "ground_rules": _text_list(
+                context.get("analysis", {}).get("ground_rules", [])
+            ),
             "assumptions": [
                 *_text_list(context.get("project", {}).get("assumptions", [])),
-                *_text_list(context.get("analysis", {}).get("fault_tolerance_assumptions", [])),
+                *_text_list(
+                    context.get("analysis", {}).get("fault_tolerance_assumptions", [])
+                ),
             ],
         },
         "summary": analysis.get("summary", {}),
@@ -553,10 +575,30 @@ def build_html_report_data(
             "project_findings": project_findings,
         },
         "distributions": {
-            "failure_classes": dict(Counter(str(item.get("scanner", {}).get("failure_class", "unclassified")) for item in active)),
-            "priorities": dict(Counter(str(item.get("scanner", {}).get("screening_priority", "unrated")) for item in active)),
-            "dispositions": dict(Counter(str(item.get("review", {}).get("disposition", "unreviewed")) for item in active)),
-            "statuses": dict(Counter(str(item.get("review", {}).get("status", "draft")) for item in active)),
+            "failure_classes": dict(
+                Counter(
+                    str(item.get("scanner", {}).get("failure_class", "unclassified"))
+                    for item in active
+                )
+            ),
+            "priorities": dict(
+                Counter(
+                    str(item.get("scanner", {}).get("screening_priority", "unrated"))
+                    for item in active
+                )
+            ),
+            "dispositions": dict(
+                Counter(
+                    str(item.get("review", {}).get("disposition", "unreviewed"))
+                    for item in active
+                )
+            ),
+            "statuses": dict(
+                Counter(
+                    str(item.get("review", {}).get("status", "draft"))
+                    for item in active
+                )
+            ),
         },
         "records": [
             _report_record(
@@ -588,6 +630,7 @@ def build_html_report_data(
         },
         "sfta": sfta,
         "run_manifest": analysis.get("run_manifest", {}),
+        "run_manifest_integrity": verify_run_manifest_integrity(analysis),
         "system_context": analysis.get("system_context", {}),
         "repository_inventory": _report_repository_inventory(analysis),
         "subsystems": _subsystem_summary(analysis, active),
@@ -607,7 +650,8 @@ def build_html_report_data(
             "nodes": len(graph.get("nodes", [])),
             "edges": len(graph.get("edges", [])),
             "edge_counts": dict(edge_counts),
-            "runtime_imports": len(analysis.get("runtime_evidence", {}).get("imports", [])),
+            "runtime_imports": len(runtime_imports),
+            "runtime_instrumentation_statuses": dict(instrumentation_statuses),
         },
         "sequences": _sequence_summaries(analysis),
         "diagrams": diagrams,
@@ -622,6 +666,7 @@ def build_html_report_data(
             "sources": guidance_trace["sources"],
             "citations": guidance_trace["citations"],
             "rule_mappings": guidance_trace["rule_mappings"],
+            "mapping_governance": guidance_trace.get("mapping_governance", {}),
             "coverage": guidance_trace["coverage"],
             "notice": guidance_trace["notice"],
         },
@@ -665,7 +710,9 @@ def _read_bounded_report_notes(source: str | Path) -> str:
             raise ValueError(f"report notes file exceeds {MAX_NOTES_BYTES} bytes")
         return raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     except UnicodeDecodeError as exc:
-        raise ValueError(f"report notes file is not valid UTF-8: {path}: {exc}") from exc
+        raise ValueError(
+            f"report notes file is not valid UTF-8: {path}: {exc}"
+        ) from exc
 
 
 def export_html_report(
@@ -710,10 +757,15 @@ def export_html_report(
     report_data_sha256 = hashlib.sha256(safe_data.encode("utf-8")).hexdigest()
     report_title = title or f"Software FMEA - {data['project']['name']}"
     document = (
-        _REPORT_TEMPLATE.replace("__REPORT_TITLE__", html.escape(report_title, quote=True))
+        _REPORT_TEMPLATE.replace(
+            "__REPORT_TITLE__", html.escape(report_title, quote=True)
+        )
         .replace("__REPORT_FORMAT__", binding["format"])
         .replace("__REPORT_BASELINE__", html.escape(binding["baseline_id"], quote=True))
-        .replace("__REPORT_SCHEMA__", html.escape(binding["analysis_schema_version"], quote=True))
+        .replace(
+            "__REPORT_SCHEMA__",
+            html.escape(binding["analysis_schema_version"], quote=True),
+        )
         .replace("__REPORT_ANALYSIS_SHA256__", binding["analysis_state_sha256"])
         .replace("__REPORT_DATA_SHA256__", report_data_sha256)
         .replace("__REPORT_DATA__", safe_data)
@@ -731,9 +783,7 @@ def export_html_report(
 
 
 def _html_report_meta(document: str, name: str) -> str:
-    match = re.search(
-        rf'<meta name="{re.escape(name)}" content="([^"]*)">', document
-    )
+    match = re.search(rf'<meta name="{re.escape(name)}" content="([^"]*)">', document)
     return match.group(1) if match else ""
 
 
@@ -782,12 +832,8 @@ def verify_html_report_file(
         "analysis_state_sha256": _html_report_meta(
             document, "pysfmea-analysis-state-sha256"
         ),
-        "report_data_sha256": _html_report_meta(
-            document, "pysfmea-report-data-sha256"
-        ),
-        "document_sha256": _html_report_meta(
-            document, "pysfmea-document-sha256"
-        ),
+        "report_data_sha256": _html_report_meta(document, "pysfmea-report-data-sha256"),
+        "document_sha256": _html_report_meta(document, "pysfmea-document-sha256"),
     }
     payload_match = re.search(
         r'<script id="report-data" type="application/json">(.*?)</script>',
@@ -889,8 +935,7 @@ def verify_html_report_file(
         }
         checks["baseline"] = current["baseline_id"] == declared["baseline_id"]
         checks["schema"] = (
-            current["analysis_schema_version"]
-            == declared["analysis_schema_version"]
+            current["analysis_schema_version"] == declared["analysis_schema_version"]
         )
         checks["analysis_state"] = (
             current["analysis_state_sha256"]
@@ -959,7 +1004,7 @@ def verify_html_report_file(
     }
 
 
-_REPORT_TEMPLATE = r'''<!doctype html>
+_REPORT_TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1077,10 +1122,10 @@ function renderTable(){const body=$("recordRows");clear(body);const start=(filte
 function detail(root,label,value,wide=false){const box=document.createElement("div");box.className=`detail ${wide?"wide":""}`;box.append(text("h3",label));if(Array.isArray(value))box.append(list(value));else box.append(text("p",value));root.append(box)}
 function openRecord(r,updateHash=true){$("detailEyebrow").textContent=`${r.id} · ${r.priority} priority · ${r.failure_class}`;$("detailTitle").textContent=r.failure_mode;const root=$("detailBody");clear(root);const grid=document.createElement("div");grid.className="detail-grid";detail(grid,"Component",`${r.component}\n${r.signature}\n${r.path}:${r.line}-${r.end_line}`);detail(grid,"Review state",`Disposition: ${r.disposition}\nStatus: ${r.status}\nReviewer: ${r.reviewer||"not assigned"}\nOwner: ${r.owner||"not assigned"}`);detail(grid,"Function",r.function,true);detail(grid,"Operational mode / state",`Mode: ${r.operational_mode||"not recorded"}\nState: ${r.operational_state||"not recorded"}`);detail(grid,"Trigger",r.trigger,true);detail(grid,"Causes",r.causes,true);detail(grid,"Local effect",r.local_effect);detail(grid,"Next-higher effect",r.next_higher_effect);detail(grid,"End effect",r.end_effect,true);detail(grid,"Required safe state",r.required_safe_state);detail(grid,"Permitted degraded behavior",r.degraded_behavior);detail(grid,"Recovery behavior",r.recovery_behavior,true);detail(grid,"Initial risk",`Severity: ${r.severity??"not rated"} ${r.severity_category||""}\nOccurrence: ${r.occurrence??"not rated"}\nDetection: ${r.detection??"not rated"}\nRPN: ${r.rpn??"not calculated"}`);detail(grid,"Rating rationale",`Severity: ${r.severity_rationale||"not recorded"}\nOccurrence: ${r.occurrence_rationale||"not recorded"}\nDetection: ${r.detection_rationale||"not recorded"}`);detail(grid,"Prevention controls",r.prevention_controls);detail(grid,"Detection controls",r.detection_controls);detail(grid,"Recommended actions",r.recommended_actions,true);detail(grid,"Actions taken",r.actions_taken);detail(grid,"Verification evidence",r.verification_evidence);detail(grid,"Residual risk",r.residual_risk,true);detail(grid,"Assurance obligations",(r.assurance_obligations||[]).map(v=>`${v.id}: ${v.method} · ${v.status} · evidence ${v.evidence_status}`),true);detail(grid,"Trace links",[`Requirements: ${r.requirements.join(", ")||"none"}`,`Hazards: ${r.linked_hazards.join(", ")||"none"}`,`Interfaces: ${r.interfaces.join(", ")||"none"}`],true);detail(grid,"Scanner rationale",r.screening_reasons,true);detail(grid,"Scanner evidence",r.evidence,true);detail(grid,"Quality-gate rules",r.validation_rules,true);detail(grid,"Review notes",r.notes,true);root.append(grid);if(updateHash)history.replaceState(null,"",`#failure-modes/${encodeURIComponent(r.id)}`);const dialog=$("detailDialog");if(dialog.showModal)dialog.showModal();else dialog.setAttribute("open","")}
 function exportCsv(){const fields=["id","priority","failure_class","disposition","status","component","path","line","failure_mode","operational_mode","operational_state","end_effect","required_safe_state","degraded_behavior","recovery_behavior","severity","occurrence","detection","rpn","residual_risk","linked_hazards","requirements","owner","target_date"];const quote=value=>`"${String(Array.isArray(value)?value.join(" | "):(value??"")).replaceAll('"','""')}"`;const csv=[fields.join(","),...filtered.map(r=>fields.map(f=>quote(r[f])).join(","))].join("\r\n");const blob=new Blob(["\ufeff",csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`${data.project.name.replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-sfmea-filtered.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),0)}
-function renderArchitecture(){const a=data.architecture,m=$("architectureMetrics");m.append(metric(fmt(a.nodes),"graph nodes"),metric(fmt(a.edges),"graph edges"),metric(fmt(a.edge_counts.internal_call),"static calls"),metric(fmt(a.edge_counts.system_interface),"system interfaces"),metric(fmt(a.edge_counts.observed_runtime),"observed edges"),metric(fmt(a.runtime_imports),"runtime imports"));const flows=$("interfaceFlows");if(!data.interfaces.length)flows.append(text("p","No system interfaces were configured.","muted"));data.interfaces.forEach(i=>{const row=document.createElement("div");row.className="flow";row.append(text("div",i.source,"flow-node"),text("div","→","flow-arrow"),text("div",i.target,"flow-node"));const desc=document.createElement("div");desc.append(text("strong",i.id),text("p",i.description));row.append(desc);flows.append(row)});const grid=$("subsystemGrid");data.subsystems.forEach(s=>{const card=document.createElement("article");card.className="subsystem";card.append(text("h3",s.name));const values=document.createElement("div");values.className="compact-metrics";[[s.components,"components"],[s.candidates,"candidates"],[s.high_priority,"high priority"]].forEach(([value,label])=>{const node=document.createElement("div");node.append(text("b",fmt(value)),text("span",label));values.append(node)});card.append(values);if(s.requirements.length)card.append(text("p",`Requirements: ${s.requirements.join(", ")}`,"small"));grid.append(card)})}
+function renderArchitecture(){const a=data.architecture,m=$("architectureMetrics"),instrumentation=a.runtime_instrumentation_statuses||{};m.append(metric(fmt(a.nodes),"graph nodes"),metric(fmt(a.edges),"graph edges"),metric(fmt(a.edge_counts.internal_call),"static calls"),metric(fmt(a.edge_counts.system_interface),"system interfaces"),metric(fmt(a.edge_counts.observed_runtime),"observed edges"),metric(fmt(a.runtime_imports),"runtime imports"),metric(fmt(instrumentation.complete_declared_and_observed),"complete declared trace scopes",instrumentation.complete_declared_and_observed?"good":""),metric(fmt(instrumentation.incomplete),"incomplete declared trace scopes",instrumentation.incomplete?"warning":"good"),metric(fmt(instrumentation.undeclared),"trace scopes undeclared",instrumentation.undeclared?"warning":"good"));const flows=$("interfaceFlows");if(!data.interfaces.length)flows.append(text("p","No system interfaces were configured.","muted"));data.interfaces.forEach(i=>{const row=document.createElement("div");row.className="flow";row.append(text("div",i.source,"flow-node"),text("div","→","flow-arrow"),text("div",i.target,"flow-node"));const desc=document.createElement("div");desc.append(text("strong",i.id),text("p",i.description));row.append(desc);flows.append(row)});const grid=$("subsystemGrid");data.subsystems.forEach(s=>{const card=document.createElement("article");card.className="subsystem";card.append(text("h3",s.name));const values=document.createElement("div");values.className="compact-metrics";[[s.components,"components"],[s.candidates,"candidates"],[s.high_priority,"high priority"]].forEach(([value,label])=>{const node=document.createElement("div");node.append(text("b",fmt(value)),text("span",label));values.append(node)});card.append(values);if(s.requirements.length)card.append(text("p",`Requirements: ${s.requirements.join(", ")}`,"small"));grid.append(card)})}
 function renderTraceability(){const rows=$("traceRows");if(!data.catalog.requirements.length)rows.append(text("p","No requirements were configured.","muted"));data.catalog.requirements.forEach(r=>{const row=document.createElement("div");row.className="trace-row";const requirement=document.createElement("div");requirement.append(text("strong",r.id),text("div",r.text),text("div",`${r.components} components · ${r.candidates} candidates`,"small"));row.append(requirement,text("div","mitigates →","trace-arrow"));const hazards=document.createElement("div");hazards.className="hazard-chips";(r.hazards.length?r.hazards:["No hazard link"]).forEach(h=>hazards.append(tag(h,r.hazards.length?"warning":"")));row.append(hazards);rows.append(row)});const grid=$("hazardGrid");data.catalog.hazards.forEach(h=>{const card=document.createElement("article");card.className="catalog-card";card.append(text("h3",h.id),text("p",h.description),text("p",h.end_effect,"small"),tag(`${h.candidates} linked candidates`,"info"));grid.append(card)})}
 function participantLabel(sequence,id){return sequence.participants.find(p=>p.id===id)?.label||id}
-function renderSequence(){const sequence=data.sequences[$("sequenceSelect").selectedIndex];const root=$("sequenceDiagram");clear(root);if(!sequence){$("sequenceMeta").textContent="No bounded sequence could be derived.";return}$("sequenceMeta").textContent=`${sequence.path}:${sequence.title} · ${sequence.participants.length} participants · ${sequence.interactions.length} interactions${sequence.truncated?` · truncated by ${sequence.truncation_reasons.join(", ")}`:""}`;sequence.interactions.forEach((i,index)=>{const row=document.createElement("div");row.className="interaction";row.append(text("span",index+1,"step"),text("span",participantLabel(sequence,i.source),"actor"),text("span",i.cycle?"↺":"→","arrow"),text("span",participantLabel(sequence,i.target),"actor"),tag(i.evidence,i.evidence==="observed_runtime"?"accepted":"info"));root.append(row)})}
+function renderSequence(){const sequence=data.sequences[$("sequenceSelect").selectedIndex],root=$("sequenceDiagram");clear(root);if(!sequence){$("sequenceMeta").textContent="No bounded sequence could be derived.";return}const r=sequence.reconciliation||{};$("sequenceMeta").textContent=`${sequence.path}:${sequence.title} · ${sequence.participants.length} participants · ${sequence.interactions.length} interactions · ${fmt(r.corroborated_relations)} corroborated · ${fmt(r.runtime_only_relations)} runtime-only · ${pct(r.static_observation_coverage_percent)} static observation coverage${sequence.truncated?` · truncated by ${sequence.truncation_reasons.join(", ")}`:""}`;sequence.interactions.forEach((i,index)=>{const row=document.createElement("div");row.className="interaction";const evidence=i.observation_status==="runtime_corroborated"?"static + observed":i.static_alignment==="runtime_only"?"runtime only":i.evidence;row.append(text("span",index+1,"step"),text("span",participantLabel(sequence,i.source),"actor"),text("span",i.cycle?"↺":"→","arrow"),text("span",participantLabel(sequence,i.target),"actor"),tag(evidence,i.evidence==="observed_runtime"||i.observation_status==="runtime_corroborated"?"accepted":"info"));root.append(row)})}
 function renderSequences(){const select=$("sequenceSelect");data.sequences.forEach((s,index)=>select.append(new Option(`${s.path}:${s.title}`,index)));select.addEventListener("change",renderSequence);renderSequence()}
 const svgNS="http://www.w3.org/2000/svg";let diagramScale=1,diagramBaseSize={width:900,height:570},activeDiagram=null,selectedDiagramNode="";
 function svgElement(name,attributes={}){const node=document.createElementNS(svgNS,name);Object.entries(attributes).forEach(([key,value])=>node.setAttribute(key,String(value)));return node}
@@ -1109,9 +1154,11 @@ function renderGenericDiagram(){activeDiagram=data.diagrams[$("diagramSelect").s
 function downloadDiagramSvg(){const svg=$("diagramStage").querySelector("svg");if(!svg||!activeDiagram)return;const clone=svg.cloneNode(true);clone.setAttribute("xmlns",svgNS);clone.removeAttribute("style");clone.querySelectorAll(".dim,.selected").forEach(node=>{node.classList.remove("dim");node.classList.remove("selected")});const style=svgElement("style");style.textContent=`:root{--ink:#172033;--muted:#647089;--card:#fff;--line:#dce2ec;--brand:#2457d6;--cyan:#0d8d96;--amber:#a65f00;--red:#b52d3b;--green:#14734a}.diagram-node rect{fill:#eef3ff;stroke:#7996dc;stroke-width:1.5}.diagram-node[data-kind="hazard"] rect,.diagram-node[data-kind="failure_mode"] rect,.diagram-node[data-kind="end_effect"] rect{fill:#fbecee;stroke:#cf7c86}.diagram-node[data-kind="requirement"] rect,.diagram-node[data-kind="prevention_control"] rect,.diagram-node[data-kind="detection_control"] rect,.diagram-node[data-kind="verification_evidence"] rect{fill:#eaf6f0;stroke:#68a88b}.diagram-node[data-kind="boundary"] rect,.diagram-node[data-kind="participant"] rect{fill:#e8f6f7;stroke:#69b5b9}.diagram-node[data-kind="recommended_action"] rect,.diagram-node[data-kind="next_higher_effect"] rect,.diagram-node[data-kind="timing_boundary"] rect{fill:#fff4e4;stroke:#ca9954}.diagram-node[data-kind="breaker_state"] rect,.diagram-node[data-kind="unconfirmed_state"] rect{fill:#f2edfb;stroke:#9475c8}.diagram-node[data-kind="containment_boundary"] rect,.diagram-node[data-kind="verification_evidence"] rect{fill:#eaf6f0;stroke:#68a88b}.diagram-node[data-kind="cascade_component"] rect,.diagram-node[data-kind="cascade_origin"] rect{fill:#e8f6f7;stroke:#69b5b9}.diagram-node[data-kind="review_gap"] rect{fill:#fbecee;stroke:#cf7c86}.diagram-node[data-kind="unconfirmed_state"] rect,.diagram-node[data-kind="review_gap"] rect{stroke-dasharray:7 4}.diagram-node text{fill:var(--ink);font:650 12px system-ui,sans-serif}.diagram-edge{color:var(--muted)}.diagram-edge path{fill:none;stroke:currentColor;stroke-width:1.5}.diagram-edge.runtime{color:var(--green)}.diagram-edge text{fill:var(--muted);font:11px system-ui,sans-serif;paint-order:stroke;stroke:var(--card);stroke-width:5px}.diagram-lifeline{stroke:var(--line);stroke-width:1;stroke-dasharray:5 5}`;clone.insertBefore(style,clone.firstChild);const source=`<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`,blob=new Blob([source],{type:"image/svg+xml;charset=utf-8"}),url=URL.createObjectURL(blob),anchor=document.createElement("a");anchor.href=url;anchor.download=`${activeDiagram.id}.svg`;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),0)}
 function initDiagrams(){const select=$("diagramSelect"),copy=$("diagramCopyRecipe");(data.diagrams||[]).forEach((diagram,index)=>select.append(new Option(`${diagram.title} · ${diagram.type.replaceAll("_"," ")}`,index)));select.addEventListener("change",()=>{renderGenericDiagram();if(activeDiagram)history.replaceState(null,"",`#diagrams/${encodeURIComponent(activeDiagram.id)}`)});$("diagramKindFilter").addEventListener("change",updateDiagramHighlights);$("diagramSearch").addEventListener("input",updateDiagramHighlights);$("diagramZoomIn").addEventListener("click",()=>{diagramScale=Math.min(2,diagramScale+.15);applyDiagramScale()});$("diagramZoomOut").addEventListener("click",()=>{diagramScale=Math.max(.35,diagramScale-.15);applyDiagramScale()});$("diagramZoomFit").addEventListener("click",()=>{diagramScale=Math.max(.35,Math.min(1,($("diagramStage").clientWidth-20)/diagramBaseSize.width));applyDiagramScale();$("diagramStage").scrollTo({left:0,top:0})});copy.addEventListener("click",()=>copyText(copy,$("diagramRecipeText").textContent,"Projection command copied","Copy projection command"));$("diagramDownload").addEventListener("click",downloadDiagramSvg);renderGenericDiagram()}
 function externalLink(label,url){const anchor=document.createElement("a");anchor.textContent=label;anchor.href=url;anchor.target="_blank";anchor.rel="noopener noreferrer";return anchor}
-function renderGuidance(){const g=data.guidance,c=g.coverage||{},metrics=$("guidanceMetrics"),active=new Set(g.active_profiles||[]);$("guidanceNotice").textContent=g.notice;metrics.append(metric(pct(c.finding_coverage_percent),"cited findings",c.finding_coverage_percent===100?"good":""),metric(fmt(c.used_sources),"used sources"),metric(fmt(c.used_citations),"used locators"),metric(fmt(g.rule_mappings.length),"curated mappings"),metric(g.catalog_version,"catalog version"),metric(g.retrieved_at,"retrieved"));const profiles=$("guidanceProfiles");(g.profiles||[]).filter(profile=>active.has(profile.id)).forEach(profile=>{const card=document.createElement("article");card.className="catalog-card citation-card";card.append(text("h3",profile.title),text("p",profile.applicability));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(profile.id,"accepted"),tag(profile.status,"info"),tag(profile.compliance_claim?"compliance claim":"no compliance claim",profile.compliance_claim?"warning":"info"));card.append(meta,text("p",profile.tailoring),text("p",profile.verification_semantics,"small"));profiles.append(card)});const uses=c.uses_by_citation||{},selectedSourceIds=new Set((g.profiles||[]).filter(profile=>active.has(profile.id)).flatMap(profile=>profile.source_ids||[])),sources=$("guidanceSources");g.sources.filter(source=>selectedSourceIds.has(source.id)).forEach(source=>{const card=document.createElement("article");card.className="catalog-card citation-card";card.append(externalLink(source.title,source.url),text("p",`${source.publisher} · version ${source.version||"not recorded"}`));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(source.status,source.status.includes("legacy")?"warning":"accepted"),tag(source.applicability,"info"),tag(source.access,"info"));card.append(meta,text("p",source.use),text("p",`Record SHA-256 ${source.record_sha256||"not recorded"}${source.artifact?.sha256?` · artifact ${source.artifact.sha256}`:""}`,"small"));sources.append(card)});const root=$("guidanceCitations"),citationSource=Object.fromEntries(g.sources.map(s=>[s.id,s]));g.citations.filter(citation=>uses[citation.id]).sort((a,b)=>(uses[b.id]||0)-(uses[a.id]||0)||a.id.localeCompare(b.id)).forEach(citation=>{const source=citationSource[citation.source_id]||{},locator=citation.locator||{},entry=document.createElement("div");entry.className="citation-entry";entry.append(externalLink(`${citation.id} — ${locator.heading||locator.section}`,citation.url||source.url||"#"),text("p",citation.summary),text("p",`${source.title||citation.source_id} · section ${locator.section||"not recorded"}${locator.page?` · page ${locator.page}`:""}`,"small"));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(`${uses[citation.id]} finding uses`,"info"),tag(citation.applicability,"info"));const show=document.createElement("button");show.className="btn";show.textContent="Show findings";show.addEventListener("click",()=>{filterState.search=citation.id;filterState.page=1;$("search").value=citation.id;applyFilters();setView("failure-modes")});meta.append(show);entry.append(meta);root.append(entry)});if(!root.children.length)root.append(text("p","No active finding uses a curated citation.","muted"))}
+function renderGuidanceGovernance(){const g=data.guidance||{},governance=g.mapping_governance||{},metrics=$("guidanceMetrics");if(!metrics)return;metrics.append(metric(fmt(governance.active_mappings),"active governed mappings"),metric(fmt(governance.independently_approved_mappings),"independently approved"),metric(fmt(governance.effective_independently_approved_mappings),"effective approvals",governance.effective_independently_approved_mappings?"good":"warning"),metric(fmt(governance.expired_mapping_reviews),"expired mapping reviews",governance.expired_mapping_reviews?"warning":"good"),metric(fmt(governance.rejected_mappings),"independently rejected",governance.rejected_mappings?"warning":"good"),metric(fmt(governance.mapping_integrity_failures),"mapping integrity failures",governance.mapping_integrity_failures?"danger":"good"),metric(fmt(governance.review_integrity_failures),"review integrity failures",governance.review_integrity_failures?"danger":"good"),metric(fmt(governance.unverifiable_legacy_mappings),"legacy mappings without digests",governance.unverifiable_legacy_mappings?"warning":"good"));if(governance.notice)$("guidanceNotice").textContent=`${$("guidanceNotice").textContent} ${governance.notice} Review expiry audited as of ${governance.review_audit_as_of||"the analysis date"}.`}
+queueMicrotask(renderGuidanceGovernance)
+function renderGuidance(){const g=data.guidance,c=g.coverage||{},metrics=$("guidanceMetrics"),active=new Set(g.active_profiles||[]);$("guidanceNotice").textContent=g.notice;metrics.append(metric(pct(c.finding_coverage_percent),"any mapped citation",c.finding_coverage_percent===100?"good":""),metric(pct(c.direct_finding_coverage_percent),"direct mapping coverage",c.direct_finding_coverage_percent===100?"good":"warning"),metric(fmt(c.supporting_only_findings),"supporting-only findings"),metric(fmt(c.contextual_only_findings),"contextual-only findings"),metric(fmt(c.used_sources),"used sources"),metric(fmt(c.used_citations),"used locators"),metric(fmt(g.rule_mappings.length),"curated mappings"),metric(g.catalog_version,"catalog version"),metric(g.retrieved_at,"retrieved"));const profiles=$("guidanceProfiles");(g.profiles||[]).filter(profile=>active.has(profile.id)).forEach(profile=>{const card=document.createElement("article");card.className="catalog-card citation-card";card.append(text("h3",profile.title),text("p",profile.applicability));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(profile.id,"accepted"),tag(profile.status,"info"),tag(profile.compliance_claim?"compliance claim":"no compliance claim",profile.compliance_claim?"warning":"info"));card.append(meta,text("p",profile.tailoring),text("p",profile.verification_semantics,"small"));profiles.append(card)});const uses=c.uses_by_citation||{},selectedSourceIds=new Set((g.profiles||[]).filter(profile=>active.has(profile.id)).flatMap(profile=>profile.source_ids||[])),sources=$("guidanceSources");g.sources.filter(source=>selectedSourceIds.has(source.id)).forEach(source=>{const card=document.createElement("article");card.className="catalog-card citation-card";card.append(externalLink(source.title,source.url),text("p",`${source.publisher} · version ${source.version||"not recorded"}`));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(source.status,source.status.includes("legacy")?"warning":"accepted"),tag(source.applicability,"info"),tag(source.access,"info"));card.append(meta,text("p",source.use),text("p",`Record SHA-256 ${source.record_sha256||"not recorded"}${source.artifact?.sha256?` · artifact ${source.artifact.sha256}`:""}`,"small"));sources.append(card)});const root=$("guidanceCitations"),citationSource=Object.fromEntries(g.sources.map(s=>[s.id,s]));g.citations.filter(citation=>uses[citation.id]).sort((a,b)=>(uses[b.id]||0)-(uses[a.id]||0)||a.id.localeCompare(b.id)).forEach(citation=>{const source=citationSource[citation.source_id]||{},locator=citation.locator||{},entry=document.createElement("div");entry.className="citation-entry";entry.append(externalLink(`${citation.id} — ${locator.heading||locator.section}`,citation.url||source.url||"#"),text("p",citation.summary),text("p",`${source.title||citation.source_id} · section ${locator.section||"not recorded"}${locator.page?` · page ${locator.page}`:""}`,"small"));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(`${uses[citation.id]} finding uses`,"info"),tag(citation.applicability,"info"));const show=document.createElement("button");show.className="btn";show.textContent="Show findings";show.addEventListener("click",()=>{filterState.search=citation.id;filterState.page=1;$("search").value=citation.id;applyFilters();setView("failure-modes")});meta.append(show);entry.append(meta);root.append(entry)});if(!root.children.length)root.append(text("p","No active finding uses a curated citation.","muted"))}
 function renderAssurance(){const a=data.assurance||{},s=a.summary||{},projection=a.report_projection||{},obligationProjection=projection.obligations||{},executionProjection=projection.executions||{},root=$("assuranceRows"),metrics=$("assuranceMetrics"),values=(a.obligations||[]).filter(v=>v.source_status==="active"),executions=a.executions||[];$("assuranceNotice").textContent=a.notice||"Generated obligations are planning drafts, not evidence.";metrics.append(metric(fmt(s.active_obligations),"active obligations"),metric(fmt(s.implemented_tests),"implemented tests",s.implemented_tests?"good":""),metric(fmt(s.executions),"recorded executions"),metric(fmt(s.reviewed_executions),"reviewed executions",s.reviewed_executions?"good":""),metric(fmt((s.by_evidence_status||{}).sufficient),"sufficient evidence"),metric(fmt(s.planning_gaps),"planning gaps",s.planning_gaps?"danger":"good"));$("assuranceCount").textContent=`Showing ${fmt(values.length)} of ${fmt(obligationProjection.total??values.length)} obligations in this bounded view${executionProjection.truncated?` and ${fmt(executions.length)} of ${fmt(executionProjection.total)} executions`:""}; use ${projection.complete_source||"the JSON/CSV register"} for the complete machine-readable checklist.`;values.forEach(v=>{const entry=document.createElement("article");entry.className="citation-entry";entry.append(text("h3",`${v.id} · ${v.component}`),text("p",v.title),text("p",v.stimulus?.description||"Stimulus requires planning.","small"));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(v.verification_method,"info"),tag(v.assurance_status),tag(`evidence: ${v.evidence_status}`,v.evidence_status==="sufficient"?"accepted":"warning"),tag(v.automation?.implementation_status||"not implemented"));const cascadePaths=v.cascade_context?.static_upstream_paths||[],pathAnalysis=v.cascade_context?.static_path_analysis||{},pathLimitations=pathAnalysis.limitations||[];if(cascadePaths.length)meta.append(tag(`${cascadePaths.length} cascade paths`,"info"));if(pathAnalysis.complete_within_static_call_model===false)meta.append(tag("bounded caller inventory","warning"));entry.append(meta,text("p",`Proposed: ${v.automation?.proposed_test_path||"not assigned"} · ${v.automation?.command_argv?.join(" ")||"no command"}`,"small"));if((v.control_review_questions||[]).length)entry.append(text("h4","Control model review questions"),list(v.control_review_questions));if(cascadePaths.length||pathLimitations.length){entry.append(text("h4","Cascade observation context"));if(cascadePaths.length)entry.append(list(cascadePaths.map(path=>path.join(" → "))));if(pathLimitations.length)entry.append(text("p","Discovery limits:","small"),list(pathLimitations));entry.append(text("p",v.cascade_context?.notice||"Static exposure evidence only.","small"))}entry.append(text("h4","Acceptance criteria"),list(v.acceptance_criteria));const show=document.createElement("button");show.className="btn";show.textContent="Show finding";show.addEventListener("click",()=>{filterState.search=v.finding_id;filterState.page=1;$("search").value=v.finding_id;applyFilters();setView("failure-modes")});entry.append(show);root.append(entry)});if(!values.length)root.append(text("p","No active verification obligations were generated.","muted"));const executionRoot=$("assuranceExecutions");executions.slice().reverse().forEach(v=>{const entry=document.createElement("article");entry.className="citation-entry";const latest=(v.reviews||[]).at(-1),mode=v.execution_mode||"sandbox",source=mode==="external_import"?`external import · ${v.import_trust||"trust not recorded"}`:`sandbox · ${v.sandbox?.image||"image not recorded"} (${v.sandbox?.image_id||"digest unavailable"})`;entry.append(text("h3",`${v.id} · ${v.status}`),text("p",`${v.test?.path||"test not recorded"} · exit ${v.exit_code??"not available"} · ${v.duration_seconds??"n/a"} seconds`),text("p",`Baseline ${v.baseline_id||"not recorded"} · ${source}`,"small"));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(v.status,v.status==="passed"?"accepted":"warning"),tag(mode,"info"),tag(`${(v.artifacts||[]).length} artifacts`,`info`),tag(latest?latest.decision:"unreviewed",latest?.decision==="sufficient"?"accepted":"warning"),tag(v.repository?.allow_dirty?"dirty baseline allowed":"baseline bound",v.repository?.allow_dirty?"warning":"accepted"));entry.append(meta);if(latest)entry.append(text("p",`${latest.reviewer}: ${latest.rationale}`,"small"));executionRoot.append(entry)});if(!executions.length)executionRoot.append(text("p","No execution evidence has been collected.","muted"))}
-function renderRunManifest(){const m=data.run_manifest||{},registry=m.adapters||{},summary=registry.summary||{},metrics=$("runManifestMetrics");$("runManifestNotice").textContent=m.notice||"Run provenance is unavailable.";metrics.append(metric(m.id||"missing","run ID",m.id?"good":"danger"),metric(m.repository?.baseline_id||"missing","baseline",m.repository?.baseline_id?"good":"danger"),metric(fmt(summary.total),"registered adapters"),metric(fmt(summary.available),"available",summary.available?"good":""),metric(fmt(summary.not_configured),"not configured",summary.not_configured?"warning":"good"),metric(fmt(summary.not_invoked),"not invoked",summary.not_invoked?"warning":"good"));const inputRoot=$("resolvedInputs"),inputList=document.createElement("dl");Object.entries(m.resolved_inputs||{}).forEach(([key,value])=>inputList.append(text("dt",key.replaceAll("_"," ")),text("dd",value,"mono")));inputRoot.append(inputList);const environment=$("runEnvironment"),envList=document.createElement("dl"),rows=[["Revision",m.repository?.revision||"not recorded"],["Dirty state",String(m.repository?.dirty??"unknown")],["Python",m.environment?.python||"not recorded"],["Platform",m.environment?.platform||"not recorded"],["Tool",`${m.tool?.name||"PySFMEA"} ${m.tool?.version||"unknown"}`],["Manifest digest",m.manifest_sha256||"missing"]];rows.forEach(([label,value])=>envList.append(text("dt",label),text("dd",value,"mono")));environment.append(envList);const root=$("adapterRegistry");(registry.adapters||[]).forEach(adapter=>{const entry=document.createElement("article");entry.className="citation-entry";entry.append(text("h3",adapter.id),text("p",(adapter.capabilities||[]).join(" · ")||"No capabilities declared."),text("p",`${adapter.input_schema} → ${adapter.output_schema}`,"small"));const meta=document.createElement("div");meta.className="citation-meta";const health=adapter.health?.status||"unknown",run=adapter.last_run||{};meta.append(tag(health,health==="available"?"accepted":"warning"),tag(adapter.category,"info"),tag(adapter.trust_level,"info"),tag(adapter.deterministic?"deterministic":"non-deterministic",adapter.deterministic?"accepted":"warning"),tag(adapter.isolation,"info"));if(run.status)meta.append(tag(`${run.contribution_count||0} contributions`,run.contribution_count?"accepted":"info"));entry.append(meta,text("p",adapter.health?.reason||"Health reason not recorded.","small"));if(run.output_sha256)entry.append(text("p",`Output SHA-256 ${run.output_sha256}`,"small mono"));root.append(entry)})}
+function renderRunManifest(){const m=data.run_manifest||{},integrity=data.run_manifest_integrity||{},registry=m.adapters||{},summary=registry.summary||{},metrics=$("runManifestMetrics");$("runManifestNotice").textContent=`${m.notice||"Run provenance is unavailable."} Integrity: ${integrity.valid?"verified":"INVALID"}.`;metrics.append(metric(integrity.valid?"verified":"invalid","manifest integrity",integrity.valid?"good":"danger"),metric(m.id||"missing","run ID",m.id?"good":"danger"),metric(m.repository?.baseline_id||"missing","baseline",m.repository?.baseline_id?"good":"danger"),metric(fmt(summary.total),"registered adapters"),metric(fmt(summary.available),"available",summary.available?"good":""),metric(fmt(summary.not_configured),"not configured",summary.not_configured?"warning":"good"),metric(fmt(summary.not_invoked),"not invoked",summary.not_invoked?"warning":"good"));const inputRoot=$("resolvedInputs"),inputList=document.createElement("dl");Object.entries(m.resolved_inputs||{}).forEach(([key,value])=>inputList.append(text("dt",key.replaceAll("_"," ")),text("dd",value,"mono")));inputRoot.append(inputList);const environment=$("runEnvironment"),envList=document.createElement("dl"),rows=[["Revision",m.repository?.revision||"not recorded"],["Dirty state",String(m.repository?.dirty??"unknown")],["Python",m.environment?.python||"not recorded"],["Platform",m.environment?.platform||"not recorded"],["Tool",`${m.tool?.name||"PySFMEA"} ${m.tool?.version||"unknown"}`],["Manifest digest",m.manifest_sha256||"missing"]];rows.forEach(([label,value])=>envList.append(text("dt",label),text("dd",value,"mono")));environment.append(envList);const root=$("adapterRegistry");(registry.adapters||[]).forEach(adapter=>{const entry=document.createElement("article");entry.className="citation-entry";entry.append(text("h3",adapter.id),text("p",(adapter.capabilities||[]).join(" · ")||"No capabilities declared."),text("p",`${adapter.input_schema} → ${adapter.output_schema}`,"small"));const meta=document.createElement("div");meta.className="citation-meta";const health=adapter.health?.status||"unknown",run=adapter.last_run||{};meta.append(tag(health,health==="available"?"accepted":"warning"),tag(adapter.category,"info"),tag(adapter.trust_level,"info"),tag(adapter.deterministic?"deterministic":"non-deterministic",adapter.deterministic?"accepted":"warning"),tag(adapter.isolation,"info"));if(run.status)meta.append(tag(`${run.contribution_count||0} contributions`,run.contribution_count?"accepted":"info"));entry.append(meta,text("p",adapter.health?.reason||"Health reason not recorded.","small"));if(run.output_sha256)entry.append(text("p",`Output SHA-256 ${run.output_sha256}`,"small mono"));root.append(entry)})}
 function renderSfta(){const s=data.sfta||{},r=s.reconciliation||{},m=r.summary||{},metrics=$("sftaMetrics"),treeRoot=$("sftaTrees"),gapRoot=$("sftaGaps");$("sftaNotice").textContent=s.notice||"Fault-tree logic requires explicit engineering input and review.";metrics.append(metric(fmt(m.hazards),"hazards"),metric(fmt(m.explicit_trees),"explicit trees",m.explicit_trees?"good":""),metric(fmt(m.placeholder_trees),"undeveloped trees",m.placeholder_trees?"danger":"good"),metric(fmt(m.findings_correlated_to_events),"correlated findings"),metric(fmt(m.top_down_uncovered_events),"uncovered events",m.top_down_uncovered_events?"danger":"good"),metric(fmt(m.bottom_up_unmapped_findings),"unmapped findings",m.bottom_up_unmapped_findings?"danger":"good"));(s.trees||[]).forEach(tree=>{const entry=document.createElement("article"),events=(tree.nodes||[]).filter(v=>v.kind==="event"),gates=(tree.nodes||[]).filter(v=>v.kind==="gate"),linked=new Set(events.flatMap(v=>v.linked_finding_ids||[]));entry.className="citation-entry";entry.append(text("h3",`${tree.hazard_id} · ${tree.top_event}`),text("p",tree.description||"No description supplied."));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(tree.source==="explicit_configuration"?"explicit logic":"undeveloped placeholder",tree.source==="explicit_configuration"?"accepted":"warning"),tag(`${events.length} events`,`info`),tag(`${gates.length} gates`,`info`),tag(`${linked.size} correlated findings`,`info`));entry.append(meta);const index=(data.diagrams||[]).findIndex(v=>v.metadata?.category==="sfta"&&v.metadata?.tree_id===tree.id);if(index>=0){const show=document.createElement("button");show.className="btn";show.textContent="Open fault-tree diagram";show.addEventListener("click",()=>{$("diagramSelect").selectedIndex=index;renderGenericDiagram();setView("diagrams")});entry.append(show)}treeRoot.append(entry)});if(!treeRoot.children.length)treeRoot.append(text("p","No hazards are configured; no fault trees can be developed.","muted"));const groups=[["Top-down event has no bottom-up finding",r.top_down_uncovered_events||[],"warning"],["Hazard-linked finding has no tree event",r.bottom_up_unmapped_findings||[],"warning"],["Tree correlation conflicts with hazard link",r.hazard_link_mismatches||[],"error"]];groups.forEach(([label,values,kind])=>values.slice(0,250).forEach(value=>{const entry=document.createElement("article");entry.className="citation-entry";entry.append(text("h3",label),text("p",value.description||value.failure_mode||value.finding_id||value.event_id||"Gap requires review."));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(kind,kind),tag(value.hazard_id||"hazard not recorded","info"));if(value.tree_id)meta.append(tag(value.tree_id,"info"));if(value.event_id)meta.append(tag(value.event_id,"info"));if(value.finding_id)meta.append(tag(value.finding_id,"info"));entry.append(meta);gapRoot.append(entry)}));if(!gapRoot.children.length)gapRoot.append(text("p","No bidirectional SFTA reconciliation gaps were identified for the configured model.","muted"))}
 function renderMethodology(){const p=data.project;$("boundaryText").textContent=p.boundary||"Not configured.";$("operatingText").textContent=p.operating_context||"Not configured.";$("groundRules").append(...(p.ground_rules.length?p.ground_rules:["Not configured."]).map(v=>text("li",v)));$("assumptions").append(...(p.assumptions.length?p.assumptions:["Not configured."]).map(v=>text("li",v)));$("limitations").append(...data.methodology.limitations.map(v=>text("li",v)));const root=$("guidanceBasis");if(!data.methodology.basis.length)root.append(text("p","No methodology sources were recorded.","muted"));data.methodology.basis.forEach(source=>{const item=document.createElement("div");item.className="finding";item.append(externalLink(source.title||"Guidance source",source.url),text("p",source.use||source.url||""));root.append(item)})}
 function setView(view){document.querySelectorAll(".view").forEach(node=>node.hidden=node.dataset.view!==view);document.querySelectorAll("#nav button").forEach(button=>button.classList.toggle("active",button.dataset.view===view));const button=document.querySelector(`#nav button[data-view="${view}"]`),icon=button?.querySelector(".icon")?.textContent||"";$("topSubtitle").textContent=button?button.textContent.replace(icon,"").trim():"Report";history.replaceState(null,"",`#${view}`);document.body.classList.remove("menu-open");window.scrollTo({top:0,behavior:"smooth"})}
@@ -1131,4 +1178,4 @@ initHeader();renderOverview();renderCoverage();renderFindings();initTable();rend
 </script>
 </body>
 </html>
-'''
+"""

@@ -3,6 +3,86 @@
 Notable user-visible changes are recorded here. PySFMEA follows semantic versioning for the
 package; public artifact and schema identifiers carry their own explicit compatibility versions.
 
+## 0.59.0 - 2026-08-05
+
+### Executable fault injection and quality ratchets
+
+- Add three governed built-in fault-injection plugins for dependency exceptions/timeouts,
+  malformed or degraded return values, and controlled failure/recovery sequences.
+- Generate content-bound, non-executable starter plans from assurance obligations; require
+  explicit callable/patch/fault/outcome bindings and reject false-pass paths where the injected
+  dependency was never exercised.
+- Add CLI discovery, plan export, and exact obligation-binding verification while retaining the
+  existing approved-sandbox and independent evidence-review boundary.
+- Add validated plan completion and deterministic pytest-bridge commands; ready plans now use a
+  closed contract, mandatory exact provenance binding, content integrity, denied networking,
+  disabled scanner execution, and an approved-sandbox execution marker.
+- Support dotted synchronous and asynchronous subjects, controlled failure/recovery sequences,
+  per-invocation elapsed-time evidence, and optional minimum/maximum timing oracles.
+- Add branch-coverage, strict incremental typing, Hypothesis property tests, focused mutation,
+  critical-module coverage ratchets, Bandit source scanning, dependency-vulnerability gates,
+  CycloneDX dependency SBOM evidence, and automated dependency update checks to CI.
+- Replace untrusted JUnit parsing with `defusedxml` and eliminate temporarily world-writable
+  evidence staging by running the container with the invoking unprivileged host identity where
+  bind-mount ownership is meaningful.
+- Extract stable typed interfaces, deterministic assurance-planning policy, and pure sandbox
+  command policy from the largest orchestration modules.
+- Preserve structured static call sites with lexical control context and await state; label
+  ambiguous internal resolution and unresolved external-interface candidates by confidence in
+  sequence and canonical interface projections.
+- Add conservative annotation-, import-, and constructor-assignment-aware receiver resolution,
+  retain its provenance, preserve nested Python call evaluation order, and exercise a real
+  internal cascade in the golden corpus.
+- Record valid, unavailable, and invalid runtime timing explicitly on imported spans and edges,
+  with a 90% runtime-module coverage ratchet and focused mutation targets.
+- Reconcile bounded static and observed sequence relations in JSON, Mermaid, canonical diagrams,
+  and HTML while explicitly distinguishing corroboration from reachability or causal proof.
+- Separate direct guidance coverage from supporting/contextual citation coverage in traceability
+  JSON and HTML, including each finding's strongest relationship and rules lacking direct support.
+- Add the current FAA AC 450.141-1A Appendix B.1.2/Table B-1 taxonomy locator and direct
+  commercial-space mappings for functional, calculation, data, interface, logic, and timing
+  SFMEA screening; retain AC 20-115D lifecycle mappings as contextual.
+- Add per-mapping governance records and digests, locator-summary digests, integrity metrics, and
+  an explicit distinction between maintainer curation and independent regulatory approval.
+- Expand the checked-in golden repository to 75 source-aware cases across framework-style routes,
+  tasks, async behavior, data models, control flow, typed receivers, nested-call order, and an
+  internal cascade while retaining the independent-validation
+  limitation.
+- Add eight exhaustive call-resolution labels with overall and per-provenance precision/recall;
+  exact line/order, await-state, and control-context identity prevents repeated call sites from
+  collapsing, and missing or unexpected labeled calls now fail `sfmea evaluate`.
+- Add closed runtime instrumentation manifests and expected-versus-observed coverage for scenario,
+  producer, clock, sampling, dropped-span, expected-component, and expected parent-child
+  relationship declarations.
+- Add source-revision-bound organizational mapping reviews with content digests, distinct named
+  producer/reviewer identities, approval/rejection decisions, authority, expiry, rationale, and a
+  deterministic effective-approval audit against the persisted analysis timestamp.
+- Add bounded utilities for scanner performance evidence, clean-result validation-cohort records,
+  separately gated failure-mode/call-resolution cohort metrics, and content-addressed independently
+  labeled LLM quality metrics.
+- Verify scan-manifest and resolved-input digests during normal validation, cross-bind every
+  reproducibility claim to the governed analysis, retain explicit portable-root handling, and
+  expose the verdict in HTML. Rehashed false input, baseline, timestamp, guidance, adapter, or
+  static-execution claims now remain invalid outside package verification too. The shared
+  integrity module is enforced by strict typing and a 95% branch-coverage ratchet.
+- Grant organizational mapping-review approval credit only when the persisted scan timestamp is
+  protected by valid manifest content and timestamp bindings.
+- Preserve expected-side and actual-side match counts, verifier version, and the canonical
+  evaluation-result digest in converted validation cohorts; admit imperfect but structurally
+  reconciled measurements, support explicit
+  count-backed-cohort policy, and gate/report micro-averaged failure-mode and call-resolution
+  recall/precision alongside legacy-compatible macro metrics.
+- Bind converted cohorts to the retained evaluation JSON by exact byte digest and program-relative
+  artifact reference. Program verification consumes that artifact through bounded,
+  identity-stable strict JSON ingestion and cross-checks its canonical digest, corpus, verifier,
+  counts, rates, missing/unexpected cases, and call-resolution projection before granting credit.
+- Preserve LLM decision and claim counts, bind the retained labeled corpus by exact bytes, and
+  replay its closed sample contract during program verification. Unsupported-claim aggregation now
+  uses total claims rather than sample-count weighting, with explicit legacy aggregation status.
+- Add `pysfmea-llm-quality-corpus-2` with an exact provider/model/prompt subject. Converter and
+  program verification reject subject substitution; version-1 corpora remain replayable but cannot
+  satisfy the new default subject-binding gate.
+
 ## 0.58.0 - 2026-08-05
 
 ### Governed system assurance programs

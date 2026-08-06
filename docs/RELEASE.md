@@ -82,7 +82,7 @@ release scripts.
   refreshes only recognized catalogs with `--force`, and preserves prior bytes on failure.
 - Confirm JSON export emits a schema-valid path-bound verification receipt and forced refresh
   rejects format-only spoofing or malformed failure-entry structures without altering the target.
-- Confirm current packages contain 16 public schemas and 44 checked artifacts while genuine
+- Confirm current packages contain 18 public schemas and 46 checked artifacts while genuine
   twelve- through fifteen-schema packages remain compatible under the current verifier.
 - Confirm assurance-program input and verdict schemas validate current success and structured
   rejection examples, are present in offline bundles/packages, and retain historical 14-schema
@@ -272,15 +272,28 @@ release scripts.
 - Confirm package/audit/CycloneDX/README timestamps reconcile and text projections remain
   semantically portable across LF and CRLF while manifest byte checks remain exact.
 - Confirm NASA/FAA/other guidance metadata and captured hashes were not changed unintentionally.
+- Confirm starter fault plans cannot become ready unless their closed contract, content digest,
+  exact obligation provenance, plugin, denied-network policy, and disabled-scanner policy pass;
+  verify direct host execution is refused and the approved runner injects its execution marker.
+- Confirm synchronous/asynchronous subjects, false-pass patch detection, bounded sequences, and
+  elapsed-time oracles pass their focused tests without claiming complete circuit-breaker proof.
 - Ensure the CI matrix is green and dependency-update alerts are reviewed.
 
 ## 2. Run release validation
 
 ```powershell
-python -m pip install -e ".[dev,signing]"
+python -m pip install -e ".[dev,signing,quality]"
 python -m compileall -q src
 python -m ruff check src tests
 python -m pytest -q
+python -m coverage run --branch -m pytest -q
+python -m coverage report
+python -m coverage json
+python scripts/check_coverage_ratchets.py coverage.json
+python -m mypy
+python -m bandit -q -r src/pysfmea -c pyproject.toml -ll
+python -m pip_audit . --strict --progress-spinner off
+python -m pip_audit . --format cyclonedx-json --output pysfmea-build.cdx.json --progress-spinner off
 python -m build
 sfmea --version
 sfmea schema --list --json
@@ -296,7 +309,9 @@ Confirm the golden corpus is a stable regular non-link file; ingestion enforces 
 20-level/500,000-node JSON, 100,000-case, 100-scope, field-length, and 500,000-active-candidate
 limits. Confirm duplicate/non-finite/unknown/malformed inputs fail closed, the result identifies
 `pysfmea-evaluation-result-1`, and the recorded canonical corpus digest matches approved release
-evidence.
+evidence. The maintained baseline currently contains 75 exact cases and must retain the typed
+receiver, nested-call-order, and internal-cascade expectations unless an independently reviewed
+baseline change explains their removal.
 
 ```powershell
 sfmea scan benchmarks\python_sfmea_corpus\repository `
@@ -307,7 +322,13 @@ sfmea assurance benchmark-analysis.json --format work-json -o benchmark-assuranc
 sfmea assurance-work-verify benchmark-assurance-work.json --analysis benchmark-analysis.json --json
 sfmea package benchmark-analysis.json -o benchmark-review-package --json
 sfmea verify-package benchmark-review-package --json
+python scripts/benchmark_scan.py benchmarks\python_sfmea_corpus\repository `
+  --repeats 5 -o benchmark-performance.json
 ```
+
+Confirm the golden result includes clean exhaustive call-resolution metrics overall and by
+resolution provenance. Retain the performance record as environment-specific evidence; do not
+apply its duration or traced-allocation values as universal thresholds.
 
 ## 3. Smoke-test the built wheel
 

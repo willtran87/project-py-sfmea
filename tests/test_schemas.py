@@ -85,6 +85,8 @@ class SchemaCatalogTests(unittest.TestCase):
                 "diagram",
                 "diagram-bundle",
                 "diagram-bundle-verification",
+                "fault-injection-plan",
+                "fault-injection-plan-verification",
                 "html-report-verification",
                 "publication-failure-catalog",
                 "publication-failure-catalog-verification",

@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.cli import main
 from pysfmea.config import write_config_template
+from pysfmea.diagrams import interface_flow_diagram
 from pysfmea.discovery import (
     OpenAICompatibleProvider,
     deterministic_summary,
@@ -174,6 +175,187 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(len(bounded["interactions"]), 1)
         self.assertTrue(bounded["truncated"])
         self.assertIn("max_interactions", bounded["truncation_reasons"])
+
+    def test_sequence_retains_control_flow_await_and_interface_candidates(self) -> None:
+        (self.root / "flow.py").write_text(
+            "import httpx\n\n"
+            "def normalize(value):\n    return value\n\n"
+            "async def orchestrate(client, enabled):\n"
+            "    if enabled:\n"
+            "        await client.send()\n"
+            "    else:\n"
+            "        httpx.get('https://example.invalid')\n"
+            "    try:\n"
+            "        return normalize(enabled)\n"
+            "    except ValueError:\n"
+            "        return normalize(False)\n\n"
+            "class Alpha:\n"
+            "    def dispatch(self):\n"
+            "        return 1\n\n"
+            "class Beta:\n"
+            "    def dispatch(self):\n"
+            "        return 2\n\n"
+            "def ambiguous():\n"
+            "    return dispatch()\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        component = next(
+            value
+            for value in analysis["components"]
+            if value.get("qualname") == "orchestrate"
+        )
+        candidates = {
+            value["reference"]: value
+            for value in component["external_call_candidates"]
+        }
+        self.assertEqual(candidates["httpx.get"]["confidence"], "high")
+        self.assertEqual(candidates["client.send"]["confidence"], "medium")
+
+        model = sequence_model(analysis, "flow.py:orchestrate")
+        send = next(
+            value for value in model["interactions"] if value["label"] == "client.send"
+        )
+        normalized = [
+            value for value in model["interactions"] if value["label"] == "normalize"
+        ]
+        self.assertTrue(send["awaited"])
+        self.assertIn("if@7:body", send["control_context"])
+        self.assertEqual(send["evidence"], "static_external_candidate")
+        self.assertEqual(len(normalized), 2)
+        self.assertTrue(
+            any("handler-1" in " ".join(value["control_context"]) for value in normalized)
+        )
+
+        sequence_path = export_sequence(
+            analysis, self.root / "flow-sequence.md", "flow.py:orchestrate"
+        )
+        document = sequence_path.read_text(encoding="utf-8")
+        self.assertIn("[static candidate]", document)
+        self.assertIn("[await]", document)
+        interface_diagram = interface_flow_diagram(analysis)
+        self.assertEqual(
+            interface_diagram["metadata"]["external_candidates_total"], 2
+        )
+        self.assertEqual(
+            {
+                edge["evidence"]
+                for edge in interface_diagram["edges"]
+                if edge["kind"] == "external_interface_candidate"
+            },
+            {"static_candidate"},
+        )
+        ambiguous = sequence_model(analysis, "flow.py:ambiguous")
+        ambiguous_calls = [
+            value
+            for value in ambiguous["interactions"]
+            if value["label"] == "dispatch"
+        ]
+        self.assertEqual(len(ambiguous_calls), 2)
+        self.assertEqual(
+            {value["confidence"] for value in ambiguous_calls}, {"low"}
+        )
+        self.assertEqual(
+            {value["resolution"] for value in ambiguous_calls},
+            {"ambiguous_static_internal_call"},
+        )
+
+        normalize = next(
+            value for value in analysis["components"] if value.get("qualname") == "normalize"
+        )
+        analysis["runtime_evidence"] = {
+            "imports": [],
+            "spans": [],
+            "edges": [
+                {
+                    "trace_id": "T",
+                    "source_component_id": component["id"],
+                    "target_component_id": normalize["id"],
+                    "source_name": "orchestrate",
+                    "target_name": "normalize",
+                    "operation": "normalize",
+                    "start_time": "10",
+                    "end_time": "20",
+                    "timing_status": "observed",
+                    "duration_ns": 10,
+                },
+                {
+                    "trace_id": "T",
+                    "source_component_id": normalize["id"],
+                    "target_component_id": component["id"],
+                    "source_name": "normalize",
+                    "target_name": "orchestrate",
+                    "operation": "dynamic callback",
+                    "timing_status": "unavailable",
+                },
+            ],
+        }
+        reconciled = sequence_model(analysis, "flow.py:orchestrate")
+        self.assertEqual(reconciled["reconciliation"]["corroborated_relations"], 1)
+        self.assertEqual(reconciled["reconciliation"]["runtime_only_relations"], 1)
+        self.assertEqual(
+            reconciled["reconciliation"]["runtime_timing_statuses"],
+            {"observed": 1, "unavailable": 1},
+        )
+        self.assertTrue(
+            all(
+                value.get("observation_status") == "runtime_corroborated"
+                for value in reconciled["interactions"]
+                if value["label"] == "normalize" and value["evidence"] == "static_ast"
+            )
+        )
+        self.assertTrue(
+            any(
+                value.get("static_alignment") == "runtime_only"
+                for value in reconciled["interactions"]
+            )
+        )
+
+    def test_type_evidence_resolves_receivers_and_nested_call_order(self) -> None:
+        (self.root / "typed_flow.py").write_text(
+            "from httpx import AsyncClient\n\n"
+            "class LocalClient:\n"
+            "    def fetch(self):\n"
+            "        return 1\n\n"
+            "def normalize(value):\n"
+            "    return value\n\n"
+            "def wrap(value):\n"
+            "    return value\n\n"
+            "async def external(client: AsyncClient):\n"
+            "    return await client.get('https://example.invalid')\n\n"
+            "def local(client: LocalClient):\n"
+            "    return client.fetch()\n\n"
+            "def constructed():\n"
+            "    client = LocalClient()\n"
+            "    return client.fetch()\n\n"
+            "def nested():\n"
+            "    return wrap(normalize(True))\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        components = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value.get("source", {}).get("path") == "typed_flow.py"
+        }
+        external = components["external"]
+        self.assertEqual(external["symbol_types"]["client"], "httpx.AsyncClient")
+        self.assertEqual(
+            external["external_call_candidates"][0]["basis"],
+            "typed_receiver_known_external_api",
+        )
+        self.assertEqual(
+            external["call_sites"][0]["resolution"], "parameter_annotation"
+        )
+        local_model = sequence_model(analysis, "typed_flow.py:local")
+        self.assertEqual(local_model["interactions"][0]["label"], "fetch")
+        self.assertEqual(local_model["interactions"][0]["confidence"], "high")
+        constructed_model = sequence_model(analysis, "typed_flow.py:constructed")
+        self.assertTrue(
+            any(value["label"] == "fetch" for value in constructed_model["interactions"])
+        )
+        nested = components["nested"]
+        self.assertEqual(nested["ordered_calls"], ["normalize", "wrap"])
 
     def test_repository_readiness_guides_pre_scan_setup(self) -> None:
         missing = repository_readiness(self.root)
@@ -590,7 +772,7 @@ class ExtensionTests(unittest.TestCase):
             }.issubset(names)
         )
         self.assertTrue(REVIEW_PACKAGE_SCHEMA_FILES.issubset(names))
-        self.assertEqual(manifest["schema_catalog"]["schema_count"], 16)
+        self.assertEqual(manifest["schema_catalog"]["schema_count"], 18)
         self.assertEqual(
             manifest["capabilities"],
             [
@@ -1391,7 +1573,7 @@ class ExtensionTests(unittest.TestCase):
                 ).validate(receipt)
                 self.assertTrue(receipt["valid"])
                 self.assertEqual(receipt["container"], container)
-                self.assertEqual(receipt["checked_files"], 44)
+                self.assertEqual(receipt["checked_files"], 46)
                 self.assertEqual(len(receipt["capabilities"]), 9)
                 self.assertEqual(Path(receipt["package"]), destination.resolve())
                 self.assertEqual(
@@ -2017,7 +2199,7 @@ class ExtensionTests(unittest.TestCase):
         )
         verified = verify_review_package(destination)
         self.assertTrue(verified["valid"])
-        self.assertEqual(verified["checked_files"], 44)
+        self.assertEqual(verified["checked_files"], 46)
         self.assertEqual(
             verified["verification_format"], REVIEW_PACKAGE_VERIFICATION_FORMAT
         )
@@ -2085,7 +2267,7 @@ class ExtensionTests(unittest.TestCase):
         with contextlib.redirect_stdout(human_output):
             self.assertEqual(main(["verify-package", str(destination)]), 0)
         self.assertIn(
-            "Schema catalog: valid=True, schemas=16", human_output.getvalue()
+            "Schema catalog: valid=True, schemas=18", human_output.getvalue()
         )
         self.assertIn(
             "Analysis structure: valid=True, nodes=", human_output.getvalue()
@@ -2730,7 +2912,7 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_package(archive)
         self.assertTrue(verified["valid"])
         self.assertEqual(verified["container"], "zip")
-        self.assertEqual(verified["checked_files"], 44)
+        self.assertEqual(verified["checked_files"], 46)
         self.assertTrue(verified["schema_catalog"]["valid"])
         self.assertEqual(
             verified["capabilities"],
@@ -2799,6 +2981,8 @@ class ExtensionTests(unittest.TestCase):
                     "pysfmea-diagram.schema.json",
                     "pysfmea-diagram-bundle.schema.json",
                     "pysfmea-diagram-bundle-verification.schema.json",
+                    "pysfmea-fault-injection-plan.schema.json",
+                    "pysfmea-fault-injection-plan-verification.schema.json",
                     "pysfmea-html-report-verification.schema.json",
                     "pysfmea-publication-failure-catalog.schema.json",
                     "pysfmea-publication-failure-catalog-verification.schema.json",

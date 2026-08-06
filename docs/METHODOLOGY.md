@@ -33,8 +33,19 @@ The mapping chain is document → section/page locator → scanner rule → cand
 `sfmea citations` exports it as normalized JSON or flat CSV, review packages include the
 catalog and both traceability formats, and the standalone report exposes source status,
 locators, usage counts, affected findings, and a bounded guidance-traceability diagram.
+The trace separately reports any-citation coverage and direct-mapping coverage, classifies
+each finding by its strongest direct/supporting/contextual relationship, and lists rules
+without a direct mapping. Supporting or contextual mappings are never counted as direct.
 Unknown citation IDs, relationship types, strengths, and applicability values are validation
 errors. Catalog hash drift is reported.
+
+Built-in and organizational mappings expose a mapping-record SHA-256, review status, review
+basis, review timestamp, and independent-approval flag. Citation records also bind the source,
+locator, and maintained summary with a locator-summary digest. These digests detect local record
+drift; they are not hashes of official prose unless a separately captured artifact hash says so.
+Built-in mappings are maintainer-curated and deliberately report no independent regulatory
+approval. Older embedded analyses without mapping-record digests remain readable and are counted
+as legacy-unverifiable rather than as confirmed integrity failures.
 
 Mappings are curated and deterministic. They explain why a rule is relevant to an SFMEA
 review; they are not declarations of a defect, a standards violation, regulatory
@@ -153,7 +164,7 @@ The rules intentionally state failure at the functional boundary. A coding defec
 
 ## Evidence and confidence
 
-Scanner evidence includes source location, AST signals, approximate internal callers and transitive upstream paths, complexity, decorators, textual test references, dependency declarations, and optional function-level line and branch evidence derived from coverage.py JSON. Coverage input is accepted from one exact-byte, regular-file, non-link, identity-stable snapshot under 100 MB/100-level/2,000,000-node JSON limits, with 100,000-file and 4,096-character path bounds. Duplicate keys, non-finite values, repository escapes, unsafe aliases, and malformed coordinates cannot silently influence a component. Accepted byte and record provenance remains in scan settings, its SHA-256 is part of the immutable run-manifest inputs, and an input inside the analyzed repository reuses those same bytes for inventory evidence. External coverage remains external evidence rather than being added to repository accounting. These are useful for triage and traceability. They are not proof that a failure exists or that a control is effective. Python's runtime dispatch means the caller evidence is deliberately conservative and incomplete.
+Scanner evidence includes source location, AST signals, structured call sites, lexical branch/loop/exception context, await status, approximate internal callers and transitive upstream paths, confidence-labeled unresolved external-call candidates, complexity, decorators, textual test references, dependency declarations, and optional function-level line and branch evidence derived from coverage.py JSON. Call references carry resolution provenance from lexical names, import aliases, parameter or variable annotations, and unambiguous constructor assignments. Nested call sites follow Python expression-evaluation order, and return/yield/raise contexts are retained. This is lightweight evidence, not a complete type system: aliases, protocols, dependency injection, higher-order calls, descriptors, and runtime dispatch can remain unresolved. Lexical context records where a call appears in syntax; it is not a control-flow graph, path-feasibility result, or runtime-ordering proof. Coverage input is accepted from one exact-byte, regular-file, non-link, identity-stable snapshot under 100 MB/100-level/2,000,000-node JSON limits, with 100,000-file and 4,096-character path bounds. Duplicate keys, non-finite values, repository escapes, unsafe aliases, and malformed coordinates cannot silently influence a component. Accepted byte and record provenance remains in scan settings, its SHA-256 is part of the immutable run-manifest inputs, and an input inside the analyzed repository reuses those same bytes for inventory evidence. External coverage remains external evidence rather than being added to repository accounting. These are useful for triage and traceability. They are not proof that a failure exists or that a control is effective. Python's runtime dispatch means the caller and interface evidence is deliberately conservative and incomplete.
 
 Python source uses one exact identity-stable snapshot per selected file. The same immutable bytes
 drive PEP 263 decoding, AST construction, included-test reference indexing, and baseline hashing;
@@ -216,7 +227,7 @@ their historical layout.
 
 Confidence describes how directly a rule was triggered by observable syntax. It is not likelihood or occurrence. The two baseline functional rules are generated systematically even when no specialized syntax is present.
 
-Ordered call evidence and common framework decorators identify HTTP routes, background tasks, event handlers, and CLI commands. Framework recognition is metadata and a screening aid; it does not prove the runtime router, dependency injection graph, middleware order, or deployed configuration.
+Ordered call evidence and common framework decorators identify HTTP routes, background tasks, event handlers, and CLI commands. Calls to known external namespaces and unresolved receiver methods with interface-like verbs are preserved as high- or medium-confidence interface candidates. Framework recognition and candidate classification are screening metadata; they do not prove the runtime router, receiver type, dependency injection graph, middleware order, or deployed configuration.
 
 Circuit-breaker extraction recognizes bounded identifier, comparison, clock, lock,
 state-mutation, isolation-key, and fallback evidence. It records a candidate control model
@@ -268,7 +279,7 @@ exercised path, instrument its caller boundaries, and retain the static-versus-o
 bounded-inventory limitations with the checklist. An incomplete inventory becomes a planning
 gap and requires compensating runtime, integration, or architectural evidence.
 
-Imported simple or OpenTelemetry JSON spans add observed parent-child relations. Each import is hashed, baseline-linked, bounded, and audited. Static and observed relationships remain visibly distinct because one is approximate source evidence and the other is incomplete execution evidence.
+Imported simple or OpenTelemetry JSON spans add observed parent-child relations. Each span and derived edge retains an explicit observed/unavailable/invalid timing status and a duration only when non-negative integer timestamps are valid. Each import is hashed, baseline-linked, bounded, and audited. Static and observed relationships remain visibly distinct because one is approximate source evidence and the other is incomplete execution evidence; timestamps do not independently establish synchronized clocks or causal propagation.
 
 Trace import is idempotent by source hash. Mapping prefers explicit `sfmea.component`
 and code-function attributes, then unambiguous names, then code-file/function pairs.
@@ -277,6 +288,9 @@ the strength of the runtime-to-source correlation.
 
 ## Curated regression evaluation boundary
 
+The checked-in regression repository spans multiple files and 75 source-aware expectations,
+including framework-style routes/tasks, async calls, data models, control-flow constructs,
+typed receiver inference, nested-call ordering, and an internal multi-component cascade.
 Golden scanner corpora use the closed `pysfmea-golden-corpus-1` contract: bounded metadata,
 unique optional scope globs, and unique source/component/rule cases. File ingestion consumes at
 most 20 MB from a regular non-symbolic-link input, reconciles path and opened-file identity, and
@@ -289,6 +303,16 @@ corpus digest. Recall, precision, duplicate, localization, citation, traceabilit
 and source-accounting metrics establish repeatable behavior only within the declared corpus
 scope. They do not establish semantic correctness, performance on unseen systems, certification
 credit, or engineering approval of an updated golden baseline.
+The checked-in corpus is synthetic and self-maintained; independent multi-repository validation
+is still required before making claims about representative real-world recall or precision.
+
+An optional exhaustive `call_cases` register labels call-reference resolution and interface
+confidence for named components. Evaluation reports exact overall and per-provenance recall and
+precision and fails on missing or unexpected labeled calls. The maintained synthetic corpus uses
+this to prevent annotation/import/lexical resolution regressions. Confidence calibration on unseen
+repositories still requires independently labeled cohorts. A bounded conversion utility accepts
+only clean evaluation results and emits the closed validation-cohort record used by assurance
+programs; distinct identity strings express review separation but are not authenticated.
 
 ## Machine-assisted discovery boundary
 
@@ -467,6 +491,23 @@ views identify the limiting condition. The review-package export collects the go
 source record and derived reports with per-file SHA-256 checksums; it is a portable
 review artifact, not an electronic-signature or document-control system.
 
+Sequence projections reconcile bounded relation-level static and runtime evidence. Static edges
+are marked runtime-corroborated or not observed; observed edges are marked statically predicted or
+runtime-only. Timing status and valid duration remain attached to observed interactions, and the
+model reports relation counts and static-observation coverage. Absence from an imported trace is
+not evidence of unreachability, while a runtime-only edge may reflect dynamic dispatch, a bounded
+static view, or instrumentation mapping. The reconciliation is discovery evidence, not causal or
+path-completeness proof.
+
+Runtime JSON may carry a closed instrumentation manifest with scenario, producer, clock domain,
+sampling policy, expected components, expected relationships, dropped spans, and a completeness
+declaration. Import maps references through the same collision-aware component lookup. Component
+coverage requires mapped spans; relationship coverage requires mapped parent-child spans with the
+declared source and target. “Complete” requires always-on sampling, zero declared dropped spans,
+and every resolved expected component and relationship being observed. This reconciles a
+producer claim; it cannot prove hook placement, clock synchronization, causal completeness, or
+scenario representativeness.
+
 The independent package verifier treats the manifest as untrusted input. It accepts
 only canonical package-relative POSIX paths and regular files, requires the complete
 artifact set, and rejects traversal, aliases, symbolic links, missing or unexpected
@@ -554,14 +595,59 @@ labels include coverage, mutation, property-based, fault-injection, concurrency,
 SAST/DAST, runtime trace, formal analysis, and manual inspection. The label does not establish that
 the named technique was performed correctly.
 
+Repository-level fault injection uses a versioned plugin boundary rather than generated arbitrary
+Python. The deterministic planner recommends built-in exception, return-value, or sequence plugins
+from a finding's rule and verification method. A generated plan is content-bound to the exact
+obligation contract but remains non-executable until explicit import and patch targets, JSON-safe
+arguments, fault events, and expected observations validate. Completion rechecks the starter's
+closed structure, integrity, exact obligation provenance, denied-network policy, and disabled
+scanner execution before publishing a ready plan and deterministic pytest bridge. Runtime
+execution supports dotted synchronous/asynchronous subjects, records patch calls and elapsed time
+per invocation, enforces optional timing bounds, and rejects false-pass results. The API also
+requires the marker injected by the approved container runner; that marker prevents accidental
+host execution but is not an authentication credential. Scanner and report stages never import the
+analyzed project, and passing plugin output remains evidence awaiting independent review.
+
+Large orchestration modules depend on extracted typed seams in `interfaces.py`, deterministic
+method/stimulus policy in `assurance_planning.py`, and pure container argv policy in
+`sandbox_policy.py`. CI treats those modules as a strict typing ratchet, enforces module-specific
+branch-coverage floors, mutation-tests critical plan/outcome/sandbox verdicts, scans source and
+dependencies, and publishes a CycloneDX dependency SBOM alongside coverage evidence.
+
 Validation cohorts aggregate independently reviewed repository labels, content-addressed corpus
-identity, case count, recall, and precision, with distinct named producer/reviewer identities.
-Macro metrics and minimum repository counts prevent a perfect synthetic corpus from silently
-representing external validation. Optional LLM evaluations are separately grouped by recorded
+identity, case counts, expected-side and actual-side match counts, recall, and precision, with distinct named
+producer/reviewer identities. Converted records bind the exact evaluation-result digest, format,
+and verifier version. Semantic verification recomputes claimed rates and reports both equal-weight
+macro averages and population-weighted micro averages; configurable gates can reject legacy
+records that lack count provenance. Micro metrics prevent a small perfect corpus from masking a
+larger weak one, while minimum repository counts keep one corpus from silently representing
+external validation. Optional LLM evaluations are separately grouped by recorded
 provider/model/prompt and corpus provenance, retain independent producer/reviewer claims, and are
-weighted by sample count; grounding, citation accuracy, unsupported-claim rate, sample, and
-independence thresholds are explicit policy gates. These metrics measure only the supplied
-evaluation records.
+count-backed. Grounding and citation accuracy aggregate over labeled samples; unsupported-claim
+rate aggregates over total claims, avoiding bias when samples contain different numbers of claims.
+Grounding, citation accuracy, unsupported-claim rate, sample, count-backing, retained-corpus, and
+independence thresholds are explicit policy gates. Legacy records retain their former
+sample-weighted projection behind an explicit aggregation label when new gates are disabled. These
+metrics measure only the supplied evaluation records.
+
+New cohorts also reference the retained evaluator JSON and bind both its exact file bytes and its
+canonical parsed content. Program verification consumes each unique artifact once through bounded,
+identity-stable, regular non-link strict JSON ingestion, enforces per-file and aggregate limits,
+and reconciles every projected corpus, verifier, count, rate, missing/unexpected, and call metric.
+This establishes artifact-to-claim consistency; it does not prove corpus representativeness,
+reviewer authority, or that the evaluator itself is defect-free.
+
+The `llm_quality_record.py` utility consumes one strict, bounded, content-addressed corpus of
+independently labeled samples. Its closed sample contract records grounding and citation decisions
+plus total and unsupported claim counts, then calculates the exact program-compatible aggregate.
+It rejects duplicate samples, inconsistent counts, and identical producer/reviewer names. New
+records bind an exact-byte artifact path; program verification safely replays the closed corpus,
+recomputes every count and rate, and enforces per-file and aggregate bounds. The
+result measures the supplied provider/model/prompt/corpus tuple only; corpus representativeness,
+reviewer competence, identity authentication, and provider drift remain external controls.
+Corpus format 2 places that provider/model/prompt tuple inside the retained labeled artifact and
+requires an exact match to converter and program provenance. Format 1 remains replayable legacy
+evidence but has no defensible subject binding and is rejected by the default subject gate.
 
 Governance policy requires every configured role to approve the exact named program, uses
 timezone-qualified decision timestamps, refuses one reviewer identity exercising multiple
@@ -591,6 +677,14 @@ The `sfmea doctor` preflight runs before scanning and checks only repository and
 configuration readiness. Post-scan `sfmea validate` remains the authoritative
 completeness gate for the generated analysis and reviewed worksheet.
 
+Validation also verifies the immutable scan manifest rather than merely checking for its presence.
+It recomputes the manifest and resolved-input digests and cross-checks the declared source,
+configuration, guidance, dependency, contract, repository inventory, system context, adapter
+ledger, repository baseline, scan time, stable run ID, schema, adapter registry, and non-execution
+claim against the governed analysis. A locally edited and rehashed claim remains invalid when it
+no longer matches those sources. Portable package root redaction is accepted only with its explicit
+redaction record. This is consistency verification, not a signature or identity assertion.
+
 ## Guidance applicability and integrity
 
 The default `core_sfmea` profile provides general public methodology. NASA assurance,
@@ -606,6 +700,10 @@ guidance inputs to the source, configuration, adapter registry, dependency inven
 contract inventory, tool version, environment, and VCS state. These controls make the
 analysis reproducible; they do not establish regulatory applicability, compliance, or
 tool qualification.
+
+Mapping-review expiry uses the persisted scan time only when the manifest content and timestamp
+binding verify. If either check fails, traceability retains the audit result for diagnosis but
+grants zero effective independent-approval credit until the analysis provenance is restored.
 
 ## Public references
 

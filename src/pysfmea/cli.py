@@ -16,6 +16,7 @@ from .assurance import (
     ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
     PLANNING_REVIEW_STATUSES,
     archive_pytest_scaffold,
+    ensure_assurance_register,
     export_assurance_register,
     export_pytest_scaffold,
     refresh_pytest_scaffold,
@@ -55,6 +56,15 @@ from .execution import (
     register_test_implementation,
     review_execution_evidence,
     run_sandbox_execution,
+)
+from .fault_injection import (
+    export_completed_fault_injection_plan,
+    export_fault_injection_plan,
+    export_fault_injection_pytest,
+    fault_injection_plugin_catalog,
+    load_fault_injection_case,
+    load_fault_injection_plan,
+    verify_fault_injection_plan,
 )
 from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
 from .html_report import (
@@ -791,6 +801,63 @@ def _parser() -> argparse.ArgumentParser:
     assurance_review.add_argument("--rationale", required=True)
     assurance_review.add_argument("--owner", default="")
     assurance_review.set_defaults(handler=_assurance_review)
+
+    fault_plugins = subparsers.add_parser(
+        "assurance-fault-plugins",
+        help="list governed executable fault-injection plugins",
+    )
+    fault_plugins.add_argument(
+        "--json", action="store_true", help="emit machine-readable plugin metadata"
+    )
+    fault_plugins.set_defaults(handler=_assurance_fault_plugins)
+
+    fault_plan = subparsers.add_parser(
+        "assurance-fault-plan",
+        help="create an obligation-bound fault-injection plan requiring explicit bindings",
+    )
+    fault_plan.add_argument("analysis", help="analysis JSON path")
+    fault_plan.add_argument("obligation_id")
+    fault_plan.add_argument("-o", "--output", required=True)
+    fault_plan.add_argument(
+        "--plugin",
+        default="",
+        help="built-in plugin ID; the obligation recommendation is used when omitted",
+    )
+    fault_plan.set_defaults(handler=_assurance_fault_plan)
+
+    fault_complete = subparsers.add_parser(
+        "assurance-fault-complete",
+        help="complete and validate a fault plan from an explicit case JSON object",
+    )
+    fault_complete.add_argument("plan", help="starter fault-plan JSON path")
+    fault_complete.add_argument("case", help="engineer-authored fault-case JSON path")
+    fault_complete.add_argument("--analysis", required=True)
+    fault_complete.add_argument("-o", "--output", required=True)
+    fault_complete.set_defaults(handler=_assurance_fault_complete)
+
+    fault_verify = subparsers.add_parser(
+        "assurance-fault-verify",
+        help="verify a fault-injection plan and its exact obligation binding",
+    )
+    fault_verify.add_argument("plan", help="fault-injection plan JSON path")
+    fault_verify.add_argument(
+        "--analysis",
+        required=True,
+        help="analysis JSON path for mandatory exact obligation binding",
+    )
+    fault_verify.add_argument(
+        "--json", action="store_true", help="emit machine-readable verification"
+    )
+    fault_verify.set_defaults(handler=_assurance_fault_verify)
+
+    fault_scaffold = subparsers.add_parser(
+        "assurance-fault-scaffold",
+        help="generate a pytest bridge for a valid plan and the approved sandbox runner",
+    )
+    fault_scaffold.add_argument("plan", help="ready fault-plan JSON path")
+    fault_scaffold.add_argument("--analysis", required=True)
+    fault_scaffold.add_argument("-o", "--output", required=True)
+    fault_scaffold.set_defaults(handler=_assurance_fault_scaffold)
 
     assurance_scaffold = subparsers.add_parser(
         "assurance-scaffold",
@@ -2272,6 +2339,16 @@ def _evaluate(args: argparse.Namespace) -> int:
             f"adapter_provenance={metrics.get('adapter_provenance_coverage')}, "
             f"source_accounting={metrics.get('repository_source_accounting')}"
         )
+        call_resolution = result.get("call_resolution", {})
+        if call_resolution.get("enabled"):
+            print(
+                "Call resolution: "
+                f"expected={call_resolution.get('expected')}, "
+                f"actual={call_resolution.get('actual')}, "
+                f"matched={call_resolution.get('matched')}, "
+                f"recall={call_resolution.get('recall')}, "
+                f"precision={call_resolution.get('precision')}"
+            )
         findings = [
             *(
                 f"Missing: {value.get('source') or '*'}:{value['component']} / "
@@ -2283,6 +2360,18 @@ def _evaluate(args: argparse.Namespace) -> int:
                 f"{value['rule_id']}"
                 for value in result["unexpected"]
             ),
+            *(
+                f"Missing call: {value['source']}:{value['component']} / "
+                f"{value['raw_reference']} -> {value['reference']} "
+                f"({value['resolution']})"
+                for value in call_resolution.get("missing", [])
+            ),
+            *(
+                f"Unexpected call: {value['source']}:{value['component']} / "
+                f"{value['raw_reference']} -> {value['reference']} "
+                f"({value['resolution']})"
+                for value in call_resolution.get("unexpected", [])
+            ),
         ]
         for finding in findings[: args.max_findings]:
             print(f"- {finding}")
@@ -2293,6 +2382,8 @@ def _evaluate(args: argparse.Namespace) -> int:
         bool(
             result["missing"]
             or result["unexpected"]
+            or result.get("call_resolution", {}).get("missing")
+            or result.get("call_resolution", {}).get("unexpected")
             or result.get("metrics", {}).get("duplicate_count")
             or result.get("metrics", {}).get("unsupported_verification_claims")
         )
@@ -2482,6 +2573,100 @@ def _assurance_review(args: argparse.Namespace) -> int:
         f"Assurance obligation {result['id']} updated to {result['assurance_status']}; "
         "no verification or closure was inferred."
     )
+    return 0
+
+
+def _assurance_fault_plugins(args: argparse.Namespace) -> int:
+    catalog = fault_injection_plugin_catalog()
+    if args.json:
+        print(json.dumps({"plugins": catalog}, indent=2, ensure_ascii=False))
+    else:
+        for plugin in catalog:
+            print(
+                f"{plugin['id']}: {plugin['title']} "
+                f"({', '.join(plugin['fault_kinds'])})"
+            )
+        print(
+            "Plugins execute only from explicitly bound tests in the approved sandbox; "
+            "scanner execution is prohibited."
+        )
+    return 0
+
+
+def _assurance_obligation(
+    analysis: dict[str, Any], obligation_id: str
+) -> dict[str, Any]:
+    register = ensure_assurance_register(analysis)
+    obligation = next(
+        (
+            value
+            for value in register.get("obligations", [])
+            if isinstance(value, dict) and value.get("id") == obligation_id
+        ),
+        None,
+    )
+    if obligation is None:
+        raise ValueError(f"unknown assurance obligation: {obligation_id}")
+    return obligation
+
+
+def _assurance_fault_plan(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    obligation = _assurance_obligation(analysis, args.obligation_id)
+    result = export_fault_injection_plan(obligation, args.output, plugin_id=args.plugin)
+    print(f"Created governed fault-injection starter plan: {result}")
+    print(
+        "Author a fault-case JSON file, then use assurance-fault-complete; execute the "
+        "resulting test only through the approved sandbox workflow."
+    )
+    return 0
+
+
+def _bound_fault_plan(
+    plan: dict[str, Any], analysis_path: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    analysis = load_analysis(analysis_path)
+    binding = plan.get("binding", {})
+    obligation = _assurance_obligation(
+        analysis,
+        str(binding.get("obligation_id", "")) if isinstance(binding, dict) else "",
+    )
+    return analysis, obligation
+
+
+def _assurance_fault_complete(args: argparse.Namespace) -> int:
+    plan = load_fault_injection_plan(args.plan)
+    _analysis, obligation = _bound_fault_plan(plan, args.analysis)
+    case = load_fault_injection_case(args.case)
+    result = export_completed_fault_injection_plan(
+        plan, case, obligation, args.output
+    )
+    print(f"Created validated ready fault-injection plan: {result}")
+    return 0
+
+
+def _assurance_fault_verify(args: argparse.Namespace) -> int:
+    plan = load_fault_injection_plan(args.plan)
+    _analysis, obligation = _bound_fault_plan(plan, args.analysis)
+    result = verify_fault_injection_plan(plan, obligation=obligation)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Fault-injection plan: {result['status']} "
+            f"(plugin: {result['plugin_id'] or 'unknown'})"
+        )
+        for finding in result["findings"]:
+            print(f"[{finding['code']}] {finding['message']}")
+    return 0 if result["valid"] else 1
+
+
+def _assurance_fault_scaffold(args: argparse.Namespace) -> int:
+    plan = load_fault_injection_plan(args.plan)
+    _analysis, obligation = _bound_fault_plan(plan, args.analysis)
+    result = export_fault_injection_pytest(plan, obligation, args.output)
+    print(f"Created approved-sandbox pytest bridge: {result}")
+    print("Register it with assurance-test-register, then execute it with assurance-run.")
     return 0
 
 

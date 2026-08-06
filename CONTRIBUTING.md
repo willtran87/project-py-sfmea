@@ -11,7 +11,7 @@ Python 3.11 or newer is supported.
 ```powershell
 py -3.11 -m venv .venv
 .venv\Scripts\python.exe -m pip install --upgrade pip
-.venv\Scripts\python.exe -m pip install -e ".[dev,signing]"
+.venv\Scripts\python.exe -m pip install -e ".[dev,signing,quality]"
 .venv\Scripts\Activate.ps1
 ```
 
@@ -21,11 +21,22 @@ Run the same core checks as CI:
 python -m compileall -q src
 python -m ruff check src tests
 python -m pytest -q
+python -m coverage run --branch -m pytest -q
+python -m coverage report
+python -m coverage json
+python scripts/check_coverage_ratchets.py coverage.json
+python -m mypy
+python -m bandit -q -r src/pysfmea -c pyproject.toml -ll
+python -m pip_audit . --strict --progress-spinner off
+python -m pip_audit . --format cyclonedx-json --output pysfmea-build.cdx.json --progress-spinner off
 python -m build
 ```
 
 The CI matrix repeats compilation, linting, tests, and public-schema validation on Linux and
-Windows across supported Python versions. It separately builds and installs the wheel.
+Windows across supported Python versions. Separate jobs build and install the wheel, enforce
+branch coverage with critical-module ratchets, type-check extracted subsystem boundaries, scan
+source and dependencies, publish a dependency SBOM, run property tests, and mutation-test the
+critical fault-plan, outcome, and sandbox-policy verdict logic.
 
 ## Engineering invariants
 
