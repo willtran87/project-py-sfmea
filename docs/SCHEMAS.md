@@ -189,10 +189,52 @@ the staged file to retain its regular-file identity, size, and rendered-content 
 destination must still match its inspected absent/file state immediately before atomic
 replacement. Rejection or concurrent change preserves the previous report.
 The embedded payload check enforces the closed verdict envelope, exact nested verifier/program
-records, typed check values and non-boolean counts, bounded object relationships and findings,
-closed finding fields/levels, count reconciliation, and agreement between `valid`, error count,
-and failed checks. Publication additionally requires the staged receipt's program and normalized
-verdict digests to match the exact in-memory result supplied to the renderer.
+records, the exact current producer check set, and closed summary, relationship, validation, LLM,
+and finding projections. It reconciles finding counts and validity; repository, relationship, and
+evidence totals; timing/resilience configuration state; cohort credit and duplicate counts;
+artifact-credit bounds; and LLM aggregation/claim totals. Minimal early input rejections are
+separately closed and cannot claim unchecked derived summaries. The public
+`assurance-program-verification` schema now exposes these exact nested structures; cross-field
+arithmetic remains enforced by the runtime verifier. Relationship schema conditions require
+configured deadlines, observations, and linked evidence for supported/violated timing and
+resilience states. Runtime checks additionally require supported timing/recovery to remain within
+their declared deadlines, measured timing violations to exceed the deadline, repository-binding
+checks to match bound totals, and credited completed evidence not to exceed passed/failed records.
+Publication additionally requires the staged receipt's program and normalized verdict digests to
+match the exact in-memory result supplied to the renderer.
+Runtime reconciliation derives each full-verdict check from the corresponding error-code
+namespace rather than trusting the declared boolean. Endpoint, deadline-overrun, and
+circuit-breaker-violation projections must also match the exact relationship-scoped finding code
+and location. This semantic linkage is intentionally stronger than JSON Schema and prevents
+balanced count/validity edits from moving a failure between assurance domains.
+Finding codes are restricted to producer-owned namespaces. Runtime reconciliation also prevents
+observed deadline or recovery overruns from being relabeled as unverified, derives validation
+metric availability from the credited/count-backed populations, and derives the LLM aggregation
+mode from credited and count-backed evaluations. Count-backed unsupported-claim rates must equal
+their projected claim totals. The public schema mirrors deterministic availability and
+aggregation-state constraints where JSON Schema can express them.
+Governance summaries distinguish declared, fully validated, and credited program-level approvals.
+Approval credit requires a closed record, supported subject kind, known exact subject, bounded
+identities, a supported decision, and an offset-bearing timestamp. Malformed declarations remain
+visible in the declared total and findings but cannot satisfy roles or named-program approval.
+Required roles use bounded, whitespace-free identifiers and must also be unique after
+case-normalization, preventing visually distinct declarations from collapsing into one authority.
+Exactly one valid program-level decision may occupy each normalized role. Multiple approvals,
+rejections, or mixed decisions for the same role are reported as an explicit conflicting-role
+set, receive no program credit, and reconcile to role-scoped conflict findings in embedded reports.
+Approval timestamps are also compared deterministically with the sealed program's creation time.
+A record that predates the program remains declared and actionable but is excluded from validated
+and credited totals; verification intentionally does not depend on the host's current clock.
+Completed external evidence reports verified, credited, and exact-duplicate claim counts. Credit
+identity hashes the content-addressed artifact, technique, status, normalized subjects,
+producer/reviewer identities, and metrics. Repeating one semantic claim under another ID is an
+evidence-domain error and cannot inflate relationship support or evidence totals. Malformed
+evidence reference arrays also disqualify that record directly in the evidence domain.
+Direct program-verdict JSON, Markdown, and HTML render/export APIs apply this contract before
+destination inspection. JSON stages are strictly parsed and semantically matched to the requested
+verdict, Markdown stages are exact-byte matched, and HTML stages retain full report verification.
+The derived verdict uses a projection-scaled 1,500,000-node read budget under its existing byte
+ceilings; the assurance-program input remains limited to 500,000 nodes.
 
 ## Offline review-package use
 

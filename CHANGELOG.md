@@ -113,6 +113,39 @@ package; public artifact and schema identifiers carry their own explicit compati
 - Close the embedded program-verdict contract through nested record/type/bound checks, reconcile
   finding levels with declared counts and validity, and prevent a different internally consistent
   verdict from satisfying staged publication.
+- Close the remaining nested program-verdict projections: require the exact producer check set and
+  exact summary, relationship, validation, and LLM fields; reconcile repository/relationship/
+  evidence totals, temporal/resilience configuration, cohort and artifact credit, LLM aggregation
+  and claim totals; expose those shapes in the public schema; and retain a separate minimal closed
+  form for safe early input rejections.
+- Enforce that contract uniformly before direct Markdown, JSON, and HTML rendering or publication;
+  semantically verify private JSON stages, exact-byte verify Markdown stages, preserve prior
+  destinations on rejection, and give derived verdicts a projection-scaled node budget without
+  widening the assurance-program input boundary.
+- Reconcile relationship claims with projected evidence: derive repository-binding success from
+  exact totals, bound trusted credit by completed evidence, require supported timing and recovery
+  to carry linked within-deadline measurements, require timing violations to show an overrun, and
+  prevent passing relationship checks from masking invalid endpoints or violated contracts. Add
+  equivalent state-specific conditions to the public verdict schema.
+- Derive every full program-verdict check from its producer error namespace and bind invalid
+  endpoint, deadline-overrun, and circuit-breaker-violation projections to their exact
+  relationship-scoped findings. Rebalanced counts and validity can no longer conceal an
+  unexplained check failure or move an error between assurance domains.
+- Restrict verdict findings to producer-owned namespaces; enforce overrun-to-state implications,
+  validation population/metric availability, and exact LLM aggregation/claim-rate reconciliation
+  so internally balanced reports cannot relabel or manufacture assurance evidence.
+- Make governance approval credit fail closed at the record level and expose declared, validated,
+  and credited program-approval totals. Invalid fields, subjects, identities, decisions, or
+  timestamps remain findings but cannot satisfy a required role or named approval gate. Required
+  roles are bounded identifiers and cannot duplicate after case normalization.
+- Require one authoritative program-level decision per normalized role. Duplicate, repeated, or
+  mixed decisions become explicit role-scoped conflicts, receive no approval credit, and must
+  reconcile exactly between verdict summaries and findings.
+- Reject approval credit when the offset-bearing decision timestamp predates creation of the sealed
+  assurance program, using deterministic artifact timestamps rather than the verifier host clock.
+- Deduplicate external evidence by a content-addressed semantic-claim fingerprint and expose exact
+  verified/credited/duplicate totals. Replayed claims cannot inflate relationship support, while
+  malformed evidence reference arrays now fail and disqualify credit in the evidence domain.
 
 ## 0.58.0 - 2026-08-05
 

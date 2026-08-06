@@ -35,7 +35,11 @@ from .file_publication import atomic_publish_text
 from .html_report import HTML_REPORT_VERIFICATION_FORMAT
 from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_file
-from .program import PROGRAM_REPORT_FORMAT, PROGRAM_REPORT_VERIFICATION_FORMAT
+from .program import (
+    PROGRAM_REPORT_FORMAT,
+    PROGRAM_REPORT_VERIFICATION_FORMAT,
+    PROGRAM_VERIFICATION_CHECKS,
+)
 from .publication import (
     PUBLICATION_FAILURE_CATALOG_ALGORITHM,
     PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
@@ -2883,7 +2887,7 @@ def _assurance_program_schema() -> dict[str, Any]:
                                 },
                                 "subject_id": nonempty,
                                 "reviewer": nonempty,
-                                "role": nonempty,
+                                "role": identifier,
                                 "decision": {"enum": ["approved", "rejected"]},
                                 "at": {
                                     "type": "string",
@@ -2987,6 +2991,421 @@ def _assurance_program_schema() -> dict[str, Any]:
 
 def _assurance_program_verification_schema() -> dict[str, Any]:
     digest = {"type": "string", "pattern": "^([0-9a-f]{64})?$"}
+    nonempty = {"type": "string", "minLength": 1, "maxLength": 4_096}
+    count = {"type": "integer", "minimum": 0}
+    ratio = {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+    string_array = {
+        "type": "array",
+        "maxItems": 50_000,
+        "uniqueItems": True,
+        "items": nonempty,
+    }
+    role_array = {
+        "type": "array",
+        "maxItems": 10_000,
+        "uniqueItems": True,
+        "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^\\S+$",
+        },
+    }
+    check_names = PROGRAM_VERIFICATION_CHECKS
+    full_checks = {
+        "type": "object",
+        "required": list(check_names),
+        "properties": {name: {"type": "boolean"} for name in check_names},
+        "additionalProperties": False,
+    }
+    checks = {
+        "oneOf": [
+            {
+                "type": "object",
+                "required": ["input"],
+                "properties": {"input": {"const": False}},
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "required": ["input", "format"],
+                "properties": {
+                    "input": {"const": True},
+                    "format": {"const": False},
+                },
+                "additionalProperties": False,
+            },
+            full_checks,
+        ]
+    }
+    summary = {
+        "type": "object",
+        "required": [
+            "name",
+            "purpose",
+            "repositories",
+            "repository_ids",
+            "bound_repositories",
+            "relationships",
+            "requirements",
+            "external_evidence",
+            "verified_evidence",
+            "trusted_evidence",
+            "duplicate_evidence",
+            "evidence_bytes",
+            "evidence_statuses",
+            "approvals",
+            "validated_approvals",
+            "credited_program_approvals",
+            "conflicting_program_roles",
+            "required_roles",
+            "approved_roles",
+            "program_approval",
+        ],
+        "properties": {
+            "name": {"type": "string", "maxLength": 4_096},
+            "purpose": {"type": "string", "maxLength": 16_384},
+            "repositories": count,
+            "repository_ids": string_array,
+            "bound_repositories": count,
+            "relationships": count,
+            "requirements": count,
+            "external_evidence": count,
+            "verified_evidence": count,
+            "trusted_evidence": count,
+            "duplicate_evidence": count,
+            "evidence_bytes": count,
+            "evidence_statuses": {
+                "type": "object",
+                "maxProperties": 100,
+                "propertyNames": {"minLength": 1, "maxLength": 500},
+                "additionalProperties": count,
+            },
+            "approvals": count,
+            "validated_approvals": count,
+            "credited_program_approvals": count,
+            "conflicting_program_roles": role_array,
+            "required_roles": role_array,
+            "approved_roles": role_array,
+            "program_approval": {"type": "boolean"},
+        },
+        "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {"properties": {"program_approval": {"const": True}}},
+                "then": {
+                    "properties": {"credited_program_approvals": {"minimum": 1}}
+                },
+                "else": {
+                    "properties": {"credited_program_approvals": {"const": 0}}
+                },
+            }
+        ],
+    }
+    relationship = {
+        "type": "object",
+        "required": [
+            "id",
+            "kind",
+            "source",
+            "source_repository",
+            "target",
+            "target_repository",
+            "endpoints_valid",
+            "temporal_status",
+            "resilience_status",
+            "deadline_ms",
+            "observed_max_ms",
+            "recovery_deadline_ms",
+            "observed_recovery_ms",
+            "evidence_ids",
+        ],
+        "properties": {
+            "id": nonempty,
+            "kind": {"type": "string", "maxLength": 500},
+            "source": {"type": "string", "maxLength": 4_096},
+            "source_repository": {"type": "string", "maxLength": 2_000},
+            "target": {"type": "string", "maxLength": 4_096},
+            "target_repository": {"type": "string", "maxLength": 2_000},
+            "endpoints_valid": {"type": "boolean"},
+            "temporal_status": {
+                "enum": ["not_configured", "unverified", "supported", "violated"]
+            },
+            "resilience_status": {
+                "enum": ["not_configured", "unverified", "supported", "violated"]
+            },
+            "deadline_ms": {"type": ["number", "null"], "minimum": 0},
+            "observed_max_ms": {"type": ["number", "null"], "minimum": 0},
+            "recovery_deadline_ms": {
+                "type": ["number", "null"],
+                "minimum": 0,
+            },
+            "observed_recovery_ms": {
+                "type": ["number", "null"],
+                "minimum": 0,
+            },
+            "evidence_ids": string_array,
+        },
+        "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {
+                    "properties": {"temporal_status": {"const": "not_configured"}}
+                },
+                "then": {"properties": {"deadline_ms": {"type": "null"}}},
+                "else": {"properties": {"deadline_ms": {"type": "number"}}},
+            },
+            {
+                "if": {
+                    "properties": {
+                        "temporal_status": {"enum": ["supported", "violated"]}
+                    }
+                },
+                "then": {
+                    "properties": {
+                        "observed_max_ms": {"type": "number", "minimum": 0},
+                        "evidence_ids": {"minItems": 1},
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {
+                        "resilience_status": {"const": "not_configured"}
+                    }
+                },
+                "then": {
+                    "properties": {
+                        "recovery_deadline_ms": {"type": "null"},
+                        "observed_recovery_ms": {"type": "null"},
+                    }
+                },
+                "else": {
+                    "properties": {"recovery_deadline_ms": {"type": "number"}}
+                },
+            },
+            {
+                "if": {
+                    "properties": {
+                        "resilience_status": {"enum": ["supported", "violated"]}
+                    }
+                },
+                "then": {"properties": {"evidence_ids": {"minItems": 1}}},
+            },
+            {
+                "if": {
+                    "properties": {"resilience_status": {"const": "supported"}}
+                },
+                "then": {
+                    "properties": {
+                        "observed_recovery_ms": {"type": "number", "minimum": 0}
+                    }
+                },
+            },
+        ],
+    }
+    validation_count_names = (
+        "cohorts",
+        "credited_cohorts",
+        "duplicate_evidence",
+        "repositories",
+        "independently_reviewed",
+        "cases",
+        "count_backed_cohorts",
+        "count_backed_cases",
+        "evaluation_artifacts",
+        "verified_evaluation_artifacts",
+        "evaluation_artifact_bytes",
+        "call_cases",
+        "call_resolution_cohorts",
+        "call_count_backed_cohorts",
+        "call_count_backed_cases",
+    )
+    validation_ratio_names = (
+        "macro_recall",
+        "macro_precision",
+        "micro_recall",
+        "micro_precision",
+        "macro_call_resolution_recall",
+        "macro_call_resolution_precision",
+        "micro_call_resolution_recall",
+        "micro_call_resolution_precision",
+    )
+    validation = {
+        "type": "object",
+        "required": [*validation_count_names, *validation_ratio_names],
+        "properties": {
+            **{name: count for name in validation_count_names},
+            **{name: ratio for name in validation_ratio_names},
+        },
+        "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {"properties": {"credited_cohorts": {"const": 0}}},
+                "then": {
+                    "properties": {
+                        "macro_recall": {"type": "null"},
+                        "macro_precision": {"type": "null"},
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "macro_recall": {"type": "number"},
+                        "macro_precision": {"type": "number"},
+                    }
+                },
+            },
+            {
+                "if": {"properties": {"count_backed_cohorts": {"const": 0}}},
+                "then": {
+                    "properties": {
+                        "micro_recall": {"type": "null"},
+                        "micro_precision": {"type": "null"},
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "micro_recall": {"type": "number"},
+                        "micro_precision": {"type": "number"},
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {"call_resolution_cohorts": {"const": 0}}
+                },
+                "then": {
+                    "properties": {
+                        "macro_call_resolution_recall": {"type": "null"},
+                        "macro_call_resolution_precision": {"type": "null"},
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "macro_call_resolution_recall": {"type": "number"},
+                        "macro_call_resolution_precision": {"type": "number"},
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {
+                        "call_count_backed_cohorts": {"const": 0}
+                    }
+                },
+                "then": {
+                    "properties": {
+                        "micro_call_resolution_recall": {"type": "null"},
+                        "micro_call_resolution_precision": {"type": "null"},
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "micro_call_resolution_recall": {"type": "number"},
+                        "micro_call_resolution_precision": {"type": "number"},
+                    }
+                },
+            },
+        ],
+    }
+    llm_count_names = (
+        "evaluations",
+        "credited_evaluations",
+        "duplicate_evidence",
+        "samples",
+        "independently_reviewed",
+        "count_backed_evaluations",
+        "verified_corpus_artifacts",
+        "subject_bound_evaluations",
+        "semantic_fingerprinted_evaluations",
+        "corpus_artifacts",
+        "corpus_artifact_bytes",
+    )
+    llm_quality = {
+        "type": "object",
+        "required": [
+            *llm_count_names,
+            "claim_count",
+            "unsupported_claim_count",
+            "aggregation_method",
+            "grounding",
+            "citation_accuracy",
+            "unsupported_claim_rate",
+        ],
+        "properties": {
+            **{name: count for name in llm_count_names},
+            "claim_count": {"type": ["integer", "null"], "minimum": 0},
+            "unsupported_claim_count": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+            },
+            "aggregation_method": {
+                "enum": [
+                    "count-backed",
+                    "legacy-sample-weighted",
+                    "unavailable",
+                ]
+            },
+            "grounding": ratio,
+            "citation_accuracy": ratio,
+            "unsupported_claim_rate": ratio,
+        },
+        "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {
+                    "properties": {"aggregation_method": {"const": "unavailable"}}
+                },
+                "then": {
+                    "properties": {
+                        "credited_evaluations": {"const": 0},
+                        "count_backed_evaluations": {"const": 0},
+                        "samples": {"const": 0},
+                        "claim_count": {"type": "null"},
+                        "unsupported_claim_count": {"type": "null"},
+                        "grounding": {"type": "null"},
+                        "citation_accuracy": {"type": "null"},
+                        "unsupported_claim_rate": {"type": "null"},
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {"aggregation_method": {"const": "count-backed"}}
+                },
+                "then": {
+                    "properties": {
+                        "credited_evaluations": {"minimum": 1},
+                        "claim_count": {"type": "integer", "minimum": 1},
+                        "unsupported_claim_count": {
+                            "type": "integer",
+                            "minimum": 0,
+                        },
+                        "grounding": {"type": "number"},
+                        "citation_accuracy": {"type": "number"},
+                        "unsupported_claim_rate": {"type": "number"},
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {
+                        "aggregation_method": {"const": "legacy-sample-weighted"}
+                    }
+                },
+                "then": {
+                    "properties": {
+                        "credited_evaluations": {"minimum": 1},
+                        "claim_count": {"type": "null"},
+                        "unsupported_claim_count": {"type": "null"},
+                        "grounding": {"type": "number"},
+                        "citation_accuracy": {"type": "number"},
+                        "unsupported_claim_rate": {"type": "number"},
+                    }
+                },
+            },
+        ],
+    }
     return {
         "$schema": JSON_SCHEMA_DRAFT,
         "$id": _schema_id("assurance-program-verification"),
@@ -3024,10 +3443,7 @@ def _assurance_program_verification_schema() -> dict[str, Any]:
                 "additionalProperties": False,
             },
             "valid": {"type": "boolean"},
-            "checks": {
-                "type": "object",
-                "additionalProperties": {"type": ["boolean", "null"]},
-            },
+            "checks": checks,
             "counts": {
                 "type": "object",
                 "required": ["errors", "warnings", "information"],
@@ -3038,14 +3454,20 @@ def _assurance_program_verification_schema() -> dict[str, Any]:
                 },
                 "additionalProperties": False,
             },
-            "summary": {"type": "object"},
+            "summary": {
+                "oneOf": [{"type": "object", "maxProperties": 0}, summary]
+            },
             "relationships": {
                 "type": "array",
                 "maxItems": 10_000,
-                "items": {"type": "object"},
+                "items": relationship,
             },
-            "validation": {"type": "object"},
-            "llm_quality": {"type": "object"},
+            "validation": {
+                "oneOf": [{"type": "object", "maxProperties": 0}, validation]
+            },
+            "llm_quality": {
+                "oneOf": [{"type": "object", "maxProperties": 0}, llm_quality]
+            },
             "findings": {
                 "type": "array",
                 "maxItems": 200_000,
@@ -3053,7 +3475,10 @@ def _assurance_program_verification_schema() -> dict[str, Any]:
                     "type": "object",
                     "required": ["code", "level", "message", "location"],
                     "properties": {
-                        "code": {"type": "string", "minLength": 1},
+                        "code": {
+                            "type": "string",
+                            "pattern": "^(program|repository|relationship|requirements|evidence|validation|llm|governance)\\.[a-z0-9_]+$",
+                        },
                         "level": {"enum": ["error", "warning", "information"]},
                         "message": {"type": "string", "minLength": 1},
                         "location": {"type": "string"},

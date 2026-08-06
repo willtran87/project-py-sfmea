@@ -1441,11 +1441,52 @@ The in-memory verdict must first satisfy the same closed current contract: exact
 check fields, typed verifier/digest/count/state values, reconciled failed and unchecked check
 lists, coherent artifact/program binding states, derived status and validity, and consistent
 publication phase/preservation claims. Invalid caller dictionaries are rejected before staging.
-The embedded verdict contract is closed through nested verifier/program records, typed check
-states and counts, bounded object relationships, exact finding fields and levels, count-to-finding
-reconciliation, and validity-to-error/check reconciliation. Staged publication also requires the
-receipt's program and semantic-verdict digests to equal the exact in-memory result requested by
-the caller, preventing substitution with a different but internally consistent report.
+The embedded verdict contract is closed through nested verifier/program records, the exact
+producer check set, exact summary/relationship/validation/LLM projection fields, typed and bounded
+values, and exact finding fields and levels. Runtime reconciliation checks finding counts,
+validity, repository and relationship totals, evidence totals, timing/resilience configuration
+state and measurements, credited-versus-duplicate validation cohorts, artifact-credit bounds, LLM
+aggregation mode, and claim totals. Repository-binding checks must agree with declared/bound
+counts; completed evidence credit is bounded by passed/failed records; supported timing requires a
+linked observation within its deadline; a timing violation requires a measured overrun; and
+supported resilience requires linked evidence with recovery inside its deadline. Early input
+rejections use a separate minimal closed shape and cannot carry unchecked summaries. Staged
+publication also requires the receipt's program and semantic-verdict digests to equal the exact
+in-memory result requested by the caller, preventing substitution with a different but internally
+consistent report.
+
+Every full-verdict check is derived from its producer error namespace: format, integrity, program
+contract, relationships, requirements, evidence, validation, LLM quality, and governance cannot
+be marked failed or passed independently of the error findings that explain them. Repository
+binding remains derived from exact bound totals. Invalid endpoints, deadline overruns, and
+circuit-breaker violations must reconcile to their exact relationship-scoped finding codes and
+locations, preventing a correct error count from being reassigned to the wrong assurance domain.
+Producer-owned finding namespaces, overrun-to-state implications, validation population/metric
+availability, and LLM aggregation/claim-rate reconciliation are also enforced. A report cannot
+hide a measured timing or recovery overrun as unverified, invent a finding domain, publish metrics
+without the population that produced them, or relabel count-backed model evidence as legacy.
+Approval totals now distinguish declarations, fully validated records, and credited program-level
+approvals. Unknown fields or subjects, invalid identities or decisions, and timestamps without an
+offset remain auditable findings but cannot contribute an approval role or readiness credit.
+Each normalized program role must have exactly one valid decision. Duplicate or conflicting
+decisions are surfaced in the summary and findings and the entire role receives no approval credit,
+preventing stale or ambiguous authority from satisfying readiness.
+An approval must be timestamped at or after creation of the sealed assurance program. Pre-creation
+decisions remain visible but receive no credit; the comparison is artifact-to-artifact and does not
+make verification depend on the workstation clock.
+External evidence accounting separates artifact-verified records, credited semantic claims, and
+exact duplicates. Claims are fingerprinted across artifact digest, technique, status, subjects,
+identities, and metrics; replaying the same claim under another ID is reported and receives no
+relationship or evidence credit. Malformed subject arrays likewise disqualify the record directly.
+
+The same contract is enforced before direct Markdown, JSON, or HTML rendering/publication, so
+library callers cannot bypass it by skipping `program-report-verify`. Invalid caller data is
+rejected before destination inspection or staging. JSON stages are strictly decoded and must
+retain the exact requested semantic digest; Markdown stages are exact-byte checked; HTML retains
+its independent receipt verification. All three paths preserve an existing destination on
+rejection. Program-verdict projections use a separate 1,500,000-node budget within the existing
+10–16 MiB byte ceilings so large valid results remain consumable without widening program-input
+limits.
 
 ## Evaluation hook
 

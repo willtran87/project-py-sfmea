@@ -313,6 +313,7 @@ class AssuranceProgramTests(unittest.TestCase):
                 },
             ],
         }
+        program["created_at"] = "2026-08-05T00:00:00+00:00"
         return seal_program(program)
 
     def _write_program(self, program: dict[str, object]) -> Path:
@@ -340,6 +341,12 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertEqual(result["relationships"][0]["temporal_status"], "supported")
         self.assertEqual(result["relationships"][0]["resilience_status"], "supported")
         self.assertEqual(result["summary"]["trusted_evidence"], 1)
+        self.assertEqual(result["summary"]["verified_evidence"], 1)
+        self.assertEqual(result["summary"]["duplicate_evidence"], 0)
+        self.assertEqual(result["summary"]["approvals"], 2)
+        self.assertEqual(result["summary"]["validated_approvals"], 2)
+        self.assertEqual(result["summary"]["credited_program_approvals"], 2)
+        self.assertEqual(result["summary"]["conflicting_program_roles"], [])
         self.assertEqual(result["validation"]["macro_recall"], 0.91)
         self.assertEqual(result["validation"]["credited_cohorts"], 1)
         self.assertEqual(result["validation"]["duplicate_evidence"], 0)
@@ -368,6 +375,10 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("Credited validation cohorts: 1 of 1", markdown)
         self.assertIn("Count-backed cohorts: 1 of 1", markdown)
         self.assertIn("Verified evaluation artifacts: 1 of 1", markdown)
+        self.assertIn("Verified / credited / duplicate evidence: 1 / 1 / 0", markdown)
+        self.assertIn("Validated approvals: 2 / 2", markdown)
+        self.assertIn("Credited program approvals: 2", markdown)
+        self.assertIn("Conflicting program roles: none", markdown)
         self.assertIn("LLM aggregation: count-backed", markdown)
         self.assertIn("Credited LLM evaluations: 1 of 1", markdown)
         self.assertIn("Verified LLM corpus artifacts: 1 of 1", markdown)
@@ -390,6 +401,9 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("subject-bound LLM evaluations", html)
         self.assertIn("semantic LLM fingerprints", html)
         self.assertIn("credited LLM evaluations", html)
+        self.assertIn("validated approvals", html)
+        self.assertIn("program approvals", html)
+        self.assertIn("conflicting roles", html)
         self.assertIn("duplicate LLM evidence", html)
         self.assertIn("LLM aggregation", html)
         self.assertNotIn("https://", html)
@@ -499,8 +513,10 @@ class AssuranceProgramTests(unittest.TestCase):
         result = verify_assurance_program(self.program_path)
         self.assertFalse(result["valid"])
         codes = {value["code"] for value in result["findings"]}
-        self.assertIn("program.invalid_reference_array", codes)
+        self.assertIn("evidence.reference_array", codes)
         self.assertIn("governance.required_roles", codes)
+        self.assertEqual(result["summary"]["verified_evidence"], 0)
+        self.assertEqual(result["summary"]["trusted_evidence"], 0)
 
     def test_unknown_subjects_weak_quality_and_incomplete_temporal_contract_are_blocked(
         self,
@@ -532,6 +548,9 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("validation.call_resolution_recall", codes)
         self.assertIn("llm.unsupported_claim_rate", codes)
         self.assertIn("governance.unknown_subject", codes)
+        self.assertEqual(result["summary"]["validated_approvals"], 1)
+        self.assertEqual(result["summary"]["credited_program_approvals"], 1)
+        self.assertEqual(result["summary"]["approved_roles"], ["safety"])
 
     def test_call_resolution_cohort_contract_fails_closed(self) -> None:
         mutations = (
@@ -832,6 +851,10 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertEqual(
             result["llm_quality"]["aggregation_method"], "legacy-sample-weighted"
         )
+        self.assertTrue(_program_verification_payload_contract(result))
+        Draft202012Validator(
+            schema_document("assurance-program-verification")
+        ).validate(result)
 
     def test_evidence_digest_and_html_content_are_safe(self) -> None:
         program = self._valid_program()
@@ -1255,6 +1278,216 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertFalse(malformed["checks"]["payload_contract"])
         self.assertIsNone(malformed["assurance_valid"])
 
+    def test_program_report_rejects_self_consistent_semantic_contradictions(
+        self,
+    ) -> None:
+        self._write_program(self._valid_program())
+        result = verify_assurance_program(self.program_path)
+        self.assertTrue(result["valid"], result["findings"])
+
+        def unexplained_failed_check(value: dict[str, object]) -> None:
+            value["checks"]["validation"] = False
+            value["valid"] = False
+
+        def moved_error_namespace(value: dict[str, object]) -> None:
+            value["checks"]["relationships"] = False
+            value["valid"] = False
+            value["counts"]["errors"] = 1
+            value["findings"].append(
+                {
+                    "code": "validation.forged_failure",
+                    "level": "error",
+                    "message": "A validation error cannot explain relationship failure.",
+                    "location": "validation_cohorts",
+                }
+            )
+
+        def misplaced_deadline_finding(value: dict[str, object]) -> None:
+            relationship = value["relationships"][0]
+            relationship["temporal_status"] = "violated"
+            relationship["observed_max_ms"] = relationship["deadline_ms"] + 1
+            value["checks"]["relationships"] = False
+            value["valid"] = False
+            value["counts"]["errors"] = 1
+            value["findings"].append(
+                {
+                    "code": "relationship.deadline_violated",
+                    "level": "error",
+                    "message": "The finding is attached to the wrong relationship.",
+                    "location": "relationships.UNRELATED",
+                }
+            )
+
+        def invented_finding_namespace(value: dict[str, object]) -> None:
+            value["valid"] = False
+            value["counts"]["errors"] = 1
+            value["findings"].append(
+                {
+                    "code": "forged.failure",
+                    "level": "error",
+                    "message": "An invented producer namespace is not trustworthy.",
+                    "location": "forged",
+                }
+            )
+
+        def hidden_timing_overrun(value: dict[str, object]) -> None:
+            relationship = value["relationships"][0]
+            relationship["temporal_status"] = "unverified"
+            relationship["observed_max_ms"] = relationship["deadline_ms"] + 1
+            value["checks"]["relationships"] = False
+            value["valid"] = False
+            value["counts"]["errors"] = 1
+            value["findings"].append(
+                {
+                    "code": "relationship.temporal_evidence_missing",
+                    "level": "error",
+                    "message": "An observed overrun cannot remain unverified.",
+                    "location": f"relationships.{relationship['id']}",
+                }
+            )
+
+        def impossible_validation_population(value: dict[str, object]) -> None:
+            value["validation"]["cases"] = 0
+
+        def relabeled_llm_aggregation(value: dict[str, object]) -> None:
+            value["llm_quality"]["aggregation_method"] = "legacy-sample-weighted"
+            value["llm_quality"]["claim_count"] = None
+            value["llm_quality"]["unsupported_claim_count"] = None
+
+        def forged_llm_claim_rate(value: dict[str, object]) -> None:
+            current = value["llm_quality"]["unsupported_claim_rate"]
+            value["llm_quality"]["unsupported_claim_rate"] = (
+                0.5 if current != 0.5 else 0.25
+            )
+
+        mutations = (
+            unexplained_failed_check,
+            moved_error_namespace,
+            misplaced_deadline_finding,
+            invented_finding_namespace,
+            hidden_timing_overrun,
+            impossible_validation_population,
+            relabeled_llm_aggregation,
+            forged_llm_claim_rate,
+            lambda value: value["checks"].update({"invented_check": True}),
+            lambda value: value["summary"].update(
+                {"relationships": value["summary"]["relationships"] + 1}
+            ),
+            lambda value: value["summary"].update(
+                {"conflicting_program_roles": ["forged"]}
+            ),
+            lambda value: value["summary"].update(
+                {
+                    "bound_repositories": value["summary"]["bound_repositories"]
+                    - 1
+                }
+            ),
+            lambda value: value["summary"].update(
+                {"evidence_statuses": {"not_run": 1}}
+            ),
+            lambda value: value["summary"].update({"duplicate_evidence": 1}),
+            lambda value: value["summary"].update(
+                {
+                    "validated_approvals": value["summary"][
+                        "validated_approvals"
+                    ]
+                    - 1
+                }
+            ),
+            lambda value: value["relationships"][0].update(
+                {"unexpected_projection": True}
+            ),
+            lambda value: value["relationships"][0].update(
+                {"observed_max_ms": None}
+            ),
+            lambda value: value["relationships"][0].update(
+                {"temporal_status": "violated"}
+            ),
+            lambda value: value["relationships"][0].update(
+                {"observed_recovery_ms": None}
+            ),
+            lambda value: value["relationships"][0].update(
+                {"endpoints_valid": False}
+            ),
+            lambda value: value["validation"].update(
+                {"credited_cohorts": value["validation"]["cohorts"] + 1}
+            ),
+            lambda value: value["llm_quality"].update(
+                {
+                    "unsupported_claim_count": value["llm_quality"]["claim_count"]
+                    + 1
+                }
+            ),
+            lambda value: value["program"].update({"content_sha256": ""}),
+        )
+        for index, mutation in enumerate(mutations):
+            with self.subTest(index=index):
+                contradictory = copy.deepcopy(result)
+                mutation(contradictory)
+                report = self.root / f"self-consistent-contradiction-{index}.html"
+                with patch(
+                    "pysfmea.program._program_verification_payload_contract",
+                    return_value=True,
+                ):
+                    forged_html = program_verification_html(contradictory)
+                report.write_bytes(forged_html.encode("utf-8"))
+
+                verdict = verify_program_report_file(report)
+
+                self.assertFalse(verdict["valid"])
+                self.assertFalse(verdict["checks"]["payload_contract"])
+                self.assertTrue(verdict["checks"]["payload_integrity"])
+                self.assertTrue(
+                    verdict["checks"]["verification_result_integrity"]
+                )
+                self.assertTrue(verdict["checks"]["document_integrity"])
+
+        program_schema = Draft202012Validator(
+            schema_document("assurance-program-verification")
+        )
+        for field in ("observed_max_ms", "observed_recovery_ms"):
+            with self.subTest(schema_field=field):
+                contradictory = copy.deepcopy(result)
+                contradictory["relationships"][0][field] = None
+                self.assertFalse(program_schema.is_valid(contradictory))
+        missing_evidence = copy.deepcopy(result)
+        missing_evidence["relationships"][0]["evidence_ids"] = []
+        self.assertFalse(program_schema.is_valid(missing_evidence))
+
+    def test_program_report_accepts_closed_early_rejection_payload(self) -> None:
+        rejected_program = self.root / "invalid-root-program.json"
+        rejected_program.write_text("[]\n", encoding="utf-8")
+        result = verify_assurance_program(rejected_program)
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["checks"], {"input": True, "format": False})
+        report = self.root / "invalid-root-program-report.html"
+        report.write_bytes(program_verification_html(result).encode("utf-8"))
+
+        verdict = verify_program_report_file(report)
+
+        self.assertTrue(verdict["valid"], verdict)
+        self.assertFalse(verdict["assurance_valid"])
+        self.assertTrue(verdict["checks"]["payload_contract"])
+        Draft202012Validator(
+            schema_document("assurance-program-verification")
+        ).validate(result)
+
+        invalid_program = self._valid_program()
+        invalid_program["external_evidence"][0]["artifact"]["sha256"] = "0" * 64
+        self._write_program(invalid_program)
+        full_result = verify_assurance_program(self.program_path)
+        self.assertFalse(full_result["valid"])
+        report.write_bytes(program_verification_html(full_result).encode("utf-8"))
+
+        full_verdict = verify_program_report_file(report)
+
+        self.assertTrue(full_verdict["valid"], full_verdict)
+        self.assertFalse(full_verdict["assurance_valid"])
+        self.assertTrue(full_verdict["checks"]["payload_contract"])
+        Draft202012Validator(
+            schema_document("assurance-program-verification")
+        ).validate(full_result)
+
     def test_program_report_publication_json_is_schema_backed_and_assurance_aware(
         self,
     ) -> None:
@@ -1499,6 +1732,40 @@ class AssuranceProgramTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertFalse(_program_verification_payload_contract(candidate))
 
+        contradictory_result = copy.deepcopy(result)
+        contradictory_result["summary"]["relationships"] += 1
+        for renderer in (program_verification_markdown, program_verification_html):
+            with self.subTest(renderer=renderer.__name__):
+                with self.assertRaisesRegex(ValueError, "closed contract"):
+                    renderer(contradictory_result)
+        for output_format, suffix in (
+            ("json", ".json"),
+            ("markdown", ".md"),
+            ("html", ".html"),
+        ):
+            with self.subTest(output_format=output_format):
+                destination = self.root / f"preserved-invalid-verdict{suffix}"
+                destination.write_text("trusted prior", encoding="utf-8")
+                expected_error = (
+                    ProgramReportPublicationError
+                    if output_format == "html"
+                    else ValueError
+                )
+                with self.assertRaisesRegex(expected_error, "closed contract") as raised:
+                    export_program_verification(
+                        contradictory_result,
+                        destination,
+                        format=output_format,
+                    )
+                if output_format == "html":
+                    self.assertEqual(raised.exception.phase, "input_validation")
+                self.assertEqual(
+                    destination.read_text(encoding="utf-8"), "trusted prior"
+                )
+                self.assertFalse(
+                    list(self.root.glob(f".{destination.name}.*.tmp"))
+                )
+
         json_output = export_program_verification(
             result, self.root / "program-verification.json", format="json"
         )
@@ -1511,6 +1778,32 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn(
             "# System assurance program verification",
             markdown_output.read_text(encoding="utf-8"),
+        )
+        substituted_program_verdict = self.root / "substituted-program-verdict.json"
+        substituted_program_verdict.write_text(
+            "trusted prior verdict", encoding="utf-8"
+        )
+        with patch(
+            "pysfmea.program.load_bounded_json_document",
+            return_value=BoundedJsonDocument(
+                path=substituted_program_verdict,
+                value={"format": "substituted-program-verdict"},
+                raw=b"{}",
+            ),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "staged assurance program verification verification failed",
+            ):
+                export_program_verification(
+                    result, substituted_program_verdict, format="json"
+                )
+        self.assertEqual(
+            substituted_program_verdict.read_text(encoding="utf-8"),
+            "trusted prior verdict",
+        )
+        self.assertFalse(
+            list(self.root.glob(".substituted-program-verdict.json.*.tmp"))
         )
         receipt_source = self.root / "receipt-source-program-report.html"
         receipt_source.write_bytes(program_verification_html(result).encode("utf-8"))
@@ -1659,6 +1952,33 @@ class AssuranceProgramTests(unittest.TestCase):
             "evidence.failed", {value["code"] for value in failed["findings"]}
         )
 
+    def test_duplicate_external_evidence_claims_are_verified_but_not_credited(self) -> None:
+        program = self._valid_program()
+        duplicate = copy.deepcopy(program["external_evidence"][0])
+        duplicate["id"] = "EVID-TIMING-DUPLICATE"
+        program["external_evidence"].append(duplicate)
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+
+        self.assertFalse(result["valid"])
+        self.assertFalse(result["checks"]["external_evidence"])
+        self.assertIn(
+            "evidence.duplicate_claim",
+            {finding["code"] for finding in result["findings"]},
+        )
+        self.assertEqual(result["summary"]["external_evidence"], 2)
+        self.assertEqual(result["summary"]["verified_evidence"], 2)
+        self.assertEqual(result["summary"]["trusted_evidence"], 1)
+        self.assertEqual(result["summary"]["duplicate_evidence"], 1)
+        self.assertEqual(
+            result["relationships"][0]["evidence_ids"], ["EVID-TIMING-001"]
+        )
+        self.assertTrue(_program_verification_payload_contract(result))
+        Draft202012Validator(
+            schema_document("assurance-program-verification")
+        ).validate(result)
+
     def test_circuit_breaker_violation_and_unrelated_role_approval_are_blocked(
         self,
     ) -> None:
@@ -1708,12 +2028,71 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("program.boolean_value", codes)
         self.assertIn("validation.independence_identity", codes)
         self.assertIn("llm.independence_identity", codes)
-        self.assertIn("governance.role_independence", codes)
-        self.assertIn("governance.program_rejected", codes)
+        self.assertIn("governance.roles", codes)
+        self.assertNotIn("governance.role_independence", codes)
+        self.assertIn("governance.role_decision_conflict", codes)
+        self.assertIn("governance.program_approval", codes)
+        self.assertNotIn("governance.program_rejected", codes)
         self.assertIn("governance.approval_unknown_fields", codes)
+        self.assertEqual(result["summary"]["approvals"], 3)
+        self.assertEqual(result["summary"]["validated_approvals"], 2)
+        self.assertEqual(result["summary"]["credited_program_approvals"], 0)
+        self.assertEqual(result["summary"]["approved_roles"], [])
+        self.assertEqual(result["summary"]["conflicting_program_roles"], ["software"])
         self.assertIn("evidence.unknown_fields", codes)
         self.assertEqual(result["summary"]["trusted_evidence"], 0)
         self.assertEqual(result["relationships"][0]["temporal_status"], "unverified")
+
+    def test_invalid_approval_records_receive_no_governance_credit(self) -> None:
+        mutations = (
+            (lambda approval: approval.update({"reviewer": ""}), "governance.approval_identity"),
+            (lambda approval: approval.update({"role": "software authority"}), "governance.approval_identity"),
+            (lambda approval: approval.update({"at": "2026-08-05"}), "governance.approval_timestamp"),
+            (lambda approval: approval.update({"at": "2026-08-04T23:59:59+00:00"}), "governance.approval_predates_program"),
+            (lambda approval: approval.update({"unexpected": True}), "governance.approval_unknown_fields"),
+            (lambda approval: approval.update({"subject_id": "unknown"}), "governance.unknown_subject"),
+        )
+        for index, (mutation, expected_code) in enumerate(mutations):
+            with self.subTest(index=index, expected_code=expected_code):
+                program = self._valid_program()
+                mutation(program["governance"]["approvals"][0])
+                self._write_program(seal_program(program))
+
+                result = verify_assurance_program(self.program_path)
+
+                self.assertFalse(result["valid"])
+                self.assertIn(
+                    expected_code,
+                    {finding["code"] for finding in result["findings"]},
+                )
+                self.assertEqual(result["summary"]["approvals"], 2)
+                self.assertEqual(result["summary"]["validated_approvals"], 1)
+                self.assertEqual(result["summary"]["credited_program_approvals"], 1)
+                self.assertEqual(result["summary"]["approved_roles"], ["safety"])
+                self.assertTrue(result["summary"]["program_approval"])
+                self.assertTrue(_program_verification_payload_contract(result))
+
+    def test_required_approval_roles_are_bounded_identifiers_and_unique(self) -> None:
+        mutations = (
+            lambda roles: roles.append(""),
+            lambda roles: roles.append("software assurance"),
+            lambda roles: roles.append("SOFTWARE"),
+        )
+        for index, mutation in enumerate(mutations):
+            with self.subTest(index=index):
+                program = self._valid_program()
+                mutation(program["governance"]["required_roles"])
+                self._write_program(seal_program(program))
+
+                result = verify_assurance_program(self.program_path)
+
+                self.assertFalse(result["valid"])
+                self.assertIn(
+                    "governance.required_roles",
+                    {finding["code"] for finding in result["findings"]},
+                )
+                self.assertEqual(result["summary"]["required_roles"], ["safety", "software"])
+                self.assertTrue(_program_verification_payload_contract(result))
 
     def test_finding_references_are_repository_qualified(self) -> None:
         program = self._valid_program()

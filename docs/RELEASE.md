@@ -115,9 +115,34 @@ release scripts.
   digests/booleans/counts/checks, unreconciled failed or unchecked lists, contradictory artifact
   or program binding, invalid status/validity, and inconsistent publication state before staging.
 - Confirm the embedded program-verdict contract rejects open or mistyped verifier/program/finding
-  records, boolean or inconsistent counts, invalid levels/check states, validity disagreement, and
-  excess relationships/findings. Confirm a different internally valid verdict cannot satisfy the
-  staged in-memory result binding.
+  records, invented producer checks, open summary/relationship/validation/LLM projections,
+  boolean or inconsistent counts, invalid levels/check states, validity disagreement, mismatched
+  repository/relationship/evidence totals, impossible cohort/artifact credit, contradictory
+  timing/resilience state, invalid LLM aggregation/claim totals, and excess relationships/findings.
+  Confirm minimal early rejections cannot carry unchecked summaries and a different internally
+  valid verdict cannot satisfy the staged in-memory result binding.
+- Confirm direct program-verdict Markdown/JSON/HTML renderers and exporters reject a contradictory
+  in-memory verdict before destination inspection, preserve prior output, and leave no temporary
+  residue. Confirm JSON stages require strict closed-contract semantic equality, Markdown stages
+  retain exact bytes, and the 1,500,000-node verdict-projection budget does not widen the
+  500,000-node assurance-program input boundary.
+- Confirm program-verdict reconciliation derives repository-binding success from non-empty exact
+  bound/declared totals, bounds trusted completed evidence by passed/failed evidence, rejects
+  supported timing without a linked within-deadline observation, rejects a timing violation
+  without a measured overrun, rejects supported resilience without linked within-deadline recovery
+  evidence, and prevents a passing relationship check from hiding invalid endpoints or violations.
+- Confirm each full program-verdict check exactly follows its error namespace. Exercise a failed
+  check with no error, an error moved to another namespace while counts/validity are rebalanced,
+  and deadline/endpoint/circuit-breaker findings attached to the wrong relationship; each must
+  fail the embedded runtime contract even when payload and document digests are regenerated.
+- Confirm governance reports declared, fully validated, and credited program approvals separately.
+  Unknown fields/subjects, invalid identity or decision values, and offset-free timestamps must
+  remain visible but receive no role or named-program credit. Confirm required roles reject empty,
+  whitespace-bearing, overlong, and case-normalized duplicate identifiers. Confirm multiple valid
+  decisions for one normalized program role produce one exact role-scoped conflict finding, appear
+  in the conflict summary, and grant that role no credit. Confirm a structurally valid approval
+  dated before the sealed program's `created_at` remains declared but is neither validated nor
+  credited, without consulting the host clock.
 - Confirm program ingestion rejects links/non-files, duplicate keys, non-finite values, malformed
   UTF-8, and byte/depth/node overflow. Confirm completed external evidence uses bounded
   identity-stable artifact reads with per-file/aggregate limits and exact SHA-256 checks.
@@ -133,6 +158,10 @@ release scripts.
 - Confirm unrun, inconclusive, failed, missing-artifact, and digest-invalid evidence cannot support
   timing or resilience; failed evidence independently blocks readiness. Confirm nested unknown
   fields, offset-free timestamps, non-boolean policy flags, and finding-output overflow fail closed.
+- Confirm malformed evidence subject arrays fail in the evidence domain and cannot enter verified
+  or credited totals. Repeat one content-addressed semantic claim under another ID and confirm both
+  records remain verified, exactly one is credited, one duplicate is reported, and only the owner
+  evidence ID can support relationship timing or resilience.
 - Confirm the self-contained program HTML includes accessible topology semantics, trusted-evidence
   accounting, timing/resilience states, navigation, search/severity filters, restrictive CSP, no
   remote assets, and safe escaped program text; confirm Markdown table delimiters are escaped.

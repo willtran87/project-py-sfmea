@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import unicodedata
@@ -37,6 +38,19 @@ PROGRAM_REPORT_FORMAT = "pysfmea-assurance-program-report-1"
 PROGRAM_REPORT_VERIFICATION_FORMAT = (
     "pysfmea-assurance-program-report-verification-1"
 )
+PROGRAM_VERIFICATION_CHECKS = (
+    "input",
+    "format",
+    "integrity",
+    "program_contract",
+    "repository_bindings",
+    "relationships",
+    "requirements",
+    "external_evidence",
+    "validation",
+    "llm_quality",
+    "governance",
+)
 PROGRAM_REPORT_VERIFICATION_CHECKS = (
     "metadata_complete",
     "metadata_unique",
@@ -57,6 +71,7 @@ MAX_PROGRAM_REPORT_BYTES = 16 * 1024 * 1024
 MAX_PROGRAM_REPORT_VERIFICATION_BYTES = 1024 * 1024
 MAX_PROGRAM_DEPTH = 100
 MAX_PROGRAM_NODES = 500_000
+MAX_PROGRAM_VERIFICATION_NODES = 1_500_000
 MAX_PROGRAM_REPOSITORIES = 100
 MAX_PROGRAM_RELATIONSHIPS = 10_000
 MAX_PROGRAM_REQUIREMENTS = 50_000
@@ -363,16 +378,17 @@ def _timestamp(
     label: str,
     findings: list[dict[str, str]],
     location: str,
-) -> bool:
+    code: str = "program.timestamp",
+) -> datetime | None:
     try:
         text = _bounded_text(value, label=label, limit=200)
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise ValueError(f"{label} must include a UTC offset")
     except (TypeError, ValueError) as exc:
-        _finding(findings, "program.timestamp", "error", str(exc), location)
-        return False
-    return True
+        _finding(findings, code, "error", str(exc), location)
+        return None
+    return parsed
 
 
 def _boolean(
@@ -511,6 +527,7 @@ def _string_array(
     *,
     location: str,
     limit: int = 10_000,
+    code: str = "program.invalid_reference_array",
 ) -> list[str]:
     value = record.get(field, [])
     if (
@@ -527,7 +544,7 @@ def _string_array(
     ):
         _finding(
             findings,
-            "program.invalid_reference_array",
+            code,
             "error",
             f"{field} must be a bounded array of non-empty strings.",
             f"{location}.{field}",
@@ -786,7 +803,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             _bounded_text(program.get(field), label=f"program {field}", limit=limit)
         except ValueError as exc:
             _finding(findings, "program.metadata", "error", str(exc), field)
-    _timestamp(
+    program_created_at = _timestamp(
         program.get("created_at"),
         label="program created_at",
         findings=findings,
@@ -1126,7 +1143,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         derived_relationships.append(
             {
                 "id": relationship_id,
-                "kind": kind,
+                "kind": str(kind),
                 "source": (
                     f"{source.get('repository_id')}:{source.get('component_id')}"
                     if isinstance(source, dict)
@@ -1154,7 +1171,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "observed_max_ms": None,
                 "recovery_deadline_ms": (
                     circuit_breaker.get("recovery_deadline_ms")
-                    if isinstance(circuit_breaker, dict)
+                    if breaker_valid and isinstance(circuit_breaker, dict)
                     else None
                 ),
                 "observed_recovery_ms": None,
@@ -1346,6 +1363,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     total_evidence_bytes = 0
     evidence_statuses = Counter()
     trusted_evidence: dict[str, dict[str, Any]] = {}
+    evidence_claim_owners: dict[str, str] = {}
+    verified_evidence = 0
+    duplicate_external_evidence = 0
     artifact_cache: dict[Path, tuple[int, str]] = {}
     for evidence_id, record in evidence_map.items():
         location = f"external_evidence.{evidence_id}"
@@ -1388,15 +1408,30 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 location,
             )
         evidence_statuses[str(status)] += 1
+        reference_finding_count = len(findings)
         evidence_repositories = _string_array(
-            record, "repository_ids", findings, location=location
+            record,
+            "repository_ids",
+            findings,
+            location=location,
+            code="evidence.reference_array",
         )
         evidence_relationships = _string_array(
-            record, "relationship_ids", findings, location=location
+            record,
+            "relationship_ids",
+            findings,
+            location=location,
+            code="evidence.reference_array",
         )
         evidence_findings = _string_array(
-            record, "finding_ids", findings, location=location
+            record,
+            "finding_ids",
+            findings,
+            location=location,
+            code="evidence.reference_array",
         )
+        if len(findings) != reference_finding_count:
+            evidence_valid = False
         unknown_repositories = set(evidence_repositories) - set(repository_map)
         unknown_relationships = set(evidence_relationships) - set(relationship_map)
         if unknown_repositories or unknown_relationships:
@@ -1457,6 +1492,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 )
         artifact = record.get("artifact", {})
         artifact_verified = False
+        artifact_digest = ""
         if status in {"passed", "failed"}:
             for field in ("producer", "reviewer"):
                 try:
@@ -1525,6 +1561,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                         )
                     else:
                         artifact_verified = True
+                        artifact_digest = digest
                 except (ValueError, BoundedFileSnapshotError) as exc:
                     evidence_valid = False
                     _finding(
@@ -1559,6 +1596,32 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 location,
             )
         if evidence_valid and artifact_verified and status in {"passed", "failed"}:
+            verified_evidence += 1
+            claim_fingerprint = canonical_json_sha256(
+                {
+                    "technique": technique,
+                    "status": status,
+                    "repository_ids": sorted(evidence_repositories),
+                    "relationship_ids": sorted(evidence_relationships),
+                    "finding_ids": sorted(evidence_findings),
+                    "producer": str(record.get("producer", "")).strip().casefold(),
+                    "reviewer": str(record.get("reviewer", "")).strip().casefold(),
+                    "metrics": metrics,
+                    "artifact_sha256": artifact_digest,
+                }
+            )
+            owner = evidence_claim_owners.get(claim_fingerprint)
+            if owner is not None:
+                duplicate_external_evidence += 1
+                _finding(
+                    findings,
+                    "evidence.duplicate_claim",
+                    "error",
+                    f"Evidence {evidence_id} duplicates the content-addressed semantic claim already declared by {owner}.",
+                    location,
+                )
+                continue
+            evidence_claim_owners[claim_fingerprint] = evidence_id
             trusted_evidence[evidence_id] = {
                 "id": evidence_id,
                 "technique": technique,
@@ -3141,10 +3204,13 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     approved_roles: set[str] = set()
     rejected_program_roles: set[str] = set()
     program_role_reviewers: dict[str, set[str]] = {}
-    program_approved = False
+    program_role_decisions: dict[str, list[tuple[str, str]]] = {}
+    conflicting_program_roles: set[str] = set()
+    validated_approvals = 0
+    credited_program_approvals = 0
     for index, approval in enumerate(approvals):
         location = f"governance.approvals[{index}]"
-        _reject_unknown_fields(
+        approval_valid = _reject_unknown_fields(
             approval,
             {"subject_kind", "subject_id", "reviewer", "role", "decision", "at"},
             findings,
@@ -3153,6 +3219,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         )
         subject_kind = approval.get("subject_kind")
         if subject_kind not in APPROVAL_SUBJECT_KINDS:
+            approval_valid = False
             _finding(
                 findings,
                 "governance.subject_kind",
@@ -3161,10 +3228,19 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 location,
             )
         subject_id = str(approval.get("subject_id", ""))
+        identity_valid = True
         for field in ("subject_id", "reviewer", "role"):
             try:
-                _bounded_text(approval.get(field), label=f"approval {field}", limit=500)
+                if field == "role":
+                    _identifier(approval.get(field), label="approval role")
+                else:
+                    _bounded_text(
+                        approval.get(field),
+                        label=f"approval {field}",
+                        limit=500,
+                    )
             except ValueError as exc:
+                identity_valid = False
                 _finding(
                     findings,
                     "governance.approval_identity",
@@ -3172,6 +3248,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                     str(exc),
                     f"{location}.{field}",
                 )
+        approval_valid = approval_valid and identity_valid
         known_subjects = {
             "program": {str(program.get("name", ""))},
             "repository": set(repository_map),
@@ -3183,6 +3260,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             subject_kind in known_subjects
             and subject_id not in known_subjects[subject_kind]
         ):
+            approval_valid = False
             _finding(
                 findings,
                 "governance.unknown_subject",
@@ -3192,6 +3270,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             )
         decision = approval.get("decision")
         if decision not in {"approved", "rejected"}:
+            approval_valid = False
             _finding(
                 findings,
                 "governance.decision",
@@ -3199,37 +3278,67 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "Approval decision must be approved or rejected.",
                 f"{location}.decision",
             )
-        _timestamp(
+        approval_at = _timestamp(
             approval.get("at"),
             label="approval timestamp",
             findings=findings,
             location=f"{location}.at",
+            code="governance.approval_timestamp",
         )
-        if decision == "approved":
-            role = str(approval.get("role", "")).strip().lower()
-            reviewer = str(approval.get("reviewer", "")).strip()
-            if not role or not reviewer:
-                _finding(
-                    findings,
-                    "governance.approval_identity",
-                    "error",
-                    "Approved decisions require reviewer and role identities.",
-                    location,
-                )
-            if subject_kind == "program" and subject_id == str(program.get("name", "")):
-                approved_roles.add(role)
-                program_role_reviewers.setdefault(role, set()).add(reviewer.casefold())
-                program_approved = True
-        elif (
-            decision == "rejected"
+        approval_valid = approval_at is not None and approval_valid
+        if (
+            approval_valid
+            and approval_at is not None
+            and program_created_at is not None
+            and approval_at < program_created_at
+        ):
+            approval_valid = False
+            _finding(
+                findings,
+                "governance.approval_predates_program",
+                "error",
+                "Approval timestamp predates creation of the assurance program and cannot authorize that program state.",
+                f"{location}.at",
+            )
+        if approval_valid:
+            validated_approvals += 1
+        if (
+            approval_valid
             and subject_kind == "program"
             and subject_id == str(program.get("name", ""))
         ):
-            rejected_program_roles.add(str(approval.get("role", "")).strip().lower())
+            role = str(approval["role"]).strip().lower()
+            program_role_decisions.setdefault(role, []).append(
+                (
+                    str(decision),
+                    str(approval["reviewer"]).strip().casefold(),
+                )
+            )
+    for role, decisions in sorted(program_role_decisions.items()):
+        if len(decisions) != 1:
+            conflicting_program_roles.add(role)
+            _finding(
+                findings,
+                "governance.role_decision_conflict",
+                "error",
+                f"Program approval role {role} has multiple valid decisions; exactly one authoritative decision is required.",
+                f"governance.roles.{role}",
+            )
+            continue
+        decision, reviewer = decisions[0]
+        if decision == "approved":
+                approved_roles.add(role)
+                program_role_reviewers.setdefault(role, set()).add(
+                    reviewer
+                )
+                credited_program_approvals += 1
+        else:
+            rejected_program_roles.add(role)
+    program_approved = credited_program_approvals > 0
     required_role_values = governance.get("required_roles", [])
     if not isinstance(required_role_values, list) or not all(
         isinstance(value, str) for value in required_role_values
-    ):
+    ) or len(required_role_values) > 10_000:
         required_role_values = []
         _finding(
             findings,
@@ -3238,9 +3347,29 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "required_roles must be an array of strings.",
             "governance.required_roles",
         )
-    required_roles = {
-        value.strip().lower() for value in required_role_values if value.strip()
-    }
+    required_roles: set[str] = set()
+    for index, value in enumerate(required_role_values):
+        try:
+            role = _identifier(value, label="required approval role").lower()
+        except ValueError as exc:
+            _finding(
+                findings,
+                "governance.required_roles",
+                "error",
+                str(exc),
+                f"governance.required_roles[{index}]",
+            )
+            continue
+        if role in required_roles:
+            _finding(
+                findings,
+                "governance.required_roles",
+                "error",
+                f"Duplicate normalized required approval role: {role}.",
+                f"governance.required_roles[{index}]",
+            )
+            continue
+        required_roles.add(role)
     missing_roles = required_roles - approved_roles
     if missing_roles:
         _finding(
@@ -3347,10 +3476,15 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         "relationships": len(relationship_map),
         "requirements": requirement_count,
         "external_evidence": len(evidence_map),
+        "verified_evidence": verified_evidence,
         "trusted_evidence": len(trusted_evidence),
+        "duplicate_evidence": duplicate_external_evidence,
         "evidence_bytes": total_evidence_bytes,
         "evidence_statuses": dict(sorted(evidence_statuses.items())),
         "approvals": len(approvals),
+        "validated_approvals": validated_approvals,
+        "credited_program_approvals": credited_program_approvals,
+        "conflicting_program_roles": sorted(conflicting_program_roles),
         "required_roles": sorted(required_roles),
         "approved_roles": sorted(approved_roles),
         "program_approval": program_approved,
@@ -3440,6 +3574,8 @@ def _program_topology_svg(result: dict[str, Any]) -> str:
 def program_verification_markdown(result: dict[str, Any]) -> str:
     """Render a compact human review view from a machine verification result."""
 
+    if not _program_verification_payload_contract(result):
+        raise ValueError("assurance program verification violates its closed contract")
     summary = result.get("summary", {})
     validation = result.get("validation", {})
     llm = result.get("llm_quality", {})
@@ -3450,6 +3586,10 @@ def program_verification_markdown(result: dict[str, Any]) -> str:
         f"- Repositories: {summary.get('bound_repositories', 0)} / {summary.get('repositories', 0)} bound",
         f"- Relationships: {summary.get('relationships', 0)}",
         f"- External evidence records: {summary.get('external_evidence', 0)}",
+        f"- Verified / credited / duplicate evidence: {summary.get('verified_evidence', 0)} / {summary.get('trusted_evidence', 0)} / {summary.get('duplicate_evidence', 0)}",
+        f"- Validated approvals: {summary.get('validated_approvals', 0)} / {summary.get('approvals', 0)}",
+        f"- Credited program approvals: {summary.get('credited_program_approvals', 0)}",
+        f"- Conflicting program roles: {', '.join(summary.get('conflicting_program_roles', [])) or 'none'}",
         f"- Validation repositories: {validation.get('repositories', 0)}",
         f"- Credited validation cohorts: {validation.get('credited_cohorts', validation.get('cohorts', 0))} of {validation.get('cohorts', 0)} (duplicate evidence: {validation.get('duplicate_evidence', 0)})",
         f"- Macro recall / precision: {validation.get('macro_recall')} / {validation.get('macro_precision')}",
@@ -3511,6 +3651,8 @@ def _program_verification_state_sha256(result: dict[str, Any]) -> str:
 def program_verification_html(result: dict[str, Any]) -> str:
     """Render a self-contained accessible system-level assurance report."""
 
+    if not _program_verification_payload_contract(result):
+        raise ValueError("assurance program verification violates its closed contract")
     summary = result.get("summary", {})
     validation = result.get("validation", {})
     llm = result.get("llm_quality", {})
@@ -3583,7 +3725,7 @@ table{{width:100%;border-collapse:collapse}} th,td{{padding:10px;text-align:left
 <header><h1>{value(summary.get("name", "System assurance program"))}</h1><span class="status">{"VALID" if valid else "NOT READY"}</span><p>{value(summary.get("purpose", result.get("notice", "")))}</p><p><code>Program SHA-256 {value(result.get("program", {}).get("content_sha256"))}</code></p></header>
 <nav aria-label="Report sections"><a href="#overview">Overview</a><a href="#topology">Topology</a><a href="#checks">Checks</a><a href="#quality">Quality</a><a href="#relationships">Relationships</a><a href="#findings">Findings</a></nav>
 <main id="main"><section id="overview"><h2>Executive assurance state</h2><div class="metrics">
-{metric(f"{summary.get('bound_repositories', 0)} / {summary.get('repositories', 0)}", "bound repositories")}{metric(summary.get("relationships", 0), "relationships")}{metric(summary.get("requirements", 0), "external requirements")}{metric(f"{summary.get('trusted_evidence', 0)} / {summary.get('external_evidence', 0)}", "trusted evidence")}{metric(validation.get("repositories", 0), "validation repositories")}{metric(llm.get("samples", 0), "LLM evaluation samples")}
+{metric(f"{summary.get('bound_repositories', 0)} / {summary.get('repositories', 0)}", "bound repositories")}{metric(summary.get("relationships", 0), "relationships")}{metric(summary.get("requirements", 0), "external requirements")}{metric(f"{summary.get('trusted_evidence', 0)} / {summary.get('external_evidence', 0)}", "credited evidence")}{metric(summary.get("verified_evidence", 0), "verified evidence")}{metric(summary.get("duplicate_evidence", 0), "duplicate evidence")}{metric(f"{summary.get('validated_approvals', 0)} / {summary.get('approvals', 0)}", "validated approvals")}{metric(summary.get("credited_program_approvals", 0), "program approvals")}{metric(len(summary.get("conflicting_program_roles", [])), "conflicting roles")}{metric(validation.get("repositories", 0), "validation repositories")}{metric(llm.get("samples", 0), "LLM evaluation samples")}
 </div></section>
 <section id="topology"><h2>System topology</h2>{_program_topology_svg(result)}</section>
 <section id="checks"><h2>Verification checks</h2><table><thead><tr><th>Check</th><th>State</th></tr></thead><tbody>{check_rows}</tbody></table></section>
@@ -3878,7 +4020,7 @@ def _program_report_verification_contract(value: Any) -> bool:
 
 
 def _program_verification_payload_contract(value: Any) -> bool:
-    """Validate the closed embedded program-verification result envelope."""
+    """Validate and reconcile the embedded program-verification result."""
 
     if not isinstance(value, dict) or set(value) != {
         "format",
@@ -3900,7 +4042,10 @@ def _program_verification_payload_contract(value: Any) -> bool:
     valid = value.get("valid")
     checks = value.get("checks")
     counts = value.get("counts")
+    summary = value.get("summary")
     relationships = value.get("relationships")
+    validation = value.get("validation")
+    llm_quality = value.get("llm_quality")
     findings = value.get("findings")
     notice = value.get("notice")
     digest = re.compile(r"^(?:[0-9a-f]{64})?$")
@@ -3930,19 +4075,22 @@ def _program_verification_payload_contract(value: Any) -> bool:
             isinstance(count, int) and not isinstance(count, bool) and count >= 0
             for count in counts.values()
         )
-        or not isinstance(value.get("summary"), dict)
+        or not isinstance(summary, dict)
         or not isinstance(relationships, list)
         or len(relationships) > MAX_PROGRAM_RELATIONSHIPS
         or not all(isinstance(item, dict) for item in relationships)
-        or not isinstance(value.get("validation"), dict)
-        or not isinstance(value.get("llm_quality"), dict)
+        or not isinstance(validation, dict)
+        or not isinstance(llm_quality, dict)
         or not isinstance(findings, list)
         or len(findings) > MAX_PROGRAM_FINDINGS
         or not isinstance(notice, str)
         or not notice
     ):
         return False
-    finding_counts = Counter()
+    finding_counts: Counter[str] = Counter()
+    finding_code_pattern = re.compile(
+        r"^(?:program|repository|relationship|requirements|evidence|validation|llm|governance)\.[a-z0-9_]+$"
+    )
     for finding in findings:
         if (
             not isinstance(finding, dict)
@@ -3951,6 +4099,7 @@ def _program_verification_payload_contract(value: Any) -> bool:
             not in {"error", "warning", "information"}
             or not isinstance(finding.get("code"), str)
             or not finding["code"]
+            or not finding_code_pattern.fullmatch(finding["code"])
             or not isinstance(finding.get("message"), str)
             or not finding["message"]
             or not isinstance(finding.get("location"), str)
@@ -3969,7 +4118,597 @@ def _program_verification_payload_contract(value: Any) -> bool:
     expected_valid = counts["errors"] == 0 and all(
         state is not False for state in checks.values()
     )
-    return bool(counts_match and valid is expected_valid)
+    if not counts_match or valid is not expected_valid:
+        return False
+
+    # Input rejections deliberately carry only the checks that were actually
+    # reached. They must not smuggle producer summaries into an unchecked result.
+    if set(checks) != set(PROGRAM_VERIFICATION_CHECKS):
+        rejection_checks = (
+            checks == {"input": False}
+            and program["content_sha256"] == ""
+        ) or (
+            checks == {"input": True, "format": False}
+            and bool(re.fullmatch(r"[0-9a-f]{64}", program["content_sha256"]))
+        )
+        return bool(
+            rejection_checks
+            and not valid
+            and counts["errors"] > 0
+            and not summary
+            and not relationships
+            and not validation
+            and not llm_quality
+        )
+
+    if (
+        not all(isinstance(state, bool) for state in checks.values())
+        or checks["input"] is not True
+        or not re.fullmatch(r"[0-9a-f]{64}", program["content_sha256"])
+    ):
+        return False
+    error_findings = [finding for finding in findings if finding["level"] == "error"]
+    error_codes = {finding["code"] for finding in error_findings}
+    expected_checks = {
+        "format": "program.format" not in error_codes,
+        "integrity": "program.integrity" not in error_codes,
+        "program_contract": not any(
+            finding["code"].startswith("program.") for finding in error_findings
+        ),
+        "relationships": not any(
+            finding["code"].startswith("relationship.")
+            for finding in error_findings
+        ),
+        "requirements": not any(
+            finding["code"].startswith("requirements.")
+            for finding in error_findings
+        ),
+        "external_evidence": not any(
+            finding["code"].startswith("evidence.") for finding in error_findings
+        ),
+        "validation": not any(
+            finding["code"].startswith("validation.") for finding in error_findings
+        ),
+        "llm_quality": not any(
+            finding["code"].startswith("llm.") for finding in error_findings
+        ),
+        "governance": not any(
+            finding["code"].startswith("governance.")
+            for finding in error_findings
+        ),
+    }
+    if any(checks[name] is not state for name, state in expected_checks.items()):
+        return False
+
+    def nonnegative_integer(item: Any) -> bool:
+        return isinstance(item, int) and not isinstance(item, bool) and item >= 0
+
+    def finite_nonnegative_number(item: Any) -> bool:
+        return (
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and math.isfinite(float(item))
+            and item >= 0
+        )
+
+    def ratio_or_none(item: Any) -> bool:
+        return item is None or (
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and math.isfinite(float(item))
+            and 0 <= item <= 1
+        )
+
+    summary_fields = {
+        "name",
+        "purpose",
+        "repositories",
+        "repository_ids",
+        "bound_repositories",
+        "relationships",
+        "requirements",
+        "external_evidence",
+        "verified_evidence",
+        "trusted_evidence",
+        "duplicate_evidence",
+        "evidence_bytes",
+        "evidence_statuses",
+        "approvals",
+        "validated_approvals",
+        "credited_program_approvals",
+        "conflicting_program_roles",
+        "required_roles",
+        "approved_roles",
+        "program_approval",
+    }
+    if set(summary) != summary_fields:
+        return False
+    repository_ids = summary.get("repository_ids")
+    evidence_statuses = summary.get("evidence_statuses")
+    required_roles = summary.get("required_roles")
+    approved_roles = summary.get("approved_roles")
+    conflicting_program_roles = summary.get("conflicting_program_roles")
+    summary_counts = (
+        "repositories",
+        "bound_repositories",
+        "relationships",
+        "requirements",
+        "external_evidence",
+        "verified_evidence",
+        "trusted_evidence",
+        "duplicate_evidence",
+        "evidence_bytes",
+        "approvals",
+        "validated_approvals",
+        "credited_program_approvals",
+    )
+    if (
+        not isinstance(summary["name"], str)
+        or not isinstance(summary["purpose"], str)
+        or not all(nonnegative_integer(summary[name]) for name in summary_counts)
+        or not isinstance(repository_ids, list)
+        or repository_ids != sorted(set(repository_ids))
+        or not all(isinstance(item, str) and item for item in repository_ids)
+        or len(repository_ids) != summary["repositories"]
+        or summary["bound_repositories"] > summary["repositories"]
+        or summary["trusted_evidence"] > summary["external_evidence"]
+        or summary["verified_evidence"] > summary["external_evidence"]
+        or summary["trusted_evidence"] + summary["duplicate_evidence"]
+        != summary["verified_evidence"]
+        or not isinstance(evidence_statuses, dict)
+        or not all(
+            isinstance(name, str) and name and nonnegative_integer(count)
+            for name, count in evidence_statuses.items()
+        )
+        or sum(evidence_statuses.values()) != summary["external_evidence"]
+        or not isinstance(required_roles, list)
+        or required_roles != sorted(set(required_roles))
+        or not all(
+            isinstance(item, str)
+            and 1 <= len(item) <= 200
+            and not any(char.isspace() for char in item)
+            for item in required_roles
+        )
+        or not isinstance(approved_roles, list)
+        or approved_roles != sorted(set(approved_roles))
+        or not all(
+            isinstance(item, str)
+            and 1 <= len(item) <= 200
+            and not any(char.isspace() for char in item)
+            for item in approved_roles
+        )
+        or not isinstance(conflicting_program_roles, list)
+        or conflicting_program_roles != sorted(set(conflicting_program_roles))
+        or not all(
+            isinstance(item, str)
+            and 1 <= len(item) <= 200
+            and not any(char.isspace() for char in item)
+            for item in conflicting_program_roles
+        )
+        or not set(approved_roles).isdisjoint(conflicting_program_roles)
+        or not isinstance(summary["program_approval"], bool)
+        or summary["validated_approvals"] > summary["approvals"]
+        or summary["credited_program_approvals"]
+        > summary["validated_approvals"]
+        or len(approved_roles) != summary["credited_program_approvals"]
+        or summary["program_approval"]
+        is not (summary["credited_program_approvals"] > 0)
+        or (
+            checks["governance"]
+            and (
+                summary["validated_approvals"] != summary["approvals"]
+                or not set(required_roles).issubset(approved_roles)
+            )
+        )
+    ):
+        return False
+    conflict_prefix = "governance.roles."
+    conflict_findings = [
+        finding
+        for finding in error_findings
+        if finding["code"] == "governance.role_decision_conflict"
+    ]
+    actual_conflicting_roles = {
+        finding["location"][len(conflict_prefix) :]
+        for finding in conflict_findings
+        if finding["location"].startswith(conflict_prefix)
+        and finding["location"][len(conflict_prefix) :]
+    }
+    if (
+        len(conflict_findings) != len(conflicting_program_roles)
+        or actual_conflicting_roles != set(conflicting_program_roles)
+    ):
+        return False
+    repository_binding_expected = bool(summary["repositories"]) and (
+        summary["bound_repositories"] == summary["repositories"]
+    )
+    completed_evidence = evidence_statuses.get("passed", 0) + evidence_statuses.get(
+        "failed", 0
+    )
+    unsupported_evidence_statuses = sum(
+        count
+        for name, count in evidence_statuses.items()
+        if name not in EVIDENCE_STATUSES
+    )
+    evidence_status_errors = sum(
+        finding["code"] == "evidence.status" for finding in error_findings
+    )
+    duplicate_evidence_errors = sum(
+        finding["code"] == "evidence.duplicate_claim"
+        for finding in error_findings
+    )
+    if (
+        checks["repository_bindings"] is not repository_binding_expected
+        or summary["verified_evidence"] > completed_evidence
+        or unsupported_evidence_statuses != evidence_status_errors
+        or summary["duplicate_evidence"] != duplicate_evidence_errors
+        or (
+            checks["external_evidence"]
+            and (
+                summary["verified_evidence"] != completed_evidence
+                or summary["trusted_evidence"] != completed_evidence
+                or summary["duplicate_evidence"] != 0
+            )
+        )
+    ):
+        return False
+
+    relationship_fields = {
+        "id",
+        "kind",
+        "source",
+        "source_repository",
+        "target",
+        "target_repository",
+        "endpoints_valid",
+        "temporal_status",
+        "resilience_status",
+        "deadline_ms",
+        "observed_max_ms",
+        "recovery_deadline_ms",
+        "observed_recovery_ms",
+        "evidence_ids",
+    }
+    relationship_ids: list[str] = []
+    for relationship in relationships:
+        if set(relationship) != relationship_fields:
+            return False
+        identifier = relationship.get("id")
+        relationship_ids.append(identifier if isinstance(identifier, str) else "")
+        evidence_ids = relationship.get("evidence_ids")
+        deadline = relationship.get("deadline_ms")
+        observed_max = relationship.get("observed_max_ms")
+        recovery_deadline = relationship.get("recovery_deadline_ms")
+        observed_recovery = relationship.get("observed_recovery_ms")
+        if (
+            not all(
+                isinstance(relationship.get(name), str)
+                for name in (
+                    "id",
+                    "kind",
+                    "source",
+                    "source_repository",
+                    "target",
+                    "target_repository",
+                )
+            )
+            or not identifier
+            or not isinstance(relationship.get("endpoints_valid"), bool)
+            or relationship.get("temporal_status")
+            not in {"not_configured", "unverified", "supported", "violated"}
+            or relationship.get("resilience_status")
+            not in {"not_configured", "unverified", "supported", "violated"}
+            or not all(
+                item is None or finite_nonnegative_number(item)
+                for item in (
+                    deadline,
+                    observed_max,
+                    recovery_deadline,
+                    observed_recovery,
+                )
+            )
+            or (deadline is None)
+            is not (relationship["temporal_status"] == "not_configured")
+            or (recovery_deadline is None)
+            is not (relationship["resilience_status"] == "not_configured")
+            or not isinstance(evidence_ids, list)
+            or evidence_ids != sorted(set(evidence_ids))
+            or not all(isinstance(item, str) and item for item in evidence_ids)
+        ):
+            return False
+        temporal_status = relationship["temporal_status"]
+        resilience_status = relationship["resilience_status"]
+        if temporal_status == "supported" and (
+            observed_max is None
+            or observed_max > deadline
+            or not evidence_ids
+        ):
+            return False
+        if temporal_status == "violated" and (
+            observed_max is None
+            or observed_max <= deadline
+            or not evidence_ids
+        ):
+            return False
+        if (
+            deadline is not None
+            and observed_max is not None
+            and observed_max > deadline
+            and temporal_status != "violated"
+        ):
+            return False
+        if resilience_status == "supported" and (
+            observed_recovery is None
+            or observed_recovery > recovery_deadline
+            or not evidence_ids
+        ):
+            return False
+        if resilience_status == "violated" and not evidence_ids:
+            return False
+        if resilience_status == "not_configured" and observed_recovery is not None:
+            return False
+        if (
+            recovery_deadline is not None
+            and observed_recovery is not None
+            and observed_recovery > recovery_deadline
+            and resilience_status != "violated"
+        ):
+            return False
+    expected_deadline_locations = {
+        f"relationships.{relationship['id']}"
+        for relationship in relationships
+        if relationship["temporal_status"] == "violated"
+    }
+    expected_breaker_locations = {
+        f"relationships.{relationship['id']}.circuit_breaker"
+        for relationship in relationships
+        if relationship["resilience_status"] == "violated"
+    }
+    actual_deadline_locations = {
+        finding["location"]
+        for finding in error_findings
+        if finding["code"] == "relationship.deadline_violated"
+    }
+    actual_breaker_locations = {
+        finding["location"]
+        for finding in error_findings
+        if finding["code"] == "relationship.circuit_breaker_violated"
+    }
+    invalid_endpoint_ids = {
+        str(relationship["id"])
+        for relationship in relationships
+        if not relationship["endpoints_valid"]
+    }
+    endpoint_error_locations = {
+        finding["location"]
+        for finding in error_findings
+        if finding["code"] == "relationship.endpoint"
+    }
+    endpoint_error_ids: set[str] = set()
+    for location in endpoint_error_locations:
+        matches = {
+            identifier
+            for identifier in relationship_ids
+            if location
+            in {
+                f"relationships.{identifier}.source",
+                f"relationships.{identifier}.target",
+            }
+        }
+        if len(matches) != 1:
+            return False
+        endpoint_error_ids.update(matches)
+    if (
+        len(set(relationship_ids)) != len(relationship_ids)
+        or summary["relationships"] != len(relationships)
+        or actual_deadline_locations != expected_deadline_locations
+        or actual_breaker_locations != expected_breaker_locations
+        or endpoint_error_ids != invalid_endpoint_ids
+        or (
+            checks["relationships"]
+            and any(
+                not relationship["endpoints_valid"]
+                or relationship["temporal_status"] == "violated"
+                or relationship["resilience_status"] == "violated"
+                for relationship in relationships
+            )
+        )
+    ):
+        return False
+
+    validation_fields = {
+        "cohorts",
+        "credited_cohorts",
+        "duplicate_evidence",
+        "repositories",
+        "independently_reviewed",
+        "macro_recall",
+        "macro_precision",
+        "cases",
+        "count_backed_cohorts",
+        "count_backed_cases",
+        "evaluation_artifacts",
+        "verified_evaluation_artifacts",
+        "evaluation_artifact_bytes",
+        "micro_recall",
+        "micro_precision",
+        "call_cases",
+        "call_resolution_cohorts",
+        "call_count_backed_cohorts",
+        "call_count_backed_cases",
+        "macro_call_resolution_recall",
+        "macro_call_resolution_precision",
+        "micro_call_resolution_recall",
+        "micro_call_resolution_precision",
+    }
+    validation_ratios = {
+        "macro_recall",
+        "macro_precision",
+        "micro_recall",
+        "micro_precision",
+        "macro_call_resolution_recall",
+        "macro_call_resolution_precision",
+        "micro_call_resolution_recall",
+        "micro_call_resolution_precision",
+    }
+    if (
+        set(validation) != validation_fields
+        or not all(
+            nonnegative_integer(validation[name])
+            for name in validation_fields - validation_ratios
+        )
+        or not all(ratio_or_none(validation[name]) for name in validation_ratios)
+        or validation["credited_cohorts"] + validation["duplicate_evidence"]
+        != validation["cohorts"]
+        or validation["repositories"] > validation["credited_cohorts"]
+        or validation["independently_reviewed"] > validation["credited_cohorts"]
+        or validation["count_backed_cohorts"] > validation["credited_cohorts"]
+        or validation["verified_evaluation_artifacts"]
+        > validation["evaluation_artifacts"]
+        or validation["evaluation_artifacts"] > validation["credited_cohorts"]
+        or validation["call_resolution_cohorts"] > validation["credited_cohorts"]
+        or validation["call_count_backed_cohorts"]
+        > validation["call_resolution_cohorts"]
+        or validation["call_count_backed_cohorts"]
+        > validation["count_backed_cohorts"]
+        or validation["cases"] < validation["credited_cohorts"]
+        or validation["count_backed_cases"]
+        < validation["count_backed_cohorts"]
+        or validation["count_backed_cases"] > validation["cases"]
+        or validation["call_cases"] < validation["call_resolution_cohorts"]
+        or validation["call_count_backed_cases"]
+        < validation["call_count_backed_cohorts"]
+        or validation["call_count_backed_cases"] > validation["call_cases"]
+    ):
+        return False
+    macro_validation_available = validation["credited_cohorts"] > 0
+    micro_validation_available = validation["count_backed_cohorts"] > 0
+    macro_call_available = validation["call_resolution_cohorts"] > 0
+    micro_call_available = validation["call_count_backed_cohorts"] > 0
+    if (
+        any(
+            (validation[name] is not None) is not macro_validation_available
+            for name in ("macro_recall", "macro_precision")
+        )
+        or any(
+            (validation[name] is not None) is not micro_validation_available
+            for name in ("micro_recall", "micro_precision")
+        )
+        or any(
+            (validation[name] is not None) is not macro_call_available
+            for name in (
+                "macro_call_resolution_recall",
+                "macro_call_resolution_precision",
+            )
+        )
+        or any(
+            (validation[name] is not None) is not micro_call_available
+            for name in (
+                "micro_call_resolution_recall",
+                "micro_call_resolution_precision",
+            )
+        )
+    ):
+        return False
+
+    llm_fields = {
+        "evaluations",
+        "credited_evaluations",
+        "duplicate_evidence",
+        "samples",
+        "independently_reviewed",
+        "count_backed_evaluations",
+        "verified_corpus_artifacts",
+        "subject_bound_evaluations",
+        "semantic_fingerprinted_evaluations",
+        "corpus_artifacts",
+        "corpus_artifact_bytes",
+        "claim_count",
+        "unsupported_claim_count",
+        "aggregation_method",
+        "grounding",
+        "citation_accuracy",
+        "unsupported_claim_rate",
+    }
+    llm_optional_counts = {"claim_count", "unsupported_claim_count"}
+    llm_ratios = {"grounding", "citation_accuracy", "unsupported_claim_rate"}
+    if (
+        set(llm_quality) != llm_fields
+        or not all(
+            nonnegative_integer(llm_quality[name])
+            for name in llm_fields
+            - llm_optional_counts
+            - llm_ratios
+            - {"aggregation_method"}
+        )
+        or not all(ratio_or_none(llm_quality[name]) for name in llm_ratios)
+        or llm_quality["aggregation_method"]
+        not in {"count-backed", "legacy-sample-weighted", "unavailable"}
+        or llm_quality["credited_evaluations"] + llm_quality["duplicate_evidence"]
+        != llm_quality["evaluations"]
+        or any(
+            llm_quality[name] > llm_quality["credited_evaluations"]
+            for name in (
+                "independently_reviewed",
+                "count_backed_evaluations",
+                "corpus_artifacts",
+                "verified_corpus_artifacts",
+                "subject_bound_evaluations",
+                "semantic_fingerprinted_evaluations",
+            )
+        )
+        or llm_quality["verified_corpus_artifacts"]
+        > llm_quality["corpus_artifacts"]
+    ):
+        return False
+    claims = llm_quality["claim_count"]
+    unsupported_claims = llm_quality["unsupported_claim_count"]
+    if (claims is None) is not (unsupported_claims is None):
+        return False
+    if claims is not None and (
+        not nonnegative_integer(claims)
+        or claims == 0
+        or not nonnegative_integer(unsupported_claims)
+        or unsupported_claims > claims
+    ):
+        return False
+    credited_evaluations = llm_quality["credited_evaluations"]
+    count_backed_evaluations = llm_quality["count_backed_evaluations"]
+    expected_aggregation = (
+        "unavailable"
+        if credited_evaluations == 0
+        else (
+            "count-backed"
+            if count_backed_evaluations == credited_evaluations
+            else "legacy-sample-weighted"
+        )
+    )
+    llm_metrics_available = credited_evaluations > 0
+    if (
+        llm_quality["aggregation_method"] != expected_aggregation
+        or llm_quality["samples"] < credited_evaluations
+        or any(
+            (llm_quality[name] is not None) is not llm_metrics_available
+            for name in llm_ratios
+        )
+    ):
+        return False
+    if llm_quality["aggregation_method"] == "count-backed":
+        if (
+            claims is None
+            or llm_quality["unsupported_claim_rate"]
+            != round(unsupported_claims / claims, 4)
+        ):
+            return False
+    elif claims is not None:
+        return False
+    if llm_quality["aggregation_method"] == "unavailable" and (
+        llm_quality["credited_evaluations"] != 0
+        or llm_quality["samples"] != 0
+        or any(llm_quality[name] is not None for name in llm_ratios)
+    ):
+        return False
+    return True
 
 
 def verify_program_report_file(
@@ -4057,7 +4796,7 @@ def verify_program_report_file(
                 label="embedded assurance program verification",
                 max_bytes=MAX_PROGRAM_REPORT_BYTES,
                 max_depth=MAX_PROGRAM_DEPTH,
-                max_nodes=MAX_PROGRAM_NODES,
+                max_nodes=MAX_PROGRAM_VERIFICATION_NODES,
             )
             payload_json_valid = isinstance(payload, dict)
         except ValueError:
@@ -4213,6 +4952,13 @@ def export_program_verification(
 ) -> Path:
     """Atomically publish a JSON, Markdown, or HTML program-verification view."""
 
+    if format not in {"json", "markdown", "html"}:
+        raise ValueError("program verification format must be json, markdown, or html")
+    if not _program_verification_payload_contract(result):
+        message = "assurance program verification violates its closed contract"
+        if format == "html":
+            raise ProgramReportPublicationError("input_validation", message)
+        raise ValueError(message)
     destination_state = expected_destination or inspect_artifact_destination(
         destination,
         label=(
@@ -4246,8 +4992,40 @@ def export_program_verification(
     publication_label = "assurance program verification"
     if format == "json":
         content = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
+        expected_result_sha256 = canonical_json_sha256(result)
+
+        def staged_verifier(path: Path) -> bool:
+            try:
+                document = load_bounded_json_document(
+                    path,
+                    label="staged assurance program verification",
+                    max_bytes=MAX_PROGRAM_BYTES,
+                    max_depth=MAX_PROGRAM_DEPTH,
+                    max_nodes=MAX_PROGRAM_VERIFICATION_NODES,
+                )
+            except (OSError, ValueError):
+                return False
+            return bool(
+                isinstance(document.value, dict)
+                and _program_verification_payload_contract(document.value)
+                and canonical_json_sha256(document.value) == expected_result_sha256
+            )
+
     elif format == "markdown":
         content = program_verification_markdown(result)
+        expected_markdown = content.encode("utf-8")
+
+        def staged_verifier(path: Path) -> bool:
+            try:
+                snapshot = load_bounded_file_snapshot(
+                    path,
+                    label="staged assurance program verification Markdown",
+                    max_bytes=MAX_PROGRAM_BYTES,
+                )
+            except (OSError, ValueError):
+                return False
+            return snapshot.raw == expected_markdown
+
     elif format == "html":
         try:
             content = program_verification_html(result)
@@ -4272,8 +5050,6 @@ def export_program_verification(
                 and declared.get("program_sha256") == expected_program_sha256
             )
 
-    else:
-        raise ValueError("program verification format must be json, markdown, or html")
     try:
         return atomic_publish_text(
             destination,
