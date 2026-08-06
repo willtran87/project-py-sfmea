@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import io
 import json
@@ -16,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.cli import main
 from pysfmea.integrity import canonical_json_sha256
+from pysfmea.llm_quality import project_llm_quality_corpus
 from pysfmea.program import (
     PROGRAM_FORMAT,
     build_program_template,
@@ -225,6 +227,7 @@ class AssuranceProgramTests(unittest.TestCase):
         llm_corpus_artifact.write_text(
             json.dumps(llm_corpus, indent=2) + "\n", encoding="utf-8"
         )
+        llm_projection = project_llm_quality_corpus(llm_corpus)
         program["llm_evaluations"] = [
             {
                 "id": "LLM-EVAL-1",
@@ -242,6 +245,7 @@ class AssuranceProgramTests(unittest.TestCase):
                 "corpus_sha256": hashlib.sha256(
                     llm_corpus_artifact.read_bytes()
                 ).hexdigest(),
+                "evidence_fingerprint_sha256": llm_projection.evidence_fingerprint_sha256,
                 "corpus_format": "pysfmea-llm-quality-corpus-2",
                 "subject_bound": True,
                 "corpus_artifact": {
@@ -330,6 +334,8 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertEqual(result["relationships"][0]["resilience_status"], "supported")
         self.assertEqual(result["summary"]["trusted_evidence"], 1)
         self.assertEqual(result["validation"]["macro_recall"], 0.91)
+        self.assertEqual(result["validation"]["credited_cohorts"], 1)
+        self.assertEqual(result["validation"]["duplicate_evidence"], 0)
         self.assertEqual(result["validation"]["micro_recall"], 0.91)
         self.assertEqual(result["validation"]["micro_precision"], 0.91)
         self.assertEqual(result["validation"]["count_backed_cohorts"], 1)
@@ -339,19 +345,27 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertEqual(result["validation"]["micro_call_resolution_recall"], 0.9)
         self.assertEqual(result["validation"]["call_cases"], 40)
         self.assertEqual(result["llm_quality"]["samples"], 50)
+        self.assertEqual(result["llm_quality"]["credited_evaluations"], 1)
+        self.assertEqual(result["llm_quality"]["duplicate_evidence"], 0)
         self.assertEqual(result["llm_quality"]["count_backed_evaluations"], 1)
         self.assertEqual(result["llm_quality"]["verified_corpus_artifacts"], 1)
         self.assertEqual(result["llm_quality"]["subject_bound_evaluations"], 1)
+        self.assertEqual(
+            result["llm_quality"]["semantic_fingerprinted_evaluations"], 1
+        )
         self.assertEqual(result["llm_quality"]["claim_count"], 100)
         self.assertEqual(result["llm_quality"]["aggregation_method"], "count-backed")
         markdown = program_verification_markdown(result)
         self.assertIn("**VALID**", markdown)
         self.assertIn("Micro recall / precision: 0.91 / 0.91", markdown)
+        self.assertIn("Credited validation cohorts: 1 of 1", markdown)
         self.assertIn("Count-backed cohorts: 1 of 1", markdown)
         self.assertIn("Verified evaluation artifacts: 1 of 1", markdown)
         self.assertIn("LLM aggregation: count-backed", markdown)
+        self.assertIn("Credited LLM evaluations: 1 of 1", markdown)
         self.assertIn("Verified LLM corpus artifacts: 1 of 1", markdown)
         self.assertIn("Subject-bound LLM evaluations: 1 of 1", markdown)
+        self.assertIn("Semantically fingerprinted LLM evaluations: 1 of 1", markdown)
         self.assertIn("REL-CHECKOUT-PAYMENT", markdown)
         html = program_verification_html(result)
         self.assertIn("<!doctype html>", html)
@@ -362,11 +376,78 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("Severity", html)
         self.assertIn("micro recall", html)
         self.assertIn("count-backed cohorts", html)
+        self.assertIn("credited validation cohorts", html)
+        self.assertIn("duplicate validation evidence", html)
         self.assertIn("verified evaluation artifacts", html)
         self.assertIn("verified LLM corpus artifacts", html)
         self.assertIn("subject-bound LLM evaluations", html)
+        self.assertIn("semantic LLM fingerprints", html)
+        self.assertIn("credited LLM evaluations", html)
+        self.assertIn("duplicate LLM evidence", html)
         self.assertIn("LLM aggregation", html)
         self.assertNotIn("https://", html)
+
+    def test_duplicate_validation_corpus_is_rejected_without_metric_credit(
+        self,
+    ) -> None:
+        program = self._valid_program()
+        duplicate = copy.deepcopy(program["validation_cohorts"][0])
+        duplicate["id"] = "COHORT-EXTERNAL-DUPLICATE"
+        duplicate["repository"] = "claimed-second-repository"
+        program["validation_cohorts"].append(duplicate)
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+
+        self.assertFalse(result["valid"])
+        self.assertIn(
+            "validation.duplicate_corpus_evidence",
+            {value["code"] for value in result["findings"]},
+        )
+        self.assertEqual(result["validation"]["cohorts"], 2)
+        self.assertEqual(result["validation"]["credited_cohorts"], 1)
+        self.assertEqual(result["validation"]["duplicate_evidence"], 1)
+        self.assertEqual(result["validation"]["repositories"], 1)
+        self.assertEqual(result["validation"]["cases"], 100)
+        self.assertEqual(result["validation"]["micro_recall"], 0.91)
+
+    def test_duplicate_llm_corpus_is_rejected_without_sample_credit(self) -> None:
+        program = self._valid_program()
+        duplicate = copy.deepcopy(program["llm_evaluations"][0])
+        duplicate["id"] = "LLM-EVAL-DUPLICATE"
+        original_path = self.root / "llm-quality-corpus.json"
+        duplicate_corpus = json.loads(original_path.read_text(encoding="utf-8"))
+        duplicate_corpus["name"] = "Repackaged metadata"
+        duplicate_corpus["purpose"] = "Same labels in a different order"
+        duplicate_corpus["samples"].reverse()
+        duplicate_path = self.root / "llm-quality-corpus-repackaged.json"
+        duplicate_path.write_text(
+            json.dumps(duplicate_corpus, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        duplicate_digest = hashlib.sha256(duplicate_path.read_bytes()).hexdigest()
+        self.assertNotEqual(duplicate_digest, duplicate["corpus_sha256"])
+        duplicate["corpus_sha256"] = duplicate_digest
+        duplicate["corpus_artifact"] = {
+            "path": duplicate_path.name,
+            "sha256": duplicate_digest,
+        }
+        program["llm_evaluations"].append(duplicate)
+        self._write_program(seal_program(program))
+
+        result = verify_assurance_program(self.program_path)
+
+        self.assertFalse(result["valid"])
+        self.assertIn(
+            "llm.duplicate_corpus_evidence",
+            {value["code"] for value in result["findings"]},
+        )
+        self.assertEqual(result["llm_quality"]["evaluations"], 2)
+        self.assertEqual(result["llm_quality"]["credited_evaluations"], 1)
+        self.assertEqual(result["llm_quality"]["duplicate_evidence"], 1)
+        self.assertEqual(result["llm_quality"]["samples"], 50)
+        self.assertEqual(result["llm_quality"]["claim_count"], 100)
+        self.assertEqual(result["llm_quality"]["grounding"], 0.98)
 
     def test_rejects_stale_analysis_deadline_failure_and_nonindependent_evidence(
         self,
@@ -676,6 +757,7 @@ class AssuranceProgramTests(unittest.TestCase):
         evaluation["corpus_artifact"]["sha256"] = digest
         evaluation["corpus_format"] = "pysfmea-llm-quality-corpus-1"
         evaluation["subject_bound"] = False
+        evaluation.pop("evidence_fingerprint_sha256")
         self._write_program(seal_program(program))
 
         result = verify_assurance_program(self.program_path)
@@ -727,6 +809,7 @@ class AssuranceProgramTests(unittest.TestCase):
             "citation_correct_sample_count",
             "claim_count",
             "unsupported_claim_count",
+            "evidence_fingerprint_sha256",
             "corpus_artifact",
             "corpus_format",
             "subject_bound",

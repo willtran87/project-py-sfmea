@@ -637,6 +637,18 @@ and reconciles every projected corpus, verifier, count, rate, missing/unexpected
 This establishes artifact-to-claim consistency; it does not prove corpus representativeness,
 reviewer authority, or that the evaluator itself is defect-free.
 
+Validation aggregation treats the labeled corpus digest as its evidence-credit identity. LLM
+replay additionally constructs a canonical semantic identity from corpus format, the bound subject
+when present, and sample records sorted by normalized ID. Descriptive `name`/`purpose`, JSON byte
+layout, and sample order are excluded. The converter publishes this value as
+`evidence_fingerprint_sha256`; program verification recomputes it from the retained artifact rather
+than trusting the claim. Distinct record IDs, reviewers, paths, metadata, or repeated runs do not
+turn the same labeled evidence into a larger population. The first declaration remains credited,
+later declarations remain visible as blocking duplicate evidence, and population-weighted metrics
+use only unique credit identities. This prevents straightforward evidence repackaging from
+inflating repository, case, sample, claim, artifact, or independence summaries; it does not prove
+that differently labeled corpora are statistically independent or representative.
+
 The `llm_quality_record.py` utility consumes one strict, bounded, content-addressed corpus of
 independently labeled samples. Its closed sample contract records grounding and citation decisions
 plus total and unsupported claim counts, then calculates the exact program-compatible aggregate.

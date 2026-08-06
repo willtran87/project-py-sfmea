@@ -5,6 +5,37 @@ diagrams can be validated, transported, rendered in the standalone report, and
 processed by other tools without depending on Mermaid, Graphviz, or a hosted
 service.
 
+For an operator-level view of how these diagrams relate to the complete assurance workflow, see
+the [visual guide](VISUAL_GUIDE.md).
+
+## Diagram portfolio at a glance
+
+```mermaid
+flowchart LR
+    A["Governed analysis"] --> AR["Architecture"]
+    A --> IF["Interface flow"]
+    A --> SQ["Sequence"]
+    A --> FP["Failure propagation"]
+    A --> CB["Circuit breaker"]
+    A --> CC["Control coverage"]
+    A --> TR["Traceability"]
+    RT["Imported runtime evidence"] --> SQ
+    RT --> FP
+    CT["Custom diagram JSON"] --> RP["Self-contained HTML report"]
+    AR --> RP
+    IF --> RP
+    SQ --> RP
+    FP --> RP
+    CB --> RP
+    CC --> RP
+    TR --> RP
+```
+
+- Generated diagrams share the exact governed analysis binding.
+- Runtime evidence can corroborate relationships without proving failure causality.
+- Custom diagrams use the same validated renderer-neutral model.
+- Every bounded view reports truncation, omissions, and interpretation limits.
+
 ## Generate diagram models
 
 ```powershell

@@ -5,6 +5,9 @@ evidence-backed SFMEA handoff. The governed analysis JSON is the source of truth
 coverage views, assurance queues, and review packages are projections of that state rather than
 independent analyses.
 
+For a diagram-led overview of scanning, failure cascades, evidence credit, finding lifecycle, and
+multi-repository assurance, see the [visual guide](VISUAL_GUIDE.md).
+
 ```mermaid
 flowchart LR
     R["Repository + sfmea.toml"] --> D["Doctor"]
@@ -275,6 +278,17 @@ subjects. The program
 aggregates grounding and citation decisions over samples and unsupported claims over total claims;
 legacy records remain readable with an explicit `legacy-sample-weighted` aggregation label only
 when those gates are disabled.
+
+Corpus credit is unique across the complete program. Validation uses `corpus_sha256`; replayed LLM
+evidence uses a canonical `evidence_fingerprint_sha256` over format, subject, and normalized
+sample records, so metadata, whitespace, or sample reordering cannot create a second population.
+A repeated or semantically equivalent corpus is retained as a declared record for audit visibility
+but produces a blocking
+`validation.duplicate_corpus_evidence` or `llm.duplicate_corpus_evidence` finding. It receives no
+second credit toward repositories, cases, samples, claims, independence totals, artifacts, or
+quality metrics. Review `credited_cohorts`, `credited_evaluations`, `duplicate_evidence`, and
+`semantic_fingerprinted_evaluations` in the machine verdict, or the corresponding Markdown/HTML
+metrics, before accepting population claims.
 
 After intentional edits, refresh the program digest and generate both machine and human views:
 

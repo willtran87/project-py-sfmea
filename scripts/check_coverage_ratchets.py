@@ -15,6 +15,7 @@ THRESHOLDS = {
     "html_report.py": 90.0,
     "integrity.py": 95.0,
     "interfaces.py": 90.0,
+    "llm_quality.py": 90.0,
     "runtime.py": 90.0,
     "sandbox_policy.py": 85.0,
     "scanner.py": 80.0,

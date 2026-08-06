@@ -10,11 +10,9 @@ from typing import Any
 
 from pysfmea.file_publication import atomic_publish_text
 from pysfmea.json_ingestion import load_bounded_json_document
+from pysfmea.llm_quality import project_llm_quality_corpus
 
-LEGACY_CORPUS_FORMAT = "pysfmea-llm-quality-corpus-1"
-CORPUS_FORMAT = "pysfmea-llm-quality-corpus-2"
 MAX_CORPUS_BYTES = 20_000_000
-MAX_SAMPLES = 100_000
 
 
 def quality_record(
@@ -41,104 +39,32 @@ def quality_record(
         raise ValueError(
             "LLM quality record requires distinct producer and reviewer identities"
         )
-    schema_version = corpus.get("schema_version")
-    allowed_root = {"schema_version", "name", "purpose", "samples"}
-    if schema_version == CORPUS_FORMAT:
-        allowed_root.add("subject")
-    if set(corpus) - allowed_root:
-        raise ValueError("LLM quality corpus contains unsupported fields")
-    if schema_version not in {LEGACY_CORPUS_FORMAT, CORPUS_FORMAT}:
-        raise ValueError("LLM quality corpus schema_version is missing or unsupported")
-    subject_bound = schema_version == CORPUS_FORMAT
-    if subject_bound:
-        subject = corpus.get("subject")
-        expected_subject = {
+    projection = project_llm_quality_corpus(
+        corpus,
+        expected_subject={
             "provider": provider.strip(),
             "model": model.strip(),
             "prompt_version": prompt_version.strip(),
-        }
-        if (
-            not isinstance(subject, dict)
-            or set(subject) != set(expected_subject)
-            or any(
-                not isinstance(value, str) or not value.strip() or len(value) > 4096
-                for value in subject.values()
-            )
-            or subject != expected_subject
-        ):
-            raise ValueError(
-                "LLM quality corpus subject must exactly match provider, model, and prompt version"
-            )
-    samples = corpus.get("samples")
-    if not isinstance(samples, list) or not samples or len(samples) > MAX_SAMPLES:
-        raise ValueError(
-            "LLM quality corpus requires a bounded non-empty samples array"
-        )
-    sample_ids: set[str] = set()
-    grounded = 0
-    citations_correct = 0
-    claim_count = 0
-    unsupported_claim_count = 0
-    allowed_sample = {
-        "id",
-        "grounded",
-        "citations_correct",
-        "claim_count",
-        "unsupported_claim_count",
-    }
-    for index, sample in enumerate(samples, start=1):
-        if not isinstance(sample, dict) or set(sample) != allowed_sample:
-            raise ValueError(
-                f"LLM quality sample {index} does not match the closed contract"
-            )
-        sample_id = sample.get("id")
-        if (
-            not isinstance(sample_id, str)
-            or not sample_id.strip()
-            or len(sample_id) > 4096
-        ):
-            raise ValueError(f"LLM quality sample {index} requires a bounded id")
-        if sample_id in sample_ids:
-            raise ValueError("LLM quality sample ids must be unique")
-        sample_ids.add(sample_id)
-        if not all(
-            isinstance(sample.get(field), bool)
-            for field in ("grounded", "citations_correct")
-        ):
-            raise ValueError(f"LLM quality sample {index} decisions must be booleans")
-        claims = sample.get("claim_count")
-        unsupported = sample.get("unsupported_claim_count")
-        if (
-            not isinstance(claims, int)
-            or isinstance(claims, bool)
-            or claims < 1
-            or not isinstance(unsupported, int)
-            or isinstance(unsupported, bool)
-            or unsupported < 0
-            or unsupported > claims
-        ):
-            raise ValueError(f"LLM quality sample {index} claim counts are invalid")
-        grounded += int(sample["grounded"])
-        citations_correct += int(sample["citations_correct"])
-        claim_count += claims
-        unsupported_claim_count += unsupported
+        },
+    )
     raw_digest = hashlib.sha256(raw).hexdigest()
     record: dict[str, Any] = {
         "id": evaluation_id.strip(),
         "provider": provider.strip(),
         "model": model.strip(),
         "prompt_version": prompt_version.strip(),
-        "sample_count": len(samples),
-        "grounding": round(grounded / len(samples), 4),
-        "citation_accuracy": round(citations_correct / len(samples), 4),
-        "unsupported_claim_rate": round(unsupported_claim_count / claim_count, 4),
-        "grounded_sample_count": grounded,
-        "citation_correct_sample_count": citations_correct,
-        "claim_count": claim_count,
-        "unsupported_claim_count": unsupported_claim_count,
+        "sample_count": projection.sample_count,
+        "grounding": projection.grounding,
+        "citation_accuracy": projection.citation_accuracy,
+        "unsupported_claim_rate": projection.unsupported_claim_rate,
+        "grounded_sample_count": projection.grounded_sample_count,
+        "citation_correct_sample_count": projection.citation_correct_sample_count,
+        "claim_count": projection.claim_count,
+        "unsupported_claim_count": projection.unsupported_claim_count,
         "corpus_sha256": raw_digest,
-        "corpus_format": schema_version,
-        "subject_bound": subject_bound,
+        "corpus_format": projection.corpus_format,
+        "subject_bound": projection.subject_bound,
+        "evidence_fingerprint_sha256": projection.evidence_fingerprint_sha256,
         "independent_reviewed": True,
         "producer": producer.strip(),
         "reviewer": reviewer.strip(),

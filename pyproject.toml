@@ -95,6 +95,7 @@ files = [
   "src/pysfmea/sandbox_policy.py",
   "src/pysfmea/architecture.py",
   "src/pysfmea/integrity.py",
+  "src/pysfmea/llm_quality.py",
   "scripts/check_coverage_ratchets.py",
 ]
 warn_unused_configs = true

@@ -98,6 +98,9 @@ release scripts.
   cohorts, insufficient or non-independent LLM quality samples/metrics, missing program-level
   approval roles, shared role authorities, unresolved required-role rejections, and same-person
   evidence review block the program verdict without changing inputs.
+- Confirm validation corpus duplicates and LLM corpora repackaged through metadata, formatting, or
+  sample-order changes remain declared but uncredited. Recompute and compare the LLM
+  `evidence_fingerprint_sha256`, and retain declared/credited/duplicate/fingerprinted verdict counts.
 - Confirm unrun, inconclusive, failed, missing-artifact, and digest-invalid evidence cannot support
   timing or resilience; failed evidence independently blocks readiness. Confirm nested unknown
   fields, offset-free timestamps, non-boolean policy flags, and finding-output overflow fail closed.

@@ -57,7 +57,10 @@ This matrix compares PySFMEA with the public NASA and FAA process guidance used 
   assurance-program cohort with reconciled failure-mode and call-resolution metrics, and calculate
   provider/model/prompt-specific LLM grounding, citation, and claim-weighted unsupported-claim
   metrics from an exact-artifact-bound, subject-bound labeled corpus whose samples are replayed by
-  program verification. Legacy unbound corpora are explicitly identified and gated.
+  program verification. Program aggregation credits each validation corpus digest once and each
+  replayed LLM semantic fingerprint once, so metadata or sample-order repackaging cannot inflate
+  the population; declared/credited/duplicate/fingerprinted counts remain visible. Legacy unbound
+  corpora are explicitly identified and gated.
 
 These controls make external validation executable and comparable; they do not manufacture the
 independent repositories, qualified reviewers, representative scenarios, or organizational

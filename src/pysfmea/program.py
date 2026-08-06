@@ -22,6 +22,7 @@ from .json_ingestion import (
     load_bounded_file_snapshot,
     load_bounded_json_document,
 )
+from .llm_quality import project_llm_quality_corpus
 from .model import utc_now
 from .report import analysis_state_sha256
 from .store import load_analysis
@@ -626,93 +627,44 @@ def _evaluation_result_matches_cohort(
     )
 
 
-def _llm_corpus_matches_evaluation(
+def _llm_corpus_evidence_fingerprint(
     corpus: Any,
     evaluation: dict[str, Any],
-) -> bool:
-    """Recompute the closed labeled-corpus projection for one LLM evaluation."""
+) -> str | None:
+    """Recompute metrics and the order/metadata-insensitive evidence identity."""
 
-    if not isinstance(corpus, dict):
-        return False
-    schema_version = corpus.get("schema_version")
-    supported_formats = {
-        "pysfmea-llm-quality-corpus-1",
-        "pysfmea-llm-quality-corpus-2",
-    }
-    allowed_root = {"schema_version", "name", "purpose", "samples"}
-    if schema_version == "pysfmea-llm-quality-corpus-2":
-        allowed_root.add("subject")
-    if schema_version not in supported_formats or set(corpus) - allowed_root:
-        return False
-    claimed_format = evaluation.get("corpus_format")
-    if claimed_format is not None and claimed_format != schema_version:
-        return False
-    subject_bound = schema_version == "pysfmea-llm-quality-corpus-2"
-    if evaluation.get("subject_bound", False) is not subject_bound:
-        return False
-    if subject_bound:
-        subject = corpus.get("subject")
-        if not isinstance(subject, dict) or subject != {
-            "provider": evaluation.get("provider"),
-            "model": evaluation.get("model"),
-            "prompt_version": evaluation.get("prompt_version"),
-        }:
-            return False
-    samples = corpus.get("samples")
-    if not isinstance(samples, list) or not samples or len(samples) > 100_000:
-        return False
-    allowed_sample = {
-        "id",
-        "grounded",
-        "citations_correct",
-        "claim_count",
-        "unsupported_claim_count",
-    }
-    sample_ids: set[str] = set()
-    grounded = 0
-    citations_correct = 0
-    claim_count = 0
-    unsupported_claim_count = 0
-    for sample in samples:
-        if not isinstance(sample, dict) or set(sample) != allowed_sample:
-            return False
-        sample_id = sample.get("id")
-        claims = sample.get("claim_count")
-        unsupported = sample.get("unsupported_claim_count")
-        if (
-            not isinstance(sample_id, str)
-            or not sample_id.strip()
-            or len(sample_id) > 4096
-            or sample_id in sample_ids
-            or not isinstance(sample.get("grounded"), bool)
-            or not isinstance(sample.get("citations_correct"), bool)
-            or not isinstance(claims, int)
-            or isinstance(claims, bool)
-            or claims < 1
-            or not isinstance(unsupported, int)
-            or isinstance(unsupported, bool)
-            or unsupported < 0
-            or unsupported > claims
-        ):
-            return False
-        sample_ids.add(sample_id)
-        grounded += int(sample["grounded"])
-        citations_correct += int(sample["citations_correct"])
-        claim_count += claims
-        unsupported_claim_count += unsupported
-    sample_count = len(samples)
-    return bool(
-        evaluation.get("sample_count") == sample_count
-        and evaluation.get("grounded_sample_count") == grounded
-        and evaluation.get("citation_correct_sample_count") == citations_correct
-        and evaluation.get("claim_count") == claim_count
-        and evaluation.get("unsupported_claim_count") == unsupported_claim_count
-        and evaluation.get("grounding") == round(grounded / sample_count, 4)
-        and evaluation.get("citation_accuracy")
-        == round(citations_correct / sample_count, 4)
-        and evaluation.get("unsupported_claim_rate")
-        == round(unsupported_claim_count / claim_count, 4)
-    )
+    try:
+        projection = project_llm_quality_corpus(
+            corpus,
+            expected_subject={
+                "provider": evaluation.get("provider"),
+                "model": evaluation.get("model"),
+                "prompt_version": evaluation.get("prompt_version"),
+            },
+        )
+    except ValueError:
+        return None
+    claimed_fingerprint = evaluation.get("evidence_fingerprint_sha256")
+    if (
+        evaluation.get("corpus_format") not in {None, projection.corpus_format}
+        or evaluation.get("subject_bound", False) is not projection.subject_bound
+        or claimed_fingerprint
+        not in {None, projection.evidence_fingerprint_sha256}
+        or evaluation.get("sample_count") != projection.sample_count
+        or evaluation.get("grounded_sample_count")
+        != projection.grounded_sample_count
+        or evaluation.get("citation_correct_sample_count")
+        != projection.citation_correct_sample_count
+        or evaluation.get("claim_count") != projection.claim_count
+        or evaluation.get("unsupported_claim_count")
+        != projection.unsupported_claim_count
+        or evaluation.get("grounding") != projection.grounding
+        or evaluation.get("citation_accuracy") != projection.citation_accuracy
+        or evaluation.get("unsupported_claim_rate")
+        != projection.unsupported_claim_rate
+    ):
+        return None
+    return projection.evidence_fingerprint_sha256
 
 
 def verify_assurance_program(source: str | Path) -> dict[str, Any]:
@@ -1798,6 +1750,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     total_evaluation_bytes = 0
     evaluation_artifact_cache: dict[Path, tuple[int, str, Any]] = {}
     cohort_ids: set[str] = set()
+    validation_corpus_owners: dict[str, str] = {}
     for index, cohort in enumerate(cohorts):
         location = f"validation_cohorts[{index}]"
         _reject_unknown_fields(
@@ -2265,6 +2218,22 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 location,
             )
             independent = False
+        duplicate_evidence = False
+        if len(corpus_digest) == 64 and not any(
+            char not in "0123456789abcdef" for char in corpus_digest
+        ):
+            previous_cohort = validation_corpus_owners.get(corpus_digest)
+            if previous_cohort is not None:
+                duplicate_evidence = True
+                _finding(
+                    findings,
+                    "validation.duplicate_corpus_evidence",
+                    "error",
+                    f"Validation cohort {cohort_id} reuses the labeled corpus already declared by {previous_cohort}; duplicate evidence receives no aggregate credit.",
+                    location,
+                )
+            else:
+                validation_corpus_owners[corpus_digest] = cohort_id
         validation_records.append(
             {
                 "id": cohort_id,
@@ -2286,13 +2255,22 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "call_actual_count": call_actual_count,
                 "evaluation_artifact_declared": artifact_declared,
                 "evaluation_artifact_verified": evaluation_artifact_verified,
+                "duplicate_evidence": duplicate_evidence,
             }
         )
-    call_validation_records = [
+    credited_validation_records = [
+        value for value in validation_records if not value["duplicate_evidence"]
+    ]
+    declared_call_validation_records = [
         value for value in validation_records if value["call_case_count"] > 0
     ]
+    call_validation_records = [
+        value
+        for value in credited_validation_records
+        if value["call_case_count"] > 0
+    ]
     count_backed_records = [
-        value for value in validation_records if value["count_backed"]
+        value for value in credited_validation_records if value["count_backed"]
     ]
     call_count_backed_records = [
         value for value in call_validation_records if value["call_count_backed"]
@@ -2323,34 +2301,43 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     )
     validation_summary = {
         "cohorts": len(validation_records),
+        "credited_cohorts": len(credited_validation_records),
+        "duplicate_evidence": len(validation_records)
+        - len(credited_validation_records),
         "repositories": len(
-            {value["repository"] for value in validation_records if value["repository"]}
+            {
+                value["repository"]
+                for value in credited_validation_records
+                if value["repository"]
+            }
         ),
         "independently_reviewed": sum(
-            value["independent"] for value in validation_records
+            value["independent"] for value in credited_validation_records
         ),
         "macro_recall": round(
-            sum(value["recall"] for value in validation_records)
-            / len(validation_records),
+            sum(value["recall"] for value in credited_validation_records)
+            / len(credited_validation_records),
             4,
         )
-        if validation_records
+        if credited_validation_records
         else None,
         "macro_precision": round(
-            sum(value["precision"] for value in validation_records)
-            / len(validation_records),
+            sum(value["precision"] for value in credited_validation_records)
+            / len(credited_validation_records),
             4,
         )
-        if validation_records
+        if credited_validation_records
         else None,
-        "cases": sum(value["case_count"] for value in validation_records),
+        "cases": sum(value["case_count"] for value in credited_validation_records),
         "count_backed_cohorts": len(count_backed_records),
         "count_backed_cases": total_count_backed_cases,
         "evaluation_artifacts": sum(
-            value["evaluation_artifact_declared"] for value in validation_records
+            value["evaluation_artifact_declared"]
+            for value in credited_validation_records
         ),
         "verified_evaluation_artifacts": sum(
-            value["evaluation_artifact_verified"] for value in validation_records
+            value["evaluation_artifact_verified"]
+            for value in credited_validation_records
         ),
         "evaluation_artifact_bytes": total_evaluation_bytes,
         "micro_recall": round(
@@ -2363,7 +2350,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         )
         if total_count_backed_actual
         else None,
-        "call_cases": sum(value["call_case_count"] for value in validation_records),
+        "call_cases": sum(
+            value["call_case_count"] for value in credited_validation_records
+        ),
         "call_resolution_cohorts": len(call_validation_records),
         "call_count_backed_cohorts": len(call_count_backed_records),
         "call_count_backed_cases": total_call_count_backed_cases,
@@ -2405,9 +2394,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             f"Independent validation covers {validation_summary['repositories']} repositories; {min_repositories} required.",
             "validation_cohorts",
         )
-    if require_independent_validation and validation_summary[
-        "independently_reviewed"
-    ] < len(validation_records):
+    if require_independent_validation and sum(
+        value["independent"] for value in validation_records
+    ) < len(validation_records):
         _finding(
             findings,
             "validation.independence",
@@ -2415,9 +2404,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "Every configured validation cohort must be independently reviewed.",
             "validation_cohorts",
         )
-    if require_count_backed_validation and validation_summary[
-        "count_backed_cohorts"
-    ] < len(validation_records):
+    if require_count_backed_validation and sum(
+        value["count_backed"] for value in validation_records
+    ) < len(validation_records):
         _finding(
             findings,
             "validation.count_backing",
@@ -2425,9 +2414,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "Every configured validation cohort must carry reconciled counts and evaluation-result provenance.",
             "validation_cohorts",
         )
-    if require_evaluation_result_artifacts and validation_summary[
-        "verified_evaluation_artifacts"
-    ] < len(validation_records):
+    if require_evaluation_result_artifacts and sum(
+        value["evaluation_artifact_verified"] for value in validation_records
+    ) < len(validation_records):
         _finding(
             findings,
             "validation.evaluation_artifacts",
@@ -2435,9 +2424,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "Every configured validation cohort must bind a verified retained evaluation-result artifact.",
             "validation_cohorts",
         )
-    if require_count_backed_validation and validation_summary[
-        "call_count_backed_cohorts"
-    ] < len(call_validation_records):
+    if require_count_backed_validation and sum(
+        value["call_count_backed"] for value in declared_call_validation_records
+    ) < len(declared_call_validation_records):
         _finding(
             findings,
             "validation.call_count_backing",
@@ -2520,6 +2509,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     total_llm_corpus_bytes = 0
     llm_corpus_cache: dict[Path, tuple[int, str, Any]] = {}
     llm_ids: set[str] = set()
+    llm_corpus_owners: dict[str, str] = {}
     for index, evaluation in enumerate(llm_evaluations):
         location = f"llm_evaluations[{index}]"
         _reject_unknown_fields(
@@ -2538,6 +2528,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "claim_count",
                 "unsupported_claim_count",
                 "corpus_sha256",
+                "evidence_fingerprint_sha256",
                 "corpus_format",
                 "subject_bound",
                 "corpus_artifact",
@@ -2585,6 +2576,22 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "llm.corpus_digest",
                 "error",
                 "LLM evaluation corpus_sha256 must be a lowercase SHA-256 digest.",
+                location,
+            )
+        evidence_fingerprint_claim = evaluation.get("evidence_fingerprint_sha256")
+        if evidence_fingerprint_claim is not None and (
+            not isinstance(evidence_fingerprint_claim, str)
+            or len(evidence_fingerprint_claim) != 64
+            or any(
+                char not in "0123456789abcdef"
+                for char in evidence_fingerprint_claim
+            )
+        ):
+            _finding(
+                findings,
+                "llm.evidence_fingerprint",
+                "error",
+                "LLM evidence_fingerprint_sha256 must be a lowercase SHA-256 digest when declared.",
                 location,
             )
         subject_fields = {"corpus_format", "subject_bound"} & set(evaluation)
@@ -2720,6 +2727,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         corpus_artifact = evaluation.get("corpus_artifact")
         corpus_artifact_declared = corpus_artifact is not None
         corpus_artifact_verified = False
+        semantic_fingerprint: str | None = None
         if corpus_artifact_declared:
             if not isinstance(corpus_artifact, dict):
                 _finding(
@@ -2807,9 +2815,15 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                                 "LLM corpus artifact bytes do not match corpus_sha256.",
                                 location,
                             )
-                        elif not llm_count_backed or not _llm_corpus_matches_evaluation(
-                            corpus_value, evaluation
-                        ):
+                        else:
+                            semantic_fingerprint = (
+                                _llm_corpus_evidence_fingerprint(
+                                    corpus_value, evaluation
+                                )
+                                if llm_count_backed
+                                else None
+                            )
+                        if raw_digest == corpus_digest and semantic_fingerprint is None:
                             _finding(
                                 findings,
                                 "llm.corpus_artifact_claims",
@@ -2817,7 +2831,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                                 "LLM corpus samples do not match the evaluation counts or metrics.",
                                 location,
                             )
-                        else:
+                        elif semantic_fingerprint is not None:
                             corpus_artifact_verified = True
                     except (ValueError, BoundedFileSnapshotError) as exc:
                         _finding(
@@ -2849,8 +2863,26 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 location,
             )
             independent = False
+        duplicate_evidence = False
+        credit_identity = semantic_fingerprint or corpus_digest
+        if len(credit_identity) == 64 and not any(
+            char not in "0123456789abcdef" for char in credit_identity
+        ):
+            previous_evaluation = llm_corpus_owners.get(credit_identity)
+            if previous_evaluation is not None:
+                duplicate_evidence = True
+                _finding(
+                    findings,
+                    "llm.duplicate_corpus_evidence",
+                    "error",
+                    f"LLM evaluation {evaluation_id} reuses semantically equivalent labeled evidence already declared by {previous_evaluation}; duplicate evidence receives no aggregate credit.",
+                    location,
+                )
+            else:
+                llm_corpus_owners[credit_identity] = evaluation_id
         llm_records.append(
             {
+                "id": evaluation_id,
                 "grounding": grounding,
                 "citation_accuracy": citation,
                 "unsupported_claim_rate": unsupported,
@@ -2863,15 +2895,22 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "unsupported_count": unsupported_count,
                 "corpus_artifact_declared": corpus_artifact_declared,
                 "corpus_artifact_verified": corpus_artifact_verified,
+                "semantic_fingerprint_verified": semantic_fingerprint is not None,
                 "subject_binding_verified": subject_binding_claimed
                 and corpus_artifact_verified,
+                "duplicate_evidence": duplicate_evidence,
             }
         )
-    llm_samples = sum(value["sample_count"] for value in llm_records)
-    llm_count_backed_records = [value for value in llm_records if value["count_backed"]]
-    llm_counts_complete = bool(llm_records) and len(llm_count_backed_records) == len(
-        llm_records
-    )
+    credited_llm_records = [
+        value for value in llm_records if not value["duplicate_evidence"]
+    ]
+    llm_samples = sum(value["sample_count"] for value in credited_llm_records)
+    llm_count_backed_records = [
+        value for value in credited_llm_records if value["count_backed"]
+    ]
+    llm_counts_complete = bool(credited_llm_records) and len(
+        llm_count_backed_records
+    ) == len(credited_llm_records)
     llm_claims = sum(value["claim_count"] for value in llm_count_backed_records)
     llm_unsupported_claims = sum(
         value["unsupported_count"] for value in llm_count_backed_records
@@ -2880,7 +2919,10 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     def weighted(field: str) -> float | None:
         return (
             round(
-                sum(value[field] * value["sample_count"] for value in llm_records)
+                sum(
+                    value[field] * value["sample_count"]
+                    for value in credited_llm_records
+                )
                 / llm_samples,
                 4,
             )
@@ -2890,17 +2932,24 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
 
     llm_summary = {
         "evaluations": len(llm_records),
+        "credited_evaluations": len(credited_llm_records),
+        "duplicate_evidence": len(llm_records) - len(credited_llm_records),
         "samples": llm_samples,
-        "independently_reviewed": sum(value["independent"] for value in llm_records),
+        "independently_reviewed": sum(
+            value["independent"] for value in credited_llm_records
+        ),
         "count_backed_evaluations": len(llm_count_backed_records),
         "verified_corpus_artifacts": sum(
-            value["corpus_artifact_verified"] for value in llm_records
+            value["corpus_artifact_verified"] for value in credited_llm_records
         ),
         "subject_bound_evaluations": sum(
-            value["subject_binding_verified"] for value in llm_records
+            value["subject_binding_verified"] for value in credited_llm_records
+        ),
+        "semantic_fingerprinted_evaluations": sum(
+            value["semantic_fingerprint_verified"] for value in credited_llm_records
         ),
         "corpus_artifacts": sum(
-            value["corpus_artifact_declared"] for value in llm_records
+            value["corpus_artifact_declared"] for value in credited_llm_records
         ),
         "corpus_artifact_bytes": total_llm_corpus_bytes,
         "claim_count": llm_claims if llm_counts_complete else None,
@@ -2909,7 +2958,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         else None,
         "aggregation_method": "count-backed"
         if llm_counts_complete
-        else ("legacy-sample-weighted" if llm_records else "unavailable"),
+        else (
+            "legacy-sample-weighted" if credited_llm_records else "unavailable"
+        ),
         "grounding": round(
             sum(value["grounded_count"] for value in llm_count_backed_records)
             / llm_samples,
@@ -2940,7 +2991,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     if (
         require_independent_llm
         and llm_records
-        and llm_summary["independently_reviewed"] < len(llm_records)
+        and sum(value["independent"] for value in llm_records) < len(llm_records)
     ):
         _finding(
             findings,
@@ -2949,7 +3000,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "Every configured LLM evaluation must be independently reviewed.",
             "llm_evaluations",
         )
-    if require_llm_count_backing and len(llm_count_backed_records) < len(llm_records):
+    if require_llm_count_backing and sum(
+        value["count_backed"] for value in llm_records
+    ) < len(llm_records):
         _finding(
             findings,
             "llm.count_backing",
@@ -2957,9 +3010,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "Every configured LLM quality evaluation must carry reconciled decision and claim counts.",
             "llm_evaluations",
         )
-    if require_llm_corpus_artifacts and llm_summary["verified_corpus_artifacts"] < len(
-        llm_records
-    ):
+    if require_llm_corpus_artifacts and sum(
+        value["corpus_artifact_verified"] for value in llm_records
+    ) < len(llm_records):
         _finding(
             findings,
             "llm.corpus_artifacts",
@@ -2967,9 +3020,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "Every configured LLM quality evaluation must bind a verified retained labeled corpus.",
             "llm_evaluations",
         )
-    if require_llm_subject_binding and llm_summary["subject_bound_evaluations"] < len(
-        llm_records
-    ):
+    if require_llm_subject_binding and sum(
+        value["subject_binding_verified"] for value in llm_records
+    ) < len(llm_records):
         _finding(
             findings,
             "llm.subject_binding",
@@ -3366,16 +3419,19 @@ def program_verification_markdown(result: dict[str, Any]) -> str:
         f"- Relationships: {summary.get('relationships', 0)}",
         f"- External evidence records: {summary.get('external_evidence', 0)}",
         f"- Validation repositories: {validation.get('repositories', 0)}",
+        f"- Credited validation cohorts: {validation.get('credited_cohorts', validation.get('cohorts', 0))} of {validation.get('cohorts', 0)} (duplicate evidence: {validation.get('duplicate_evidence', 0)})",
         f"- Macro recall / precision: {validation.get('macro_recall')} / {validation.get('macro_precision')}",
         f"- Micro recall / precision: {validation.get('micro_recall')} / {validation.get('micro_precision')}",
-        f"- Count-backed cohorts: {validation.get('count_backed_cohorts', 0)} of {validation.get('cohorts', 0)}",
-        f"- Verified evaluation artifacts: {validation.get('verified_evaluation_artifacts', 0)} of {validation.get('cohorts', 0)}",
+        f"- Count-backed cohorts: {validation.get('count_backed_cohorts', 0)} of {validation.get('credited_cohorts', validation.get('cohorts', 0))} credited",
+        f"- Verified evaluation artifacts: {validation.get('verified_evaluation_artifacts', 0)} of {validation.get('credited_cohorts', validation.get('cohorts', 0))} credited",
         f"- Micro call-resolution recall / precision: {validation.get('micro_call_resolution_recall')} / {validation.get('micro_call_resolution_precision')}",
         f"- LLM samples: {llm.get('samples', 0)}",
+        f"- Credited LLM evaluations: {llm.get('credited_evaluations', llm.get('evaluations', 0))} of {llm.get('evaluations', 0)} (duplicate evidence: {llm.get('duplicate_evidence', 0)})",
         f"- LLM aggregation: {llm.get('aggregation_method', 'unavailable')}",
-        f"- Count-backed LLM evaluations: {llm.get('count_backed_evaluations', 0)} of {llm.get('evaluations', 0)}",
-        f"- Verified LLM corpus artifacts: {llm.get('verified_corpus_artifacts', 0)} of {llm.get('evaluations', 0)}",
-        f"- Subject-bound LLM evaluations: {llm.get('subject_bound_evaluations', 0)} of {llm.get('evaluations', 0)}",
+        f"- Count-backed LLM evaluations: {llm.get('count_backed_evaluations', 0)} of {llm.get('credited_evaluations', llm.get('evaluations', 0))} credited",
+        f"- Verified LLM corpus artifacts: {llm.get('verified_corpus_artifacts', 0)} of {llm.get('credited_evaluations', llm.get('evaluations', 0))} credited",
+        f"- Subject-bound LLM evaluations: {llm.get('subject_bound_evaluations', 0)} of {llm.get('credited_evaluations', llm.get('evaluations', 0))} credited",
+        f"- Semantically fingerprinted LLM evaluations: {llm.get('semantic_fingerprinted_evaluations', 0)} of {llm.get('credited_evaluations', llm.get('evaluations', 0))} credited",
         f"- LLM claims / unsupported claims: {llm.get('claim_count')} / {llm.get('unsupported_claim_count')}",
         "",
         "## Cross-repository relationships",
@@ -3473,7 +3529,7 @@ table{{width:100%;border-collapse:collapse}} th,td{{padding:10px;text-align:left
 </div></section>
 <section id="topology"><h2>System topology</h2>{_program_topology_svg(result)}</section>
 <section id="checks"><h2>Verification checks</h2><table><thead><tr><th>Check</th><th>State</th></tr></thead><tbody>{check_rows}</tbody></table></section>
-<section id="quality"><h2>Validation and model quality</h2><div class="metrics">{metric(validation.get("macro_recall"), "macro recall")}{metric(validation.get("macro_precision"), "macro precision")}{metric(validation.get("micro_recall"), "micro recall")}{metric(validation.get("micro_precision"), "micro precision")}{metric(validation.get("macro_call_resolution_recall"), "macro call-resolution recall")}{metric(validation.get("macro_call_resolution_precision"), "macro call-resolution precision")}{metric(validation.get("micro_call_resolution_recall"), "micro call-resolution recall")}{metric(validation.get("micro_call_resolution_precision"), "micro call-resolution precision")}{metric(validation.get("count_backed_cohorts", 0), "count-backed cohorts")}{metric(validation.get("verified_evaluation_artifacts", 0), "verified evaluation artifacts")}{metric(validation.get("evaluation_artifact_bytes", 0), "evaluation artifact bytes")}{metric(validation.get("call_count_backed_cohorts", 0), "count-backed call cohorts")}{metric(validation.get("cases", 0), "labelled failure-mode cases")}{metric(validation.get("call_cases", 0), "labelled call-site cases")}{metric(validation.get("independently_reviewed", 0), "independent cohorts")}{metric(llm.get("grounding"), "LLM grounding")}{metric(llm.get("citation_accuracy"), "LLM citation accuracy")}{metric(llm.get("unsupported_claim_rate"), "unsupported claim rate")}{metric(llm.get("claim_count"), "LLM claims")}{metric(llm.get("unsupported_claim_count"), "unsupported LLM claims")}{metric(llm.get("count_backed_evaluations", 0), "count-backed LLM evaluations")}{metric(llm.get("verified_corpus_artifacts", 0), "verified LLM corpus artifacts")}{metric(llm.get("subject_bound_evaluations", 0), "subject-bound LLM evaluations")}{metric(llm.get("corpus_artifact_bytes", 0), "LLM corpus bytes")}{metric(llm.get("aggregation_method", "unavailable"), "LLM aggregation")}{metric(llm.get("independently_reviewed", 0), "independent LLM evaluations")}</div></section>
+<section id="quality"><h2>Validation and model quality</h2><div class="metrics">{metric(validation.get("macro_recall"), "macro recall")}{metric(validation.get("macro_precision"), "macro precision")}{metric(validation.get("micro_recall"), "micro recall")}{metric(validation.get("micro_precision"), "micro precision")}{metric(validation.get("credited_cohorts", validation.get("cohorts", 0)), "credited validation cohorts")}{metric(validation.get("duplicate_evidence", 0), "duplicate validation evidence")}{metric(validation.get("macro_call_resolution_recall"), "macro call-resolution recall")}{metric(validation.get("macro_call_resolution_precision"), "macro call-resolution precision")}{metric(validation.get("micro_call_resolution_recall"), "micro call-resolution recall")}{metric(validation.get("micro_call_resolution_precision"), "micro call-resolution precision")}{metric(validation.get("count_backed_cohorts", 0), "count-backed cohorts")}{metric(validation.get("verified_evaluation_artifacts", 0), "verified evaluation artifacts")}{metric(validation.get("evaluation_artifact_bytes", 0), "evaluation artifact bytes")}{metric(validation.get("call_count_backed_cohorts", 0), "count-backed call cohorts")}{metric(validation.get("cases", 0), "labelled failure-mode cases")}{metric(validation.get("call_cases", 0), "labelled call-site cases")}{metric(validation.get("independently_reviewed", 0), "independent cohorts")}{metric(llm.get("grounding"), "LLM grounding")}{metric(llm.get("citation_accuracy"), "LLM citation accuracy")}{metric(llm.get("unsupported_claim_rate"), "unsupported claim rate")}{metric(llm.get("claim_count"), "LLM claims")}{metric(llm.get("unsupported_claim_count"), "unsupported LLM claims")}{metric(llm.get("credited_evaluations", llm.get("evaluations", 0)), "credited LLM evaluations")}{metric(llm.get("duplicate_evidence", 0), "duplicate LLM evidence")}{metric(llm.get("count_backed_evaluations", 0), "count-backed LLM evaluations")}{metric(llm.get("verified_corpus_artifacts", 0), "verified LLM corpus artifacts")}{metric(llm.get("subject_bound_evaluations", 0), "subject-bound LLM evaluations")}{metric(llm.get("semantic_fingerprinted_evaluations", 0), "semantic LLM fingerprints")}{metric(llm.get("corpus_artifact_bytes", 0), "LLM corpus bytes")}{metric(llm.get("aggregation_method", "unavailable"), "LLM aggregation")}{metric(llm.get("independently_reviewed", 0), "independent LLM evaluations")}</div></section>
 <section id="relationships"><h2>Cross-repository relationships, timing, and resilience</h2><table><thead><tr><th>ID</th><th>Source</th><th>Target</th><th>Kind</th><th>Timing</th><th>Resilience</th><th>Deadline ms</th><th>Observed max ms</th><th>Recovery ms</th><th>Evidence</th></tr></thead><tbody>{relationship_rows}</tbody></table></section>
 <section id="findings"><h2>Actionable findings</h2><div class="filters"><label for="finding-search">Search findings<br><input id="finding-search" type="search" placeholder="Code, message, or location"></label><label for="finding-level">Severity<br><select id="finding-level"><option value="">All levels</option><option value="error">Errors</option><option value="warning">Warnings</option><option value="information">Information</option></select></label></div><table><thead><tr><th>Level</th><th>Code</th><th>Message</th><th>Location</th></tr></thead><tbody>{finding_rows}</tbody></table></section>
 <section class="notice"><strong>Interpretation boundary.</strong> {value(result.get("notice"))}</section></main>

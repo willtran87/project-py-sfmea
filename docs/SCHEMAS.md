@@ -126,6 +126,15 @@ claims rather than samples.
 Program verification reconciles that subject to the evaluation record and reports subject-bound
 coverage. Version-1 corpora remain consumable for compatibility but cannot satisfy the default
 `require_llm_subject_binding` policy.
+Validation aggregation uses `corpus_sha256` as its evidence-credit identity. Replayed LLM
+aggregation uses `evidence_fingerprint_sha256`, canonically derived from corpus format, bound
+subject, and normalized ID-sorted samples; display metadata, byte formatting, and sample ordering
+are excluded. The field is optional for older records, but current conversion emits it and the
+verifier always recomputes it when artifact replay succeeds. Repeated declarations remain visible,
+are rejected as duplicate evidence, and receive no repository, case, sample, claim, artifact,
+independence, or quality-metric credit. Verification projections expose `cohorts`/`evaluations`,
+`credited_cohorts`/`credited_evaluations`, `duplicate_evidence`, and
+`semantic_fingerprinted_evaluations`.
 Program integrity hashes every field outside the integrity declaration using canonical sorted-key
 compact UTF-8 JSON. Run `sfmea program-seal` only after intentional edits.
 

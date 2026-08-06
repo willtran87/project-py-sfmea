@@ -2423,6 +2423,7 @@ def _assurance_program_schema() -> dict[str, Any]:
                             "minimum": 0,
                         },
                         "corpus_sha256": digest,
+                        "evidence_fingerprint_sha256": digest,
                         "corpus_format": {
                             "enum": [
                                 "pysfmea-llm-quality-corpus-1",

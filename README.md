@@ -8,8 +8,20 @@ PySFMEA scans a Python repository and creates a local, reviewable Software Failu
 
 It is designed to help begin and maintain an SFMEA. It does not claim that static analysis can determine system consequences or replace a cross-functional review.
 
+```mermaid
+flowchart LR
+    R["Python repository"] --> S["Static SFMEA scan"]
+    S --> A["Governed analysis"]
+    A --> V["Engineering review"]
+    V --> T["Hardening tests and evidence"]
+    A --> H["HTML reports and diagrams"]
+    T --> P["Verified handoff package"]
+    H --> P
+```
+
 ## Documentation map
 
+- [Visual guide](docs/VISUAL_GUIDE.md) — workflows, failure cascades, trust boundaries, and outputs
 - [Operator workflow](docs/WORKFLOW.md) — the concise scan-to-handoff path
 - [Complete command guide](#quick-start)
 - [Methodology and assurance boundaries](docs/METHODOLOGY.md)
@@ -935,6 +947,14 @@ sample set is representative or authenticate the reviewers.
 Version-1 corpora remain readable as explicit legacy evidence but cannot satisfy
 `require_llm_subject_binding`.
 
+Assurance-program aggregation credits each validation corpus once. For LLM evidence, the converter
+also emits `evidence_fingerprint_sha256` over the corpus format, bound subject, and normalized
+sample records. Display metadata, JSON whitespace, and sample ordering do not affect that semantic
+identity. Repeating or repackaging equivalent evidence under another record ID is a blocking
+duplicate-evidence finding and does not increase repository coverage, case/sample totals, claim
+totals, or macro/micro quality metrics. JSON, Markdown, and HTML show declared, credited,
+duplicate, and semantically fingerprinted evidence counts.
+
 ## Executable assurance checklist
 
 Every active SFMEA finding receives one stable verification obligation. The obligation
@@ -1359,8 +1379,10 @@ regular non-link JSON artifact and reconciles its bytes, canonical content, corp
 metrics, counts, and missing/unexpected records before granting validation credit.
 Configured LLM evaluations similarly require count-backed decisions and claims plus a verified
 retained labeled corpus whose subject matches the declared provider, model, and prompt version.
-This prevents model-evidence substitution and a small, claim-heavy evaluation from being diluted through
-incorrect sample weighting and makes every aggregate reproducible from the underlying labels.
+The verifier also recomputes a subject-and-sample semantic fingerprint that is stable across
+descriptive metadata, JSON formatting, and sample order. This prevents model-evidence substitution,
+semantic evidence repackaging, and dilution of a small claim-heavy evaluation through incorrect
+sample weighting while keeping every aggregate reproducible from the underlying labels.
 
 The HTML verdict includes a bounded repository topology, timing and circuit-breaker states,
 trusted-versus-declared evidence, verification checks, model-quality metrics, severity/search

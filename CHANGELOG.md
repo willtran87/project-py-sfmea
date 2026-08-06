@@ -82,6 +82,13 @@ package; public artifact and schema identifiers carry their own explicit compati
 - Add `pysfmea-llm-quality-corpus-2` with an exact provider/model/prompt subject. Converter and
   program verification reject subject substitution; version-1 corpora remain replayable but cannot
   satisfy the new default subject-binding gate.
+- Reject duplicate validation and LLM corpus declarations even when they use different record IDs.
+  Program metrics, repository coverage, cases, samples, and claims now credit each validation
+  corpus digest once and each replayed LLM semantic fingerprint once. LLM fingerprints ignore
+  descriptive metadata, byte formatting, and sample order while retaining subject and decisions;
+  verdicts report declared, credited, duplicate, and fingerprinted evidence counts.
+- Add a compact visual guide with end-to-end, discovery, cascade, finding-lifecycle,
+  evidence-credit, and multi-repository diagrams plus review and output matrices.
 
 ## 0.58.0 - 2026-08-05
 
