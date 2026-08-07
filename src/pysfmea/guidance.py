@@ -1655,6 +1655,35 @@ def analysis_guidance_profiles(analysis: dict[str, Any]) -> list[str]:
     return normalize_profile_ids(configured)
 
 
+def apply_guidance_applicability(
+    bundle: dict[str, Any], decisions: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """Attach project-owned profile-selection evidence to a catalog projection."""
+
+    active_profiles = [
+        value
+        for value in bundle.get("active_profiles", [])
+        if isinstance(value, str)
+    ]
+    preserved = copy.deepcopy(decisions or [])
+    decided_profiles = {
+        value.get("profile_id")
+        for value in preserved
+        if isinstance(value, dict) and isinstance(value.get("profile_id"), str)
+    }
+    bundle["applicability_decisions"] = preserved
+    bundle["applicability_summary"] = {
+        "active_profiles": len(active_profiles),
+        "decided_profiles": len(decided_profiles & set(active_profiles)),
+        "missing_profile_ids": sorted(set(active_profiles) - decided_profiles),
+        "notice": (
+            "Profile selection is a tool input until a named project authority records an "
+            "applicability decision."
+        ),
+    }
+    return bundle
+
+
 def ensure_guidance_traceability(
     analysis: dict[str, Any], *, refresh: bool = False
 ) -> dict[str, Any]:
@@ -1670,6 +1699,13 @@ def ensure_guidance_traceability(
         else:
             analysis["guidance"] = guidance_bundle(active_profiles)
     resolved_bundle = analysis.get("guidance", {})
+    if isinstance(resolved_bundle, dict):
+        configured_decisions = analysis.get("context", {}).get(
+            "guidance_applicability"
+        )
+        if not isinstance(configured_decisions, list):
+            configured_decisions = existing_bundle.get("applicability_decisions", [])
+        apply_guidance_applicability(resolved_bundle, configured_decisions)
     methodology = analysis.setdefault("methodology", {})
     if refresh:
         methodology["basis"] = selected_sources_from_bundle(resolved_bundle)

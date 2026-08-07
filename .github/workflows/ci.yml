@@ -139,6 +139,49 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  browser-report:
+    name: Self-contained report browser gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install browser quality environment
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[browser]"
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Generate bounded report fixture
+        run: |
+          mkdir -p .ci-report
+          sfmea scan benchmarks/python_sfmea_corpus/repository --allow-ungoverned --no-cache --output .ci-report/analysis.json.gz
+          sfmea report .ci-report/analysis.json.gz --output .ci-report/report.html --max-records 500
+
+      - name: Exercise report in Chromium
+        run: >-
+          python scripts/report_browser_gate.py .ci-report/report.html
+          --analysis .ci-report/analysis.json.gz
+          --max-bytes 52428800
+          --max-load-seconds 10
+          --output .ci-report/browser-quality.json
+
+      - name: Publish browser quality evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pysfmea-browser-report-quality
+          path: .ci-report/*
+          if-no-files-found: error
+          retention-days: 14
+
   mutation:
     name: Focused fault-plugin mutation gate
     runs-on: ubuntu-latest

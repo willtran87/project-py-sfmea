@@ -127,10 +127,46 @@ class WorkflowStatusTests(unittest.TestCase):
         self.assertEqual(settings["config_file"], str(self.config_path.resolve()))
         self.assertEqual(settings["analysis_serialization"], "compact")
         self.assertEqual(len(self.analysis_path.read_text(encoding="utf-8").splitlines()), 1)
+        self.assertGreater(settings["fact_cache"]["run"]["misses"], 0)
+        self.assertEqual(settings["fact_cache"]["output"]["status"], "published")
+        self.assertFalse(analysis["run_manifest"]["cache"]["used"])
+        self.assertGreater(
+            analysis["run_manifest"]["cache"]["entries_recomputed"], 0
+        )
         self.assertIsNot(
             analysis["run_manifest"]["tool"]["settings"],
             settings,
         )
+
+        warm = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pysfmea",
+                "scan",
+                str(self.root),
+                "--config",
+                str(self.config_path),
+                "--fresh",
+                "--output",
+                str(self.analysis_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(warm.returncode, 0, warm.stderr)
+        self.assertIn("Fact cache: hits=", warm.stdout)
+        warmed_analysis = load_analysis(self.analysis_path)
+        self.assertGreater(
+            warmed_analysis["project"]["settings"]["fact_cache"]["run"]["hits"], 0
+        )
+        self.assertTrue(warmed_analysis["run_manifest"]["cache"]["used"])
+        self.assertGreater(
+            warmed_analysis["run_manifest"]["cache"]["entries_reused"], 0
+        )
+        self.assertTrue(verify_run_manifest_integrity(warmed_analysis)["valid"])
 
     def test_public_cli_requires_explicit_discovery_only_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

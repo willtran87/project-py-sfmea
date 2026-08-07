@@ -189,6 +189,21 @@ the complete machine candidate inventory is always retained. The CLI writes comp
 analysis JSON by default to limit artifact amplification; use `--pretty-analysis` only
 when indented JSON is operationally useful.
 
+Scans enable a persistent exact-content fact cache at
+`.artifacts/pysfmea-fact-cache.json` by default. The cache is strict, bounded,
+version/runtime-specific, integrity-checked, atomically published, and explicitly classified as a
+derived performance artifact rather than source evidence. Use `--no-cache` for a cold scan or
+`--cache FILE` for an isolated cache. Warm-scan hit/miss/prune counts are printed and retained in
+the run manifest. Invalid or incompatible cache content is discarded and recorded as a warning.
+
+For large analyses, choose an output ending in `.json.gz`. Loading is transparent, publication is
+deterministic and atomic, and decompression is bounded by the same 100 MB governed-analysis limit:
+
+```powershell
+sfmea scan C:\path\to\python-repo -o .artifacts\sfmea-analysis.json.gz
+sfmea validate .artifacts\sfmea-analysis.json.gz
+```
+
 Project configuration is consumed as an identity-revalidated regular non-symbolic-link UTF-8 TOML
 file under a 5 MB byte limit. Relative coverage and organizational guidance paths are normalized against the
 configuration directory without resolving their final entry, preserving link identity for each
@@ -235,6 +250,11 @@ digest-protected unresolved region and is explicitly marked truncated. File and
 excluded/opaque-region traversal are each capped at 100,000 records.
 The inventory's `snapshot_source` values and summary accounting are defined in
 [Repository snapshot provenance](docs/METHODOLOGY.md#repository-snapshot-provenance).
+JavaScript and TypeScript sources receive a bounded UTF-8 lexical boundary index for imports,
+exports, external packages, and literal HTTP/WebSocket/EventSource endpoints. These records are
+`indexed`, not presented as full semantic analysis, and retain an explicit dynamic-dispatch and
+generated-client limitation. Project-specific external prefixes, receiver names, and method names
+can extend Python interface candidates through the `[scan]` hint arrays.
 
 `sfmea status` is the read-only workflow cockpit. It auto-discovers configuration and
 analysis files in the repository root or `.artifacts`, classifies the current lifecycle
@@ -1532,7 +1552,9 @@ Performance evidence includes per-phase durations, exact repository/source/test 
 counts, peak traced Python allocations, and optional CI budget verdicts. `--reuse-facts`
 measures a cold scan followed by exact-content parser-fact reuse: source bytes, relative
 path, parser options, scanner version, and Python AST version are part of every cache key,
-so metadata-only reuse is impossible.
+so metadata-only reuse is impossible. The record distinguishes cold-start time from the
+warm steady-state median and reports the measured warm speedup percentage. Cache data is
+derived performance state; repository snapshots and governed configuration remain authoritative.
 
 For a real Chromium smoke, navigation, responsive-layout, integrity, size, and load-time
 gate on a generated report:
@@ -1544,6 +1566,9 @@ python scripts/report_browser_gate.py sfmea-report.html `
   --analysis sfmea-analysis.json --max-bytes 52428800 `
   --max-load-seconds 5 -o report-browser-quality.json
 ```
+
+CI runs the same gate against a generated compressed-analysis fixture in Chromium and retains the
+self-contained report plus its machine-readable quality receipt as workflow artifacts.
 
 Report generation itself can fail closed before publication with
 `sfmea report ... --max-output-bytes BYTES`; an existing destination is preserved when
@@ -1695,12 +1720,21 @@ Select guidance applicability explicitly in `[analysis]`:
 
 ```toml
 guidance_profiles = ["core_sfmea", "faa_commercial_space"]
+
+[[guidance_applicability]]
+profile_id = "core_sfmea"
+rationale = "General SFMEA method applies to the governed software scope."
+selected_by = "System safety authority"
+effective_date = "2026-08-06"
+exclusions = []
 ```
 
 Available built-in profiles are `core_sfmea` (default), `nasa_assurance`,
 `faa_commercial_space`, `faa_airworthiness`, `security`, and `legacy_reference`.
-Only selected profiles contribute citations to findings. Selecting a profile records
-the intended analytical context; it does not determine legal applicability or compliance.
+Only selected profiles contribute citations to findings. Record one named
+`[[guidance_applicability]]` decision per active profile; `doctor` and validation identify missing
+decisions. Selection and a local decision record still do not determine legal applicability or
+compliance.
 
 ## Public guidance basis
 

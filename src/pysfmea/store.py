@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import gzip
 import hashlib
+import io
 import json
 import os
 import stat
@@ -172,6 +174,17 @@ def _read_analysis_bytes(path: Path) -> bytes:
         raise ValueError("analysis input changed while it was being read") from exc
     if not _same_file_state(opened_after, current):
         raise ValueError("analysis input changed while it was being read")
+    if raw.startswith(b"\x1f\x8b"):
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(raw), mode="rb") as compressed:
+                expanded = compressed.read(MAX_ANALYSIS_BYTES + 1)
+        except (EOFError, OSError) as exc:
+            raise ValueError("analysis input is not a valid gzip stream") from exc
+        if len(expanded) > MAX_ANALYSIS_BYTES:
+            raise ValueError(
+                f"expanded analysis exceeds the {MAX_ANALYSIS_BYTES}-byte import limit"
+            )
+        raw = expanded
     return raw
 
 
@@ -747,16 +760,31 @@ def save_analysis(
     )
     try:
         with os.fdopen(descriptor, "wb") as handle:
-            writer = _BoundedUtf8Writer(handle, MAX_ANALYSIS_BYTES)
-            json.dump(
-                analysis,
-                writer,
-                indent=None if compact else 2,
-                separators=(",", ":") if compact else None,
-                ensure_ascii=False,
-                allow_nan=False,
-            )
-            writer.write("\n")
+            compressed_handle: Any = handle
+            gzip_stream: gzip.GzipFile | None = None
+            if destination.suffix.casefold() == ".gz":
+                gzip_stream = gzip.GzipFile(
+                    filename="",
+                    mode="wb",
+                    compresslevel=9,
+                    fileobj=handle,
+                    mtime=0,
+                )
+                compressed_handle = gzip_stream
+            try:
+                writer = _BoundedUtf8Writer(compressed_handle, MAX_ANALYSIS_BYTES)
+                json.dump(
+                    analysis,
+                    writer,
+                    indent=None if compact else 2,
+                    separators=(",", ":") if compact else None,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+                writer.write("\n")
+            finally:
+                if gzip_stream is not None:
+                    gzip_stream.close()
             handle.flush()
             os.fsync(handle.fileno())
         if expected_sha256 is not None:

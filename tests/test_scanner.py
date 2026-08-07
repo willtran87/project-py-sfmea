@@ -158,6 +158,34 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("newly_added", {item["qualname"] for item in changed["components"]})
         self.assertGreater(changed_telemetry["fact_cache"]["misses"], 0)
 
+    def test_project_interface_hints_extend_external_boundary_detection(self) -> None:
+        (self.root / "custom_client.py").write_text(
+            "import proprietary_sdk\n\n"
+            "def publish(client, value):\n"
+            "    client.transmit_record(value)\n"
+            "    proprietary_sdk.gateway(value)\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(
+            self.root,
+            config={
+                "scan": {
+                    "external_call_prefixes": ["proprietary_sdk"],
+                    "external_receiver_hints": ["client"],
+                    "external_method_hints": ["transmit_record"],
+                }
+            },
+        )
+        component = next(
+            value for value in analysis["components"] if value["qualname"] == "publish"
+        )
+        candidates = {
+            value["reference"]: value
+            for value in component["external_call_candidates"]
+        }
+        self.assertEqual(candidates["proprietary_sdk.gateway"]["confidence"], "high")
+        self.assertEqual(candidates["client.transmit_record"]["confidence"], "medium")
+
     @settings(max_examples=12, deadline=None)
     @given(
         value=st.integers(min_value=-1_000_000, max_value=1_000_000),
@@ -380,7 +408,10 @@ class ScannerTests(unittest.TestCase):
     ) -> None:
         (self.root / "README.md").write_text("# System\n", encoding="utf-8")
         (self.root / "frontend.tsx").write_text(
-            "export const App = () => null;\n", encoding="utf-8"
+            "import React from 'react';\n"
+            "export const App = () => fetch(`${BASE_URL}/api/${id}`);\n"
+            "const client = { baseURL: '/api/v2' };\n",
+            encoding="utf-8",
         )
         (self.root / "opaque.bin").write_bytes(b"\x00\x01")
         excluded = self.root / "generated"
@@ -418,8 +449,26 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(by_path["broken.py"]["status"], "unresolved")
         self.assertEqual(by_path["opaque.bin"]["status"], "opaque")
         self.assertEqual(by_path["frontend.tsx"]["kind"], "typescript_source")
-        self.assertEqual(by_path["frontend.tsx"]["status"], "opaque")
-        self.assertIn("Language-boundary source", by_path["frontend.tsx"]["reason"])
+        self.assertEqual(by_path["frontend.tsx"]["status"], "indexed")
+        self.assertEqual(
+            by_path["frontend.tsx"]["analysis_depth"], "lexical_boundary_index"
+        )
+        boundary = by_path["frontend.tsx"]["boundary_facts"]
+        self.assertEqual(boundary["imports"], ["react"])
+        self.assertEqual(boundary["exports"], ["App"])
+        self.assertEqual(
+            boundary["endpoint_literals"], ["${BASE_URL}/api/${id}", "/api/v2"]
+        )
+        self.assertEqual(
+            inventory["summary"]["language_boundaries"],
+            {
+                "files": 1,
+                "imports": 1,
+                "exports": 1,
+                "literal_endpoints": 2,
+                "external_packages": 1,
+            },
+        )
         self.assertEqual(
             inventory["summary"]["by_snapshot_source"]["analysis_source_snapshot"],
             2,

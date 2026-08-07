@@ -22,6 +22,25 @@ from pysfmea.store import (
 
 
 class StoreTests(unittest.TestCase):
+    def test_compressed_analysis_is_deterministic_bounded_and_transparent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "code.py").write_text(
+                "def act(value):\n    return value\n", encoding="utf-8"
+            )
+            analysis = scan_repository(root)
+            first = root / "analysis-a.json.gz"
+            second = root / "analysis-b.json.gz"
+            save_analysis(first, analysis, compact=True)
+            save_analysis(second, analysis, compact=True)
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            self.assertEqual(load_analysis(first), load_analysis(second))
+            self.assertLess(first.stat().st_size, len(json.dumps(analysis).encode("utf-8")))
+
+            first.write_bytes(b"\x1f\x8bnot-a-valid-stream")
+            with self.assertRaisesRegex(ValueError, "valid gzip stream"):
+                load_analysis(first)
+
     def test_analysis_ingestion_is_bounded_identity_safe_and_shape_limited(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

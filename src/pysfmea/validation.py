@@ -135,6 +135,35 @@ def validate_analysis(
     known_citations = {
         citation["id"] for citation in supplied_guidance.get("citations", [])
     }
+    applicability = analysis.get("context", {}).get("guidance_applicability", [])
+    if not isinstance(applicability, list) or any(
+        not isinstance(value, dict) for value in applicability
+    ):
+        add(
+            "guidance.invalid_applicability_decisions",
+            "error",
+            "Guidance applicability decisions must be an array of governed records.",
+            field="context.guidance_applicability",
+        )
+        applicability = []
+    decided_profiles = {
+        value.get("profile_id")
+        for value in applicability
+        if isinstance(value.get("profile_id"), str)
+        and value.get("rationale")
+        and value.get("selected_by")
+        and value.get("effective_date")
+    }
+    missing_applicability = sorted(set(active_guidance_profiles) - decided_profiles)
+    if missing_applicability:
+        add(
+            "guidance.missing_applicability_decision",
+            "warning",
+            "Active guidance profiles lack a named project applicability decision: "
+            + ", ".join(missing_applicability)
+            + ".",
+            field="context.guidance_applicability",
+        )
     review_expiry = mapping_review_expiry_audit(
         analysis,
         bundle=supplied_guidance,
@@ -1401,11 +1430,18 @@ def review_queue(
     limit: int = 25,
     minimum_priority: str = "low",
     group_families: bool = False,
+    max_per_component: int | None = None,
 ) -> list[dict[str, Any]]:
     """Return a bounded, optionally family-grouped human review queue."""
 
     if minimum_priority not in {"high", "medium", "low"}:
         raise ValueError("minimum_priority must be high, medium, or low")
+    if max_per_component is not None and (
+        not isinstance(max_per_component, int)
+        or isinstance(max_per_component, bool)
+        or max_per_component < 1
+    ):
+        raise ValueError("max_per_component must be a positive integer or null")
 
     report = validate_analysis(analysis)
     findings_by_item: dict[str, list[dict[str, Any]]] = {}
@@ -1453,6 +1489,7 @@ def review_queue(
                     "screening_priority", ""
                 ),
                 "disposition": review.get("disposition", ""),
+                "hazard_linked": bool(review.get("linked_hazards")),
                 "status": review.get("status", ""),
                 "revalidation_required": bool(review.get("revalidation_required")),
                 "errors": errors,
@@ -1494,6 +1531,22 @@ def review_queue(
             ]
             candidates.append(representative)
         candidates.sort(key=lambda value: value["_rank"])
+    if max_per_component is not None:
+        selected: list[dict[str, Any]] = []
+        component_counts: Counter[str] = Counter()
+        for candidate in candidates:
+            protected = bool(
+                candidate["revalidation_required"]
+                or candidate["screening_priority"] == "manual"
+                or candidate["hazard_linked"]
+            )
+            component_id = candidate["component_id"]
+            if not protected and component_counts[component_id] >= max_per_component:
+                continue
+            selected.append(candidate)
+            if not protected:
+                component_counts[component_id] += 1
+        candidates = selected
     for value in candidates:
         value.pop("_rank", None)
         value.pop("_family_key", None)

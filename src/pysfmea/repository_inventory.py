@@ -6,6 +6,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import stat
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -19,6 +20,10 @@ MAX_FILES = 100_000
 MAX_REGIONS = 100_000
 MAX_HASH_BYTES = 20_000_000
 MAX_TOTAL_HASH_BYTES = 500_000_000
+MAX_LANGUAGE_BOUNDARY_IMPORTS = 500
+MAX_LANGUAGE_BOUNDARY_EXPORTS = 500
+MAX_LANGUAGE_BOUNDARY_ENDPOINTS = 200
+MAX_LANGUAGE_BOUNDARY_VALUE_CHARS = 4_096
 
 SNAPSHOT_SOURCES = frozenset(
     {
@@ -50,6 +55,11 @@ def summarize_repository_inventory(
     status_counts.update(value["status"] for value in regions)
     kind_counts = Counter(value["kind"] for value in entries)
     snapshot_counts = Counter(value["snapshot_source"] for value in entries)
+    boundary_records = [
+        value.get("boundary_facts", {})
+        for value in entries
+        if isinstance(value.get("boundary_facts"), dict)
+    ]
     return {
         "files": len(entries),
         "regions": len(regions),
@@ -63,6 +73,32 @@ def summarize_repository_inventory(
         else 100.0,
         "opaque_or_unresolved": status_counts.get("opaque", 0)
         + status_counts.get("unresolved", 0),
+        "language_boundaries": {
+            "files": len(boundary_records),
+            "imports": sum(
+                len(value.get("imports", []))
+                for value in boundary_records
+                if isinstance(value.get("imports", []), list)
+            ),
+            "exports": sum(
+                len(value.get("exports", []))
+                for value in boundary_records
+                if isinstance(value.get("exports", []), list)
+            ),
+            "literal_endpoints": sum(
+                len(value.get("endpoint_literals", [])) for value in boundary_records
+                if isinstance(value.get("endpoint_literals", []), list)
+            ),
+            "external_packages": len(
+                {
+                    package
+                    for value in boundary_records
+                    if isinstance(value.get("external_packages", []), list)
+                    for package in value.get("external_packages", [])
+                    if isinstance(package, str)
+                }
+            ),
+        },
     }
 
 
@@ -247,6 +283,82 @@ def _kind(path: str) -> str:
     if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".zip", ".gz", ".whl", ".exe", ".dll", ".so", ".pyd"}:
         return "binary_or_generated"
     return "unclassified"
+
+
+def _bounded_unique(values: Iterable[str], limit: int) -> tuple[list[str], bool]:
+    accepted = sorted(
+        {
+            value.strip()
+            for value in values
+            if value.strip() and len(value.strip()) <= MAX_LANGUAGE_BOUNDARY_VALUE_CHARS
+        }
+    )
+    return accepted[:limit], len(accepted) > limit
+
+
+def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
+    """Extract conservative JS/TS import, export, and literal endpoint boundaries."""
+
+    try:
+        source = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    imports, imports_truncated = _bounded_unique(
+        (
+            match.group(1)
+            for match in re.finditer(
+                r"(?:\bfrom\s*|\brequire\s*\(|\bimport\s*\(?\s*)['\"]([^'\"]+)['\"]",
+                source,
+            )
+        ),
+        MAX_LANGUAGE_BOUNDARY_IMPORTS,
+    )
+    exports, exports_truncated = _bounded_unique(
+        (
+            match.group(1)
+            for match in re.finditer(
+                r"\bexport\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)",
+                source,
+            )
+        ),
+        MAX_LANGUAGE_BOUNDARY_EXPORTS,
+    )
+    literal_argument = r"(?:'([^'\r\n]+)'|\"([^\"\r\n]+)\"|`([^`\r\n]+)`)"
+    endpoint_values: list[str] = []
+    for match in re.finditer(
+        rf"(?:\bfetch|\baxios\.(?:get|post|put|patch|delete)|new\s+(?:WebSocket|EventSource))\s*\(\s*{literal_argument}",
+        source,
+    ):
+        endpoint_values.append(next(value for value in match.groups() if value is not None))
+    for match in re.finditer(rf"\bbaseURL\s*:\s*{literal_argument}", source):
+        endpoint_values.append(next(value for value in match.groups() if value is not None))
+    endpoints, endpoints_truncated = _bounded_unique(
+        endpoint_values,
+        MAX_LANGUAGE_BOUNDARY_ENDPOINTS,
+    )
+    external_packages = sorted(
+        {
+            value.split("/", 1)[0] if not value.startswith("@") else "/".join(value.split("/")[:2])
+            for value in imports
+            if not value.startswith((".", "/"))
+        }
+    )
+    return {
+        "format": "pysfmea-language-boundary-facts-1",
+        "language": "typescript" if kind == "typescript_source" else "javascript",
+        "confidence": "lexical_candidate",
+        "imports": imports,
+        "external_packages": external_packages,
+        "exports": exports,
+        "endpoint_literals": endpoints,
+        "truncated": (
+            imports_truncated or exports_truncated or endpoints_truncated
+        ),
+        "notice": (
+            "Lexical boundary extraction does not resolve types, generated clients, dynamic "
+            "expressions, control flow, or runtime service wiring."
+        ),
+    }
 
 
 def build_repository_inventory(
@@ -512,8 +624,6 @@ def build_repository_inventory(
                 )
             elif kind in {
                 "binary_or_generated",
-                "javascript_source",
-                "typescript_source",
                 "unclassified",
             }:
                 boundary_reason = record["reason"]
@@ -524,15 +634,41 @@ def build_repository_inventory(
                     ),
                     reason=(
                         (
-                            "Language-boundary source is retained with exact identity but no "
-                            "semantic analyzer is registered for it."
-                            if kind in {"javascript_source", "typescript_source"}
-                            else "No semantic analyzer is registered for this artifact type."
+                            "No semantic analyzer is registered for this artifact type."
                         )
                         if record["sha256"]
                         else boundary_reason
                     ),
                 )
+            elif kind in {"javascript_source", "typescript_source"}:
+                boundary_facts = (
+                    _language_boundary_facts(raw, kind) if raw is not None else None
+                )
+                if boundary_facts is None:
+                    record.update(
+                        status="opaque",
+                        analysis_depth=(
+                            "metadata_and_digest" if record["sha256"] else "metadata_only"
+                        ),
+                        reason=(
+                            "Language-boundary source could not be decoded as UTF-8 for bounded "
+                            "lexical interface indexing."
+                        ),
+                    )
+                else:
+                    record.update(
+                        status="indexed",
+                        analysis_depth="lexical_boundary_index",
+                        reason=(
+                            "Language-boundary imports, exports, packages, and literal endpoints "
+                            "were indexed without claiming full semantic analysis."
+                        ),
+                        adapter_ids=[
+                            "python.repository_discoverer",
+                            "web.language_boundary_indexer",
+                        ],
+                        boundary_facts=boundary_facts,
+                    )
             entries.append(record)
         if walk_truncated:
             break

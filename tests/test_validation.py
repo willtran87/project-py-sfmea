@@ -318,6 +318,32 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "minimum_priority"):
             review_queue(self.analysis, minimum_priority="urgent")
 
+    def test_review_queue_caps_components_without_hiding_protected_records(self) -> None:
+        component_id = self.analysis["items"][0]["component_id"]
+        matching = [
+            item for item in self.analysis["items"] if item["component_id"] == component_id
+        ]
+        self.assertGreater(len(matching), 2)
+        for item in matching:
+            item["scanner"]["screening_priority"] = "high"
+            item["review"]["linked_hazards"] = []
+        protected = matching[-1]
+        protected["review"]["linked_hazards"] = ["HZ-PROTECTED"]
+        queue = review_queue(
+            self.analysis,
+            limit=100,
+            minimum_priority="high",
+            max_per_component=2,
+        )
+        selected = [value for value in queue if value["component_id"] == component_id]
+        self.assertIn(protected["id"], {value["id"] for value in selected})
+        self.assertLessEqual(
+            sum(not value["hazard_linked"] for value in selected), 2
+        )
+
+        with self.assertRaisesRegex(ValueError, "max_per_component"):
+            review_queue(self.analysis, max_per_component=0)
+
     def test_repository_baseline_and_component_integrity_are_gated(self) -> None:
         update_item_review(
             self.analysis,

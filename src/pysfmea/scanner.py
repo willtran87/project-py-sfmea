@@ -26,6 +26,7 @@ from .guidance import (
     DEFAULT_EXCLUDES,
     METHODOLOGY_NOTICE,
     REVIEW_CHECKLIST,
+    apply_guidance_applicability,
     citations_for_rule,
     guidance_bundle,
     load_organizational_guidance_pack,
@@ -2838,7 +2839,12 @@ def _internal_callers(facts_list: list[FunctionFacts]) -> dict[str, list[str]]:
 
 
 def _external_call_candidates(
-    facts: FunctionFacts, resolved_calls: set[str]
+    facts: FunctionFacts,
+    resolved_calls: set[str],
+    *,
+    configured_prefixes: Iterable[str] = (),
+    configured_receiver_hints: Iterable[str] = (),
+    configured_method_hints: Iterable[str] = (),
 ) -> list[dict[str, str]]:
     interface_verbs = {
         "call",
@@ -2885,6 +2891,7 @@ def _external_call_candidates(
         "update_one",
         "upload",
     }
+    provider_methods.update(value.casefold() for value in configured_method_hints)
     receiver_hints = {
         "api",
         "channel",
@@ -2903,6 +2910,8 @@ def _external_call_candidates(
         "socket",
         "transport",
     }
+    receiver_hints.update(value.casefold() for value in configured_receiver_hints)
+    external_prefixes = tuple(EXTERNAL_PREFIXES) + tuple(configured_prefixes)
     candidates: list[dict[str, str]] = []
     for reference in sorted(facts.calls - resolved_calls):
         root = reference.split(".", 1)[0]
@@ -2920,7 +2929,7 @@ def _external_call_candidates(
         if _matches_any(
             reference,
             (
-                *EXTERNAL_PREFIXES,
+                *external_prefixes,
                 *PERSISTENCE_PREFIXES,
                 *SUBPROCESS_NAMES,
                 *HARDWARE_INTERFACE_PREFIXES,
@@ -3880,6 +3889,10 @@ def scan_repository(
         guidance_profiles,
         organizational_packs=organizational_packs,
     )
+    guidance_applicability = copy.deepcopy(
+        config.get("guidance_applicability", [])
+    )
+    apply_guidance_applicability(guidance, guidance_applicability)
     scan_config = config.get("scan", {})
     if include_private is None:
         include_private = bool(scan_config.get("include_private", True))
@@ -3890,9 +3903,17 @@ def scan_repository(
     exclude_patterns = list(scan_config.get("exclude", []))
     focus_patterns = list(scan_config.get("focus", []))
     review_depth = str(scan_config.get("review_depth", "focused"))
+    review_queue_max_per_component = int(
+        scan_config.get("review_queue_max_per_component", 3)
+    )
+    review_queue_max_total = int(scan_config.get("review_queue_max_total", 1_000))
+    external_call_prefixes = list(scan_config.get("external_call_prefixes", []))
+    external_receiver_hints = list(scan_config.get("external_receiver_hints", []))
+    external_method_hints = list(scan_config.get("external_method_hints", []))
     cache_entries: dict[str, Any] | None = None
     cache_hits = 0
     cache_misses = 0
+    used_cache_keys: set[str] = set()
     if fact_cache is not None:
         if fact_cache.get("format") != "pysfmea-python-fact-cache-1":
             fact_cache.clear()
@@ -3951,6 +3972,7 @@ def scan_repository(
                 facts_list.extend(copy.deepcopy(cached))
                 parsed_python_paths.add(relative)
                 cache_hits += 1
+                used_cache_keys.add(cache_key)
                 continue
             source = _decode_python_source(raw)
             tree = ast.parse(source, filename=relative)
@@ -3988,13 +4010,22 @@ def scan_repository(
         if cache_entries is not None:
             cache_entries[cache_key] = copy.deepcopy(file_facts)
             cache_misses += 1
+            used_cache_keys.add(cache_key)
     finish_phase("python_parsing")
+    cache_entries_before_prune = len(cache_entries or {})
+    if fact_cache is not None and cache_entries is not None:
+        pruned_entries = {
+            key: cache_entries[key] for key in sorted(used_cache_keys)
+        }
+        fact_cache["entries"] = pruned_entries
+        cache_entries = pruned_entries
     if telemetry is not None:
         telemetry["fact_cache"] = {
             "enabled": fact_cache is not None,
             "hits": cache_hits,
             "misses": cache_misses,
             "entries": len(cache_entries or {}),
+            "pruned_entries": cache_entries_before_prune - len(cache_entries or {}),
             "authority": "exact_source_bytes_and_parser_options",
         }
 
@@ -4065,7 +4096,11 @@ def scan_repository(
     facts_by_reference = {_component_ref(facts): facts for facts in facts_list}
     for reference, facts in facts_by_reference.items():
         facts.external_call_candidates = _external_call_candidates(
-            facts, resolved_calls.get(reference, set())
+            facts,
+            resolved_calls.get(reference, set()),
+            configured_prefixes=external_call_prefixes,
+            configured_receiver_hints=external_receiver_hints,
+            configured_method_hints=external_method_hints,
         )
         if facts.external_call_candidates:
             facts.signals.add("external_interface_candidate")
@@ -4178,6 +4213,11 @@ def scan_repository(
                 "include_tests": include_tests,
                 "include_nested": include_nested,
                 "review_depth": review_depth,
+                "review_queue_max_per_component": review_queue_max_per_component,
+                "review_queue_max_total": review_queue_max_total,
+                "external_call_prefixes": external_call_prefixes,
+                "external_receiver_hints": external_receiver_hints,
+                "external_method_hints": external_method_hints,
                 "exclude": exclude_patterns,
                 "focus": focus_patterns,
                 "coverage_json": str(coverage_json or ""),
@@ -4199,6 +4239,7 @@ def scan_repository(
             "common_causes": list(config.get("common_causes", [])),
             "critical_functions": critical_entries,
             "custom_rule_count": len(custom_rules),
+            "guidance_applicability": guidance_applicability,
         },
         "system_context": build_system_context(config),
         "repository_inventory": repository_inventory,

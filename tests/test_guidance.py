@@ -87,6 +87,48 @@ class GuidanceTraceabilityTests(unittest.TestCase):
             "potential_nonconformance", {link["relationship"] for link in links}
         )
 
+    def test_named_guidance_applicability_decision_is_preserved_and_gated(self) -> None:
+        analysis = scan_repository(
+            self.root,
+            config={
+                "guidance_applicability": [
+                    {
+                        "profile_id": "core_sfmea",
+                        "rationale": "General SFMEA method is applicable to this review.",
+                        "selected_by": "System safety authority",
+                        "effective_date": "2026-08-06",
+                        "exclusions": [],
+                    }
+                ]
+            },
+        )
+        self.assertEqual(
+            analysis["guidance"]["applicability_summary"]["missing_profile_ids"],
+            [],
+        )
+        rules = {
+            value["rule_id"] for value in validate_analysis(analysis)["findings"]
+        }
+        self.assertNotIn("guidance.missing_applicability_decision", rules)
+
+        persisted = self.root / "governed-analysis.json.gz"
+        save_analysis(persisted, analysis, compact=True)
+        reloaded = load_analysis(persisted)
+        self.assertEqual(
+            reloaded["guidance"]["applicability_decisions"],
+            analysis["guidance"]["applicability_decisions"],
+        )
+        self.assertEqual(
+            reloaded["guidance"]["applicability_summary"]["missing_profile_ids"],
+            [],
+        )
+
+        analysis["context"]["guidance_applicability"] = []
+        rules = {
+            value["rule_id"] for value in validate_analysis(analysis)["findings"]
+        }
+        self.assertIn("guidance.missing_applicability_decision", rules)
+
     def test_legacy_mapping_without_record_digest_is_explicitly_unverifiable(
         self,
     ) -> None:
@@ -248,6 +290,10 @@ class GuidanceTraceabilityTests(unittest.TestCase):
             payload["guidance"]["mapping_governance"]["mapping_integrity_failures"],
             0,
         )
+        self.assertEqual(
+            payload["guidance"]["applicability_summary"]["missing_profile_ids"],
+            ["core_sfmea"],
+        )
         self.assertTrue(payload["records"][0]["citations"])
         report = export_html_report(self.analysis, self.root / "report.html")
         document = report.read_text(encoding="utf-8")
@@ -255,6 +301,9 @@ class GuidanceTraceabilityTests(unittest.TestCase):
         self.assertIn("Guidance-to-finding traceability", document)
         self.assertIn("Show findings", document)
         self.assertIn("direct mapping coverage", document)
+        self.assertIn("applicability decisions", document)
+        self.assertIn("language-boundary files", document)
+        self.assertIn("facts recomputed", document)
 
 
 if __name__ == "__main__":

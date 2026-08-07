@@ -79,6 +79,11 @@ class PerformanceBenchmarkTests(unittest.TestCase):
         )
         self.assertTrue(result["summary"]["fact_reuse_enabled"])
         self.assertGreater(result["summary"]["fact_cache_hits"], 0)
+        self.assertIsInstance(result["summary"]["cold_start_seconds"], float)
+        self.assertIsInstance(
+            result["summary"]["steady_state_median_seconds"], float
+        )
+        self.assertIsInstance(result["summary"]["warm_speedup_percent"], float)
         self.assertFalse(result["budgets"]["passed"])
         self.assertFalse(result["budgets"]["checks"]["median_seconds"])
         self.assertFalse(result["budgets"]["checks"]["peak_traced_bytes"])

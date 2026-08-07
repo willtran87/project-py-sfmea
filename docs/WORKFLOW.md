@@ -83,6 +83,17 @@ manual JSON inspection. Review depth changes the family-grouped human queue, not
 candidate register. Use `sfmea queue ... --all-records` when exhaustive item-by-item triage is
 required.
 
+The configured persistent fact cache makes unchanged Python parsing reusable across CLI
+processes. It is content-addressed and performance-only; source, configuration, dependency,
+contract, coverage, and repository snapshots remain authoritative. Use `--no-cache` when capturing
+a cold performance baseline. Use `.json.gz` for the governed analysis when artifact transfer or
+retention size matters; every downstream loader accepts the bounded deterministic gzip form.
+
+The default focused queue admits at most three ordinary families per component and 1,000 total
+records per projection. Revalidation, manual, and hazard-linked records remain eligible despite
+the per-component cap. Configure `review_queue_max_per_component` and
+`review_queue_max_total`, or use `--all-records` for an uncapped exhaustive projection.
+
 ## 4. Triage and perform engineering review
 
 Start with the workflow cockpit and concise projections:

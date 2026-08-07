@@ -74,6 +74,16 @@ def create_run_manifest(
     if isinstance(coverage_evidence, dict) and coverage_evidence.get("sha256"):
         inputs["coverage_json_sha256"] = str(coverage_evidence["sha256"])
     created_at = str(analysis.get("project", {}).get("scanned_at") or utc_now())
+    cache_settings = settings.get("fact_cache", {})
+    cache_run = (
+        cache_settings.get("run", {}) if isinstance(cache_settings, dict) else {}
+    )
+    cache_input = (
+        cache_settings.get("input", {}) if isinstance(cache_settings, dict) else {}
+    )
+    entries_reused = (
+        int(cache_run.get("hits", 0)) if isinstance(cache_run, dict) else 0
+    )
     manifest: dict[str, Any] = {
         "schema_version": "pysfmea-run-manifest-1",
         "id": stable_id("RUN", str(baseline.get("id", "")), created_at),
@@ -132,7 +142,23 @@ def create_run_manifest(
         "events": [
             {"sequence": 1, "at": created_at, "event": "scan_completed", "baseline_id": baseline.get("id", "")}
         ],
-        "cache": {"used": False, "entries_reused": 0},
+        "cache": {
+            "enabled": bool(cache_run.get("enabled", False))
+            if isinstance(cache_run, dict)
+            else False,
+            "used": entries_reused > 0,
+            "entries_reused": entries_reused,
+            "entries_recomputed": int(cache_run.get("misses", 0))
+            if isinstance(cache_run, dict)
+            else 0,
+            "input_status": str(cache_input.get("status", "not_configured"))
+            if isinstance(cache_input, dict)
+            else "not_configured",
+            "input_sha256": str(cache_input.get("sha256", ""))
+            if isinstance(cache_input, dict)
+            else "",
+            "authority": "derived_performance_artifact_not_primary_assurance_evidence",
+        },
         "review_decisions": [],
         "waivers": [],
         "risk_acceptances": [],

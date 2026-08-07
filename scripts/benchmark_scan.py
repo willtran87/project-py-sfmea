@@ -101,6 +101,25 @@ def benchmark_repository(
     p95_index = max(0, math.ceil(len(durations) * 0.95) - 1)
     stable = len(baseline_ids) == 1 and "" not in baseline_ids
     median_seconds = round(statistics.median(durations), 6)
+    cold_start_seconds = float(runs[0]["elapsed_seconds"])
+    warm_durations = [
+        float(value["elapsed_seconds"])
+        for value in runs[1:]
+        if int(value.get("fact_cache", {}).get("hits", 0)) > 0
+    ]
+    steady_state_median_seconds = (
+        round(statistics.median(warm_durations), 6) if warm_durations else None
+    )
+    warm_speedup_percent = (
+        round(
+            (cold_start_seconds - steady_state_median_seconds)
+            / cold_start_seconds
+            * 100,
+            2,
+        )
+        if steady_state_median_seconds is not None and cold_start_seconds > 0
+        else None
+    )
     maximum_peak_bytes = max(peaks)
     budget_checks = {
         "median_seconds": (
@@ -156,6 +175,9 @@ def benchmark_repository(
             "fact_cache_misses": sum(
                 int(run.get("fact_cache", {}).get("misses", 0)) for run in runs
             ),
+            "cold_start_seconds": cold_start_seconds,
+            "steady_state_median_seconds": steady_state_median_seconds,
+            "warm_speedup_percent": warm_speedup_percent,
             "median_seconds": median_seconds,
             "p95_seconds": durations[p95_index],
             "minimum_seconds": durations[0],

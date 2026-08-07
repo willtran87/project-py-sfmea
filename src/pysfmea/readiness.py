@@ -148,6 +148,31 @@ def repository_readiness(
         if analysis.get("ground_rules")
         else "No SFMEA ground rules are configured.",
     )
+    active_profiles = set(analysis.get("guidance_profiles", []))
+    decided_profiles = {
+        value.get("profile_id")
+        for value in config.get("guidance_applicability", [])
+        if isinstance(value, dict)
+    }
+    missing_profile_decisions = sorted(active_profiles - decided_profiles)
+    add(
+        "guidance.applicability",
+        "pass" if not missing_profile_decisions else "warning",
+        (
+            f"Recorded named applicability decisions for {len(active_profiles)} active "
+            "guidance profile(s)."
+            if not missing_profile_decisions
+            else "Active guidance profiles lack named applicability decisions: "
+            + ", ".join(missing_profile_decisions)
+            + "."
+        ),
+        next_action=(
+            "Add one [[guidance_applicability]] decision with rationale, selector, and "
+            "effective date for every active profile."
+            if missing_profile_decisions
+            else ""
+        ),
+    )
 
     for field, label in (
         ("hazards", "hazard"),

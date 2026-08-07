@@ -7,6 +7,7 @@ import os
 import stat
 import tempfile
 import tomllib
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "include_tests": False,
         "include_nested": True,
         "review_depth": "focused",
+        "review_queue_max_per_component": 3,
+        "review_queue_max_total": 1_000,
+        "cache_enabled": True,
+        "cache_path": ".artifacts/pysfmea-fact-cache.json",
+        "external_call_prefixes": [],
+        "external_receiver_hints": [],
+        "external_method_hints": [],
         "exclude": [],
         "focus": [],
         "coverage_json": "",
@@ -108,6 +116,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "common_causes": [],
     "critical_functions": [],
     "custom_rules": [],
+    "guidance_applicability": [],
 }
 
 RESERVED_SCANNER_RULE_IDS = {
@@ -180,12 +189,29 @@ guidance_profiles = ["core_sfmea"] # Optional: nasa_assurance, faa_commercial_sp
 # Optional governed JSON packs for licensed or internal organizational standards.
 guidance_packs = []
 
+# Record one governed selection decision for every active guidance profile.
+# [[guidance_applicability]]
+# profile_id = "core_sfmea"
+# rationale = "General SFMEA method applies to the governed software scope."
+# selected_by = "Safety engineering authority"
+# effective_date = "2026-08-06"
+# exclusions = []
+
 [scan]
 include_private = true
 include_tests = false
 include_nested = true
 # Human queue projection only; the complete machine inventory is always retained.
 review_depth = "focused" # screening, focused, or exhaustive
+review_queue_max_per_component = 3 # 1-100; protected records remain eligible
+review_queue_max_total = 1000 # 1-50000; CLI --limit may request a smaller projection
+# Exact-content derived fact cache; never primary assurance evidence.
+cache_enabled = true
+cache_path = ".artifacts/pysfmea-fact-cache.json"
+# Project/framework hints extend built-in interface candidates without claiming resolution.
+external_call_prefixes = []
+external_receiver_hints = []
+external_method_hints = []
 exclude = ["migrations/**", "generated/**"]
 # When non-empty, only matching path:qualified-name components are analyzed.
 focus = []
@@ -356,6 +382,9 @@ def load_config(path: str | Path | None) -> tuple[dict[str, Any], Path | None]:
     coverage_path = config["scan"].get("coverage_json", "")
     if coverage_path:
         config["scan"]["coverage_json"] = configured_input_path(coverage_path)
+    cache_path = config["scan"].get("cache_path", "")
+    if cache_path:
+        config["scan"]["cache_path"] = configured_input_path(cache_path)
     config["analysis"]["guidance_packs"] = [
         configured_input_path(value)
         for value in config["analysis"].get("guidance_packs", [])
@@ -387,6 +416,7 @@ def normalize_config(supplied: dict[str, Any] | None = None) -> dict[str, Any]:
         "common_causes",
         "critical_functions",
         "custom_rules",
+        "guidance_applicability",
     ):
         value = supplied.get(section, [])
         if not isinstance(value, list) or not all(isinstance(entry, dict) for entry in value):
@@ -435,6 +465,13 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "include_tests",
             "include_nested",
             "review_depth",
+            "review_queue_max_per_component",
+            "review_queue_max_total",
+            "cache_enabled",
+            "cache_path",
+            "external_call_prefixes",
+            "external_receiver_hints",
+            "external_method_hints",
             "exclude",
             "focus",
             "coverage_json",
@@ -499,6 +536,13 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "causes",
             "actions",
             "confidence",
+        },
+        "guidance_applicability": {
+            "profile_id",
+            "rationale",
+            "selected_by",
+            "effective_date",
+            "exclusions",
         },
     }
     allowed_sections = set(table_fields) | set(array_fields)
@@ -621,7 +665,41 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError(f"analysis.{field} must be an array of strings")
     from .guidance import normalize_profile_ids
 
-    normalize_profile_ids(analysis["guidance_profiles"])
+    active_profiles = normalize_profile_ids(analysis["guidance_profiles"])
+    applicability = config.get("guidance_applicability", [])
+    seen_applicability: set[str] = set()
+    for index, decision in enumerate(applicability, start=1):
+        profile_id = decision.get("profile_id")
+        if not isinstance(profile_id, str) or profile_id not in active_profiles:
+            raise ValueError(
+                f"guidance_applicability entry {index} must reference an active profile"
+            )
+        if profile_id in seen_applicability:
+            raise ValueError(f"guidance applicability profile is duplicated: {profile_id}")
+        seen_applicability.add(profile_id)
+        for field in ("rationale", "selected_by"):
+            if not isinstance(decision.get(field), str) or not decision[field].strip():
+                raise ValueError(
+                    f"guidance_applicability entry {index} requires {field}"
+                )
+        effective_date = decision.get("effective_date")
+        if not isinstance(effective_date, str):
+            raise ValueError(
+                f"guidance_applicability entry {index} requires effective_date"
+            )
+        try:
+            date.fromisoformat(effective_date)
+        except ValueError as exc:
+            raise ValueError(
+                f"guidance_applicability entry {index} effective_date must be YYYY-MM-DD"
+            ) from exc
+        exclusions = decision.get("exclusions", [])
+        if not isinstance(exclusions, list) or not all(
+            isinstance(value, str) and value.strip() for value in exclusions
+        ):
+            raise ValueError(
+                f"guidance_applicability entry {index} exclusions must be strings"
+            )
     overlap = set(analysis["included_failure_classes"]) & set(
         analysis["excluded_failure_classes"]
     )
@@ -638,6 +716,35 @@ def _validate_config(config: dict[str, Any]) -> None:
         raise ValueError(
             "scan.review_depth must be screening, focused, or exhaustive"
         )
+    for field, maximum in (
+        ("review_queue_max_per_component", 100),
+        ("review_queue_max_total", 50_000),
+    ):
+        value = scan.get(field)
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not 1 <= value <= maximum
+        ):
+            raise ValueError(f"scan.{field} must be an integer from 1 through {maximum}")
+    if not isinstance(scan.get("cache_enabled"), bool):
+        raise ValueError("scan.cache_enabled must be a boolean")
+    if not isinstance(scan.get("cache_path"), str):
+        raise ValueError("scan.cache_path must be a string path")
+    if scan.get("cache_enabled") and not scan.get("cache_path", "").strip():
+        raise ValueError("scan.cache_path is required when scan.cache_enabled is true")
+    for field in (
+        "external_call_prefixes",
+        "external_receiver_hints",
+        "external_method_hints",
+    ):
+        value = scan.get(field)
+        if (
+            not isinstance(value, list)
+            or len(value) > 1_000
+            or not all(isinstance(item, str) and 0 < len(item) <= 200 for item in value)
+        ):
+            raise ValueError(f"scan.{field} must be an array of up to 1000 bounded strings")
     if not isinstance(scan.get("coverage_json"), str):
         raise ValueError("scan.coverage_json must be a string path")
     for field in ("exclude", "focus"):

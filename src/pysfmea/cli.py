@@ -116,6 +116,7 @@ from .report import (
 )
 from .repository_inventory import repository_inventory_summary_projection
 from .runtime import import_runtime_trace
+from .scan_cache import load_fact_cache, save_fact_cache
 from .scanner import scan_repository
 from .schemas import (
     export_schema,
@@ -514,6 +515,17 @@ def _parser() -> argparse.ArgumentParser:
         help="exclude nested functions and closures",
     )
     scan.add_argument("--fresh", action="store_true", help="do not merge review decisions from an existing output")
+    cache = scan.add_mutually_exclusive_group()
+    cache.add_argument(
+        "--cache",
+        metavar="FILE",
+        help="exact-content derived fact cache path; relative paths use the repository root",
+    )
+    cache.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="disable reading and publishing the configured derived fact cache",
+    )
     scan.add_argument(
         "--pretty-analysis",
         action="store_true",
@@ -767,6 +779,11 @@ def _parser() -> argparse.ArgumentParser:
     queue = subparsers.add_parser("queue", help="show the next prioritized records to review")
     queue.add_argument("analysis", help="analysis JSON path")
     queue.add_argument("--limit", type=int, default=25, help="maximum records to show")
+    queue.add_argument(
+        "--max-per-component",
+        type=int,
+        help="override the governed per-component queue cap",
+    )
     queue.add_argument(
         "--minimum-priority",
         choices=("high", "medium", "low"),
@@ -1197,6 +1214,45 @@ def _scan(args: argparse.Namespace) -> int:
     config["scan"]["focus"].extend(args.focus)
     if args.review_depth:
         config["scan"]["review_depth"] = args.review_depth
+    cache_enabled = bool(config["scan"].get("cache_enabled", True)) and not args.no_cache
+    configured_cache = args.cache or config["scan"].get("cache_path", "")
+    cache_path = Path(configured_cache).expanduser() if configured_cache else None
+    if cache_path is not None and not cache_path.is_absolute():
+        cache_path = repository / cache_path
+    if cache_path is not None:
+        cache_path = cache_path.absolute()
+    if cache_enabled and cache_path is None:
+        raise ValueError("scanner fact caching is enabled but no cache path is configured")
+    if cache_enabled and cache_path is not None:
+        if cache_path == output.absolute() or (
+            resolved_config is not None and cache_path == resolved_config.absolute()
+        ):
+            raise ValueError("scanner fact cache must differ from analysis and configuration files")
+        try:
+            cache_relative = cache_path.relative_to(repository)
+        except ValueError:
+            cache_relative = None
+        if cache_relative is not None and (
+            not cache_relative.parts or not cache_relative.parts[0].startswith(".")
+        ):
+            raise ValueError(
+                "an in-repository fact cache must be under a hidden directory such as .artifacts"
+            )
+    fact_cache: dict[str, Any] | None = {} if cache_enabled else None
+    cache_input: dict[str, Any] = {
+        "status": "disabled" if not cache_enabled else "absent",
+        "path": str(cache_path or ""),
+        "authority": "derived_performance_artifact_not_primary_assurance_evidence",
+    }
+    cache_warning = ""
+    if cache_enabled and cache_path is not None and cache_path.exists():
+        try:
+            fact_cache, cache_input = load_fact_cache(cache_path)
+        except (OSError, ValueError) as exc:
+            fact_cache = {}
+            cache_input["status"] = "rejected"
+            cache_warning = str(exc)
+    telemetry: dict[str, Any] = {}
     scanned = scan_repository(
         repository,
         include_private=args.include_private,
@@ -1204,6 +1260,8 @@ def _scan(args: argparse.Namespace) -> int:
         include_nested=args.include_nested,
         config=config,
         coverage_json=args.coverage_json,
+        telemetry=telemetry,
+        fact_cache=fact_cache,
     )
     scanned["project"]["settings"]["config_file"] = str(resolved_config or "")
     governed = resolved_config is not None
@@ -1213,6 +1271,38 @@ def _scan(args: argparse.Namespace) -> int:
     scanned["project"]["settings"]["analysis_serialization"] = (
         "pretty" if args.pretty_analysis else "compact"
     )
+    cache_output: dict[str, Any] = {
+        "status": "disabled" if not cache_enabled else "not_published",
+        "path": str(cache_path or ""),
+    }
+    if cache_enabled and cache_path is not None and fact_cache is not None:
+        try:
+            _published_cache, cache_output = save_fact_cache(cache_path, fact_cache)
+        except (OSError, ValueError) as exc:
+            cache_warning = cache_warning or str(exc)
+            cache_output["status"] = "rejected"
+    scanned["project"]["settings"]["fact_cache"] = {
+        "enabled": cache_enabled,
+        "input": cache_input,
+        "output": cache_output,
+        "run": telemetry.get("fact_cache", {}),
+        "notice": (
+            "Cache records are derived performance artifacts; source snapshots and governed "
+            "configuration remain authoritative."
+        ),
+    }
+    if cache_warning:
+        scanned.setdefault("warnings", []).append(
+            {
+                "path": str(cache_path or ""),
+                "type": "FactCacheRejected",
+                "message": (
+                    "The derived scanner fact cache was rejected and the scan continued from "
+                    f"authoritative inputs: {cache_warning}"
+                ),
+            }
+        )
+        scanned.setdefault("summary", {})["warnings"] = len(scanned["warnings"])
     if not governed:
         scanned.setdefault("warnings", []).append(
             {
@@ -1267,6 +1357,14 @@ def _scan(args: argparse.Namespace) -> int:
         + str(scanned.get("project", {}).get("settings", {}).get("review_depth"))
         + " (complete machine inventory retained)"
     )
+    cache_run = scanned.get("project", {}).get("settings", {}).get("fact_cache", {}).get("run", {})
+    if cache_run.get("enabled"):
+        print(
+            "Fact cache: "
+            f"hits={cache_run.get('hits', 0)}, misses={cache_run.get('misses', 0)}, "
+            f"pruned={cache_run.get('pruned_entries', 0)} "
+            "(derived performance artifact)"
+        )
     print(f"Next: sfmea review \"{output}\"")
     return 0
 
@@ -2390,11 +2488,19 @@ def _queue(args: argparse.Namespace) -> int:
     minimum_priority = args.minimum_priority or depth_priority.get(
         review_depth, "medium"
     )
+    settings = analysis.get("project", {}).get("settings", {})
+    governed_total = int(settings.get("review_queue_max_total", 1_000))
+    governed_per_component = int(settings.get("review_queue_max_per_component", 3))
     queue = review_queue(
         analysis,
-        limit=args.limit,
+        limit=args.limit if args.all_records else min(args.limit, governed_total),
         minimum_priority="low" if args.all_records else minimum_priority,
         group_families=not args.all_records and review_depth != "exhaustive",
+        max_per_component=(
+            None
+            if args.all_records
+            else args.max_per_component or governed_per_component
+        ),
     )
     if args.json:
         print(json.dumps(queue, indent=2))

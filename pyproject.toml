@@ -102,6 +102,7 @@ files = [
   "scripts/benchmark_scan.py",
   "scripts/report_browser_gate.py",
   "src/pysfmea/readiness.py",
+  "src/pysfmea/scan_cache.py",
 ]
 warn_unused_configs = true
 
@@ -115,12 +116,14 @@ source_paths = [
   "src/pysfmea/runtime.py",
   "src/pysfmea/sandbox_policy.py",
   "src/pysfmea/readiness.py",
+  "src/pysfmea/scan_cache.py",
 ]
 pytest_add_cli_args_test_selection = [
   "tests/test_fault_injection.py",
   "tests/test_runtime.py",
   "tests/test_sandbox_policy.py",
   "tests/test_readiness.py",
+  "tests/test_scan_cache.py",
 ]
 mutate_only_covered_lines = true
 max_stack_depth = 12

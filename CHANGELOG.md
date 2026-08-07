@@ -3,6 +3,26 @@
 Notable user-visible changes are recorded here. PySFMEA follows semantic versioning for the
 package; public artifact and schema identifiers carry their own explicit compatibility versions.
 
+## Unreleased
+
+### Scalable governed discovery and reporting
+
+- Add a bounded, integrity-checked, atomically published persistent Python fact cache with exact
+  source/runtime/version invalidation, truthful run-manifest reuse metrics, and cold/warm benchmark
+  evidence. Whole-repository call resolution and finding generation remain freshly recomputed.
+- Add deterministic bounded `.json.gz` analysis publication/loading and bounded per-component and
+  total human review-queue projections while preserving the complete candidate register.
+- Index JavaScript and TypeScript imports, exports, external packages, endpoint templates, and base
+  URLs as confidence-labeled language-boundary evidence instead of treating every frontend file as
+  opaque.
+- Add project-specific external-call, receiver, and method hints without promoting heuristic
+  candidates to resolved interfaces.
+- Require explicit named applicability decisions for selected guidance profiles, preserve those
+  decisions through canonical persistence, validate missing decisions, and expose their state in
+  the self-contained report.
+- Add a Chromium CI gate for the generated self-contained report and expose language-boundary,
+  guidance-applicability, and cache provenance metrics in the report.
+
 ## 0.59.0 - 2026-08-05
 
 ### Executable fault injection and quality ratchets
