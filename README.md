@@ -176,9 +176,18 @@ sfmea status C:\path\to\python-repo
 
 `sfmea doctor` is a read-only preflight. It checks the repository, configuration,
 system context, analysis revision and ground rules, review team, catalogs, mappings,
-and optional coverage evidence before a governed scan. It rejects an untouched
-generated example template rather than presenting placeholder inputs as ready. Use
-`--json` in automation.
+test-source availability, and optional coverage evidence before a governed scan. It
+rejects an untouched generated example template rather than presenting placeholder
+inputs as ready. Missing or nearby-but-unconfigured coverage produces an exact next
+action; relative evidence paths are resolved against `sfmea.toml`. Use `--json` in
+automation and consume `suggested_actions` for onboarding automation.
+
+Public scans require `sfmea.toml`. `--allow-ungoverned` is an explicit discovery-only
+escape hatch whose output is marked not assurance-ready. Set `scan.review_depth` to
+`screening`, `focused` (default), or `exhaustive` to control the human queue projection;
+the complete machine candidate inventory is always retained. The CLI writes compact
+analysis JSON by default to limit artifact amplification; use `--pretty-analysis` only
+when indented JSON is operationally useful.
 
 Project configuration is consumed as an identity-revalidated regular non-symbolic-link UTF-8 TOML
 file under a 5 MB byte limit. Relative coverage and organizational guidance paths are normalized against the
@@ -1509,6 +1518,8 @@ Create repeatable performance and independent-validation evidence:
 
 ```powershell
 python scripts/benchmark_scan.py C:\path\to\repo --repeats 5 -o performance.json
+python scripts/benchmark_scan.py C:\path\to\repo --repeats 5 --reuse-facts `
+  --max-median-seconds 60 --max-peak-bytes 134217728 -o performance-gate.json
 sfmea evaluate analysis.json independently-reviewed-expected.json --json > evaluation.json
 python scripts/evaluation_to_cohort.py evaluation.json `
   --id VAL-SERVICE-1 --repository organization/service --framework FastAPI `
@@ -1516,6 +1527,27 @@ python scripts/evaluation_to_cohort.py evaluation.json `
   --artifact-path evidence/evaluation.json `
   -o validation-cohort.json
 ```
+
+Performance evidence includes per-phase durations, exact repository/source/test byte
+counts, peak traced Python allocations, and optional CI budget verdicts. `--reuse-facts`
+measures a cold scan followed by exact-content parser-fact reuse: source bytes, relative
+path, parser options, scanner version, and Python AST version are part of every cache key,
+so metadata-only reuse is impossible.
+
+For a real Chromium smoke, navigation, responsive-layout, integrity, size, and load-time
+gate on a generated report:
+
+```powershell
+pip install -e .[browser]
+playwright install chromium
+python scripts/report_browser_gate.py sfmea-report.html `
+  --analysis sfmea-analysis.json --max-bytes 52428800 `
+  --max-load-seconds 5 -o report-browser-quality.json
+```
+
+Report generation itself can fail closed before publication with
+`sfmea report ... --max-output-bytes BYTES`; an existing destination is preserved when
+the budget is exceeded.
 
 The cohort record is compatible with an assurance program's `validation_cohorts` collection. It
 retains expected-side and actual-side match counts, the evaluator version, the canonical result

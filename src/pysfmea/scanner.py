@@ -10,6 +10,8 @@ import io
 import json
 import re
 import subprocess
+import sys
+import time
 import tokenize
 import tomllib
 from collections.abc import Iterable
@@ -43,16 +45,24 @@ from .version import __version__
 
 EXTERNAL_PREFIXES = {
     "aiohttp",
+    "anthropic",
+    "azure",
     "boto3",
     "botocore",
     "grpc",
+    "google.cloud",
     "httpx",
     "kafka",
+    "langchain",
+    "langgraph",
+    "mcp",
+    "openai",
     "pika",
     "redis",
     "requests",
     "socket",
     "urllib",
+    "websockets",
 }
 PERSISTENCE_PREFIXES = {
     "asyncpg",
@@ -2845,10 +2855,60 @@ def _external_call_candidates(
         "send",
         "write",
     }
+    provider_methods = {
+        "aggregate",
+        "ainvoke",
+        "chat",
+        "commit",
+        "complete",
+        "create",
+        "delete",
+        "delete_one",
+        "dispatch",
+        "download",
+        "emit",
+        "enqueue",
+        "find",
+        "find_one",
+        "generate",
+        "get",
+        "insert_many",
+        "insert_one",
+        "invoke",
+        "patch",
+        "post",
+        "put",
+        "stream",
+        "subscribe",
+        "unsubscribe",
+        "update_many",
+        "update_one",
+        "upload",
+    }
+    receiver_hints = {
+        "api",
+        "channel",
+        "client",
+        "collection",
+        "consumer",
+        "db",
+        "http",
+        "llm",
+        "mcp",
+        "model",
+        "producer",
+        "queue",
+        "redis",
+        "session",
+        "socket",
+        "transport",
+    }
     candidates: list[dict[str, str]] = []
     for reference in sorted(facts.calls - resolved_calls):
         root = reference.split(".", 1)[0]
         leaf = reference.rsplit(".", 1)[-1].casefold()
+        receiver = reference.rsplit(".", 1)[0].casefold()
+        receiver_tokens = set(re.split(r"[^a-z0-9]+", receiver))
         if root in {"self", "cls"}:
             continue
         resolution_sources = {
@@ -2877,7 +2937,13 @@ def _external_call_candidates(
                 }
                 else "known_external_api"
             )
-        elif "." in reference and leaf in interface_verbs:
+        elif "." in reference and (
+            leaf in interface_verbs
+            or (
+                leaf in provider_methods
+                and bool(receiver_tokens & receiver_hints)
+            )
+        ):
             confidence = "medium"
             basis = (
                 "typed_unresolved_receiver_interface_verb"
@@ -3766,8 +3832,34 @@ def scan_repository(
     include_nested: bool | None = None,
     config: dict[str, Any] | None = None,
     coverage_json: str | Path | None = None,
+    telemetry: dict[str, Any] | None = None,
+    fact_cache: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Scan *root* and return a new, unmerged SFMEA analysis document."""
+    """Scan *root* and return a new, unmerged SFMEA analysis document.
+
+    ``fact_cache`` is an optional caller-owned, in-memory cache. Entries are keyed
+    by the exact source bytes, repository-relative path, and parser options; cached
+    facts are deep-copied before downstream enrichment. This keeps reuse
+    deterministic and prevents stale metadata-only cache hits.
+    """
+
+    scan_started_ns = time.perf_counter_ns()
+    phase_started_ns = scan_started_ns
+    if telemetry is not None:
+        telemetry.clear()
+        telemetry.update(
+            {"format": "pysfmea-scan-telemetry-1", "phases_seconds": {}}
+        )
+
+    def finish_phase(name: str) -> None:
+        nonlocal phase_started_ns
+        finished_ns = time.perf_counter_ns()
+        if telemetry is not None:
+            telemetry["phases_seconds"][name] = round(
+                (finished_ns - phase_started_ns) / 1_000_000_000,
+                6,
+            )
+        phase_started_ns = finished_ns
 
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
@@ -3797,14 +3889,31 @@ def scan_repository(
         include_nested = bool(scan_config.get("include_nested", True))
     exclude_patterns = list(scan_config.get("exclude", []))
     focus_patterns = list(scan_config.get("focus", []))
+    review_depth = str(scan_config.get("review_depth", "focused"))
+    cache_entries: dict[str, Any] | None = None
+    cache_hits = 0
+    cache_misses = 0
+    if fact_cache is not None:
+        if fact_cache.get("format") != "pysfmea-python-fact-cache-1":
+            fact_cache.clear()
+            fact_cache.update(
+                {"format": "pysfmea-python-fact-cache-1", "entries": {}}
+            )
+        entries = fact_cache.get("entries")
+        if not isinstance(entries, dict):
+            entries = {}
+            fact_cache["entries"] = entries
+        cache_entries = entries
     if coverage_json is None:
         coverage_json = scan_config.get("coverage_json") or None
+    finish_phase("configuration_and_guidance")
 
     warnings: list[dict[str, Any]] = []
     dependency_snapshots: dict[Path, bytes] = {}
     contract_snapshots: dict[Path, bytes] = {}
     dependencies = _dependency_inventory(root_path, warnings, dependency_snapshots)
     contracts = _contract_inventory(root_path, warnings, contract_snapshots)
+    finish_phase("dependency_and_contract_inventory")
     facts_list: list[FunctionFacts] = []
     files = _python_files(
         root_path,
@@ -3812,6 +3921,7 @@ def scan_repository(
         exclude_patterns=exclude_patterns,
         warnings=warnings,
     )
+    finish_phase("python_discovery")
     parsed_python_paths: set[str] = set()
     source_snapshots: dict[Path, bytes] = {}
     source_snapshot_errors: dict[Path, str] = {}
@@ -3820,6 +3930,28 @@ def scan_repository(
         try:
             raw = _read_python_source_bytes_bounded(file_path)
             source_snapshots[file_path] = raw
+            cache_key = hashlib.sha256(
+                json.dumps(
+                    {
+                        "path": relative,
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                        "include_private": include_private,
+                        "include_nested": include_nested,
+                        "python_ast": sys.version_info[:2],
+                        "scanner_version": __version__,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            cached = cache_entries.get(cache_key) if cache_entries is not None else None
+            if isinstance(cached, list) and all(
+                isinstance(value, FunctionFacts) for value in cached
+            ):
+                facts_list.extend(copy.deepcopy(cached))
+                parsed_python_paths.add(relative)
+                cache_hits += 1
+                continue
             source = _decode_python_source(raw)
             tree = ast.parse(source, filename=relative)
         except ValueError as exc:
@@ -3843,7 +3975,7 @@ def scan_repository(
             include_nested=include_nested,
         )
         collector.visit(tree)
-        facts_list.extend(collector.functions)
+        file_facts = list(collector.functions)
         module_facts = _module_initialization_facts(
             relative,
             tree,
@@ -3851,7 +3983,20 @@ def scan_repository(
             _module_context_fingerprint(tree),
         )
         if module_facts:
-            facts_list.append(module_facts)
+            file_facts.append(module_facts)
+        facts_list.extend(file_facts)
+        if cache_entries is not None:
+            cache_entries[cache_key] = copy.deepcopy(file_facts)
+            cache_misses += 1
+    finish_phase("python_parsing")
+    if telemetry is not None:
+        telemetry["fact_cache"] = {
+            "enabled": fact_cache is not None,
+            "hits": cache_hits,
+            "misses": cache_misses,
+            "entries": len(cache_entries or {}),
+            "authority": "exact_source_bytes_and_parser_options",
+        }
 
     test_evidence_snapshots: dict[Path, bytes] = {}
     test_evidence_errors: dict[Path, str] = {}
@@ -3909,6 +4054,7 @@ def scan_repository(
         test_evidence_snapshots,
         test_evidence_errors,
     )
+    finish_phase("evidence_inventory_and_baseline")
 
     if focus_patterns:
         facts_list = [
@@ -3928,6 +4074,7 @@ def scan_repository(
             facts_by_reference[target_reference].signals.add("internal_interface")
         for caller_reference in caller_references:
             facts_by_reference[caller_reference].signals.add("internal_interface")
+    finish_phase("call_graph_and_interfaces")
     critical_entries = list(config.get("critical_functions", []))
     mapping_entries = list(config.get("component_mappings", []))
     custom_rules = list(config.get("custom_rules", []))
@@ -3990,6 +4137,7 @@ def scan_repository(
     ):
         components.append(common_cause_component)
         items.append(common_cause_item)
+    finish_phase("component_and_candidate_generation")
 
     for item in items:
         scanner = item.setdefault("scanner", {})
@@ -4012,6 +4160,7 @@ def scan_repository(
     priority_counts = {priority: 0 for priority in ("high", "medium", "low")}
     for item in items:
         priority_counts[item["scanner"]["screening_priority"]] += 1
+    finish_phase("guidance_and_prioritization")
     analysis = {
         "schema_version": SCHEMA_VERSION,
         "generator": {
@@ -4028,6 +4177,7 @@ def scan_repository(
                 "include_private": include_private,
                 "include_tests": include_tests,
                 "include_nested": include_nested,
+                "review_depth": review_depth,
                 "exclude": exclude_patterns,
                 "focus": focus_patterns,
                 "coverage_json": str(coverage_json or ""),
@@ -4085,4 +4235,10 @@ def scan_repository(
     analysis["sfta"] = build_sfta(analysis)
     analysis["adapter_runs"] = build_adapter_run_ledger(analysis)
     analysis["run_manifest"] = create_run_manifest(analysis)
+    finish_phase("derived_models_and_manifest")
+    if telemetry is not None:
+        telemetry["total_seconds"] = round(
+            (time.perf_counter_ns() - scan_started_ns) / 1_000_000_000,
+            6,
+        )
     return analysis

@@ -71,6 +71,7 @@ from .file_publication import inspect_artifact_destination
 from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
 from .html_report import (
     HTML_REPORT_VERIFICATION_FORMAT,
+    MAX_HTML_REPORT_VERIFY_BYTES,
     MAX_REPORT_RECORDS,
     export_html_report,
     verify_html_report_file,
@@ -81,6 +82,7 @@ from .interchange import (
     export_json_document,
     sarif_document,
 )
+from .manifest import create_run_manifest
 from .pdf_report import export_pdf_report
 from .program import (
     PROGRAM_REPORT_VERIFICATION_CHECKS,
@@ -460,8 +462,23 @@ def _parser() -> argparse.ArgumentParser:
     )
     scan.add_argument("--config", help="sfmea.toml path; defaults to REPOSITORY/sfmea.toml when present")
     scan.add_argument("--coverage-json", help="coverage.py JSON file")
+    scan.add_argument(
+        "--allow-ungoverned",
+        action="store_true",
+        help=(
+            "allow a discovery-only scan without sfmea.toml; output remains explicitly "
+            "not assurance-ready"
+        ),
+    )
     scan.add_argument("--exclude", action="append", default=[], help="additional relative-path glob to exclude")
     scan.add_argument("--focus", action="append", default=[], help="only analyze matching path:qualname glob")
+    scan.add_argument(
+        "--review-depth",
+        choices=("screening", "focused", "exhaustive"),
+        help=(
+            "human review-queue depth; the complete machine candidate inventory is retained"
+        ),
+    )
     private = scan.add_mutually_exclusive_group()
     private.add_argument(
         "--include-private",
@@ -497,6 +514,11 @@ def _parser() -> argparse.ArgumentParser:
         help="exclude nested functions and closures",
     )
     scan.add_argument("--fresh", action="store_true", help="do not merge review decisions from an existing output")
+    scan.add_argument(
+        "--pretty-analysis",
+        action="store_true",
+        help="write indented JSON for manual inspection (compact JSON is the default)",
+    )
     scan.set_defaults(handler=_scan)
 
     review = subparsers.add_parser("review", help="open the local browser review workspace")
@@ -536,6 +558,15 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=10_000,
         help=f"maximum embedded records (1-{MAX_REPORT_RECORDS}; default: 10000)",
+    )
+    report.add_argument(
+        "--max-output-bytes",
+        type=int,
+        default=MAX_HTML_REPORT_VERIFY_BYTES,
+        help=(
+            "fail closed before publication when the self-contained report exceeds "
+            f"this byte budget (default: {MAX_HTML_REPORT_VERIFY_BYTES})"
+        ),
     )
     _add_propagation_arguments(report)
     report.set_defaults(handler=_html_report)
@@ -736,6 +767,18 @@ def _parser() -> argparse.ArgumentParser:
     queue = subparsers.add_parser("queue", help="show the next prioritized records to review")
     queue.add_argument("analysis", help="analysis JSON path")
     queue.add_argument("--limit", type=int, default=25, help="maximum records to show")
+    queue.add_argument(
+        "--minimum-priority",
+        choices=("high", "medium", "low"),
+        help=(
+            "override the analysis review-depth priority floor; manual records are always included"
+        ),
+    )
+    queue.add_argument(
+        "--all-records",
+        action="store_true",
+        help="disable component/failure-class family grouping and include low-priority records",
+    )
     queue.add_argument("--json", action="store_true", help="emit structured JSON")
     queue.set_defaults(handler=_queue)
 
@@ -1144,9 +1187,16 @@ def _scan(args: argparse.Namespace) -> int:
     default_config = repository / "sfmea.toml"
     if config_path is None and default_config.is_file():
         config_path = default_config
+    if config_path is None and not args.allow_ungoverned:
+        raise ValueError(
+            "no SFMEA configuration was found; run `sfmea init` and complete sfmea.toml, "
+            "or pass --allow-ungoverned for an explicitly discovery-only scan"
+        )
     config, resolved_config = load_config(config_path)
     config["scan"]["exclude"].extend(args.exclude)
     config["scan"]["focus"].extend(args.focus)
+    if args.review_depth:
+        config["scan"]["review_depth"] = args.review_depth
     scanned = scan_repository(
         repository,
         include_private=args.include_private,
@@ -1156,6 +1206,26 @@ def _scan(args: argparse.Namespace) -> int:
         coverage_json=args.coverage_json,
     )
     scanned["project"]["settings"]["config_file"] = str(resolved_config or "")
+    governed = resolved_config is not None
+    scanned["project"]["settings"]["governance_mode"] = (
+        "governed" if governed else "discovery_only"
+    )
+    scanned["project"]["settings"]["analysis_serialization"] = (
+        "pretty" if args.pretty_analysis else "compact"
+    )
+    if not governed:
+        scanned.setdefault("warnings", []).append(
+            {
+                "path": "sfmea.toml",
+                "type": "UngovernedScan",
+                "message": (
+                    "No SFMEA configuration was supplied. This output is a discovery-only "
+                    "inventory and is not assurance-ready until project context, hazards, "
+                    "ground rules, mappings, guidance applicability, and reviewers are governed."
+                ),
+            }
+        )
+        scanned.setdefault("summary", {})["warnings"] = len(scanned["warnings"])
     merged = False
     if output.exists() and not args.fresh:
         previous = load_analysis(output)
@@ -1170,7 +1240,10 @@ def _scan(args: argparse.Namespace) -> int:
                 "baseline_id": scanned.get("project", {}).get("baseline", {}).get("id", ""),
             }
         ]
-    save_analysis(output, scanned)
+    # The run manifest is an immutable projection of the final resolved scan inputs.
+    # Build it only after CLI-only settings and initial history have been settled.
+    scanned["run_manifest"] = create_run_manifest(scanned)
+    save_analysis(output, scanned, compact=not args.pretty_analysis)
     summary = scanned["summary"]
     action = "Rescanned and merged" if merged else "Scanned"
     print(f"{action} {scanned['project']['root']}")
@@ -1181,6 +1254,19 @@ def _scan(args: argparse.Namespace) -> int:
     if summary.get("warnings"):
         print(f"Warnings: {summary['warnings']} (recorded in the analysis file)")
     print(f"Analysis: {output}")
+    print(
+        "Governance: "
+        + ("governed configuration" if governed else "DISCOVERY ONLY (ungoverned)")
+    )
+    print(
+        "Guidance profiles: "
+        + ", ".join(scanned.get("guidance", {}).get("active_profiles", []))
+    )
+    print(
+        "Review depth: "
+        + str(scanned.get("project", {}).get("settings", {}).get("review_depth"))
+        + " (complete machine inventory retained)"
+    )
     print(f"Next: sfmea review \"{output}\"")
     return 0
 
@@ -1317,6 +1403,8 @@ def _doctor(args: argparse.Namespace) -> int:
         )
         for check in result["checks"]:
             print(f"[{check['status'].upper()}] {check['id']}: {check['message']}")
+            if check.get("next_action"):
+                print(f"  Next: {check['next_action']}")
         print(result["notice"])
     return int(not result["ready"])
 
@@ -1607,6 +1695,7 @@ def _html_report(args: argparse.Namespace) -> int:
                     propagation_include_finding_ids=(
                         args.propagation_include_finding
                     ),
+                    max_output_bytes=args.max_output_bytes,
                 )
             except VERIFICATION_EXCEPTIONS:
                 verification = _verification_error_result(
@@ -1704,6 +1793,7 @@ def _html_report(args: argparse.Namespace) -> int:
         propagation_path_limit=args.propagation_path_limit,
         propagation_depth=args.propagation_depth,
         propagation_include_finding_ids=args.propagation_include_finding,
+        max_output_bytes=args.max_output_bytes,
     )
     size_mib = result.stat().st_size / (1024 * 1024)
     embedded_records = min(len(analysis.get("items", [])), args.max_records)
@@ -2286,14 +2376,39 @@ def _inventory(args: argparse.Namespace) -> int:
 def _queue(args: argparse.Namespace) -> int:
     if args.limit < 1:
         raise ValueError("--limit must be at least 1")
-    queue = review_queue(load_analysis(args.analysis), limit=args.limit)
+    analysis = load_analysis(args.analysis)
+    review_depth = str(
+        analysis.get("project", {}).get("settings", {}).get(
+            "review_depth", "focused"
+        )
+    )
+    depth_priority = {
+        "screening": "high",
+        "focused": "medium",
+        "exhaustive": "low",
+    }
+    minimum_priority = args.minimum_priority or depth_priority.get(
+        review_depth, "medium"
+    )
+    queue = review_queue(
+        analysis,
+        limit=args.limit,
+        minimum_priority="low" if args.all_records else minimum_priority,
+        group_families=not args.all_records and review_depth != "exhaustive",
+    )
     if args.json:
         print(json.dumps(queue, indent=2))
         return 0
     for item in queue:
+        family = (
+            f" | family={item['family_size']}"
+            if item.get("family_size", 1) > 1
+            else ""
+        )
         print(
             f"{item['id']} | {item['screening_priority']} | {item['source_change']} | "
-            f"errors={item['errors']} | {item['component']} | {item['failure_mode']}"
+            f"errors={item['errors']}{family} | {item['component']} | "
+            f"{item['failure_mode']}"
         )
     if not queue:
         print("No active records require review.")

@@ -8,7 +8,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -122,6 +126,67 @@ class ScannerTests(unittest.TestCase):
             if item["component"]["qualname"] == "calculate_total"
         }
         self.assertIn("calculation.precision_or_range", calculate_rules)
+
+    def test_fact_cache_reuses_only_exact_source_bytes(self) -> None:
+        fact_cache: dict[str, Any] = {}
+        cold_telemetry: dict[str, Any] = {}
+        first = scan_repository(
+            self.root,
+            fact_cache=fact_cache,
+            telemetry=cold_telemetry,
+        )
+        warm_telemetry: dict[str, Any] = {}
+        second = scan_repository(
+            self.root,
+            fact_cache=fact_cache,
+            telemetry=warm_telemetry,
+        )
+        self.assertEqual(first["components"], second["components"])
+        self.assertEqual(cold_telemetry["fact_cache"]["hits"], 0)
+        self.assertGreater(warm_telemetry["fact_cache"]["hits"], 0)
+
+        (self.root / "app.py").write_text(
+            SAMPLE_SOURCE + "\ndef newly_added():\n    return 2\n",
+            encoding="utf-8",
+        )
+        changed_telemetry: dict[str, Any] = {}
+        changed = scan_repository(
+            self.root,
+            fact_cache=fact_cache,
+            telemetry=changed_telemetry,
+        )
+        self.assertIn("newly_added", {item["qualname"] for item in changed["components"]})
+        self.assertGreater(changed_telemetry["fact_cache"]["misses"], 0)
+
+    @settings(max_examples=12, deadline=None)
+    @given(
+        value=st.integers(min_value=-1_000_000, max_value=1_000_000),
+        comment=st.text(alphabet="abcdefghijklmnopqrstuvwxyz", max_size=20),
+    )
+    def test_fact_cache_property_any_source_byte_change_invalidates(
+        self, value: int, comment: str
+    ) -> None:
+        generated = self.root / "generated.py"
+        generated.write_text(
+            f"def generated():\n    return {value}\n# {comment}\n",
+            encoding="utf-8",
+        )
+        fact_cache: dict[str, Any] = {}
+        scan_repository(self.root, fact_cache=fact_cache)
+        generated.write_text(
+            f"def generated():\n    return {value}\n# {comment}x\n",
+            encoding="utf-8",
+        )
+        telemetry: dict[str, Any] = {}
+        analysis = scan_repository(
+            self.root,
+            fact_cache=fact_cache,
+            telemetry=telemetry,
+        )
+        self.assertGreater(telemetry["fact_cache"]["misses"], 0)
+        self.assertIn(
+            "generated", {component["qualname"] for component in analysis["components"]}
+        )
 
     def test_scan_extracts_circuit_breaker_semantics_without_crediting_control(
         self,
@@ -314,6 +379,9 @@ class ScannerTests(unittest.TestCase):
         self,
     ) -> None:
         (self.root / "README.md").write_text("# System\n", encoding="utf-8")
+        (self.root / "frontend.tsx").write_text(
+            "export const App = () => null;\n", encoding="utf-8"
+        )
         (self.root / "opaque.bin").write_bytes(b"\x00\x01")
         excluded = self.root / "generated"
         excluded.mkdir()
@@ -349,6 +417,9 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(by_path["tests/test_app.py"]["status"], "excluded_region")
         self.assertEqual(by_path["broken.py"]["status"], "unresolved")
         self.assertEqual(by_path["opaque.bin"]["status"], "opaque")
+        self.assertEqual(by_path["frontend.tsx"]["kind"], "typescript_source")
+        self.assertEqual(by_path["frontend.tsx"]["status"], "opaque")
+        self.assertIn("Language-boundary source", by_path["frontend.tsx"]["reason"])
         self.assertEqual(
             inventory["summary"]["by_snapshot_source"]["analysis_source_snapshot"],
             2,

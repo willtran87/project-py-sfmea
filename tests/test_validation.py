@@ -298,6 +298,26 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(queue[0]["id"], self.item["id"])
         self.assertTrue(queue[0]["revalidation_required"])
 
+    def test_review_queue_can_group_rule_families_and_filter_priority(self) -> None:
+        for item in self.analysis["items"]:
+            item["scanner"]["screening_priority"] = "high"
+        grouped = review_queue(
+            self.analysis,
+            limit=100,
+            minimum_priority="high",
+            group_families=True,
+        )
+        self.assertTrue(grouped)
+        self.assertTrue(all(value["screening_priority"] == "high" for value in grouped))
+        self.assertTrue(all(value["family_id"].startswith("REVIEW-FAMILY-") for value in grouped))
+        self.assertTrue(all(value["family_size"] >= 1 for value in grouped))
+        self.assertTrue(
+            all(value["rule_id"] in value["family_rule_ids"] for value in grouped)
+        )
+
+        with self.assertRaisesRegex(ValueError, "minimum_priority"):
+            review_queue(self.analysis, minimum_priority="urgent")
+
     def test_repository_baseline_and_component_integrity_are_gated(self) -> None:
         update_item_review(
             self.analysis,

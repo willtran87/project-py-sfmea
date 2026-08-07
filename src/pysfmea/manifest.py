@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import platform
@@ -29,6 +30,7 @@ def create_run_manifest(
 
     producer_version = tool_version or __version__
     baseline = analysis.get("project", {}).get("baseline", {})
+    settings = copy.deepcopy(analysis.get("project", {}).get("settings", {}))
     registry = adapter_registry_snapshot(analysis)
     guidance_profiles = analysis_guidance_profiles(analysis)
     embedded_guidance = analysis.get("guidance")
@@ -88,7 +90,7 @@ def create_run_manifest(
             "name": "PySFMEA",
             "version": producer_version,
             "analysis_schema_version": analysis.get("schema_version", ""),
-            "settings": analysis.get("project", {}).get("settings", {}),
+            "settings": copy.deepcopy(settings),
         },
         "environment": {
             "python": platform.python_version(),
@@ -124,7 +126,7 @@ def create_run_manifest(
                 "operation": "static_scan",
                 "repository_code_executed": False,
                 "exit_code": 0,
-                "settings": analysis.get("project", {}).get("settings", {}),
+                "settings": copy.deepcopy(settings),
             }
         ],
         "events": [

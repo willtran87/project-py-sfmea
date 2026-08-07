@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -19,10 +20,11 @@ from pysfmea.assurance import export_pytest_scaffold
 from pysfmea.cli import main
 from pysfmea.config import load_config, write_config_template
 from pysfmea.html_report import export_html_report
+from pysfmea.integrity import verify_run_manifest_integrity
 from pysfmea.report import export_review_archive
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
-from pysfmea.store import save_analysis, update_item_review
+from pysfmea.store import load_analysis, save_analysis, update_item_review
 from pysfmea.workflow import WORKFLOW_STATUS_FORMAT, workflow_status
 
 
@@ -97,6 +99,86 @@ class WorkflowStatusTests(unittest.TestCase):
         for gate in before["handoff_gates"]:
             if not gate["passed"]:
                 self.assertIn(gate["remediation_action_id"], available_actions)
+
+    def test_public_cli_scan_publishes_an_integrity_valid_final_manifest(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pysfmea",
+                "scan",
+                str(self.root),
+                "--config",
+                str(self.config_path),
+                "--fresh",
+                "--output",
+                str(self.analysis_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        analysis = load_analysis(self.analysis_path)
+        verification = verify_run_manifest_integrity(analysis)
+        self.assertTrue(verification["valid"], verification["failures"])
+        settings = analysis["project"]["settings"]
+        self.assertEqual(settings["config_file"], str(self.config_path.resolve()))
+        self.assertEqual(settings["analysis_serialization"], "compact")
+        self.assertEqual(len(self.analysis_path.read_text(encoding="utf-8").splitlines()), 1)
+        self.assertIsNot(
+            analysis["run_manifest"]["tool"]["settings"],
+            settings,
+        )
+
+    def test_public_cli_requires_explicit_discovery_only_authorization(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            (repository / "app.py").write_text(
+                "def run(value):\n    return value\n", encoding="utf-8"
+            )
+            output = repository / "analysis.json"
+            command = [
+                sys.executable,
+                "-m",
+                "pysfmea",
+                "scan",
+                str(repository),
+                "--fresh",
+                "--output",
+                str(output),
+            ]
+            refused = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(refused.returncode, 2)
+            self.assertIn("--allow-ungoverned", refused.stderr)
+            self.assertFalse(output.exists())
+
+            allowed = subprocess.run(
+                [*command, "--allow-ungoverned"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            self.assertIn("DISCOVERY ONLY", allowed.stdout)
+            analysis = load_analysis(output)
+            self.assertEqual(
+                analysis["project"]["settings"]["governance_mode"],
+                "discovery_only",
+            )
+            self.assertIn(
+                "UngovernedScan",
+                {warning.get("type") for warning in analysis["warnings"]},
+            )
+            self.assertTrue(verify_run_manifest_integrity(analysis)["valid"])
 
         analysis = self._scan()
         after = workflow_status(self.root)

@@ -89,6 +89,13 @@ class HtmlReportTests(unittest.TestCase):
             },
         )
 
+    def test_report_output_budget_fails_without_replacing_destination(self) -> None:
+        output = self.root / "budgeted-report.html"
+        output.write_text("trusted prior report", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "publication limit"):
+            export_html_report(self.analysis, output, max_output_bytes=100)
+        self.assertEqual(output.read_text(encoding="utf-8"), "trusted prior report")
+
     def tearDown(self) -> None:
         self.temp.cleanup()
 

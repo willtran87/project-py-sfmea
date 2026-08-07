@@ -201,6 +201,14 @@ def _kind(path: str) -> str:
     suffix = Path(lower).suffix
     if suffix == ".py":
         return "python_test" if _is_test(path) else "python_source"
+    if suffix in {".ts", ".tsx"}:
+        return "typescript_source"
+    if suffix in {".js", ".jsx", ".mjs", ".cjs"}:
+        return "javascript_source"
+    if suffix in {".css", ".scss", ".sass", ".less"}:
+        return "stylesheet"
+    if suffix in {".html", ".htm"}:
+        return "user_interface"
     if name in {
         "pyproject.toml",
         "poetry.lock",
@@ -502,7 +510,12 @@ def build_repository_inventory(
                     reason="Python source was selected but could not be parsed.",
                     adapter_ids=["python.repository_discoverer", "python.ast_parser"],
                 )
-            elif kind in {"binary_or_generated", "unclassified"}:
+            elif kind in {
+                "binary_or_generated",
+                "javascript_source",
+                "typescript_source",
+                "unclassified",
+            }:
                 boundary_reason = record["reason"]
                 record.update(
                     status="opaque",
@@ -510,7 +523,12 @@ def build_repository_inventory(
                         "metadata_and_digest" if record["sha256"] else "metadata_only"
                     ),
                     reason=(
-                        "No semantic analyzer is registered for this artifact type."
+                        (
+                            "Language-boundary source is retained with exact identity but no "
+                            "semantic analyzer is registered for it."
+                            if kind in {"javascript_source", "typescript_source"}
+                            else "No semantic analyzer is registered for this artifact type."
+                        )
                         if record["sha256"]
                         else boundary_reason
                     ),

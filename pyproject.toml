@@ -43,6 +43,7 @@ quality = [
   "mutmut>=3.3",
   "pip-audit>=2.9",
 ]
+browser = ["playwright>=1"]
 
 [project.urls]
 Documentation = "https://github.com/willtran87/project-py-sfmea/tree/main/docs"
@@ -98,6 +99,9 @@ files = [
   "src/pysfmea/integrity.py",
   "src/pysfmea/llm_quality.py",
   "scripts/check_coverage_ratchets.py",
+  "scripts/benchmark_scan.py",
+  "scripts/report_browser_gate.py",
+  "src/pysfmea/readiness.py",
 ]
 warn_unused_configs = true
 
@@ -110,11 +114,13 @@ source_paths = [
   "src/pysfmea/fault_injection.py",
   "src/pysfmea/runtime.py",
   "src/pysfmea/sandbox_policy.py",
+  "src/pysfmea/readiness.py",
 ]
 pytest_add_cli_args_test_selection = [
   "tests/test_fault_injection.py",
   "tests/test_runtime.py",
   "tests/test_sandbox_policy.py",
+  "tests/test_readiness.py",
 ]
 mutate_only_covered_lines = true
 max_stack_depth = 12

@@ -1921,6 +1921,12 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
             }
         )
     total = len(active)
+    total_citation_uses = sum(used_citations.values())
+    broadly_reused_citations = {
+        citation_id: uses
+        for citation_id, uses in used_citations.items()
+        if total and uses / total >= 0.8
+    }
     bundle.update(
         {
             "finding_links": finding_links,
@@ -1980,6 +1986,23 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
                 else 100.0,
                 "used_citations": len(used_citations),
                 "used_sources": len(used_sources),
+                "total_citation_uses": total_citation_uses,
+                "average_citations_per_finding": round(
+                    total_citation_uses / total, 2
+                )
+                if total
+                else 0.0,
+                "broadly_reused_citations": dict(
+                    sorted(broadly_reused_citations.items())
+                ),
+                "broadly_reused_citation_count": len(
+                    broadly_reused_citations
+                ),
+                "specificity_notice": (
+                    "Coverage counts methodology, supporting, and contextual mappings. Broadly "
+                    "reused citations apply to at least 80% of active findings and must not be "
+                    "read as finding-specific regulatory applicability."
+                ),
                 "findings_by_rule": dict(sorted(rules.items())),
                 "rules_with_direct_mapping": sorted(direct_rules),
                 "rules_without_direct_mapping": sorted(set(rules) - direct_rules),

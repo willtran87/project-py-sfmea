@@ -1395,8 +1395,17 @@ def validate_analysis(
     }
 
 
-def review_queue(analysis: dict[str, Any], *, limit: int = 25) -> list[dict[str, Any]]:
-    """Return active records ordered for human triage and review."""
+def review_queue(
+    analysis: dict[str, Any],
+    *,
+    limit: int = 25,
+    minimum_priority: str = "low",
+    group_families: bool = False,
+) -> list[dict[str, Any]]:
+    """Return a bounded, optionally family-grouped human review queue."""
+
+    if minimum_priority not in {"high", "medium", "low"}:
+        raise ValueError("minimum_priority must be high, medium, or low")
 
     report = validate_analysis(analysis)
     findings_by_item: dict[str, list[dict[str, Any]]] = {}
@@ -1404,6 +1413,7 @@ def review_queue(analysis: dict[str, Any], *, limit: int = 25) -> list[dict[str,
         if finding["item_id"]:
             findings_by_item.setdefault(finding["item_id"], []).append(finding)
     priority_rank = {"high": 0, "medium": 1, "low": 2, "manual": 3}
+    priority_threshold = priority_rank[minimum_priority]
     change_rank = {"changed": 0, "impacted": 1, "moved": 2, "new": 3, "manual": 4}
     candidates = []
     for item in analysis.get("items", []):
@@ -1419,11 +1429,23 @@ def review_queue(analysis: dict[str, Any], *, limit: int = 25) -> list[dict[str,
             and not review.get("revalidation_required")
         ):
             continue
+        screening_priority = item.get("scanner", {}).get(
+            "screening_priority", ""
+        )
+        if (
+            screening_priority != "manual"
+            and priority_rank.get(screening_priority, 9) > priority_threshold
+        ):
+            continue
+        component_id = str(item.get("component_id", ""))
+        failure_class = str(item.get("scanner", {}).get("failure_class", ""))
         candidates.append(
             {
                 "id": item.get("id", ""),
+                "component_id": component_id,
                 "component": item.get("component", {}).get("qualname", ""),
-                "failure_class": item.get("scanner", {}).get("failure_class", ""),
+                "failure_class": failure_class,
+                "rule_id": item.get("scanner", {}).get("rule_id", ""),
                 "failure_mode": review.get("failure_mode")
                 or item.get("scanner", {}).get("failure_mode", ""),
                 "source_change": item.get("source_change", ""),
@@ -1436,6 +1458,7 @@ def review_queue(analysis: dict[str, Any], *, limit: int = 25) -> list[dict[str,
                 "errors": errors,
                 "warnings": warnings,
                 "finding_rules": [finding["rule_id"] for finding in findings],
+                "_family_key": (component_id, failure_class),
                 "_rank": (
                     0 if review.get("revalidation_required") else 1,
                     0 if errors else 1,
@@ -1449,6 +1472,29 @@ def review_queue(analysis: dict[str, Any], *, limit: int = 25) -> list[dict[str,
             }
         )
     candidates.sort(key=lambda value: value["_rank"])
+    if group_families:
+        grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for candidate in candidates:
+            grouped.setdefault(candidate["_family_key"], []).append(candidate)
+        candidates = []
+        for family in grouped.values():
+            representative = family[0]
+            family_material = [
+                representative["component_id"], representative["failure_class"]
+            ]
+            representative["family_id"] = "REVIEW-FAMILY-" + _digest(
+                family_material
+            )[:12].upper()
+            representative["family_size"] = len(family)
+            representative["family_rule_ids"] = sorted(
+                {str(value["rule_id"]) for value in family}
+            )
+            representative["family_finding_ids"] = [
+                str(value["id"]) for value in family
+            ]
+            candidates.append(representative)
+        candidates.sort(key=lambda value: value["_rank"])
     for value in candidates:
         value.pop("_rank", None)
+        value.pop("_family_key", None)
     return candidates[:limit]

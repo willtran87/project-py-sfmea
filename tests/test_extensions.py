@@ -180,9 +180,10 @@ class ExtensionTests(unittest.TestCase):
         (self.root / "flow.py").write_text(
             "import httpx\n\n"
             "def normalize(value):\n    return value\n\n"
-            "async def orchestrate(client, enabled):\n"
+            "async def orchestrate(client, db_collection, enabled):\n"
             "    if enabled:\n"
             "        await client.send()\n"
+            "        await db_collection.insert_one({'enabled': enabled})\n"
             "    else:\n"
             "        httpx.get('https://example.invalid')\n"
             "    try:\n"
@@ -211,6 +212,9 @@ class ExtensionTests(unittest.TestCase):
         }
         self.assertEqual(candidates["httpx.get"]["confidence"], "high")
         self.assertEqual(candidates["client.send"]["confidence"], "medium")
+        self.assertEqual(
+            candidates["db_collection.insert_one"]["confidence"], "medium"
+        )
 
         model = sequence_model(analysis, "flow.py:orchestrate")
         send = next(
@@ -235,7 +239,7 @@ class ExtensionTests(unittest.TestCase):
         self.assertIn("[await]", document)
         interface_diagram = interface_flow_diagram(analysis)
         self.assertEqual(
-            interface_diagram["metadata"]["external_candidates_total"], 2
+            interface_diagram["metadata"]["external_candidates_total"], 3
         )
         self.assertEqual(
             {
@@ -381,9 +385,34 @@ class ExtensionTests(unittest.TestCase):
             .replace("src/example/", "")
         )
         config_path.write_text(configured, encoding="utf-8")
+        (self.root / "coverage.json").write_text(
+            json.dumps({"meta": {}, "files": {}}), encoding="utf-8"
+        )
         ready = repository_readiness(self.root)
         self.assertTrue(ready["ready"])
         self.assertGreater(ready["counts"]["pass"], 0)
+        coverage_check = next(
+            check for check in ready["checks"] if check["id"] == "evidence.coverage"
+        )
+        self.assertEqual(coverage_check["status"], "warning")
+        self.assertTrue(
+            any(
+                action["check_id"] == "evidence.coverage"
+                for action in ready["suggested_actions"]
+            )
+        )
+
+        config_path.write_text(
+            configured.replace('coverage_json = ""', 'coverage_json = "coverage.json"'),
+            encoding="utf-8",
+        )
+        configured_evidence = repository_readiness(self.root)
+        coverage_check = next(
+            check
+            for check in configured_evidence["checks"]
+            if check["id"] == "evidence.coverage"
+        )
+        self.assertEqual(coverage_check["status"], "pass")
 
     def test_traceability_namespaces_catalog_ids(self) -> None:
         analysis = scan_repository(

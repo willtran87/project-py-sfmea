@@ -723,6 +723,7 @@ def save_analysis(
     analysis: dict[str, Any],
     *,
     expected_sha256: str | None = None,
+    compact: bool = False,
 ) -> None:
     """Atomically save an analysis to avoid truncation on interrupted writes."""
 
@@ -747,7 +748,14 @@ def save_analysis(
     try:
         with os.fdopen(descriptor, "wb") as handle:
             writer = _BoundedUtf8Writer(handle, MAX_ANALYSIS_BYTES)
-            json.dump(analysis, writer, indent=2, ensure_ascii=False, allow_nan=False)
+            json.dump(
+                analysis,
+                writer,
+                indent=None if compact else 2,
+                separators=(",", ":") if compact else None,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
             writer.write("\n")
             handle.flush()
             os.fsync(handle.fileno())

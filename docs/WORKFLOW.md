@@ -50,6 +50,9 @@ functions, safe/degraded behavior, humans, timing/resource constraints, assumpti
 and rating policy in `sfmea.toml`. `doctor` deliberately rejects an untouched template. A scan can
 still be useful with incomplete context, but the missing context remains an explicit limitation
 and can block a governed handoff.
+The JSON response includes `suggested_actions` for missing or unconfigured coverage and
+test evidence. A public scan without `sfmea.toml` is refused unless the operator explicitly
+selects discovery-only mode with `--allow-ungoverned`.
 
 ## 3. Capture optional test coverage and scan
 
@@ -62,6 +65,7 @@ coverage json -o (Join-Path $artifacts "coverage.json")
 
 sfmea scan . `
   --coverage-json (Join-Path $artifacts "coverage.json") `
+  --review-depth focused `
   -o (Join-Path $artifacts "sfmea-analysis.json")
 ```
 
@@ -74,6 +78,10 @@ sfmea scan . -o (Join-Path $artifacts "sfmea-analysis.json")
 Scanning parses repository evidence without importing or executing repository code. Treat
 `sfmea-analysis.json` as governed state: preserve it, review changes to it, and pass the same file
 to every downstream command.
+CLI scans use compact JSON to reduce governed-artifact size; add `--pretty-analysis` only for
+manual JSON inspection. Review depth changes the family-grouped human queue, not the complete
+candidate register. Use `sfmea queue ... --all-records` when exhaustive item-by-item triage is
+required.
 
 ## 4. Triage and perform engineering review
 
@@ -112,7 +120,8 @@ sfmea coverage $analysis --format markdown -o (Join-Path $artifacts "sfmea-cover
 sfmea coverage $analysis --format json -o (Join-Path $artifacts "sfmea-coverage.json")
 sfmea citations $analysis --format json -o (Join-Path $artifacts "guidance-citations.json")
 sfmea diagram $analysis -o (Join-Path $artifacts "diagrams.json")
-sfmea report $analysis -o (Join-Path $artifacts "sfmea-report.html") --json
+sfmea report $analysis -o (Join-Path $artifacts "sfmea-report.html") `
+  --max-output-bytes 52428800 --json
 sfmea report-verify (Join-Path $artifacts "sfmea-report.html") --analysis $analysis
 ```
 
@@ -121,6 +130,20 @@ searchable findings, evidence, repository accounting, assurance obligations, arc
 interfaces, propagation, sequences, traceability, circuit-breaker models, and stable record links.
 The canonical diagram bundle is renderer-neutral JSON for other tools; the report renders the same
 general model without a hosted service.
+
+For release candidates, exercise every report view in a real headless browser and retain the
+machine-readable receipt:
+
+```powershell
+pip install -e .[browser]
+playwright install chromium
+python scripts/report_browser_gate.py (Join-Path $artifacts "sfmea-report.html") `
+  --analysis $analysis --max-bytes 52428800 --max-load-seconds 5 `
+  -o (Join-Path $artifacts "report-browser-quality.json")
+```
+
+Set repository-specific budgets from a reviewed baseline; the example values are not universal
+acceptance criteria.
 
 Sequence views reconcile bounded static and imported runtime relations. Treat
 `runtime_corroborated` as supporting execution evidence, `not_observed` as an instrumentation or

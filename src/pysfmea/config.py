@@ -62,6 +62,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "include_private": True,
         "include_tests": False,
         "include_nested": True,
+        "review_depth": "focused",
         "exclude": [],
         "focus": [],
         "coverage_json": "",
@@ -183,6 +184,8 @@ guidance_packs = []
 include_private = true
 include_tests = false
 include_nested = true
+# Human queue projection only; the complete machine inventory is always retained.
+review_depth = "focused" # screening, focused, or exhaustive
 exclude = ["migrations/**", "generated/**"]
 # When non-empty, only matching path:qualified-name components are analyzed.
 focus = []
@@ -431,6 +434,7 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "include_private",
             "include_tests",
             "include_nested",
+            "review_depth",
             "exclude",
             "focus",
             "coverage_json",
@@ -630,6 +634,10 @@ def _validate_config(config: dict[str, Any]) -> None:
     for field in ("include_private", "include_tests", "include_nested"):
         if not isinstance(scan.get(field), bool):
             raise ValueError(f"scan.{field} must be true or false")
+    if scan.get("review_depth") not in {"screening", "focused", "exhaustive"}:
+        raise ValueError(
+            "scan.review_depth must be screening, focused, or exhaustive"
+        )
     if not isinstance(scan.get("coverage_json"), str):
         raise ValueError("scan.coverage_json must be a string path")
     for field in ("exclude", "focus"):
