@@ -8,6 +8,7 @@ import fnmatch
 import hashlib
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -32,6 +33,7 @@ from .guidance import (
     load_organizational_guidance_pack,
     selected_sources_from_bundle,
 )
+from .interface_reconciliation import reconcile_cross_stack_interfaces
 from .json_ingestion import (
     load_bounded_file_snapshot,
     load_bounded_json_document,
@@ -193,6 +195,55 @@ def _humanize(name: str) -> str:
     return value[:1].upper() + value[1:]
 
 
+def _literal_text(node: ast.AST) -> str:
+    """Return one bounded static string without evaluating repository code."""
+
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value[:4_096]
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                parts.append(value.value)
+            elif isinstance(value, ast.FormattedValue):
+                parts.append("{dynamic}")
+        return "".join(parts)[:4_096]
+    return ""
+
+
+def _decorator_endpoint(decorator: ast.AST) -> dict[str, Any] | None:
+    """Extract a conservative HTTP route declaration from a decorator."""
+
+    if not isinstance(decorator, ast.Call):
+        return None
+    reference = _dotted_name(decorator.func)
+    leaf = reference.casefold().rsplit(".", 1)[-1]
+    if leaf not in {"get", "post", "put", "patch", "delete", "route"}:
+        return None
+    route = _literal_text(decorator.args[0]) if decorator.args else ""
+    if not route:
+        return None
+    methods = [leaf.upper()] if leaf != "route" else []
+    if leaf == "route":
+        for keyword in decorator.keywords:
+            if keyword.arg != "methods" or not isinstance(
+                keyword.value, (ast.List, ast.Tuple, ast.Set)
+            ):
+                continue
+            methods.extend(
+                value.upper()
+                for item in keyword.value.elts
+                if (value := _literal_text(item))
+            )
+    return {
+        "kind": "http_route",
+        "path": route,
+        "methods": sorted(set(methods)) or ["ANY"],
+        "declaration": reference,
+        "confidence": "static_literal",
+    }
+
+
 @dataclass
 class FunctionFacts:
     name: str
@@ -218,6 +269,7 @@ class FunctionFacts:
     symbol_type_sources: dict[str, str] = field(default_factory=dict)
     frameworks: set[str] = field(default_factory=set)
     entrypoint_types: set[str] = field(default_factory=set)
+    interface_endpoints: list[dict[str, Any]] = field(default_factory=list)
     complexity: int = 1
     loops: int = 0
     awaits: int = 0
@@ -968,6 +1020,11 @@ class _ModuleCollector(ast.NodeVisitor):
             decorators=decorators,
             parameters=params,
         )
+        facts.interface_endpoints.extend(
+            endpoint
+            for decorator in node.decorator_list
+            if (endpoint := _decorator_endpoint(decorator)) is not None
+        )
         annotated_arguments = [
             *node.args.posonlyargs,
             *node.args.args,
@@ -1196,7 +1253,10 @@ def _module_initialization_facts(
         decorators=[],
         parameters=[],
     )
-    facts.signals.add("entrypoint")
+    # Import-time execution is review-worthy, but it is not automatically an externally
+    # reachable entrypoint. Keeping a distinct signal prevents startup declarations from
+    # dominating high-priority queues while preserving their complete candidate inventory.
+    facts.signals.add("module_initialization")
     visitor = _FactVisitor(facts, dict(aliases))
     for statement in executable:
         visitor.visit(statement)
@@ -1580,8 +1640,56 @@ def _dependency_inventory(
             else:
                 record(line, resolved.relative_to(root).as_posix())
 
-    pyproject = root / "pyproject.toml"
-    if pyproject.exists() or pyproject.is_symlink():
+    manifest_patterns = (
+        "pyproject.toml",
+        "requirements*.txt",
+        "constraints*.txt",
+        "Pipfile",
+        "Pipfile.lock",
+        "poetry.lock",
+        "pdm.lock",
+        "pylock.toml",
+        "setup.cfg",
+        "uv.lock",
+    )
+    manifest_candidates: dict[str, list[Path]] = {
+        "pyproject": [],
+        "requirements": [],
+        "auxiliary": [],
+    }
+    for current, directories, filenames in os.walk(root, topdown=True, followlinks=False):
+        directories[:] = sorted(
+            directory
+            for directory in directories
+            if directory not in DEFAULT_EXCLUDES and not directory.startswith(".")
+        )
+        for filename in sorted(filenames):
+            if filename == "pyproject.toml":
+                category = "pyproject"
+            elif any(
+                fnmatch.fnmatchcase(filename, pattern)
+                for pattern in ("requirements*.txt", "constraints*.txt")
+            ):
+                category = "requirements"
+            elif any(
+                fnmatch.fnmatchcase(filename, pattern)
+                for pattern in manifest_patterns[3:]
+            ):
+                category = "auxiliary"
+            else:
+                continue
+            if len(manifest_candidates[category]) < MAX_DEPENDENCY_MANIFEST_FILES:
+                manifest_candidates[category].append(Path(current) / filename)
+
+    def discovered_manifests(patterns: tuple[str, ...]) -> list[Path]:
+        return [
+            path
+            for candidates in manifest_candidates.values()
+            for path in candidates
+            if any(fnmatch.fnmatchcase(path.name, pattern) for pattern in patterns)
+        ]
+
+    for pyproject in discovered_manifests(("pyproject.toml",)):
         loaded = record_file(pyproject)
         try:
             if loaded is None:
@@ -1598,7 +1706,7 @@ def _dependency_inventory(
             ):
                 raise TypeError
             for value in project_dependencies:
-                claims.append((value, "pyproject.toml:project.dependencies"))
+                claims.append((value, f"{relative}:project.dependencies"))
             optional = project.get("optional-dependencies", {}) or {}
             if not isinstance(optional, dict):
                 raise TypeError
@@ -1610,7 +1718,10 @@ def _dependency_inventory(
                     raise TypeError
                 for value in group_values:
                     claims.append(
-                        (value, f"pyproject.toml:project.optional-dependencies.{group}")
+                        (
+                            value,
+                            f"{relative}:project.optional-dependencies.{group}",
+                        )
                     )
             tool = payload.get("tool", {}) or {}
             if not isinstance(tool, dict):
@@ -1626,34 +1737,40 @@ def _dependency_inventory(
                     continue
                 specification = f"{name}{constraint}" if isinstance(constraint, str) else name
                 claims.append(
-                    (specification, "pyproject.toml:tool.poetry.dependencies")
+                    (specification, f"{relative}:tool.poetry.dependencies")
                 )
             for specification, source in claims:
                 record(specification, source)
         except UnicodeDecodeError:
-            warn("pyproject.toml", "Dependency manifest is not valid UTF-8 TOML")
+            warn(
+                display_path(pyproject),
+                "Dependency manifest is not valid UTF-8 TOML",
+            )
         except (tomllib.TOMLDecodeError, TypeError):
-            warn("pyproject.toml", "Dependency manifest is not valid supported TOML")
+            warn(
+                display_path(pyproject),
+                "Dependency manifest is not valid supported TOML",
+            )
         except ValueError:
             pass
-    requirement_files = sorted(
-        {path for pattern in ("requirements*.txt", "constraints*.txt") for path in root.glob(pattern)}
+    requirement_files = discovered_manifests(
+        ("requirements*.txt", "constraints*.txt")
     )
     seen_requirements: set[Path] = set()
     for requirements in requirement_files:
         read_requirements(requirements, seen_requirements)
-    for filename in (
-        "Pipfile",
-        "Pipfile.lock",
-        "poetry.lock",
-        "pdm.lock",
-        "pylock.toml",
-        "setup.cfg",
-        "uv.lock",
+    for candidate in discovered_manifests(
+        (
+            "Pipfile",
+            "Pipfile.lock",
+            "poetry.lock",
+            "pdm.lock",
+            "pylock.toml",
+            "setup.cfg",
+            "uv.lock",
+        )
     ):
-        candidate = root / filename
-        if candidate.exists() or candidate.is_symlink():
-            record_file(candidate)
+        record_file(candidate)
     return sorted(dependencies.values(), key=lambda value: (value["name"].lower(), value["source"]))
 
 
@@ -3067,6 +3184,7 @@ def _screening(
         "hardware_interface": 3,
         "state_mutation": 1,
         "internal_interface": 1,
+        "module_initialization": 1,
     }
     for signal in sorted(facts.signals):
         weight = weights.get(signal, 0)
@@ -3625,6 +3743,7 @@ def _component_dict(
         "symbol_type_sources": copy.deepcopy(facts.symbol_type_sources),
         "frameworks": sorted(facts.frameworks),
         "entrypoint_types": sorted(facts.entrypoint_types),
+        "interface_endpoints": copy.deepcopy(facts.interface_endpoints),
         "fan_in": fan_in,
         "called_by": called_by,
         "upstream_paths": upstream_paths,
@@ -4243,6 +4362,9 @@ def scan_repository(
         },
         "system_context": build_system_context(config),
         "repository_inventory": repository_inventory,
+        "interface_reconciliation": reconcile_cross_stack_interfaces(
+            components, repository_inventory
+        ),
         "methodology": {
             "name": "Software Failure Modes and Effects Analysis (SFMEA)",
             "basis": selected_sources_from_bundle(guidance),
@@ -4282,4 +4404,13 @@ def scan_repository(
             (time.perf_counter_ns() - scan_started_ns) / 1_000_000_000,
             6,
         )
+        telemetry["authority"] = (
+            "derived_performance_observation_not_primary_assurance_evidence"
+        )
+        telemetry["fresh_downstream_analysis"] = True
+        analysis["project"]["settings"]["scan_telemetry"] = copy.deepcopy(
+            telemetry
+        )
+        # Bind the final observed execution provenance rather than the pre-telemetry settings.
+        analysis["run_manifest"] = create_run_manifest(analysis)
     return analysis

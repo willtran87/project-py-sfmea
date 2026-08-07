@@ -48,6 +48,9 @@ class PerformanceBenchmarkTests(unittest.TestCase):
             self.assertEqual(
                 set(evidence["runs"][0]["phases_seconds"]), set(phase_medians)
             )
+            self.assertTrue(
+                evidence["runs"][0]["fact_cache"]["enabled"] is False
+            )
             self.assertIsInstance(evidence["repository"]["inventory_bytes"], int)
             self.assertGreater(evidence["repository"]["inventory_bytes"], 0)
             self.assertGreater(evidence["repository"]["source_snapshot_bytes"], 0)

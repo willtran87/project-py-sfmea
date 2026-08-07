@@ -58,6 +58,7 @@ _STRING_DICT_FIELDS = {"symbol_types", "symbol_type_sources"}
 _DICT_LIST_FIELDS = {
     "call_sites",
     "external_call_candidates",
+    "interface_endpoints",
     "detected_controls",
 }
 _FACT_FIELDS = {value.name for value in fields(FunctionFacts)}

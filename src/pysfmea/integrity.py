@@ -9,7 +9,10 @@ from typing import Any
 from .model import stable_id
 
 MAX_GOVERNED_JSON_DEPTH = 100
-MAX_GOVERNED_JSON_NODES = 2_000_000
+# The byte boundary remains the primary memory guard. Three million JSON nodes
+# accommodates medium monorepos whose per-finding assurance contracts legitimately
+# exceed the original two-million-node ceiling while retaining a deterministic cap.
+MAX_GOVERNED_JSON_NODES = 3_000_000
 
 
 def canonical_json_sha256(value: Any) -> str:

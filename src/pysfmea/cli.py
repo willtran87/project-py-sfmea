@@ -26,6 +26,7 @@ from .assurance import (
     verify_pytest_scaffold,
 )
 from .config import load_config, write_config_template
+from .diagnostics import analysis_diagnostics
 from .diagrams import (
     DEFAULT_PROPAGATION_DEPTH,
     DEFAULT_PROPAGATION_PATH_LIMIT,
@@ -453,6 +454,21 @@ def _parser() -> argparse.ArgumentParser:
         help="exit nonzero unless every handoff gate is satisfied",
     )
     status.set_defaults(handler=_status)
+
+    diagnostics = subparsers.add_parser(
+        "diagnostics",
+        help="explain accounting, review-load, coverage, and evidence improvement priorities",
+    )
+    diagnostics.add_argument("analysis", help="analysis JSON path")
+    diagnostics.add_argument(
+        "--json", action="store_true", help="emit the complete machine-readable diagnostic"
+    )
+    diagnostics.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit nonzero when adapter contribution accounting is inconsistent",
+    )
+    diagnostics.set_defaults(handler=_diagnostics)
 
     scan = subparsers.add_parser("scan", help="scan a Python repository")
     scan.add_argument("repository", help="path to the Python repository")
@@ -1507,6 +1523,42 @@ def _doctor(args: argparse.Namespace) -> int:
     return int(not result["ready"])
 
 
+def _diagnostics(args: argparse.Namespace) -> int:
+    result = analysis_diagnostics(load_analysis(args.analysis))
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        accounting = result["accounting"]
+        workload = result["workload"]
+        evidence = result["evidence"]
+        print(
+            "Diagnostics: "
+            f"accounting={'valid' if accounting['valid'] else 'INVALID'}, "
+            f"components={workload['components']}, "
+            f"findings={workload['active_findings']}, "
+            f"families={workload['review_families']}, "
+            f"unreviewed={workload['unreviewed']}"
+        )
+        coverage = result.get("coverage", {})
+        semantic = coverage.get("semantic", {})
+        web = coverage.get("web_boundary", {})
+        print(
+            "Coverage: "
+            f"semantic={semantic.get('percent', 0)}%, "
+            f"web-boundary={web.get('percent', 0)}%, "
+            f"tests={evidence['test_reference_coverage_percent']}%, "
+            f"executed-coverage={evidence['coverage_evidence_percent']}%, "
+            f"mappings={evidence['mapping_coverage_percent']}%"
+        )
+        for value in result["recommended_actions"]:
+            print(
+                f"[{value['priority']}] {value['id']}: {value['reason']}\n"
+                f"  Next: {value['command']}"
+            )
+        print(result["notice"])
+    return int(args.strict and not result["accounting"]["valid"])
+
+
 def _status(args: argparse.Namespace) -> int:
     result = workflow_status(
         args.repository,
@@ -2511,9 +2563,20 @@ def _queue(args: argparse.Namespace) -> int:
             if item.get("family_size", 1) > 1
             else ""
         )
+        cluster = (
+            f" | cluster={item['review_cluster_size']}"
+            if item.get("review_cluster_size", 1) > 1
+            else ""
+        )
+        diversity = (
+            f" | round={item['diversity_round']}"
+            if item.get("diversity_round")
+            else ""
+        )
         print(
             f"{item['id']} | {item['screening_priority']} | {item['source_change']} | "
-            f"errors={item['errors']}{family} | {item['component']} | "
+            f"errors={item['errors']}{family}{cluster}{diversity} | "
+            f"{item['component']} | "
             f"{item['failure_mode']}"
         )
     if not queue:

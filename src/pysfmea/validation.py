@@ -1484,6 +1484,8 @@ def review_queue(
                 "rule_id": item.get("scanner", {}).get("rule_id", ""),
                 "failure_mode": review.get("failure_mode")
                 or item.get("scanner", {}).get("failure_mode", ""),
+                "path": item.get("source", {}).get("path", ""),
+                "line": item.get("source", {}).get("line", 0) or 0,
                 "source_change": item.get("source_change", ""),
                 "screening_priority": item.get("scanner", {}).get(
                     "screening_priority", ""
@@ -1531,6 +1533,27 @@ def review_queue(
             ]
             candidates.append(representative)
         candidates.sort(key=lambda value: value["_rank"])
+    similarity_clusters: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        similarity_clusters.setdefault(
+            (str(candidate["path"]), str(candidate["failure_class"])), []
+        ).append(candidate)
+    for (path, failure_class), cluster in similarity_clusters.items():
+        cluster_id = "REVIEW-CLUSTER-" + _digest([path, failure_class])[:12].upper()
+        cluster_finding_ids = sorted(
+            {
+                str(finding_id)
+                for value in cluster
+                for finding_id in value.get("family_finding_ids", [value["id"]])
+            }
+        )
+        for candidate in cluster:
+            candidate["review_cluster_id"] = cluster_id
+            candidate["review_cluster_size"] = len(cluster_finding_ids)
+            candidate["review_cluster_finding_ids"] = cluster_finding_ids[:100]
+            candidate["review_cluster_finding_ids_omitted"] = max(
+                0, len(cluster_finding_ids) - 100
+            )
     if max_per_component is not None:
         selected: list[dict[str, Any]] = []
         component_counts: Counter[str] = Counter()
@@ -1547,6 +1570,40 @@ def review_queue(
             if not protected:
                 component_counts[component_id] += 1
         candidates = selected
+    diversified: list[dict[str, Any]] = []
+    tiers: dict[tuple[Any, ...], dict[str, list[dict[str, Any]]]] = {}
+    for candidate in candidates:
+        tier = tuple(candidate["_rank"][:4])
+        tiers.setdefault(tier, {}).setdefault(candidate["component_id"], []).append(
+            candidate
+        )
+    for tier in sorted(tiers):
+        component_buckets = tiers[tier]
+        component_order = sorted(
+            component_buckets,
+            key=lambda component_id: component_buckets[component_id][0]["_rank"],
+        )
+        max_rounds = max(len(values) for values in component_buckets.values())
+        for round_index in range(max_rounds):
+            for component_id in component_order:
+                bucket = component_buckets[component_id]
+                if round_index >= len(bucket):
+                    continue
+                candidate = bucket[round_index]
+                candidate["diversity_round"] = round_index + 1
+                reasons = [f"priority:{candidate['screening_priority']}"]
+                if candidate["revalidation_required"]:
+                    reasons.insert(0, "revalidation_required")
+                if candidate["errors"]:
+                    reasons.insert(0, "validation_error")
+                if candidate["hazard_linked"]:
+                    reasons.insert(0, "hazard_linked")
+                if candidate["screening_priority"] == "manual":
+                    reasons.insert(0, "manual_priority")
+                reasons.append(f"component_diversity_round:{round_index + 1}")
+                candidate["selection_reasons"] = reasons
+                diversified.append(candidate)
+    candidates = diversified
     for value in candidates:
         value.pop("_rank", None)
         value.pop("_family_key", None)

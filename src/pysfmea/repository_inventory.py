@@ -42,6 +42,8 @@ RECONCILED_SUMMARY_FIELDS = (
     "by_status",
     "by_kind",
     "by_snapshot_source",
+    "coverage_dimensions",
+    "language_boundaries",
     "opaque_or_unresolved",
 )
 
@@ -52,6 +54,7 @@ def summarize_repository_inventory(
     """Derive the complete repository-inventory summary from governed records."""
 
     status_counts = Counter(value["status"] for value in entries)
+    entry_status_counts = status_counts.copy()
     status_counts.update(value["status"] for value in regions)
     kind_counts = Counter(value["kind"] for value in entries)
     snapshot_counts = Counter(value["snapshot_source"] for value in entries)
@@ -60,6 +63,22 @@ def summarize_repository_inventory(
         for value in entries
         if isinstance(value.get("boundary_facts"), dict)
     ]
+    python_entries = [value for value in entries if value.get("kind") == "python_source"]
+    web_entries = [
+        value
+        for value in entries
+        if value.get("kind") in {"javascript_source", "typescript_source"}
+    ]
+    analyzed_files = status_counts.get("analyzed", 0)
+    indexed_files = status_counts.get("indexed", 0)
+    excluded_files = sum(
+        value.get("status") == "excluded_region" for value in entries
+    )
+    accounted_files = analyzed_files + indexed_files + excluded_files
+
+    def percentage(numerator: int, denominator: int) -> float:
+        return round(100 * numerator / denominator, 1) if denominator else 100.0
+
     return {
         "files": len(entries),
         "regions": len(regions),
@@ -67,10 +86,48 @@ def summarize_repository_inventory(
         "by_kind": dict(sorted(kind_counts.items())),
         "by_snapshot_source": dict(sorted(snapshot_counts.items())),
         "semantic_coverage_percent": round(
-            100 * status_counts.get("analyzed", 0) / len(entries), 1
+            100 * analyzed_files / len(entries), 1
         )
         if entries
         else 100.0,
+        "coverage_dimensions": {
+            "repository_files": len(entries),
+            "semantic": {
+                "files": analyzed_files,
+                "percent": percentage(analyzed_files, len(entries)),
+            },
+            "indexed": {
+                "files": indexed_files,
+                "percent": percentage(indexed_files, len(entries)),
+            },
+            "accounted": {
+                "files": accounted_files,
+                "percent": percentage(accounted_files, len(entries)),
+            },
+            "python_semantic": {
+                "files": sum(value.get("status") == "analyzed" for value in python_entries),
+                "eligible_files": len(python_entries),
+                "percent": percentage(
+                    sum(value.get("status") == "analyzed" for value in python_entries),
+                    len(python_entries),
+                ),
+            },
+            "web_boundary": {
+                "files": sum(value.get("status") == "indexed" for value in web_entries),
+                "eligible_files": len(web_entries),
+                "percent": percentage(
+                    sum(value.get("status") == "indexed" for value in web_entries),
+                    len(web_entries),
+                ),
+                "analysis_depth": "bounded_lexical_boundary_index",
+            },
+            "excluded_files": excluded_files,
+            "opaque_or_unresolved_files": entry_status_counts.get("opaque", 0)
+            + entry_status_counts.get("unresolved", 0),
+            "unresolved_regions": sum(
+                value.get("status") == "unresolved" for value in regions
+            ),
+        },
         "opaque_or_unresolved": status_counts.get("opaque", 0)
         + status_counts.get("unresolved", 0),
         "language_boundaries": {
@@ -212,6 +269,33 @@ def legacy_repository_inventory(reason: str) -> dict[str, Any]:
             "by_kind": {},
             "by_snapshot_source": {},
             "semantic_coverage_percent": None,
+            "coverage_dimensions": {
+                "repository_files": 0,
+                "semantic": {"files": 0, "percent": 100.0},
+                "indexed": {"files": 0, "percent": 100.0},
+                "accounted": {"files": 0, "percent": 100.0},
+                "python_semantic": {
+                    "files": 0,
+                    "eligible_files": 0,
+                    "percent": 100.0,
+                },
+                "web_boundary": {
+                    "files": 0,
+                    "eligible_files": 0,
+                    "percent": 100.0,
+                    "analysis_depth": "bounded_lexical_boundary_index",
+                },
+                "excluded_files": 0,
+                "opaque_or_unresolved_files": 0,
+                "unresolved_regions": 1,
+            },
+            "language_boundaries": {
+                "files": 0,
+                "imports": 0,
+                "exports": 0,
+                "literal_endpoints": 0,
+                "external_packages": 0,
+            },
             "opaque_or_unresolved": 1,
         },
         "inventory_sha256": digest,
@@ -324,14 +408,48 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
         MAX_LANGUAGE_BOUNDARY_EXPORTS,
     )
     literal_argument = r"(?:'([^'\r\n]+)'|\"([^\"\r\n]+)\"|`([^`\r\n]+)`)"
-    endpoint_values: list[str] = []
+    endpoint_candidates: list[dict[str, str]] = []
+    endpoint_candidate_keys: set[tuple[str, str, str]] = set()
+    endpoint_candidates_truncated = False
+
+    def add_endpoint(literal: str, method: str, operation: str) -> None:
+        nonlocal endpoint_candidates_truncated
+        key = (literal, method, operation)
+        if key in endpoint_candidate_keys:
+            return
+        if len(endpoint_candidates) >= MAX_LANGUAGE_BOUNDARY_ENDPOINTS:
+            endpoint_candidates_truncated = True
+            return
+        endpoint_candidate_keys.add(key)
+        endpoint_candidates.append(
+            {
+                "literal": literal,
+                "method": method,
+                "operation": operation,
+                "confidence": "lexical_literal",
+            }
+        )
+
     for match in re.finditer(
-        rf"(?:\bfetch|\baxios\.(?:get|post|put|patch|delete)|new\s+(?:WebSocket|EventSource))\s*\(\s*{literal_argument}",
+        rf"(?P<operation>\bfetch|\baxios\.(?:get|post|put|patch|delete)|new\s+(?:WebSocket|EventSource))\s*\(\s*{literal_argument}",
         source,
     ):
-        endpoint_values.append(next(value for value in match.groups() if value is not None))
+        operation = match.group("operation")
+        value = next(value for value in match.groups()[1:] if value is not None)
+        leaf = operation.casefold().rsplit(".", 1)[-1]
+        method = leaf.upper() if operation.casefold().startswith("axios.") else "UNKNOWN"
+        if "websocket" in operation.casefold():
+            method = "WEBSOCKET"
+        elif "eventsource" in operation.casefold():
+            method = "EVENTSOURCE"
+        add_endpoint(value, method, operation)
     for match in re.finditer(rf"\bbaseURL\s*:\s*{literal_argument}", source):
-        endpoint_values.append(next(value for value in match.groups() if value is not None))
+        add_endpoint(
+            next(value for value in match.groups() if value is not None),
+            "BASE",
+            "baseURL",
+        )
+    endpoint_values = [value["literal"] for value in endpoint_candidates]
     endpoints, endpoints_truncated = _bounded_unique(
         endpoint_values,
         MAX_LANGUAGE_BOUNDARY_ENDPOINTS,
@@ -351,8 +469,19 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
         "external_packages": external_packages,
         "exports": exports,
         "endpoint_literals": endpoints,
+        "endpoint_candidates": sorted(
+            [
+                value
+                for value in endpoint_candidates
+                if value["literal"] in endpoints
+            ],
+            key=lambda value: (value["literal"], value["method"], value["operation"]),
+        ),
         "truncated": (
-            imports_truncated or exports_truncated or endpoints_truncated
+            imports_truncated
+            or exports_truncated
+            or endpoints_truncated
+            or endpoint_candidates_truncated
         ),
         "notice": (
             "Lexical boundary extraction does not resolve types, generated clients, dynamic "
@@ -621,6 +750,42 @@ def build_repository_inventory(
                     analysis_depth="tokenization_or_parse_failed",
                     reason="Python source was selected but could not be parsed.",
                     adapter_ids=["python.repository_discoverer", "python.ast_parser"],
+                )
+            elif snapshot_source == "dependency_manifest_snapshot":
+                record.update(
+                    status="indexed",
+                    analysis_depth="dependency_manifest_index",
+                    reason=(
+                        "Dependency declarations and exact manifest identity were indexed by "
+                        "the bounded dependency adapter."
+                    ),
+                    adapter_ids=[
+                        "python.repository_discoverer",
+                        "python.dependency_inventory",
+                    ],
+                )
+            elif snapshot_source == "interface_contract_snapshot":
+                record.update(
+                    status="indexed",
+                    analysis_depth="interface_contract_index",
+                    reason=(
+                        "Interface operations and data types were indexed from an exact bounded "
+                        "contract snapshot."
+                    ),
+                    adapter_ids=[
+                        "python.repository_discoverer",
+                        "contracts.local_schema",
+                    ],
+                )
+            elif snapshot_source == "coverage_evidence_snapshot":
+                record.update(
+                    status="indexed",
+                    analysis_depth="coverage_evidence_index",
+                    reason="Coverage evidence was indexed and bound to the scan manifest.",
+                    adapter_ids=[
+                        "python.repository_discoverer",
+                        "coverage.py_json",
+                    ],
                 )
             elif kind in {
                 "binary_or_generated",

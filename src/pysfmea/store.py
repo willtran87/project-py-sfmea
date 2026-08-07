@@ -42,6 +42,7 @@ from .version import __version__
 MAX_ANALYSIS_BYTES = 100_000_000
 MAX_ANALYSIS_JSON_DEPTH = MAX_GOVERNED_JSON_DEPTH
 MAX_ANALYSIS_JSON_NODES = MAX_GOVERNED_JSON_NODES
+ANALYSIS_GZIP_COMPRESSION_LEVEL = 6
 
 EDITABLE_REVIEW_FIELDS = {
     "disposition",
@@ -766,7 +767,7 @@ def save_analysis(
                 gzip_stream = gzip.GzipFile(
                     filename="",
                     mode="wb",
-                    compresslevel=9,
+                    compresslevel=ANALYSIS_GZIP_COMPRESSION_LEVEL,
                     fileobj=handle,
                     mtime=0,
                 )

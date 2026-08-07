@@ -144,6 +144,13 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(first["components"], second["components"])
         self.assertEqual(cold_telemetry["fact_cache"]["hits"], 0)
         self.assertGreater(warm_telemetry["fact_cache"]["hits"], 0)
+        persisted_telemetry = first["project"]["settings"]["scan_telemetry"]
+        self.assertEqual(persisted_telemetry, cold_telemetry)
+        self.assertTrue(persisted_telemetry["fresh_downstream_analysis"])
+        self.assertEqual(
+            persisted_telemetry["authority"],
+            "derived_performance_observation_not_primary_assurance_evidence",
+        )
 
         (self.root / "app.py").write_text(
             SAMPLE_SOURCE + "\ndef newly_added():\n    return 2\n",
@@ -469,6 +476,10 @@ class ScannerTests(unittest.TestCase):
                 "external_packages": 1,
             },
         )
+        dimensions = inventory["summary"]["coverage_dimensions"]
+        self.assertEqual(dimensions["python_semantic"]["percent"], 50.0)
+        self.assertEqual(dimensions["web_boundary"]["percent"], 100.0)
+        self.assertGreater(dimensions["accounted"]["percent"], 0)
         self.assertEqual(
             inventory["summary"]["by_snapshot_source"]["analysis_source_snapshot"],
             2,
@@ -503,6 +514,52 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertEqual(failure_run["status"], "completed")
         self.assertEqual(failure_run["contribution_count"], len(analysis["items"]))
+        language_run = next(
+            run
+            for run in ledger["runs"]
+            if run["adapter_id"] == "web.language_boundary_indexer"
+        )
+        self.assertEqual(language_run["status"], "completed")
+        self.assertEqual(language_run["contribution_entity_ids"], ["frontend.tsx"])
+
+    def test_scan_reconciles_python_routes_with_web_endpoint_literals(self) -> None:
+        (self.root / "routes.py").write_text(
+            "from fastapi import APIRouter\n"
+            "router = APIRouter()\n\n"
+            "@router.get('/api/widgets/{widget_id}')\n"
+            "def widget(widget_id: str):\n"
+            "    return {'id': widget_id}\n",
+            encoding="utf-8",
+        )
+        (self.root / "client.ts").write_text(
+            "export const load = (id: string) => "
+            "axios.get(`/api/widgets/${id}`);\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+
+        component = next(
+            value for value in analysis["components"] if value["qualname"] == "widget"
+        )
+        self.assertEqual(
+            component["interface_endpoints"][0],
+            {
+                "kind": "http_route",
+                "path": "/api/widgets/{widget_id}",
+                "methods": ["GET"],
+                "declaration": "router.get",
+                "confidence": "static_literal",
+            },
+        )
+        reconciliation = analysis["interface_reconciliation"]
+        self.assertEqual(reconciliation["summary"]["server_routes"], 1)
+        self.assertEqual(reconciliation["summary"]["client_endpoint_candidates"], 1)
+        self.assertEqual(reconciliation["summary"]["exact_matches"], 1)
+        self.assertEqual(
+            reconciliation["matches"][0]["normalized_path"],
+            "/api/widgets/{parameter}",
+        )
 
     def test_organizational_guidance_pack_is_hashed_and_traced_to_findings(
         self,
@@ -826,6 +883,61 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertEqual(updated["source_change"], "changed")
         self.assertTrue(updated["review"]["revalidation_required"])
+
+    def test_nested_project_dependency_manifests_are_parsed_and_reconciled(self) -> None:
+        backend = self.root / "backend"
+        backend.mkdir()
+        (backend / "pyproject.toml").write_text(
+            "[project]\nname='nested-service'\ndependencies=['fastapi>=0.100']\n",
+            encoding="utf-8",
+        )
+        (backend / "requirements-dev.txt").write_text(
+            "pytest>=8\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        dependencies = analysis["context"]["dependencies"]
+        self.assertTrue(
+            {"fastapi", "pytest"}
+            <= {
+                value["name"]
+                for value in dependencies
+                if not value["name"].startswith("manifest:")
+            }
+        )
+        self.assertTrue(
+            all(
+                value["source"].startswith("backend/")
+                for value in dependencies
+            )
+        )
+        dependency_run = next(
+            value
+            for value in analysis["adapter_runs"]["runs"]
+            if value["adapter_id"] == "python.dependency_inventory"
+        )
+        self.assertEqual(dependency_run["status"], "completed")
+        self.assertGreaterEqual(dependency_run["contribution_count"], len(dependencies))
+        self.assertTrue(
+            all(
+                any(
+                    entity.endswith(
+                        ":" + value["name"]
+                    )
+                    for entity in dependency_run["contribution_entity_ids"]
+                )
+                for value in dependencies
+            )
+        )
+        inventory_by_path = {
+            value["path"]: value
+            for value in analysis["repository_inventory"]["entries"]
+        }
+        self.assertEqual(
+            inventory_by_path["backend/pyproject.toml"]["analysis_depth"],
+            "dependency_manifest_index",
+        )
 
     def test_dependency_and_contract_snapshots_are_reused_by_inventory(self) -> None:
         evidence_root = self.root / "supporting-evidence-snapshots"
@@ -1878,6 +1990,10 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("<module initialization>", components)
         self.assertIn("Controller.__init__", components)
         self.assertIn("configuration", components["<module initialization>"]["signals"])
+        self.assertIn(
+            "module_initialization", components["<module initialization>"]["signals"]
+        )
+        self.assertNotIn("entrypoint", components["<module initialization>"]["signals"])
 
     def test_declarative_data_models_are_analysis_components(self) -> None:
         (self.root / "models.py").write_text(

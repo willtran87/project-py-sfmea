@@ -149,6 +149,12 @@ def build_adapter_run_ledger(analysis: dict[str, Any]) -> dict[str, Any]:
             for value in inventory.get("entries", [])
             if value.get("status") == "analyzed"
         ],
+        "web.language_boundary_indexer": [
+            value.get("path", "")
+            for value in inventory.get("entries", [])
+            if "web.language_boundary_indexer" in value.get("adapter_ids", [])
+            and isinstance(value.get("boundary_facts"), dict)
+        ],
         "python.call_graph": [
             value.get("id", "")
             for value in analysis.get("components", [])
@@ -163,6 +169,29 @@ def build_adapter_run_ledger(analysis: dict[str, Any]) -> dict[str, Any]:
         ],
         "hazard.sfta": [
             value.get("id", "") for value in analysis.get("sfta", {}).get("trees", [])
+        ],
+        "python.dependency_inventory": [
+            "dependency:"
+            + str(value.get("source", ""))
+            + ":"
+            + str(value.get("name", ""))
+            for value in analysis.get("context", {}).get("dependencies", [])
+            if isinstance(value, dict) and value.get("name")
+        ],
+        "contracts.local_schema": [
+            str(value.get("id") or value.get("path") or value.get("source") or "")
+            for value in analysis.get("context", {}).get("contracts", [])
+            if isinstance(value, dict)
+        ],
+        "coverage.py_json": [
+            str(value.get("id", ""))
+            for value in analysis.get("components", [])
+            if isinstance(value.get("coverage"), dict)
+        ],
+        "runtime.json_trace": [
+            str(value.get("id", ""))
+            for value in analysis.get("runtime_evidence", {}).get("imports", [])
+            if isinstance(value, dict)
         ],
     }
     for adapter_id, entity_ids in static_runs.items():

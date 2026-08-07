@@ -197,12 +197,17 @@ derived performance artifact rather than source evidence. Use `--no-cache` for a
 the run manifest. Invalid or incompatible cache content is discarded and recorded as a warning.
 
 For large analyses, choose an output ending in `.json.gz`. Loading is transparent, publication is
-deterministic and atomic, and decompression is bounded by the same 100 MB governed-analysis limit:
+deterministic and atomic, uses a balanced level-6 compression profile to avoid making publication
+the dominant scan phase, and decompression is bounded by the same 100 MB governed-analysis limit:
 
 ```powershell
 sfmea scan C:\path\to\python-repo -o .artifacts\sfmea-analysis.json.gz
 sfmea validate .artifacts\sfmea-analysis.json.gz
 ```
+
+Governed analysis ingestion is additionally bounded to 100 levels and 3,000,000 JSON nodes. The
+node ceiling is sized for medium monorepos with per-finding assurance contracts; exceeding either
+the byte or structural limit fails before publication rather than producing a partial analysis.
 
 Project configuration is consumed as an identity-revalidated regular non-symbolic-link UTF-8 TOML
 file under a 5 MB byte limit. Relative coverage and organizational guidance paths are normalized against the
@@ -255,6 +260,28 @@ exports, external packages, and literal HTTP/WebSocket/EventSource endpoints. Th
 `indexed`, not presented as full semantic analysis, and retain an explicit dynamic-dispatch and
 generated-client limitation. Project-specific external prefixes, receiver names, and method names
 can extend Python interface candidates through the `[scan]` hint arrays.
+
+Coverage is reported in separate dimensions: all-repository accounting, Python semantic analysis,
+web boundary indexing, exclusions, and opaque/unresolved material. These percentages are not test
+coverage and are never combined into a single implied semantic score. Literal FastAPI/Flask-style
+route decorators are also normalized against indexed JavaScript/TypeScript client endpoints. Exact
+static matches, base configurations, dynamic candidates, and unmatched records are retained under
+`interface_reconciliation`; they are discovery evidence, not proof of deployed connectivity.
+
+After every scan, generate an actionable health assessment:
+
+```powershell
+sfmea diagnostics .artifacts\sfmea-analysis.json.gz
+sfmea diagnostics .artifacts\sfmea-analysis.json.gz --json `
+  | Out-File -Encoding utf8 .artifacts\sfmea-diagnostics.json
+sfmea diagnostics .artifacts\sfmea-analysis.json.gz --strict
+```
+
+Diagnostics reconcile adapter contribution IDs to governed inventory records, distinguish eligible
+Python-component test/coverage/mapping rates, summarize review families and hotspots, expose
+cross-stack interface gaps and scan telemetry, and return ordered P0/P1/P2 actions. `--strict`
+fails only for internally inconsistent adapter accounting; missing engineering evidence remains an
+action rather than being mislabeled as a corrupt analysis.
 
 `sfmea status` is the read-only workflow cockpit. It auto-discovers configuration and
 analysis files in the repository root or `.artifacts`, classifies the current lifecycle

@@ -103,6 +103,8 @@ files = [
   "scripts/report_browser_gate.py",
   "src/pysfmea/readiness.py",
   "src/pysfmea/scan_cache.py",
+  "src/pysfmea/diagnostics.py",
+  "src/pysfmea/interface_reconciliation.py",
 ]
 warn_unused_configs = true
 

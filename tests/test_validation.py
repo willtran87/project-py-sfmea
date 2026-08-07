@@ -314,9 +314,37 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(
             all(value["rule_id"] in value["family_rule_ids"] for value in grouped)
         )
+        self.assertTrue(
+            all(value["review_cluster_id"].startswith("REVIEW-CLUSTER-") for value in grouped)
+        )
+        self.assertTrue(all(value["review_cluster_size"] >= 1 for value in grouped))
+        self.assertTrue(all(value["selection_reasons"] for value in grouped))
 
         with self.assertRaisesRegex(ValueError, "minimum_priority"):
             review_queue(self.analysis, minimum_priority="urgent")
+
+    def test_review_queue_diversifies_components_before_repeating_them(self) -> None:
+        (self.root / "many.py").write_text(
+            "def first(value):\n    return value\n\n"
+            "def second(value):\n    return value\n\n"
+            "def third(value):\n    return value\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        for item in analysis["items"]:
+            item["scanner"]["screening_priority"] = "high"
+        component_count = len(analysis["components"])
+        queue = review_queue(
+            analysis,
+            limit=component_count,
+            minimum_priority="high",
+            group_families=False,
+        )
+        self.assertEqual(len(queue), component_count)
+        self.assertEqual(
+            len({value["component_id"] for value in queue}), component_count
+        )
+        self.assertTrue(all(value["diversity_round"] == 1 for value in queue))
 
     def test_review_queue_caps_components_without_hiding_protected_records(self) -> None:
         component_id = self.analysis["items"][0]["component_id"]

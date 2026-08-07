@@ -103,10 +103,23 @@ $analysis = Join-Path $artifacts "sfmea-analysis.json"
 
 sfmea status . --analysis $analysis
 sfmea summary $analysis
+sfmea diagnostics $analysis
+$diagnostics = Join-Path $artifacts "sfmea-diagnostics.json"
+sfmea diagnostics $analysis --json | Out-File -Encoding utf8 $diagnostics
 sfmea validate $analysis
 sfmea queue $analysis --limit 25
 sfmea review $analysis
 ```
+
+Diagnostics are a prioritized improvement plan: P0 repairs provenance or missing governing
+context; P1 closes test,
+runtime, mapping, assurance-planning, or cross-stack evidence gaps; P2 improves guidance
+specificity. Adapter-accounting errors should trigger a current rescan before review.
+
+The focused queue groups candidates by component/failure class, adds path/failure-class clusters,
+and round-robins components within each risk tier before repeating a component. This keeps a busy
+module or module-initialization component from monopolizing a bounded review batch. Each queued
+record includes the family, cluster, diversity round, and selection reason used to admit it.
 
 The local reviewer is the primary place to confirm or revise functions, failure modes, causes,
 local/next-higher/end effects, controls, ratings, dispositions, owners, actions, and evidence.
@@ -141,6 +154,12 @@ searchable findings, evidence, repository accounting, assurance obligations, arc
 interfaces, propagation, sequences, traceability, circuit-breaker models, and stable record links.
 The canonical diagram bundle is renderer-neutral JSON for other tools; the report renders the same
 general model without a hosted service.
+
+The coverage workspace keeps repository accounting, Python semantic coverage, web-boundary
+coverage, and execution coverage visibly distinct. Its cross-stack section lists unmatched client
+endpoint candidates first and exact Python-route matches second, with source path, normalized path,
+method, and confidence. Router prefixes, proxies, generated clients, and runtime configuration
+remain explicit limitations and require contract or runtime corroboration.
 
 For release candidates, exercise every report view in a real headless browser and retain the
 machine-readable receipt:
