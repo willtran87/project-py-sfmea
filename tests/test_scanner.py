@@ -162,7 +162,9 @@ class ScannerTests(unittest.TestCase):
             fact_cache=fact_cache,
             telemetry=changed_telemetry,
         )
-        self.assertIn("newly_added", {item["qualname"] for item in changed["components"]})
+        self.assertIn(
+            "newly_added", {item["qualname"] for item in changed["components"]}
+        )
         self.assertGreater(changed_telemetry["fact_cache"]["misses"], 0)
 
     def test_project_interface_hints_extend_external_boundary_detection(self) -> None:
@@ -187,8 +189,7 @@ class ScannerTests(unittest.TestCase):
             value for value in analysis["components"] if value["qualname"] == "publish"
         )
         candidates = {
-            value["reference"]: value
-            for value in component["external_call_candidates"]
+            value["reference"]: value for value in component["external_call_candidates"]
         }
         self.assertEqual(candidates["proprietary_sdk.gateway"]["confidence"], "high")
         self.assertEqual(candidates["client.transmit_record"]["confidence"], "medium")
@@ -532,8 +533,7 @@ class ScannerTests(unittest.TestCase):
             encoding="utf-8",
         )
         (self.root / "client.ts").write_text(
-            "export const load = (id: string) => "
-            "axios.get(`/api/widgets/${id}`);\n",
+            "export const load = (id: string) => axios.get(`/api/widgets/${id}`);\n",
             encoding="utf-8",
         )
 
@@ -559,6 +559,115 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(
             reconciliation["matches"][0]["normalized_path"],
             "/api/widgets/{parameter}",
+        )
+
+    def test_evidence_include_globs_do_not_expand_semantic_component_scope(
+        self,
+    ) -> None:
+        (self.root / "routes.py").write_text(
+            "from fastapi import APIRouter\n"
+            "router = APIRouter()\n\n"
+            "@router.get('/api/widgets')\n"
+            "def widgets():\n"
+            "    return []\n",
+            encoding="utf-8",
+        )
+        tests_root = self.root / "backend" / "tests"
+        tests_root.mkdir(parents=True)
+        (tests_root / "test_routes.py").write_text(
+            "from routes import widgets\n\n"
+            "def test_widgets():\n"
+            "    assert widgets() == []\n",
+            encoding="utf-8",
+        )
+        frontend = self.root / "frontend" / "src"
+        frontend.mkdir(parents=True)
+        (frontend / "client.ts").write_text(
+            "export const load = () => fetch('/api/widgets');\n",
+            encoding="utf-8",
+        )
+        vendor = self.root / "frontend" / "node_modules" / "vendor"
+        vendor.mkdir(parents=True)
+        (vendor / "client.js").write_text(
+            "fetch('/api/vendor-only');\n", encoding="utf-8"
+        )
+
+        analysis = scan_repository(
+            self.root,
+            config={
+                "scan": {
+                    "exclude": ["backend/tests/**", "frontend/**"],
+                    "test_evidence_include": ["backend/tests/**"],
+                    "boundary_evidence_include": ["frontend/**"],
+                }
+            },
+        )
+
+        self.assertFalse(
+            any(
+                value["source"]["path"].startswith(("backend/tests/", "frontend/"))
+                for value in analysis["components"]
+            )
+        )
+        routes = next(
+            value for value in analysis["components"] if value["qualname"] == "widgets"
+        )
+        self.assertEqual(routes["test_references"], ["backend/tests/test_routes.py"])
+        test_analysis = analysis["project"]["settings"]["test_evidence_analysis"]
+        self.assertGreaterEqual(test_analysis["parsed_files"], 1)
+        self.assertGreaterEqual(test_analysis["dimensions"]["assertion"]["files"], 1)
+        self.assertEqual(
+            analysis["interface_reconciliation"]["summary"]["exact_matches"], 1
+        )
+        boundary = next(
+            value
+            for value in analysis["repository_inventory"]["entries"]
+            if value["path"] == "frontend/src/client.ts"
+        )
+        self.assertEqual(boundary["analysis_depth"], "lexical_boundary_index")
+        self.assertIn("remains excluded", boundary["reason"])
+        self.assertFalse(
+            any(
+                value["path"].startswith("frontend/node_modules/")
+                for value in analysis["repository_inventory"]["entries"]
+            )
+        )
+
+    def test_interface_reconciliation_composes_prefixes_and_reports_method_gaps(
+        self,
+    ) -> None:
+        (self.root / "routes.py").write_text(
+            "from fastapi import APIRouter\n"
+            "router = APIRouter(prefix='/api/v2')\n\n"
+            "@router.post('/widgets')\n"
+            "def widgets():\n"
+            "    return {}\n",
+            encoding="utf-8",
+        )
+        (self.root / "client.ts").write_text(
+            "const client = { baseURL: '/api/v2' };\n"
+            "export const load = () => fetch('/widgets', { method: 'GET' });\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        reconciliation = analysis["interface_reconciliation"]
+
+        route = reconciliation["server_routes"][0]
+        self.assertEqual(route["declared_path"], "/widgets")
+        self.assertEqual(route["router_prefix"], "/api/v2")
+        self.assertEqual(route["normalized_path"], "/api/v2/widgets")
+        client = next(
+            value
+            for value in reconciliation["client_endpoints"]
+            if value["classification"] == "endpoint_candidate"
+        )
+        self.assertEqual(client["method"], "GET")
+        self.assertIn("/api/v2/widgets", client["composed_normalized_paths"])
+        self.assertEqual(reconciliation["summary"]["exact_matches"], 0)
+        self.assertEqual(
+            reconciliation["compatibility_findings"][0]["kind"],
+            "method_mismatch_candidate",
         )
 
     def test_organizational_guidance_pack_is_hashed_and_traced_to_findings(
@@ -884,7 +993,9 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(updated["source_change"], "changed")
         self.assertTrue(updated["review"]["revalidation_required"])
 
-    def test_nested_project_dependency_manifests_are_parsed_and_reconciled(self) -> None:
+    def test_nested_project_dependency_manifests_are_parsed_and_reconciled(
+        self,
+    ) -> None:
         backend = self.root / "backend"
         backend.mkdir()
         (backend / "pyproject.toml").write_text(
@@ -907,10 +1018,7 @@ class ScannerTests(unittest.TestCase):
             }
         )
         self.assertTrue(
-            all(
-                value["source"].startswith("backend/")
-                for value in dependencies
-            )
+            all(value["source"].startswith("backend/") for value in dependencies)
         )
         dependency_run = next(
             value
@@ -922,9 +1030,7 @@ class ScannerTests(unittest.TestCase):
         self.assertTrue(
             all(
                 any(
-                    entity.endswith(
-                        ":" + value["name"]
-                    )
+                    entity.endswith(":" + value["name"])
                     for entity in dependency_run["contribution_entity_ids"]
                 )
                 for value in dependencies
@@ -1711,7 +1817,7 @@ class ScannerTests(unittest.TestCase):
             for run in analysis["adapter_runs"]["runs"]
             if run["adapter_id"] == "python.ast_parser"
         )
-        self.assertEqual(parser_run["adapter_version"], "2")
+        self.assertEqual(parser_run["adapter_version"], "3")
         inventory_entries = {
             entry["path"]: entry
             for entry in analysis["repository_inventory"]["entries"]
@@ -1939,7 +2045,7 @@ class ScannerTests(unittest.TestCase):
             for run in analysis["adapter_runs"]["runs"]
             if run["adapter_id"] == "python.repository_discoverer"
         )
-        self.assertEqual(discoverer_run["adapter_version"], "6")
+        self.assertEqual(discoverer_run["adapter_version"], "7")
 
         race_root = self.root / "test-evidence-race"
         race_root.mkdir()
@@ -2318,6 +2424,7 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertEqual(coverage_evidence["file_records"], 1)
         self.assertEqual(coverage_evidence["accepted_file_records"], 1)
+        self.assertEqual(coverage_evidence["selection"], "configured")
         self.assertEqual(
             analysis["run_manifest"]["resolved_inputs"]["coverage_json_sha256"],
             coverage_evidence["sha256"],

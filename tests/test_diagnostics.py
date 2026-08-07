@@ -17,7 +17,9 @@ from pysfmea.store import save_analysis
 
 
 class AnalysisDiagnosticsTests(unittest.TestCase):
-    def test_diagnostics_reconcile_adapters_and_prioritize_missing_evidence(self) -> None:
+    def test_diagnostics_reconcile_adapters_and_prioritize_missing_evidence(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "app.py").write_text(
@@ -45,12 +47,16 @@ class AnalysisDiagnosticsTests(unittest.TestCase):
                 )
             )
             self.assertEqual(result["coverage"]["web_boundary"]["percent"], 100.0)
-            self.assertEqual(result["performance"], telemetry)
+            self.assertEqual(result["performance"]["telemetry"], telemetry)
+            self.assertIn("qualification", result)
+            self.assertIn("overall_grade", result["qualification"])
             action_ids = {value["id"] for value in result["recommended_actions"]}
             self.assertIn("govern_system_context", action_ids)
             self.assertIn("import_coverage", action_ids)
             self.assertIn("import_runtime_trace", action_ids)
             self.assertIn("index_test_sources", action_ids)
+            self.assertIn("aggregates", result["validation"])
+            self.assertIn("queue_projection", result["workload"])
 
             language_run = next(
                 value
@@ -61,6 +67,42 @@ class AnalysisDiagnosticsTests(unittest.TestCase):
             tampered = analysis_diagnostics(analysis)
             self.assertFalse(tampered["accounting"]["valid"])
             self.assertEqual(tampered["status"], "invalid_accounting")
+
+    def test_diagnostics_identify_evidence_scope_conflicts_and_warning_budgets(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def run(value):\n    return value\n", encoding="utf-8"
+            )
+            analysis = scan_repository(
+                root,
+                config={
+                    "scan": {
+                        "exclude": ["backend/tests/**", "frontend/**"],
+                        "diagnostic_warning_budget": 1,
+                        "diagnostic_per_rule_budget": 1,
+                    }
+                },
+            )
+
+            result = analysis_diagnostics(analysis)
+
+            conflict_kinds = {
+                value["kind"] for value in result["evidence_scope"]["conflicts"]
+            }
+            self.assertEqual(
+                conflict_kinds,
+                {
+                    "test_evidence_hidden_by_semantic_exclusion",
+                    "web_boundary_hidden_by_semantic_exclusion",
+                },
+            )
+            self.assertTrue(result["validation"]["budgets"]["warning_limit_exceeded"])
+            action_ids = {value["id"] for value in result["recommended_actions"]}
+            self.assertIn("resolve_evidence_scope_conflicts", action_ids)
+            self.assertIn("reduce_diagnostic_repetition", action_ids)
 
     def test_cli_emits_complete_json_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

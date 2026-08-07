@@ -66,14 +66,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "review_depth": "focused",
         "review_queue_max_per_component": 3,
         "review_queue_max_total": 1_000,
+        "diagnostic_warning_budget": 25_000,
+        "diagnostic_per_rule_budget": 10_000,
         "cache_enabled": True,
         "cache_path": ".artifacts/pysfmea-fact-cache.json",
         "external_call_prefixes": [],
         "external_receiver_hints": [],
         "external_method_hints": [],
         "exclude": [],
+        "test_evidence_include": [],
+        "boundary_evidence_include": [],
         "focus": [],
         "coverage_json": "",
+        "coverage_discovery": True,
     },
     "risk": {
         "method": "severity_only",
@@ -150,7 +155,7 @@ RESERVED_SCANNER_RULE_IDS = {
 }
 
 
-CONFIG_TEMPLATE = '''# PySFMEA project configuration
+CONFIG_TEMPLATE = """# PySFMEA project configuration
 # Edit this file before the first governed scan. Blank values are allowed.
 
 [project]
@@ -205,6 +210,9 @@ include_nested = true
 review_depth = "focused" # screening, focused, or exhaustive
 review_queue_max_per_component = 3 # 1-100; protected records remain eligible
 review_queue_max_total = 1000 # 1-50000; CLI --limit may request a smaller projection
+# Diagnostic budgets do not discard findings; they surface unmanageable repetition.
+diagnostic_warning_budget = 25000 # 1-1000000
+diagnostic_per_rule_budget = 10000 # 1-1000000
 # Exact-content derived fact cache; never primary assurance evidence.
 cache_enabled = true
 cache_path = ".artifacts/pysfmea-fact-cache.json"
@@ -213,10 +221,16 @@ external_call_prefixes = []
 external_receiver_hints = []
 external_method_hints = []
 exclude = ["migrations/**", "generated/**"]
+# Evidence-only overrides do not create components. They permit bounded indexing
+# where a semantic exclusion would otherwise hide corroborating evidence.
+test_evidence_include = [] # Example: ["backend/tests/**"]
+boundary_evidence_include = [] # Example: ["frontend/src/**"]
 # When non-empty, only matching path:qualified-name components are analyzed.
 focus = []
 # Optional coverage.py JSON path, relative to this file.
 coverage_json = ""
+# When no path is configured, inspect only coverage.json and .artifacts/coverage.json.
+coverage_discovery = true
 
 [risk]
 method = "severity_only" # severity_only or sod_rpn
@@ -327,7 +341,7 @@ local_effect = "The transaction is recorded or submitted more than once."
 causes = ["Non-idempotent retry", "Duplicate event delivery"]
 actions = ["Use an idempotency key", "Test ambiguous completion and replay"]
 confidence = "project"
-'''
+"""
 
 
 def load_config(path: str | Path | None) -> tuple[dict[str, Any], Path | None]:
@@ -419,7 +433,9 @@ def normalize_config(supplied: dict[str, Any] | None = None) -> dict[str, Any]:
         "guidance_applicability",
     ):
         value = supplied.get(section, [])
-        if not isinstance(value, list) or not all(isinstance(entry, dict) for entry in value):
+        if not isinstance(value, list) or not all(
+            isinstance(entry, dict) for entry in value
+        ):
             raise ValueError(f"[[{section}]] entries must be TOML tables")
         config[section] = value
     _validate_config(config)
@@ -467,14 +483,19 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "review_depth",
             "review_queue_max_per_component",
             "review_queue_max_total",
+            "diagnostic_warning_budget",
+            "diagnostic_per_rule_budget",
             "cache_enabled",
             "cache_path",
             "external_call_prefixes",
             "external_receiver_hints",
             "external_method_hints",
             "exclude",
+            "test_evidence_include",
+            "boundary_evidence_include",
             "focus",
             "coverage_json",
+            "coverage_discovery",
         },
         "risk": {
             "method",
@@ -548,7 +569,9 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
     allowed_sections = set(table_fields) | set(array_fields)
     unknown_sections = set(supplied) - allowed_sections
     if unknown_sections:
-        raise ValueError("unknown configuration section(s): " + ", ".join(sorted(unknown_sections)))
+        raise ValueError(
+            "unknown configuration section(s): " + ", ".join(sorted(unknown_sections))
+        )
     for section, allowed in table_fields.items():
         value = supplied.get(section)
         if isinstance(value, dict):
@@ -580,7 +603,9 @@ def write_config_template(path: str | Path, *, overwrite: bool = False) -> Path:
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise ValueError("configuration destination could not be prepared safely") from exc
+        raise ValueError(
+            "configuration destination could not be prepared safely"
+        ) from exc
     staging: Path | None = None
     try:
         descriptor, staging_name = tempfile.mkstemp(
@@ -597,7 +622,9 @@ def write_config_template(path: str | Path, *, overwrite: bool = False) -> Path:
             raise ValueError("configuration destination must not be a symbolic link")
         if destination.exists():
             if not destination.is_file():
-                raise ValueError("configuration destination must be a regular file path")
+                raise ValueError(
+                    "configuration destination must be a regular file path"
+                )
             if not overwrite:
                 raise ValueError(f"configuration already exists: {destination}")
         os.replace(staging, destination)
@@ -605,7 +632,9 @@ def write_config_template(path: str | Path, *, overwrite: bool = False) -> Path:
     except ValueError:
         raise
     except OSError as exc:
-        raise ValueError("configuration template could not be published safely") from exc
+        raise ValueError(
+            "configuration template could not be published safely"
+        ) from exc
     finally:
         if staging is not None:
             try:
@@ -617,7 +646,14 @@ def write_config_template(path: str | Path, *, overwrite: bool = False) -> Path:
 
 def _validate_config(config: dict[str, Any]) -> None:
     project = config["project"]
-    for field in ("name", "purpose", "mission", "boundary", "operating_context", "criticality"):
+    for field in (
+        "name",
+        "purpose",
+        "mission",
+        "boundary",
+        "operating_context",
+        "criticality",
+    ):
         if not isinstance(project.get(field), str):
             raise ValueError(f"project.{field} must be a string")
     for field in (
@@ -675,7 +711,9 @@ def _validate_config(config: dict[str, Any]) -> None:
                 f"guidance_applicability entry {index} must reference an active profile"
             )
         if profile_id in seen_applicability:
-            raise ValueError(f"guidance applicability profile is duplicated: {profile_id}")
+            raise ValueError(
+                f"guidance applicability profile is duplicated: {profile_id}"
+            )
         seen_applicability.add(profile_id)
         for field in ("rationale", "selected_by"):
             if not isinstance(decision.get(field), str) or not decision[field].strip():
@@ -709,16 +747,21 @@ def _validate_config(config: dict[str, Any]) -> None:
             + ", ".join(sorted(overlap))
         )
     scan = config["scan"]
-    for field in ("include_private", "include_tests", "include_nested"):
+    for field in (
+        "include_private",
+        "include_tests",
+        "include_nested",
+        "coverage_discovery",
+    ):
         if not isinstance(scan.get(field), bool):
             raise ValueError(f"scan.{field} must be true or false")
     if scan.get("review_depth") not in {"screening", "focused", "exhaustive"}:
-        raise ValueError(
-            "scan.review_depth must be screening, focused, or exhaustive"
-        )
+        raise ValueError("scan.review_depth must be screening, focused, or exhaustive")
     for field, maximum in (
         ("review_queue_max_per_component", 100),
         ("review_queue_max_total", 50_000),
+        ("diagnostic_warning_budget", 1_000_000),
+        ("diagnostic_per_rule_budget", 1_000_000),
     ):
         value = scan.get(field)
         if (
@@ -726,7 +769,9 @@ def _validate_config(config: dict[str, Any]) -> None:
             or isinstance(value, bool)
             or not 1 <= value <= maximum
         ):
-            raise ValueError(f"scan.{field} must be an integer from 1 through {maximum}")
+            raise ValueError(
+                f"scan.{field} must be an integer from 1 through {maximum}"
+            )
     if not isinstance(scan.get("cache_enabled"), bool):
         raise ValueError("scan.cache_enabled must be a boolean")
     if not isinstance(scan.get("cache_path"), str):
@@ -744,14 +789,23 @@ def _validate_config(config: dict[str, Any]) -> None:
             or len(value) > 1_000
             or not all(isinstance(item, str) and 0 < len(item) <= 200 for item in value)
         ):
-            raise ValueError(f"scan.{field} must be an array of up to 1000 bounded strings")
+            raise ValueError(
+                f"scan.{field} must be an array of up to 1000 bounded strings"
+            )
     if not isinstance(scan.get("coverage_json"), str):
         raise ValueError("scan.coverage_json must be a string path")
-    for field in ("exclude", "focus"):
+    for field in (
+        "exclude",
+        "test_evidence_include",
+        "boundary_evidence_include",
+        "focus",
+    ):
         if not isinstance(scan.get(field), list) or not all(
-            isinstance(entry, str) for entry in scan[field]
+            isinstance(entry, str) and 0 < len(entry) <= 4_096 for entry in scan[field]
         ):
-            raise ValueError(f"scan.{field} must be an array of glob strings")
+            raise ValueError(
+                f"scan.{field} must be an array of non-empty bounded glob strings"
+            )
     risk = config["risk"]
     if risk.get("method") not in {"severity_only", "sod_rpn"}:
         raise ValueError("risk.method must be 'severity_only' or 'sod_rpn'")
@@ -764,7 +818,9 @@ def _validate_config(config: dict[str, Any]) -> None:
         if not isinstance(risk.get(field), str):
             raise ValueError(f"risk.{field} must be a string")
     categories = risk.get("severity_categories", [])
-    if not isinstance(categories, list) or not all(isinstance(value, str) for value in categories):
+    if not isinstance(categories, list) or not all(
+        isinstance(value, str) for value in categories
+    ):
         raise ValueError("risk.severity_categories must be an array of strings")
     if len(categories) != len(set(categories)):
         raise ValueError("risk.severity_categories must not contain duplicates")
@@ -792,13 +848,21 @@ def _validate_config(config: dict[str, Any]) -> None:
         if not isinstance(quality.get(field), bool):
             raise ValueError(f"quality.{field} must be true or false")
     threshold = quality.get("approval_severity_threshold")
-    if isinstance(threshold, bool) or not isinstance(threshold, int) or not 1 <= threshold <= 10:
-        raise ValueError("quality.approval_severity_threshold must be from 1 through 10")
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, int)
+        or not 1 <= threshold <= 10
+    ):
+        raise ValueError(
+            "quality.approval_severity_threshold must be from 1 through 10"
+        )
     approval_categories = quality.get("approval_severity_categories", [])
     if not isinstance(approval_categories, list) or not all(
         isinstance(value, str) for value in approval_categories
     ):
-        raise ValueError("quality.approval_severity_categories must be an array of strings")
+        raise ValueError(
+            "quality.approval_severity_categories must be an array of strings"
+        )
     unknown_approval_categories = set(approval_categories) - set(categories)
     if unknown_approval_categories:
         raise ValueError(
@@ -806,9 +870,13 @@ def _validate_config(config: dict[str, Any]) -> None:
             + ", ".join(sorted(unknown_approval_categories))
         )
     if quality.get("unreviewed_level") not in {"error", "warning", "information"}:
-        raise ValueError("quality.unreviewed_level must be error, warning, or information")
+        raise ValueError(
+            "quality.unreviewed_level must be error, warning, or information"
+        )
     if quality.get("scan_warning_level") not in {"error", "warning", "information"}:
-        raise ValueError("quality.scan_warning_level must be error, warning, or information")
+        raise ValueError(
+            "quality.scan_warning_level must be error, warning, or information"
+        )
 
     hazard_ids: set[str] = set()
     for hazard in config["hazards"]:
@@ -827,7 +895,9 @@ def _validate_config(config: dict[str, Any]) -> None:
             or not isinstance(severity, int)
             or not 1 <= severity <= 10
         ):
-            raise ValueError(f"hazard {hazard_id} severity must be an integer from 1 through 10")
+            raise ValueError(
+                f"hazard {hazard_id} severity must be an integer from 1 through 10"
+            )
         severity_category = hazard.get("severity_category", "")
         if not isinstance(severity_category, str):
             raise ValueError(f"hazard {hazard_id} severity_category must be a string")
@@ -845,7 +915,9 @@ def _validate_config(config: dict[str, Any]) -> None:
         tree_ids.add(tree_id)
         hazard_id = tree.get("hazard")
         if hazard_id not in hazard_ids:
-            raise ValueError(f"fault tree {tree_id} references unknown hazard: {hazard_id}")
+            raise ValueError(
+                f"fault tree {tree_id} references unknown hazard: {hazard_id}"
+            )
         for field in ("top_event_id", "top_event"):
             if not isinstance(tree.get(field), str) or not tree[field]:
                 raise ValueError(f"fault tree {tree_id} requires {field}")
@@ -855,12 +927,18 @@ def _validate_config(config: dict[str, Any]) -> None:
         if not isinstance(assumptions, list) or not all(
             isinstance(value, str) for value in assumptions
         ):
-            raise ValueError(f"fault tree {tree_id} assumptions must be an array of strings")
+            raise ValueError(
+                f"fault tree {tree_id} assumptions must be an array of strings"
+            )
         gates = tree.get("gates", [])
         events = tree.get("events", [])
-        if not isinstance(gates, list) or not all(isinstance(value, dict) for value in gates):
+        if not isinstance(gates, list) or not all(
+            isinstance(value, dict) for value in gates
+        ):
             raise ValueError(f"fault tree {tree_id} gates must be an array of tables")
-        if not isinstance(events, list) or not all(isinstance(value, dict) for value in events):
+        if not isinstance(events, list) or not all(
+            isinstance(value, dict) for value in events
+        ):
             raise ValueError(f"fault tree {tree_id} events must be an array of tables")
         nodes: dict[str, list[str]] = {}
         for gate in gates:
@@ -875,10 +953,14 @@ def _validate_config(config: dict[str, Any]) -> None:
             if not isinstance(gate_id, str) or not gate_id:
                 raise ValueError(f"fault tree {tree_id} gate requires an id")
             if gate_type not in {"AND", "OR", "VOTE", "INHIBIT"}:
-                raise ValueError(f"fault tree {tree_id} gate {gate_id} has invalid type")
+                raise ValueError(
+                    f"fault tree {tree_id} gate {gate_id} has invalid type"
+                )
             inputs = gate.get("inputs", [])
-            if not isinstance(inputs, list) or len(inputs) < 2 or not all(
-                isinstance(value, str) and value for value in inputs
+            if (
+                not isinstance(inputs, list)
+                or len(inputs) < 2
+                or not all(isinstance(value, str) and value for value in inputs)
             ):
                 raise ValueError(
                     f"fault tree {tree_id} gate {gate_id} requires at least two input ids"
@@ -888,13 +970,26 @@ def _validate_config(config: dict[str, Any]) -> None:
                 or not isinstance(gate.get("k"), int)
                 or not 1 <= gate["k"] <= len(inputs)
             ):
-                raise ValueError(f"fault tree {tree_id} VOTE gate {gate_id} requires valid k")
+                raise ValueError(
+                    f"fault tree {tree_id} VOTE gate {gate_id} requires valid k"
+                )
             if not isinstance(gate.get("description", ""), str):
-                raise ValueError(f"fault tree {tree_id} gate {gate_id} description must be a string")
+                raise ValueError(
+                    f"fault tree {tree_id} gate {gate_id} description must be a string"
+                )
             if gate_id in nodes:
-                raise ValueError(f"fault tree {tree_id} has duplicate node id: {gate_id}")
+                raise ValueError(
+                    f"fault tree {tree_id} has duplicate node id: {gate_id}"
+                )
             nodes[gate_id] = inputs
-        event_types = {"top", "intermediate", "basic", "undeveloped", "external", "conditioning"}
+        event_types = {
+            "top",
+            "intermediate",
+            "basic",
+            "undeveloped",
+            "external",
+            "conditioning",
+        }
         for event in events:
             unknown = set(event) - {
                 "id",
@@ -916,14 +1011,23 @@ def _validate_config(config: dict[str, Any]) -> None:
             if not isinstance(event_id, str) or not event_id:
                 raise ValueError(f"fault tree {tree_id} event requires an id")
             if event.get("type") not in event_types:
-                raise ValueError(f"fault tree {tree_id} event {event_id} has invalid type")
-            if not isinstance(event.get("description"), str) or not event["description"]:
-                raise ValueError(f"fault tree {tree_id} event {event_id} requires a description")
+                raise ValueError(
+                    f"fault tree {tree_id} event {event_id} has invalid type"
+                )
+            if (
+                not isinstance(event.get("description"), str)
+                or not event["description"]
+            ):
+                raise ValueError(
+                    f"fault tree {tree_id} event {event_id} requires a description"
+                )
             inputs = event.get("inputs", [])
             if not isinstance(inputs, list) or not all(
                 isinstance(value, str) and value for value in inputs
             ):
-                raise ValueError(f"fault tree {tree_id} event {event_id} inputs must be strings")
+                raise ValueError(
+                    f"fault tree {tree_id} event {event_id} inputs must be strings"
+                )
             for field in (
                 "component_patterns",
                 "failure_mode_patterns",
@@ -939,11 +1043,16 @@ def _validate_config(config: dict[str, Any]) -> None:
                         f"fault tree {tree_id} event {event_id} {field} must be strings"
                     )
             if event_id in nodes:
-                raise ValueError(f"fault tree {tree_id} has duplicate node id: {event_id}")
+                raise ValueError(
+                    f"fault tree {tree_id} has duplicate node id: {event_id}"
+                )
             nodes[event_id] = inputs
         top_event_id = tree["top_event_id"]
         event_by_id = {str(value.get("id")): value for value in events}
-        if top_event_id not in event_by_id or event_by_id[top_event_id].get("type") != "top":
+        if (
+            top_event_id not in event_by_id
+            or event_by_id[top_event_id].get("type") != "top"
+        ):
             raise ValueError(
                 f"fault tree {tree_id} top_event_id must identify an event of type top"
             )
@@ -979,10 +1088,16 @@ def _validate_config(config: dict[str, Any]) -> None:
         requirement_ids.add(requirement_id)
         for field in ("text", "source"):
             if field in requirement and not isinstance(requirement[field], str):
-                raise ValueError(f"requirement {requirement_id} {field} must be a string")
+                raise ValueError(
+                    f"requirement {requirement_id} {field} must be a string"
+                )
         linked = requirement.get("hazards", [])
-        if not isinstance(linked, list) or not all(isinstance(value, str) for value in linked):
-            raise ValueError(f"requirement {requirement_id} hazards must be an array of strings")
+        if not isinstance(linked, list) or not all(
+            isinstance(value, str) for value in linked
+        ):
+            raise ValueError(
+                f"requirement {requirement_id} hazards must be an array of strings"
+            )
         unknown = set(linked) - hazard_ids
         if unknown:
             raise ValueError(
@@ -994,10 +1109,17 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError("each component_mappings entry requires a pattern")
         if not isinstance(mapping.get("subsystem", ""), str):
             raise ValueError("component_mappings subsystem must be a string")
-        for field, known in (("requirements", requirement_ids), ("hazards", hazard_ids)):
+        for field, known in (
+            ("requirements", requirement_ids),
+            ("hazards", hazard_ids),
+        ):
             linked = mapping.get(field, [])
-            if not isinstance(linked, list) or not all(isinstance(value, str) for value in linked):
-                raise ValueError(f"component_mappings {field} must be an array of strings")
+            if not isinstance(linked, list) or not all(
+                isinstance(value, str) for value in linked
+            ):
+                raise ValueError(
+                    f"component_mappings {field} must be an array of strings"
+                )
             unknown = set(linked) - known
             if unknown:
                 raise ValueError(
@@ -1008,7 +1130,9 @@ def _validate_config(config: dict[str, Any]) -> None:
         if not isinstance(interfaces, list) or not all(
             isinstance(value, str) for value in interfaces
         ):
-            raise ValueError("component_mappings interfaces must be an array of strings")
+            raise ValueError(
+                "component_mappings interfaces must be an array of strings"
+            )
     interface_ids: set[str] = set()
     for interface in config["system_interfaces"]:
         interface_id = interface.get("id")
@@ -1019,11 +1143,17 @@ def _validate_config(config: dict[str, Any]) -> None:
         interface_ids.add(interface_id)
         for field in ("source", "target", "description"):
             if not isinstance(interface.get(field, ""), str):
-                raise ValueError(f"system interface {interface_id} {field} must be a string")
+                raise ValueError(
+                    f"system interface {interface_id} {field} must be a string"
+                )
         for field in ("data", "assumptions"):
             value = interface.get(field, [])
-            if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
-                raise ValueError(f"system interface {interface_id} {field} must be an array of strings")
+            if not isinstance(value, list) or not all(
+                isinstance(entry, str) for entry in value
+            ):
+                raise ValueError(
+                    f"system interface {interface_id} {field} must be an array of strings"
+                )
     for mapping in config["component_mappings"]:
         unknown = set(mapping.get("interfaces", [])) - interface_ids
         if unknown:
@@ -1040,7 +1170,9 @@ def _validate_config(config: dict[str, Any]) -> None:
         reviewer_names.add(reviewer["name"])
         for field in ("role", "organization"):
             if not isinstance(reviewer.get(field, ""), str):
-                raise ValueError(f"reviewer {reviewer['name']} {field} must be a string")
+                raise ValueError(
+                    f"reviewer {reviewer['name']} {field} must be a string"
+                )
     common_cause_ids: set[str] = set()
     for common_cause in config["common_causes"]:
         common_cause_id = common_cause.get("id")
@@ -1049,19 +1181,31 @@ def _validate_config(config: dict[str, Any]) -> None:
         if common_cause_id in common_cause_ids:
             raise ValueError(f"duplicate common cause id: {common_cause_id}")
         common_cause_ids.add(common_cause_id)
-        if not isinstance(common_cause.get("description"), str) or not common_cause["description"]:
+        if (
+            not isinstance(common_cause.get("description"), str)
+            or not common_cause["description"]
+        ):
             raise ValueError(f"common cause {common_cause_id} requires a description")
         patterns = common_cause.get("component_patterns", [])
-        if not isinstance(patterns, list) or not patterns or not all(
-            isinstance(pattern, str) for pattern in patterns
+        if (
+            not isinstance(patterns, list)
+            or not patterns
+            or not all(isinstance(pattern, str) for pattern in patterns)
         ):
             raise ValueError(
                 f"common cause {common_cause_id} component_patterns must be a non-empty array"
             )
-        for field, known in (("hazards", hazard_ids), ("requirements", requirement_ids)):
+        for field, known in (
+            ("hazards", hazard_ids),
+            ("requirements", requirement_ids),
+        ):
             values = common_cause.get(field, [])
-            if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-                raise ValueError(f"common cause {common_cause_id} {field} must be an array")
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) for value in values
+            ):
+                raise ValueError(
+                    f"common cause {common_cause_id} {field} must be an array"
+                )
             unknown = set(values) - known
             if unknown:
                 raise ValueError(
@@ -1070,13 +1214,19 @@ def _validate_config(config: dict[str, Any]) -> None:
                 )
         for field in ("causes", "controls"):
             values = common_cause.get(field, [])
-            if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-                raise ValueError(f"common cause {common_cause_id} {field} must be an array")
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) for value in values
+            ):
+                raise ValueError(
+                    f"common cause {common_cause_id} {field} must be an array"
+                )
     for entry in config["critical_functions"]:
         if not isinstance(entry.get("pattern"), str) or not entry["pattern"]:
             raise ValueError("each critical_functions entry requires a pattern")
         linked = entry.get("hazards", [])
-        if not isinstance(linked, list) or not all(isinstance(value, str) for value in linked):
+        if not isinstance(linked, list) or not all(
+            isinstance(value, str) for value in linked
+        ):
             raise ValueError("critical_functions hazards must be an array of strings")
         if "rationale" in entry and not isinstance(entry["rationale"], str):
             raise ValueError("critical_functions rationale must be a string")
@@ -1089,7 +1239,11 @@ def _validate_config(config: dict[str, Any]) -> None:
     rule_ids: set[str] = set()
     for rule in config["custom_rules"]:
         required = {"id", "pattern", "guideword", "failure_mode"}
-        missing = [field for field in required if not isinstance(rule.get(field), str) or not rule[field]]
+        missing = [
+            field
+            for field in required
+            if not isinstance(rule.get(field), str) or not rule[field]
+        ]
         if missing:
             raise ValueError("custom rule missing: " + ", ".join(sorted(missing)))
         if rule["id"] in rule_ids:
@@ -1099,8 +1253,12 @@ def _validate_config(config: dict[str, Any]) -> None:
         rule_ids.add(rule["id"])
         for field in ("causes", "actions"):
             value = rule.get(field, [])
-            if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
-                raise ValueError(f"custom rule {rule['id']} {field} must be an array of strings")
+            if not isinstance(value, list) or not all(
+                isinstance(entry, str) for entry in value
+            ):
+                raise ValueError(
+                    f"custom rule {rule['id']} {field} must be an array of strings"
+                )
         for field in ("trigger", "local_effect", "confidence", "failure_class"):
             if field in rule and not isinstance(rule[field], str):
                 raise ValueError(f"custom rule {rule['id']} {field} must be a string")

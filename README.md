@@ -220,7 +220,9 @@ file must be a regular non-link file and is captured through a 20 MB exact-byte 
 inspected, opened, and final identities agree before PEP 263 decoding. Each selected source is read
 once; AST parsing, included-test indexing, and baseline hashing reuse the same immutable bytes.
 Eligible test-reference evidence is likewise read once before baseline construction and reused for
-reference attribution and inventory hashing; configured/default/hidden exclusions apply equally.
+reference attribution and inventory hashing. Default and hidden exclusions remain closed. An
+explicit `scan.test_evidence_include` glob may admit test evidence hidden by a configured semantic
+exclusion without analyzing that test file as a component.
 Source discovery stops explicitly at 100,000 selected files; the optional textual test-reference
 index stops at 10,000 files or 100 MB. The baseline records accepted/rejected source counts, total
 accepted bytes, and separate canonical source/test-evidence snapshot-set SHA-256 values that are
@@ -260,13 +262,25 @@ exports, external packages, and literal HTTP/WebSocket/EventSource endpoints. Th
 `indexed`, not presented as full semantic analysis, and retain an explicit dynamic-dispatch and
 generated-client limitation. Project-specific external prefixes, receiver names, and method names
 can extend Python interface candidates through the `[scan]` hint arrays.
+`scan.boundary_evidence_include` provides the equivalent evidence-only override for JS/TS beneath a
+configured semantic exclusion. It never expands Python component scope, and unrelated files in the
+excluded directory are not consumed merely to reach the approved boundary evidence.
 
 Coverage is reported in separate dimensions: all-repository accounting, Python semantic analysis,
 web boundary indexing, exclusions, and opaque/unresolved material. These percentages are not test
 coverage and are never combined into a single implied semantic score. Literal FastAPI/Flask-style
-route decorators are also normalized against indexed JavaScript/TypeScript client endpoints. Exact
-static matches, base configurations, dynamic candidates, and unmatched records are retained under
-`interface_reconciliation`; they are discovery evidence, not proof of deployed connectivity.
+route decorators are also normalized against indexed JavaScript/TypeScript client endpoints.
+Literal router prefixes and same-file client `baseURL` values are composed, bounded literal fetch
+methods are recovered, and method/path gaps plus cross-stack request sequences are retained under
+`interface_reconciliation`. These are discovery leads, not proof of schema compatibility or
+deployed connectivity.
+
+When no coverage path is supplied, `coverage_discovery = true` checks only `coverage.json` and
+`.artifacts/coverage.json`; the selection mode, exact digest, coverage timestamp/tool metadata, and
+branch-coverage flag are recorded. Disable discovery for repositories where those conventional
+paths are not governed evidence. Test attribution uses parsed imports and calls rather than comment
+or string matches, and `project.settings.test_evidence_analysis` reports bounded structural signals
+without claiming execution or adequacy.
 
 After every scan, generate an actionable health assessment:
 
@@ -279,7 +293,9 @@ sfmea diagnostics .artifacts\sfmea-analysis.json.gz --strict
 
 Diagnostics reconcile adapter contribution IDs to governed inventory records, distinguish eligible
 Python-component test/coverage/mapping rates, summarize review families and hotspots, expose
-cross-stack interface gaps and scan telemetry, and return ordered P0/P1/P2 actions. `--strict`
+cross-stack interface gaps and scan telemetry, enforce non-destructive warning budgets, identify
+evidence-scope conflicts, and return ordered P0/P1/P2 actions. The `qualification` scorecard grades
+diagnostic readiness domains only; it is not tool qualification, compliance, or approval. `--strict`
 fails only for internally inconsistent adapter accounting; missing engineering evidence remains an
 action rather than being mislabeled as a corrupt analysis.
 

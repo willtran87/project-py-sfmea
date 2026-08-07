@@ -15,6 +15,7 @@ import sys
 import time
 import tokenize
 import tomllib
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -101,7 +102,14 @@ MAX_CONTRACT_ENTITIES = 500
 MAX_CONTRACT_JSON_DEPTH = 100
 MAX_CONTRACT_JSON_NODES = 1_000_000
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
-FILESYSTEM_NAMES = {"open", "io.open", "pathlib.Path", "os.remove", "os.rename", "shutil"}
+FILESYSTEM_NAMES = {
+    "open",
+    "io.open",
+    "pathlib.Path",
+    "os.remove",
+    "os.rename",
+    "shutil",
+}
 SUBPROCESS_NAMES = {"os.popen", "os.system", "subprocess"}
 OBSERVABILITY_PREFIXES = {
     "logging",
@@ -168,7 +176,9 @@ def _annotation_reference(node: ast.AST | None, aliases: dict[str, str]) -> str:
         return _annotation_reference(parsed, aliases)
     if isinstance(node, (ast.Name, ast.Attribute)):
         reference = _resolve_alias_reference(_dotted_name(node), aliases)
-        return "" if reference in {"None", "NoneType", "typing.Any", "Any"} else reference
+        return (
+            "" if reference in {"None", "NoneType", "typing.Any", "Any"} else reference
+        )
     if isinstance(node, ast.Subscript):
         container = _dotted_name(node.value).rsplit(".", 1)[-1]
         if container in {"Annotated", "ClassVar", "Final", "Optional"}:
@@ -321,10 +331,19 @@ def _circuit_breaker_control(
             *(value.casefold() for value in strings),
         ]
     )
-    explicit = any(token in searchable for token in ("circuit", "breaker", "half-open", "half_open"))
+    explicit = any(
+        token in searchable
+        for token in ("circuit", "breaker", "half-open", "half_open")
+    )
     supporting = sum(
         token in searchable
-        for token in ("cooldown", "failure", "threshold", "record_success", "record_failure")
+        for token in (
+            "cooldown",
+            "failure",
+            "threshold",
+            "record_success",
+            "record_failure",
+        )
     )
     if not explicit and supporting < 3:
         return None
@@ -341,21 +360,24 @@ def _circuit_breaker_control(
         value.casefold() for value in [*comparison_text, *assignment_text]
     )
     roles: set[str] = set()
-    if any(token in searchable for token in ("check_circuit", "circuit_open", "is_open")) or (
+    if any(
+        token in searchable for token in ("check_circuit", "circuit_open", "is_open")
+    ) or (
         "open" in structural_text
         and any(token in structural_text for token in ("state", "circuit", "breaker"))
     ):
         roles.add("admission_guard")
-    if any(token in searchable for token in ("record_failure", "failure_count", "failures")) and any(
-        isinstance(value, (ast.Assign, ast.AnnAssign, ast.AugAssign)) for value in assignments
+    if any(
+        token in searchable for token in ("record_failure", "failure_count", "failures")
+    ) and any(
+        isinstance(value, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+        for value in assignments
     ):
         roles.add("failure_recording")
     if (
         any(token in searchable for token in ("record_success", "reset", "clear"))
         and bool(assignments)
-    ) or any(
-        call.endswith((".pop", ".clear")) for call in calls
-    ):
+    ) or any(call.endswith((".pop", ".clear")) for call in calls):
         roles.add("success_reset")
     has_clock_call = any(
         call.endswith(("time", "monotonic", "perf_counter")) for call in calls
@@ -368,11 +390,17 @@ def _circuit_breaker_control(
         or (has_clock_call and deletes_state)
     ):
         roles.add("recovery_timer")
-    if any(token in searchable for token in ("fallback", "placeholder", "skipping", "temporarily unavailable")):
+    if any(
+        token in searchable
+        for token in ("fallback", "placeholder", "skipping", "temporarily unavailable")
+    ):
         roles.add("degraded_fallback")
     if any(token in structural_text for token in ("circuit", "breaker")) or (
         "state" in structural_text
-        and any(token in structural_text for token in ("closed", "open", "half_open", "half-open"))
+        and any(
+            token in structural_text
+            for token in ("closed", "open", "half_open", "half-open")
+        )
     ):
         roles.add("breaker_state_management")
     if not roles:
@@ -397,19 +425,16 @@ def _circuit_breaker_control(
     for value, expression in zip(comparisons, comparison_text, strict=True):
         lowered = expression.casefold()
         if "fail" in lowered and any(
-            isinstance(operator, (ast.Gt, ast.GtE, ast.Eq))
-            for operator in value.ops
+            isinstance(operator, (ast.Gt, ast.GtE, ast.Eq)) for operator in value.ops
         ):
             threshold_expressions.append(expression)
-        if any(token in lowered for token in ("cooldown", "circuit_open", "breaker")) and any(
-            token in lowered for token in ("time", "monotonic", "clock")
-        ):
+        if any(
+            token in lowered for token in ("cooldown", "circuit_open", "breaker")
+        ) and any(token in lowered for token in ("time", "monotonic", "clock")):
             cooldown_expressions.append(expression)
 
     clock_sources = sorted(
-        call
-        for call in calls
-        if call.endswith(("time", "monotonic", "perf_counter"))
+        call for call in calls if call.endswith(("time", "monotonic", "perf_counter"))
     )[:10]
     synchronization = sorted(
         {
@@ -426,7 +451,12 @@ def _circuit_breaker_control(
             for value in [*calls, *strings]
             if any(
                 token in value.casefold()
-                for token in ("fallback", "placeholder", "skipping", "temporarily unavailable")
+                for token in (
+                    "fallback",
+                    "placeholder",
+                    "skipping",
+                    "temporarily unavailable",
+                )
             )
         }
     )[:20]
@@ -440,7 +470,10 @@ def _circuit_breaker_control(
                 *node.args.kwonlyargs,
             ]
         )
-        if any(token in parameter.casefold() for token in ("server", "dependency", "client", "service", "key", "id"))
+        if any(
+            token in parameter.casefold()
+            for token in ("server", "dependency", "client", "service", "key", "id")
+        )
     )[:10]
     state_material = " ".join(
         [
@@ -560,7 +593,9 @@ class _FactVisitor(ast.NodeVisitor):
         module = node.module or ""
         for alias in node.names:
             if alias.name != "*":
-                self.aliases[alias.asname or alias.name] = f"{module}.{alias.name}".strip(".")
+                self.aliases[alias.asname or alias.name] = (
+                    f"{module}.{alias.name}".strip(".")
+                )
 
     def visit_If(self, node: ast.If) -> None:
         self.facts.complexity += 1
@@ -617,9 +652,7 @@ class _FactVisitor(ast.NodeVisitor):
                 self._visit_with_context(
                     case.guard, f"match@{node.lineno}:case-{index + 1}-guard"
                 )
-            self._visit_block(
-                case.body, f"match@{node.lineno}:case-{index + 1}"
-            )
+            self._visit_block(case.body, f"match@{node.lineno}:case-{index + 1}")
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
         self.facts.arithmetic_ops += 1
@@ -635,9 +668,14 @@ class _FactVisitor(ast.NodeVisitor):
     def visit_Try(self, node: ast.Try) -> None:
         self.facts.complexity += len(node.handlers)
         for handler in node.handlers:
-            if handler.type is None or _dotted_name(handler.type) in {"Exception", "BaseException"}:
+            if handler.type is None or _dotted_name(handler.type) in {
+                "Exception",
+                "BaseException",
+            }:
                 self.facts.broad_handlers += 1
-            if not handler.body or all(isinstance(stmt, (ast.Pass, ast.Continue)) for stmt in handler.body):
+            if not handler.body or all(
+                isinstance(stmt, (ast.Pass, ast.Continue)) for stmt in handler.body
+            ):
                 self.facts.silent_handlers += 1
         self._visit_block(node.body, f"try@{node.lineno}:body")
         for index, handler in enumerate(node.handlers):
@@ -681,7 +719,10 @@ class _FactVisitor(ast.NodeVisitor):
         self._visit_with_context(node.value, f"yield-from@{node.lineno}:value")
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        if any(isinstance(target, (ast.Attribute, ast.Subscript)) for target in node.targets):
+        if any(
+            isinstance(target, (ast.Attribute, ast.Subscript))
+            for target in node.targets
+        ):
             self.facts.mutates_state = True
             self.facts.signals.add("state_mutation")
         for target in node.targets:
@@ -813,6 +854,7 @@ class _ModuleCollector(ast.NodeVisitor):
         self.scope_stack: list[str] = []
         self.function_depth = 0
         self.functions: list[FunctionFacts] = []
+        self.route_prefixes: dict[str, str] = {}
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -823,7 +865,9 @@ class _ModuleCollector(ast.NodeVisitor):
         for alias in node.names:
             if alias.name == "*":
                 continue
-            self.aliases[alias.asname or alias.name] = f"{module}.{alias.name}".strip(".")
+            self.aliases[alias.asname or alias.name] = f"{module}.{alias.name}".strip(
+                "."
+            )
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         if self.function_depth and not self.include_nested:
@@ -842,14 +886,20 @@ class _ModuleCollector(ast.NodeVisitor):
         fields: list[str] = []
         class_context: list[ast.stmt] = []
         for statement in node.body:
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(
+                statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
                 continue
             class_context.append(statement)
-            if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            if isinstance(statement, ast.AnnAssign) and isinstance(
+                statement.target, ast.Name
+            ):
                 fields.append(statement.target.id)
             elif isinstance(statement, ast.Assign):
                 fields.extend(
-                    target.id for target in statement.targets if isinstance(target, ast.Name)
+                    target.id
+                    for target in statement.targets
+                    if isinstance(target, ast.Name)
                 )
         decorators = [
             _dotted_name(value.func if isinstance(value, ast.Call) else value)
@@ -867,23 +917,34 @@ class _ModuleCollector(ast.NodeVisitor):
         is_model = bool(
             fields
             or any(value.rsplit(".", 1)[-1] in model_markers for value in bases)
-            or any(value.rsplit(".", 1)[-1] in {"dataclass", "define", "frozen"} for value in decorators)
+            or any(
+                value.rsplit(".", 1)[-1] in {"dataclass", "define", "frozen"}
+                for value in decorators
+            )
         )
         if not is_model:
             return
         qualname = ".".join([*self.scope_stack, node.name])
         material = {
             "name": "<class-model>",
-            "bases": [ast.dump(value, include_attributes=False) for value in node.bases],
-            "decorators": [
-                ast.dump(value, include_attributes=False) for value in node.decorator_list
+            "bases": [
+                ast.dump(value, include_attributes=False) for value in node.bases
             ],
-            "context": [ast.dump(value, include_attributes=False) for value in class_context],
+            "decorators": [
+                ast.dump(value, include_attributes=False)
+                for value in node.decorator_list
+            ],
+            "context": [
+                ast.dump(value, include_attributes=False) for value in class_context
+            ],
         }
         fingerprint = hashlib.sha256(
             json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        class_doc = ast.get_docstring(node, clean=True) or f"Define the {node.name} data contract."
+        class_doc = (
+            ast.get_docstring(node, clean=True)
+            or f"Define the {node.name} data contract."
+        )
         facts = FunctionFacts(
             name=node.name,
             qualname=qualname,
@@ -902,7 +963,10 @@ class _ModuleCollector(ast.NodeVisitor):
             parameters=fields,
         )
         facts.signals.add("data_model")
-        if any(value.rsplit(".", 1)[-1] in model_markers for value in bases) or decorators:
+        if (
+            any(value.rsplit(".", 1)[-1] in model_markers for value in bases)
+            or decorators
+        ):
             facts.signals.add("serialization")
         visitor = _FactVisitor(facts, dict(self.aliases))
         for statement in class_context:
@@ -916,10 +980,19 @@ class _ModuleCollector(ast.NodeVisitor):
         self._collect_function(node, is_async=True)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(
-            node.value, ast.Lambda
-        ):
-            self._collect_lambda(node.targets[0].id, node.value)
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            target = node.targets[0].id
+            if isinstance(node.value, ast.Lambda):
+                self._collect_lambda(target, node.value)
+            elif isinstance(node.value, ast.Call) and _dotted_name(
+                node.value.func
+            ).rsplit(".", 1)[-1] in {"APIRouter", "Blueprint"}:
+                for keyword in node.value.keywords:
+                    if keyword.arg not in {"prefix", "url_prefix"}:
+                        continue
+                    prefix = _literal_text(keyword.value)
+                    if prefix.startswith("/"):
+                        self.route_prefixes[target] = prefix.rstrip("/")
         self.generic_visit(node)
 
     def _collect_lambda(self, name: str, node: ast.Lambda) -> None:
@@ -954,7 +1027,9 @@ class _ModuleCollector(ast.NodeVisitor):
         _FactVisitor(facts, dict(self.aliases)).visit(node.body)
         self.functions.append(facts)
 
-    def _collect_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef, is_async: bool) -> None:
+    def _collect_function(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef, is_async: bool
+    ) -> None:
         if self.function_depth and not self.include_nested:
             return
         private = node.name.startswith("_") and node.name not in {
@@ -992,7 +1067,9 @@ class _ModuleCollector(ast.NodeVisitor):
             params.append("**" + node.args.kwarg.arg)
         signature = self._signature(node)
         decorators = [
-            _dotted_name(decorator.func if isinstance(decorator, ast.Call) else decorator)
+            _dotted_name(
+                decorator.func if isinstance(decorator, ast.Call) else decorator
+            )
             for decorator in node.decorator_list
         ]
         decorators = [decorator for decorator in decorators if decorator]
@@ -1025,6 +1102,15 @@ class _ModuleCollector(ast.NodeVisitor):
             for decorator in node.decorator_list
             if (endpoint := _decorator_endpoint(decorator)) is not None
         )
+        for endpoint in facts.interface_endpoints:
+            receiver = str(endpoint.get("declaration", "")).partition(".")[0]
+            prefix = self.route_prefixes.get(receiver, "")
+            declared_path = str(endpoint.get("path", ""))
+            if prefix and declared_path.startswith("/"):
+                endpoint["declared_path"] = declared_path
+                endpoint["router_prefix"] = prefix
+                endpoint["path"] = prefix + declared_path
+                endpoint["confidence"] = "static_literal_composed_router_prefix"
         annotated_arguments = [
             *node.args.posonlyargs,
             *node.args.args,
@@ -1055,7 +1141,10 @@ class _ModuleCollector(ast.NodeVisitor):
                 "consumer",
                 "receiver",
             }
-            if any(item.lower().rsplit(".", 1)[-1] in entrypoint_names for item in decorators):
+            if any(
+                item.lower().rsplit(".", 1)[-1] in entrypoint_names
+                for item in decorators
+            ):
                 facts.signals.add("entrypoint")
                 facts.signals.add("external_interface")
                 imported_frameworks = {
@@ -1155,7 +1244,11 @@ class _ModuleCollector(ast.NodeVisitor):
 
 
 def _formatted_arg(arg: ast.arg) -> str:
-    return arg.arg if arg.annotation is None else f"{arg.arg}: {ast.unparse(arg.annotation)}"
+    return (
+        arg.arg
+        if arg.annotation is None
+        else f"{arg.arg}: {ast.unparse(arg.annotation)}"
+    )
 
 
 def _module_aliases(tree: ast.Module) -> dict[str, str]:
@@ -1168,7 +1261,9 @@ def _module_aliases(tree: ast.Module) -> dict[str, str]:
             module = node.module or ""
             for alias in node.names:
                 if alias.name != "*":
-                    aliases[alias.asname or alias.name] = f"{module}.{alias.name}".strip(".")
+                    aliases[alias.asname or alias.name] = (
+                        f"{module}.{alias.name}".strip(".")
+                    )
     return aliases
 
 
@@ -1183,18 +1278,28 @@ def _module_context_fingerprint(tree: ast.Module) -> str:
             class_context = [
                 statement
                 for statement in node.body
-                if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                if not isinstance(
+                    statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                )
             ]
             entries.append(
                 {
                     "class": node.name,
-                    "bases": [ast.dump(value, include_attributes=False) for value in node.bases],
-                    "keywords": [ast.dump(value, include_attributes=False) for value in node.keywords],
+                    "bases": [
+                        ast.dump(value, include_attributes=False)
+                        for value in node.bases
+                    ],
+                    "keywords": [
+                        ast.dump(value, include_attributes=False)
+                        for value in node.keywords
+                    ],
                     "decorators": [
-                        ast.dump(value, include_attributes=False) for value in node.decorator_list
+                        ast.dump(value, include_attributes=False)
+                        for value in node.decorator_list
                     ],
                     "context": [
-                        ast.dump(value, include_attributes=False) for value in class_context
+                        ast.dump(value, include_attributes=False)
+                        for value in class_context
                     ],
                 }
             )
@@ -1213,7 +1318,16 @@ def _module_initialization_facts(
 ) -> FunctionFacts | None:
     executable: list[ast.stmt] = []
     for index, node in enumerate(tree.body):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom)):
+        if isinstance(
+            node,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+                ast.Import,
+                ast.ImportFrom,
+            ),
+        ):
             continue
         if (
             index == 0
@@ -1242,7 +1356,10 @@ def _module_initialization_facts(
         kind="module_initialization",
         path=path,
         line=min(getattr(node, "lineno", 1) for node in executable),
-        end_line=max(getattr(node, "end_lineno", getattr(node, "lineno", 1)) for node in executable),
+        end_line=max(
+            getattr(node, "end_lineno", getattr(node, "lineno", 1))
+            for node in executable
+        ),
         signature="module initialization",
         source_fingerprint=fingerprint,
         content_fingerprint=fingerprint,
@@ -1264,7 +1381,9 @@ def _module_initialization_facts(
 
 
 def _matches_pattern(value: str, patterns: Iterable[str]) -> bool:
-    return any(fnmatch.fnmatchcase(value, pattern.replace("\\", "/")) for pattern in patterns)
+    return any(
+        fnmatch.fnmatchcase(value, pattern.replace("\\", "/")) for pattern in patterns
+    )
 
 
 def _read_python_source_bytes_bounded(path: Path) -> bytes:
@@ -1308,7 +1427,9 @@ def _decode_python_source(raw: bytes) -> str:
         encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
         return raw.decode(encoding)
     except (LookupError, SyntaxError, UnicodeDecodeError) as exc:
-        raise ValueError("Python source has an invalid or unsupported encoding") from exc
+        raise ValueError(
+            "Python source has an invalid or unsupported encoding"
+        ) from exc
 
 
 def _python_files(
@@ -1342,7 +1463,10 @@ def _python_files(
                     }
                 )
             continue
-        if any(part in DEFAULT_EXCLUDES or part.startswith(".") for part in relative.parts[:-1]):
+        if any(
+            part in DEFAULT_EXCLUDES or part.startswith(".")
+            for part in relative.parts[:-1]
+        ):
             continue
         if _matches_pattern(relative.as_posix(), exclude_patterns):
             continue
@@ -1369,6 +1493,21 @@ def _python_files(
     return sorted(result)
 
 
+def _pattern_may_match_descendant(directory: str, patterns: Iterable[str]) -> bool:
+    prefix = directory.strip("/") + "/"
+    for raw_pattern in patterns:
+        pattern = raw_pattern.replace("\\", "/").lstrip("./")
+        wildcard_positions = [
+            pattern.find(character) for character in "*[?" if character in pattern
+        ]
+        literal = pattern[: min(wildcard_positions, default=len(pattern))]
+        if not literal or literal.startswith(prefix) or prefix.startswith(literal):
+            return True
+        if _matches_pattern(directory, (pattern,)):
+            return True
+    return False
+
+
 def _test_index(
     root: Path,
     warnings: list[dict[str, Any]] | None = None,
@@ -1376,11 +1515,43 @@ def _test_index(
     test_evidence_snapshots: dict[Path, bytes] | None = None,
     test_evidence_errors: dict[Path, str] | None = None,
     exclude_patterns: Iterable[str] = (),
+    evidence_include_patterns: Iterable[str] = (),
 ) -> dict[str, str]:
     tests: dict[str, str] = {}
     consumed = 0
     candidates = 0
-    for path in sorted(root.rglob("*.py")):
+    test_paths: list[Path] = []
+    for directory, dirnames, filenames in os.walk(
+        root, topdown=True, followlinks=False
+    ):
+        base = Path(directory)
+        kept_dirs: list[str] = []
+        for dirname in sorted(dirnames):
+            candidate = base / dirname
+            relative_dir = candidate.relative_to(root).as_posix()
+            if (
+                candidate.is_symlink()
+                or dirname in DEFAULT_EXCLUDES
+                or dirname.startswith(".")
+            ):
+                continue
+            configured_excluded = _matches_pattern(
+                relative_dir, exclude_patterns
+            ) or _matches_pattern(
+                relative_dir + "/__pysfmea_region__", exclude_patterns
+            )
+            if configured_excluded and not _pattern_may_match_descendant(
+                relative_dir, evidence_include_patterns
+            ):
+                continue
+            kept_dirs.append(dirname)
+        dirnames[:] = kept_dirs
+        test_paths.extend(
+            base / filename
+            for filename in sorted(filenames)
+            if filename.casefold().endswith(".py")
+        )
+    for path in test_paths:
         try:
             path.resolve().relative_to(root)
         except (OSError, ValueError):
@@ -1393,7 +1564,9 @@ def _test_index(
                     }
                 )
             if test_evidence_errors is not None:
-                test_evidence_errors[path] = "Test evidence resolves outside the repository"
+                test_evidence_errors[path] = (
+                    "Test evidence resolves outside the repository"
+                )
             continue
         relative = path.relative_to(root)
         is_test = (
@@ -1401,13 +1574,17 @@ def _test_index(
             or path.name.startswith("test_")
             or path.name.endswith("_test.py")
         )
+        configured_excluded = _matches_pattern(relative.as_posix(), exclude_patterns)
+        evidence_override = _matches_pattern(
+            relative.as_posix(), evidence_include_patterns
+        )
         if (
             not is_test
             or any(
                 part in DEFAULT_EXCLUDES or part.startswith(".")
                 for part in relative.parts[:-1]
             )
-            or _matches_pattern(relative.as_posix(), exclude_patterns)
+            or (configured_excluded and not evidence_override)
         ):
             continue
         if path.is_symlink() or not path.is_file():
@@ -1536,7 +1713,10 @@ def _dependency_inventory(
             resolved = candidate.resolve()
             relative = resolved.relative_to(root).as_posix()
         except (OSError, ValueError):
-            warn(display_path(candidate), "Dependency manifest resolves outside the repository")
+            warn(
+                display_path(candidate),
+                "Dependency manifest resolves outside the repository",
+            )
             return None
         if resolved in loaded_resolved_files:
             loaded_files[candidate] = loaded_resolved_files[resolved]
@@ -1589,7 +1769,11 @@ def _dependency_inventory(
 
     def record(specification: str, source: str) -> None:
         value = specification.strip()
-        if not value or value.startswith("#") or value.startswith(("-r", "--requirement")):
+        if (
+            not value
+            or value.startswith("#")
+            or value.startswith(("-r", "--requirement"))
+        ):
             return
         name_match = re.match(r"[A-Za-z0-9_.-]+", value)
         name = name_match.group(0) if name_match else value
@@ -1634,9 +1818,13 @@ def _dependency_inventory(
             return
         for raw_line in lines:
             line = raw_line.split(" #", 1)[0].strip()
-            include_match = re.match(r"^(?:-r|--requirement|-c|--constraint)[= ]+(.+)$", line)
+            include_match = re.match(
+                r"^(?:-r|--requirement|-c|--constraint)[= ]+(.+)$", line
+            )
             if include_match:
-                read_requirements(resolved.parent / include_match.group(1).strip(), seen)
+                read_requirements(
+                    resolved.parent / include_match.group(1).strip(), seen
+                )
             else:
                 record(line, resolved.relative_to(root).as_posix())
 
@@ -1657,7 +1845,9 @@ def _dependency_inventory(
         "requirements": [],
         "auxiliary": [],
     }
-    for current, directories, filenames in os.walk(root, topdown=True, followlinks=False):
+    for current, directories, filenames in os.walk(
+        root, topdown=True, followlinks=False
+    ):
         directories[:] = sorted(
             directory
             for directory in directories
@@ -1735,10 +1925,10 @@ def _dependency_inventory(
             for name, constraint in poetry.items():
                 if name == "python":
                     continue
-                specification = f"{name}{constraint}" if isinstance(constraint, str) else name
-                claims.append(
-                    (specification, f"{relative}:tool.poetry.dependencies")
+                specification = (
+                    f"{name}{constraint}" if isinstance(constraint, str) else name
                 )
+                claims.append((specification, f"{relative}:tool.poetry.dependencies"))
             for specification, source in claims:
                 record(specification, source)
         except UnicodeDecodeError:
@@ -1753,9 +1943,7 @@ def _dependency_inventory(
             )
         except ValueError:
             pass
-    requirement_files = discovered_manifests(
-        ("requirements*.txt", "constraints*.txt")
-    )
+    requirement_files = discovered_manifests(("requirements*.txt", "constraints*.txt"))
     seen_requirements: set[Path] = set()
     for requirements in requirement_files:
         read_requirements(requirements, seen_requirements)
@@ -1771,7 +1959,10 @@ def _dependency_inventory(
         )
     ):
         record_file(candidate)
-    return sorted(dependencies.values(), key=lambda value: (value["name"].lower(), value["source"]))
+    return sorted(
+        dependencies.values(),
+        key=lambda value: (value["name"].lower(), value["source"]),
+    )
 
 
 def _contract_inventory(
@@ -2020,9 +2211,13 @@ def _contract_inventory(
                     line,
                     re.IGNORECASE,
                 )
-                if current_route and method_match and not retain(
-                    operations,
-                    f"{method_match.group(1).upper()} {current_route}",
+                if (
+                    current_route
+                    and method_match
+                    and not retain(
+                        operations,
+                        f"{method_match.group(1).upper()} {current_route}",
+                    )
                 ):
                     entities_truncated = True
                     break
@@ -2117,7 +2312,9 @@ def _repository_baseline(
     content_hash.update(
         json.dumps(contracts, sort_keys=True, separators=(",", ":")).encode("utf-8")
     )
-    content_hash.update(str(repository_inventory.get("inventory_sha256", "")).encode("utf-8"))
+    content_hash.update(
+        str(repository_inventory.get("inventory_sha256", "")).encode("utf-8")
+    )
     config_digest = hashlib.sha256(
         json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -2171,7 +2368,14 @@ def _repository_baseline(
         )
         if revision.returncode == 0:
             status = subprocess.run(
-                ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=normal"],
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "status",
+                    "--porcelain",
+                    "--untracked-files=normal",
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -2180,7 +2384,9 @@ def _repository_baseline(
             vcs = {
                 "type": "git",
                 "revision": revision.stdout.strip(),
-                "dirty": bool(status.stdout.strip()) if status.returncode == 0 else None,
+                "dirty": bool(status.stdout.strip())
+                if status.returncode == 0
+                else None,
             }
     except (OSError, subprocess.SubprocessError):
         pass
@@ -2196,9 +2402,7 @@ def _repository_baseline(
         "test_evidence_snapshot_bytes": test_evidence_snapshot_bytes,
         "test_evidence_snapshot_rejected_files": len(test_evidence_errors),
         "config_digest": config_digest,
-        "repository_inventory_sha256": repository_inventory.get(
-            "inventory_sha256", ""
-        ),
+        "repository_inventory_sha256": repository_inventory.get("inventory_sha256", ""),
         "vcs": vcs,
     }
 
@@ -2208,7 +2412,11 @@ def _dependency_component_and_item(
 ) -> tuple[dict[str, Any], dict[str, Any]] | None:
     included = set(analysis_rules.get("included_failure_classes", []))
     excluded = set(analysis_rules.get("excluded_failure_classes", []))
-    if not dependencies or "environment" in excluded or (included and "environment" not in included):
+    if (
+        not dependencies
+        or "environment" in excluded
+        or (included and "environment" not in included)
+    ):
         return None
     fingerprint = hashlib.sha256(
         json.dumps(dependencies, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -2219,7 +2427,11 @@ def _dependency_component_and_item(
         "kind": "environment",
         "name": "Runtime and dependency environment",
         "qualname": "Runtime and dependency environment",
-        "source": {"path": "pyproject.toml / requirements files", "line": "", "end_line": ""},
+        "source": {
+            "path": "pyproject.toml / requirements files",
+            "line": "",
+            "end_line": "",
+        },
         "signature": "",
         "docstring_summary": "Declared Python runtime dependencies",
         "is_async": False,
@@ -2471,8 +2683,14 @@ def _contract_components_and_items(
                 "screening_reasons": component["screening"]["reasons"],
                 "evidence": [
                     f"Contract: {contract['path']} ({contract['kind']})",
-                    *(f"Operation: {value}" for value in contract.get("operations", [])[:50]),
-                    *(f"Data type: {value}" for value in contract.get("data_types", [])[:50]),
+                    *(
+                        f"Operation: {value}"
+                        for value in contract.get("operations", [])[:50]
+                    ),
+                    *(
+                        f"Data type: {value}"
+                        for value in contract.get("data_types", [])[:50]
+                    ),
                     *(f"Requirement mapping: {value}" for value in requirement_ids),
                     *(f"Hazard mapping: {value}" for value in linked_hazards),
                     *(f"System interface mapping: {value}" for value in interface_ids),
@@ -2632,9 +2850,92 @@ def _common_cause_elements(
     return result
 
 
-def _find_test_references(name: str, tests: dict[str, str]) -> list[str]:
-    pattern = re.compile(rf"\b{re.escape(name)}\b")
-    return [path for path, content in tests.items() if pattern.search(content)][:5]
+def _test_evidence_analysis(
+    tests: dict[str, str],
+) -> tuple[dict[str, list[str]], dict[str, Any]]:
+    """Build an AST-grounded symbol index and bounded test-quality signal summary."""
+
+    symbol_paths: dict[str, set[str]] = defaultdict(set)
+    dimensions: dict[str, set[str]] = defaultdict(set)
+    parse_errors: list[str] = []
+    for path, content in tests.items():
+        try:
+            tree = ast.parse(content, filename=path)
+        except (SyntaxError, ValueError, MemoryError, RecursionError):
+            parse_errors.append(path)
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name != "*":
+                        symbol_paths[alias.asname or alias.name].add(path)
+            elif isinstance(node, ast.Call):
+                reference = _dotted_name(node.func)
+                if reference:
+                    symbol_paths[reference.rsplit(".", 1)[-1]].add(path)
+                    lowered = reference.casefold()
+                    if lowered.endswith((".raises", ".warns")):
+                        dimensions["negative_or_exception"].add(path)
+                    if any(
+                        token in lowered for token in ("mock", "patch", "monkeypatch")
+                    ):
+                        dimensions["mock_or_isolation"].add(path)
+                    if any(
+                        token in lowered
+                        for token in ("thread", "gather", "create_task")
+                    ):
+                        dimensions["concurrency"].add(path)
+            elif isinstance(node, ast.Assert):
+                dimensions["assertion"].add(path)
+            elif isinstance(node, ast.AsyncFunctionDef):
+                dimensions["async"].add(path)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if any(
+                    "parametrize"
+                    in _dotted_name(
+                        value.func if isinstance(value, ast.Call) else value
+                    ).casefold()
+                    for value in node.decorator_list
+                ):
+                    dimensions["parameterized"].add(path)
+        lowered_content = content.casefold()
+        if "hypothesis" in lowered_content or "@given" in lowered_content:
+            dimensions["property_based"].add(path)
+        if any(token in lowered_content for token in ("timeout", "deadline", "clock")):
+            dimensions["timing"].add(path)
+        if any(
+            token in lowered_content
+            for token in ("fault", "failure injection", "chaos", "circuit breaker")
+        ):
+            dimensions["fault_injection_or_resilience"].add(path)
+    return (
+        {name: sorted(paths)[:5] for name, paths in symbol_paths.items()},
+        {
+            "format": "pysfmea-static-test-evidence-analysis-1",
+            "authority": "static_test_structure_candidates_not_execution_or_test_adequacy",
+            "indexed_files": len(tests),
+            "parsed_files": len(tests) - len(parse_errors),
+            "parse_error_files": parse_errors[:25],
+            "parse_error_files_omitted": max(0, len(parse_errors) - 25),
+            "dimensions": {
+                name: {
+                    "files": len(paths),
+                    "percent": round(100 * len(paths) / len(tests), 1)
+                    if tests
+                    else 100.0,
+                    "sample_paths": sorted(paths)[:25],
+                    "sample_paths_omitted": max(0, len(paths) - 25),
+                }
+                for name, paths in sorted(dimensions.items())
+            },
+        },
+    )
+
+
+def _find_test_references(
+    name: str, reference_index: dict[str, list[str]]
+) -> list[str]:
+    return reference_index.get(name, [])[:5]
 
 
 MAX_COVERAGE_JSON_BYTES = 100_000_000
@@ -2696,7 +2997,10 @@ def _load_coverage_document(
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     if not path:
         return {}, [], {}
-    coverage_path = Path(path).expanduser().absolute()
+    coverage_path = Path(path).expanduser()
+    if not coverage_path.is_absolute():
+        coverage_path = root / coverage_path
+    coverage_path = coverage_path.absolute()
     try:
         document = load_bounded_json_document(
             coverage_path,
@@ -2733,12 +3037,24 @@ def _load_coverage_document(
             evidence_snapshots[coverage_path] = document.raw
     payload = document.value
     if not isinstance(payload, dict):
-        return {}, [_coverage_warning(coverage_path, "coverage JSON root must be an object")], {}
+        return (
+            {},
+            [_coverage_warning(coverage_path, "coverage JSON root must be an object")],
+            {},
+        )
     if "files" not in payload:
-        return {}, [_coverage_warning(coverage_path, "coverage JSON has no files object")], {}
+        return (
+            {},
+            [_coverage_warning(coverage_path, "coverage JSON has no files object")],
+            {},
+        )
     files = payload["files"]
     if not isinstance(files, dict):
-        return {}, [_coverage_warning(coverage_path, "coverage JSON has no files object")], {}
+        return (
+            {},
+            [_coverage_warning(coverage_path, "coverage JSON has no files object")],
+            {},
+        )
     if len(files) > MAX_COVERAGE_FILE_RECORDS:
         return (
             {},
@@ -2803,6 +3119,24 @@ def _load_coverage_document(
         "sha256": hashlib.sha256(document.raw).hexdigest(),
         "file_records": len(files),
         "accepted_file_records": len(indexed),
+        "coverage_generated_at": (
+            payload.get("meta", {}).get("timestamp", "")
+            if isinstance(payload.get("meta"), dict)
+            and isinstance(payload.get("meta", {}).get("timestamp", ""), str)
+            else ""
+        ),
+        "coverage_tool_version": (
+            payload.get("meta", {}).get("version", "")
+            if isinstance(payload.get("meta"), dict)
+            and isinstance(payload.get("meta", {}).get("version", ""), str)
+            else ""
+        ),
+        "branch_coverage": (
+            payload.get("meta", {}).get("branch_coverage")
+            if isinstance(payload.get("meta"), dict)
+            and isinstance(payload.get("meta", {}).get("branch_coverage"), bool)
+            else None
+        ),
     }
     return indexed, warnings, provenance
 
@@ -2816,7 +3150,9 @@ def _load_coverage(
     return indexed, warnings
 
 
-def _function_coverage(facts: FunctionFacts, coverage: dict[str, Any]) -> dict[str, Any] | None:
+def _function_coverage(
+    facts: FunctionFacts, coverage: dict[str, Any]
+) -> dict[str, Any] | None:
     file_data = coverage.get(facts.path)
     if not isinstance(file_data, dict):
         return None
@@ -2873,14 +3209,26 @@ def _component_ref(facts: FunctionFacts) -> str:
     return f"{facts.path}:{facts.qualname}"
 
 
-def _critical_context(facts: FunctionFacts, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _critical_context(
+    facts: FunctionFacts, entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     reference = _component_ref(facts)
-    return [entry for entry in entries if fnmatch.fnmatchcase(reference, entry.get("pattern", ""))]
+    return [
+        entry
+        for entry in entries
+        if fnmatch.fnmatchcase(reference, entry.get("pattern", ""))
+    ]
 
 
-def _mapping_context(facts: FunctionFacts, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _mapping_context(
+    facts: FunctionFacts, entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     reference = _component_ref(facts)
-    return [entry for entry in entries if fnmatch.fnmatchcase(reference, entry.get("pattern", ""))]
+    return [
+        entry
+        for entry in entries
+        if fnmatch.fnmatchcase(reference, entry.get("pattern", ""))
+    ]
 
 
 def _module_suffixes(path: str) -> list[str]:
@@ -2902,13 +3250,17 @@ def _internal_call_resolution(
             by_full.setdefault(f"{module}.{target.qualname}", []).append(target)
             by_full.setdefault(f"{module}.{target.name}", []).append(target)
 
-    callers: dict[str, set[str]] = {_component_ref(target): set() for target in facts_list}
+    callers: dict[str, set[str]] = {
+        _component_ref(target): set() for target in facts_list
+    }
     resolved_calls: dict[str, set[str]] = {
         _component_ref(caller): set() for caller in facts_list
     }
     for caller in facts_list:
         caller_ref = _component_ref(caller)
-        caller_class = caller.qualname.rsplit(".", 1)[0] if "." in caller.qualname else ""
+        caller_class = (
+            caller.qualname.rsplit(".", 1)[0] if "." in caller.qualname else ""
+        )
         for called in caller.calls:
             targets: list[FunctionFacts] = []
             if "." not in called:
@@ -3042,7 +3394,9 @@ def _external_call_candidates(
             for site in facts.call_sites
             if site.get("reference") == reference
         }
-        resolution = sorted(resolution_sources)[0] if resolution_sources else "lexical_name"
+        resolution = (
+            sorted(resolution_sources)[0] if resolution_sources else "lexical_name"
+        )
         if _matches_any(
             reference,
             (
@@ -3055,7 +3409,8 @@ def _external_call_candidates(
             confidence = "high"
             basis = (
                 "typed_receiver_known_external_api"
-                if resolution in {
+                if resolution
+                in {
                     "parameter_annotation",
                     "annotation",
                     "constructor_assignment",
@@ -3065,15 +3420,13 @@ def _external_call_candidates(
             )
         elif "." in reference and (
             leaf in interface_verbs
-            or (
-                leaf in provider_methods
-                and bool(receiver_tokens & receiver_hints)
-            )
+            or (leaf in provider_methods and bool(receiver_tokens & receiver_hints))
         ):
             confidence = "medium"
             basis = (
                 "typed_unresolved_receiver_interface_verb"
-                if resolution in {
+                if resolution
+                in {
                     "parameter_annotation",
                     "annotation",
                     "constructor_assignment",
@@ -3149,7 +3502,9 @@ def _upstream_paths(
         "notice": (
             "Caller-path discovery was complete within the bounded static call model."
             if complete
-            else "Caller-path discovery is a bounded projection; " + "; ".join(limitations) + "."
+            else "Caller-path discovery is a bounded projection; "
+            + "; ".join(limitations)
+            + "."
         ),
     }
 
@@ -3208,11 +3563,14 @@ def _screening(
     if coverage and coverage.get("line_percent") is not None:
         reasons.append(f"observed function line coverage {coverage['line_percent']}%")
     if coverage and coverage.get("branch_percent") is not None:
-        reasons.append(f"observed function branch coverage {coverage['branch_percent']}%")
+        reasons.append(
+            f"observed function branch coverage {coverage['branch_percent']}%"
+        )
     if critical_context:
         score += 4
         reasons.extend(
-            "project critical function: " + entry.get("rationale", entry.get("pattern", ""))
+            "project critical function: "
+            + entry.get("rationale", entry.get("pattern", ""))
             for entry in critical_context
         )
     label = "high" if score >= 7 else "medium" if score >= 3 else "low"
@@ -3289,8 +3647,16 @@ def _candidate_rules(
                 f"{name} fails to execute, terminates early, or produces no required result.",
                 "The function is requested under a valid operating condition.",
                 "The expected result, state transition, or side effect is absent.",
-                ["Unhandled exception", "Incorrect precondition or guard", "Missing or invalid dependency/data"],
-                ["Define the required failure response", "Add tests for omitted and interrupted execution", "Add completion monitoring where the effect warrants it"],
+                [
+                    "Unhandled exception",
+                    "Incorrect precondition or guard",
+                    "Missing or invalid dependency/data",
+                ],
+                [
+                    "Define the required failure response",
+                    "Add tests for omitted and interrupted execution",
+                    "Add completion monitoring where the effect warrants it",
+                ],
                 "high" if "entrypoint" in facts.signals else "medium",
             ),
             _rule(
@@ -3299,8 +3665,16 @@ def _candidate_rules(
                 f"{name} produces an incorrect, incomplete, inconsistent, or unintended result.",
                 "A valid or boundary-case request follows a faulty logic, calculation, or state path.",
                 "A wrong result or state is returned or propagated to the caller.",
-                ["Logic or calculation fault", "Unhandled boundary condition", "Incorrect state or assumption"],
-                ["Document invariants and acceptance criteria", "Add boundary and property-based tests", "Validate output before propagation"],
+                [
+                    "Logic or calculation fault",
+                    "Unhandled boundary condition",
+                    "Incorrect state or assumption",
+                ],
+                [
+                    "Document invariants and acceptance criteria",
+                    "Add boundary and property-based tests",
+                    "Validate output before propagation",
+                ],
             ),
         ]
 
@@ -3312,8 +3686,17 @@ def _candidate_rules(
                 f"{name} accepts missing, malformed, out-of-range, stale, duplicated, or inconsistent input data.",
                 "Input violates an unstated or unenforced data assumption.",
                 "Invalid data is rejected incorrectly, used in processing, or propagated.",
-                ["Missing validation", "Ambiguous units/schema", "Stale or duplicated message", "Unexpected null, range, precision, or encoding"],
-                ["Specify input contracts, units, ranges, freshness, and uniqueness", "Add schema and boundary validation", "Test malformed and adversarial input"],
+                [
+                    "Missing validation",
+                    "Ambiguous units/schema",
+                    "Stale or duplicated message",
+                    "Unexpected null, range, precision, or encoding",
+                ],
+                [
+                    "Specify input contracts, units, ranges, freshness, and uniqueness",
+                    "Add schema and boundary validation",
+                    "Test malformed and adversarial input",
+                ],
             )
         )
     if "calculation" in facts.signals:
@@ -3388,8 +3771,17 @@ def _candidate_rules(
                     f"An external dependency used by {name} is unavailable, times out, responds late, or disconnects mid-operation.",
                     "A network or service dependency is degraded during the call.",
                     "The operation blocks, aborts, retries unexpectedly, or completes only partially.",
-                    ["Timeout absent or too long", "Connection interruption", "Dependency overload/outage", "Unsafe retry behavior"],
-                    ["Define timeouts and bounded retry behavior", "Make partial operations idempotent or compensatable", "Test dependency outage, latency, and recovery"],
+                    [
+                        "Timeout absent or too long",
+                        "Connection interruption",
+                        "Dependency overload/outage",
+                        "Unsafe retry behavior",
+                    ],
+                    [
+                        "Define timeouts and bounded retry behavior",
+                        "Make partial operations idempotent or compensatable",
+                        "Test dependency outage, latency, and recovery",
+                    ],
                     "high",
                 ),
                 _rule(
@@ -3398,8 +3790,18 @@ def _candidate_rules(
                     f"An external dependency returns a successful but wrong, partial, stale, duplicated, or schema-incompatible response to {name}.",
                     "The dependency responds, but its content or semantics violate the consumer's assumptions.",
                     "Incorrect external data is accepted and influences local behavior.",
-                    ["Schema/version drift", "Partial response", "Stale cache", "Duplicate response", "Semantic error with success status"],
-                    ["Validate response schema and semantics", "Record provenance and freshness where needed", "Test corrupt, partial, duplicate, and version-skewed responses"],
+                    [
+                        "Schema/version drift",
+                        "Partial response",
+                        "Stale cache",
+                        "Duplicate response",
+                        "Semantic error with success status",
+                    ],
+                    [
+                        "Validate response schema and semantics",
+                        "Record provenance and freshness where needed",
+                        "Test corrupt, partial, duplicate, and version-skewed responses",
+                    ],
                 ),
             ]
         )
@@ -3432,8 +3834,18 @@ def _candidate_rules(
                 f"A storage operation in {name} is lost, partial, duplicated, reordered, or reads inconsistent data.",
                 "The process, filesystem, or data store fails between logically related operations.",
                 "Persistent state differs from the state assumed by the application.",
-                ["Interrupted write", "Missing transaction boundary", "Concurrent update", "Corrupt/incompatible data", "Non-idempotent retry"],
-                ["Define atomicity and consistency requirements", "Use transactions or atomic replacement", "Test interruption, retry, corruption, and concurrent update"],
+                [
+                    "Interrupted write",
+                    "Missing transaction boundary",
+                    "Concurrent update",
+                    "Corrupt/incompatible data",
+                    "Non-idempotent retry",
+                ],
+                [
+                    "Define atomicity and consistency requirements",
+                    "Use transactions or atomic replacement",
+                    "Test interruption, retry, corruption, and concurrent update",
+                ],
                 "high" if "persistence" in facts.signals else "medium",
             )
         )
@@ -3445,8 +3857,17 @@ def _candidate_rules(
                 f"{name} runs with missing, malformed, stale, inherited, or environment-inappropriate configuration.",
                 "Configuration is absent or resolves to a syntactically valid but unintended value.",
                 "The function targets or performs behavior different from the reviewed configuration.",
-                ["Unsafe default", "Inherited environment variable", "Unit/type ambiguity", "Secret or endpoint mix-up"],
-                ["Fail fast on invalid configuration", "Validate types, ranges, environment, and target identity", "Expose non-secret effective configuration for diagnostics"],
+                [
+                    "Unsafe default",
+                    "Inherited environment variable",
+                    "Unit/type ambiguity",
+                    "Secret or endpoint mix-up",
+                ],
+                [
+                    "Fail fast on invalid configuration",
+                    "Validate types, ranges, environment, and target identity",
+                    "Expose non-secret effective configuration for diagnostics",
+                ],
             )
         )
     if "serialization" in facts.signals:
@@ -3457,8 +3878,17 @@ def _candidate_rules(
                 f"{name} serializes or deserializes corrupt, truncated, ambiguous, or version-incompatible data.",
                 "Stored or transmitted representation differs from the expected schema or encoding.",
                 "Data is rejected, silently changed, or reconstructed incorrectly.",
-                ["Schema drift", "Truncated payload", "Encoding/precision loss", "Unsafe or ambiguous deserialization"],
-                ["Version schemas and validate before use", "Test forward/backward compatibility and truncation", "Avoid unsafe deserialization formats"],
+                [
+                    "Schema drift",
+                    "Truncated payload",
+                    "Encoding/precision loss",
+                    "Unsafe or ambiguous deserialization",
+                ],
+                [
+                    "Version schemas and validate before use",
+                    "Test forward/backward compatibility and truncation",
+                    "Avoid unsafe deserialization formats",
+                ],
             )
         )
     if "subprocess" in facts.signals:
@@ -3469,8 +3899,18 @@ def _candidate_rules(
                 f"A process launched by {name} fails, hangs, returns misleading success, or operates on an unintended target.",
                 "The executable, arguments, environment, working directory, or process result differs from assumptions.",
                 "The requested operation is absent, partial, or applied to the wrong resource.",
-                ["Executable/path substitution", "Missing timeout", "Ignored return status", "Unsafe argument construction", "Inherited environment"],
-                ["Use explicit executable, arguments, environment, and working directory", "Enforce timeout and validate result", "Test partial failure and wrong-target prevention"],
+                [
+                    "Executable/path substitution",
+                    "Missing timeout",
+                    "Ignored return status",
+                    "Unsafe argument construction",
+                    "Inherited environment",
+                ],
+                [
+                    "Use explicit executable, arguments, environment, and working directory",
+                    "Enforce timeout and validate result",
+                    "Test partial failure and wrong-target prevention",
+                ],
                 "high",
             )
         )
@@ -3525,8 +3965,18 @@ def _candidate_rules(
                 f"{name} executes too early, too late, more than once, out of sequence, or concurrently with conflicting work.",
                 "Scheduling, cancellation, duplicate delivery, or shared-state interleaving violates an ordering assumption.",
                 "State or output depends on nondeterministic timing or an incomplete concurrent operation.",
-                ["Race condition", "Missing synchronization", "Cancellation leak", "Duplicate task/message", "Unbounded wait"],
-                ["Document ordering, atomicity, cancellation, and idempotency", "Add deterministic concurrency tests", "Use deadlines and explicit synchronization where warranted"],
+                [
+                    "Race condition",
+                    "Missing synchronization",
+                    "Cancellation leak",
+                    "Duplicate task/message",
+                    "Unbounded wait",
+                ],
+                [
+                    "Document ordering, atomicity, cancellation, and idempotency",
+                    "Add deterministic concurrency tests",
+                    "Use deadlines and explicit synchronization where warranted",
+                ],
                 "high" if facts.mutates_state else "medium",
             )
         )
@@ -3538,8 +3988,18 @@ def _candidate_rules(
                 f"{name} completes too early, too late, or uses an inappropriate time basis.",
                 "Clock behavior, workload, or delay differs from the timing assumption.",
                 "The result is valid in content but invalid in time.",
-                ["Wall-clock used for duration", "Missing deadline", "Blocking delay", "Clock adjustment", "Load-dependent latency"],
-                ["Define timing requirements and clock semantics", "Use monotonic deadlines for durations", "Test deadline and overload behavior"],
+                [
+                    "Wall-clock used for duration",
+                    "Missing deadline",
+                    "Blocking delay",
+                    "Clock adjustment",
+                    "Load-dependent latency",
+                ],
+                [
+                    "Define timing requirements and clock semantics",
+                    "Use monotonic deadlines for durations",
+                    "Test deadline and overload behavior",
+                ],
             )
         )
     circuit_breaker = next(
@@ -3653,8 +4113,17 @@ def _candidate_rules(
                 f"{name} catches or suppresses a failure without an adequate safe response, diagnostic, or escalation.",
                 "A broad or silent exception handler receives an unexpected failure.",
                 "The caller or operator believes processing succeeded or lacks actionable failure information.",
-                ["Broad exception catch", "Empty/pass handler", "Fallback indistinguishable from valid result", "Diagnostic context lost"],
-                ["Catch specific exceptions", "Define safe fallback and explicit failure result", "Log/measure with sufficient context and test the detection path"],
+                [
+                    "Broad exception catch",
+                    "Empty/pass handler",
+                    "Fallback indistinguishable from valid result",
+                    "Diagnostic context lost",
+                ],
+                [
+                    "Catch specific exceptions",
+                    "Define safe fallback and explicit failure result",
+                    "Log/measure with sufficient context and test the detection path",
+                ],
                 "high" if facts.silent_handlers else "medium",
             )
         )
@@ -3666,8 +4135,17 @@ def _candidate_rules(
                 f"{name} consumes excessive CPU, memory, handles, requests, or time, or fails to terminate.",
                 "Input size, retry count, iteration count, or downstream latency exceeds the implicit bound.",
                 "The function or surrounding process becomes unavailable or misses its deadline.",
-                ["Unbounded loop/retry", "Unbounded collection", "Algorithmic amplification", "Resource not released"],
-                ["Define and enforce resource bounds", "Test worst credible sizes and retry paths", "Measure latency/resource use and fail safely at limits"],
+                [
+                    "Unbounded loop/retry",
+                    "Unbounded collection",
+                    "Algorithmic amplification",
+                    "Resource not released",
+                ],
+                [
+                    "Define and enforce resource bounds",
+                    "Test worst credible sizes and retry paths",
+                    "Measure latency/resource use and fail safely at limits",
+                ],
             )
         )
     reference = _component_ref(facts)
@@ -3681,7 +4159,9 @@ def _candidate_rules(
                 custom["guideword"],
                 custom["failure_mode"],
                 custom.get("trigger", "Project-defined initiating condition."),
-                custom.get("local_effect", "Project-defined local effect requires review."),
+                custom.get(
+                    "local_effect", "Project-defined local effect requires review."
+                ),
                 list(custom.get("causes", [])),
                 list(custom.get("actions", [])),
                 custom.get("confidence", "project"),
@@ -3760,7 +4240,11 @@ def _component_dict(
         "critical_context": critical_context,
         "mapping_context": mapping_context,
         "subsystems": sorted(
-            {entry.get("subsystem", "") for entry in mapping_context if entry.get("subsystem")}
+            {
+                entry.get("subsystem", "")
+                for entry in mapping_context
+                if entry.get("subsystem")
+            }
         ),
         "requirement_ids": sorted(
             {
@@ -3800,7 +4284,9 @@ def _analysis_context_fingerprint(
         "critical_context": component.get("critical_context", []),
         "mapping_context": component.get("mapping_context", []),
         "hazards": [
-            value for value in config.get("hazards", []) if value.get("id") in hazard_ids
+            value
+            for value in config.get("hazards", [])
+            if value.get("id") in hazard_ids
         ],
         "requirements": [
             value
@@ -3869,7 +4355,9 @@ def _item_dict(
     if component["signals"]:
         evidence.append("Observed code signals: " + ", ".join(component["signals"]))
     if component["test_references"]:
-        evidence.append("Textual test references: " + ", ".join(component["test_references"]))
+        evidence.append(
+            "Textual test references: " + ", ".join(component["test_references"])
+        )
     if component.get("coverage"):
         coverage = component["coverage"]
         evidence.append(
@@ -3883,7 +4371,9 @@ def _item_dict(
                 f"{coverage.get('missing_branches', 0)} missing"
             )
     if component.get("called_by"):
-        evidence.append("Observed internal callers: " + ", ".join(component["called_by"][:10]))
+        evidence.append(
+            "Observed internal callers: " + ", ".join(component["called_by"][:10])
+        )
     for path in component.get("upstream_paths", [])[:5]:
         evidence.append("Observed propagation path: " + " -> ".join(path))
     detected_controls = copy.deepcopy(component.get("detected_controls", []))
@@ -3975,9 +4465,7 @@ def scan_repository(
     phase_started_ns = scan_started_ns
     if telemetry is not None:
         telemetry.clear()
-        telemetry.update(
-            {"format": "pysfmea-scan-telemetry-1", "phases_seconds": {}}
-        )
+        telemetry.update({"format": "pysfmea-scan-telemetry-1", "phases_seconds": {}})
 
     def finish_phase(name: str) -> None:
         nonlocal phase_started_ns
@@ -4008,9 +4496,7 @@ def scan_repository(
         guidance_profiles,
         organizational_packs=organizational_packs,
     )
-    guidance_applicability = copy.deepcopy(
-        config.get("guidance_applicability", [])
-    )
+    guidance_applicability = copy.deepcopy(config.get("guidance_applicability", []))
     apply_guidance_applicability(guidance, guidance_applicability)
     scan_config = config.get("scan", {})
     if include_private is None:
@@ -4020,12 +4506,22 @@ def scan_repository(
     if include_nested is None:
         include_nested = bool(scan_config.get("include_nested", True))
     exclude_patterns = list(scan_config.get("exclude", []))
+    test_evidence_include_patterns = list(scan_config.get("test_evidence_include", []))
+    boundary_evidence_include_patterns = list(
+        scan_config.get("boundary_evidence_include", [])
+    )
     focus_patterns = list(scan_config.get("focus", []))
     review_depth = str(scan_config.get("review_depth", "focused"))
     review_queue_max_per_component = int(
         scan_config.get("review_queue_max_per_component", 3)
     )
     review_queue_max_total = int(scan_config.get("review_queue_max_total", 1_000))
+    diagnostic_warning_budget = int(
+        scan_config.get("diagnostic_warning_budget", 25_000)
+    )
+    diagnostic_per_rule_budget = int(
+        scan_config.get("diagnostic_per_rule_budget", 10_000)
+    )
     external_call_prefixes = list(scan_config.get("external_call_prefixes", []))
     external_receiver_hints = list(scan_config.get("external_receiver_hints", []))
     external_method_hints = list(scan_config.get("external_method_hints", []))
@@ -4036,16 +4532,26 @@ def scan_repository(
     if fact_cache is not None:
         if fact_cache.get("format") != "pysfmea-python-fact-cache-1":
             fact_cache.clear()
-            fact_cache.update(
-                {"format": "pysfmea-python-fact-cache-1", "entries": {}}
-            )
+            fact_cache.update({"format": "pysfmea-python-fact-cache-1", "entries": {}})
         entries = fact_cache.get("entries")
         if not isinstance(entries, dict):
             entries = {}
             fact_cache["entries"] = entries
         cache_entries = entries
+    coverage_selection = "cli_argument" if coverage_json is not None else "none"
     if coverage_json is None:
         coverage_json = scan_config.get("coverage_json") or None
+        if coverage_json is not None:
+            coverage_selection = "configured"
+    if coverage_json is None and scan_config.get("coverage_discovery", True):
+        for candidate in (
+            root_path / "coverage.json",
+            root_path / ".artifacts" / "coverage.json",
+        ):
+            if candidate.exists():
+                coverage_json = candidate
+                coverage_selection = "conventional_path_discovery"
+                break
     finish_phase("configuration_and_guidance")
 
     warnings: list[dict[str, Any]] = []
@@ -4133,9 +4639,7 @@ def scan_repository(
     finish_phase("python_parsing")
     cache_entries_before_prune = len(cache_entries or {})
     if fact_cache is not None and cache_entries is not None:
-        pruned_entries = {
-            key: cache_entries[key] for key in sorted(used_cache_keys)
-        }
+        pruned_entries = {key: cache_entries[key] for key in sorted(used_cache_keys)}
         fact_cache["entries"] = pruned_entries
         cache_entries = pruned_entries
     if telemetry is not None:
@@ -4157,7 +4661,9 @@ def scan_repository(
         test_evidence_snapshots,
         test_evidence_errors,
         exclude_patterns,
+        test_evidence_include_patterns,
     )
+    test_reference_index, test_evidence_analysis = _test_evidence_analysis(tests)
     coverage_snapshots: dict[Path, bytes] = {}
     coverage, coverage_warnings, coverage_provenance = _load_coverage_document(
         coverage_json,
@@ -4167,10 +4673,13 @@ def scan_repository(
     warnings.extend(coverage_warnings)
     repository_inventory = build_repository_inventory(
         root_path,
-        selected_python_paths={path.relative_to(root_path).as_posix() for path in files},
+        selected_python_paths={
+            path.relative_to(root_path).as_posix() for path in files
+        },
         parsed_python_paths=parsed_python_paths,
         include_tests=include_tests,
         exclude_patterns=exclude_patterns,
+        boundary_evidence_include_patterns=boundary_evidence_include_patterns,
         source_snapshots={
             path.relative_to(root_path).as_posix(): raw
             for path, raw in source_snapshots.items()
@@ -4208,7 +4717,9 @@ def scan_repository(
 
     if focus_patterns:
         facts_list = [
-            facts for facts in facts_list if _matches_pattern(_component_ref(facts), focus_patterns)
+            facts
+            for facts in facts_list
+            if _matches_pattern(_component_ref(facts), focus_patterns)
         ]
 
     callers, resolved_calls = _internal_call_resolution(facts_list)
@@ -4242,7 +4753,7 @@ def scan_repository(
     for facts in facts_list:
         called_by = callers.get(_component_ref(facts), [])
         fan_in = len(called_by)
-        test_refs = _find_test_references(facts.name, tests)
+        test_refs = _find_test_references(facts.name, test_reference_index)
         function_coverage = _function_coverage(facts, coverage)
         critical_context = _critical_context(facts, critical_entries)
         mapping_context = _mapping_context(facts, mapping_entries)
@@ -4268,7 +4779,9 @@ def scan_repository(
         components.append(component)
         items.extend(
             _item_dict(facts, component, rule, hazards)
-            for rule in _candidate_rules(facts, custom_rules, config.get("analysis", {}))
+            for rule in _candidate_rules(
+                facts, custom_rules, config.get("analysis", {})
+            )
         )
 
     dependency_element = _dependency_component_and_item(
@@ -4334,12 +4847,19 @@ def scan_repository(
                 "review_depth": review_depth,
                 "review_queue_max_per_component": review_queue_max_per_component,
                 "review_queue_max_total": review_queue_max_total,
+                "diagnostic_warning_budget": diagnostic_warning_budget,
+                "diagnostic_per_rule_budget": diagnostic_per_rule_budget,
                 "external_call_prefixes": external_call_prefixes,
                 "external_receiver_hints": external_receiver_hints,
                 "external_method_hints": external_method_hints,
                 "exclude": exclude_patterns,
+                "test_evidence_include": test_evidence_include_patterns,
+                "boundary_evidence_include": boundary_evidence_include_patterns,
                 "focus": focus_patterns,
                 "coverage_json": str(coverage_json or ""),
+                "coverage_discovery": bool(scan_config.get("coverage_discovery", True)),
+                "coverage_selection": coverage_selection,
+                "test_evidence_analysis": test_evidence_analysis,
             },
         },
         "context": {
@@ -4393,6 +4913,7 @@ def scan_repository(
         "runtime_evidence": {"imports": [], "spans": [], "edges": []},
     }
     if coverage_provenance:
+        coverage_provenance["selection"] = coverage_selection
         analysis["project"]["settings"]["coverage_evidence"] = coverage_provenance
     refresh_assurance_register(analysis, {})
     analysis["sfta"] = build_sfta(analysis)
@@ -4408,9 +4929,7 @@ def scan_repository(
             "derived_performance_observation_not_primary_assurance_evidence"
         )
         telemetry["fresh_downstream_analysis"] = True
-        analysis["project"]["settings"]["scan_telemetry"] = copy.deepcopy(
-            telemetry
-        )
+        analysis["project"]["settings"]["scan_telemetry"] = copy.deepcopy(telemetry)
         # Bind the final observed execution provenance rather than the pre-telemetry settings.
         analysis["run_manifest"] = create_run_manifest(analysis)
     return analysis

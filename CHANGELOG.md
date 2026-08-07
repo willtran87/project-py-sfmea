@@ -7,6 +7,19 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ### Scalable governed discovery and reporting
 
+- Separate semantic exclusions from explicit evidence-only test and JS/TS boundary scopes. The
+  scanner can now attribute excluded test sources and reconcile excluded frontend boundaries
+  without generating components from either scope; diagnostics report likely scope conflicts and
+  machine-readable configuration suggestions.
+- Replace repeated SFTA bottom-up validation messages with one count-and-sample diagnostic backed
+  by the complete reconciliation register. Add warning/per-rule budgets, family batch estimates,
+  cross-priority queue reservations, and a non-certifying domain qualification scorecard.
+- Use a single AST-grounded test-symbol index instead of repeated textual searches, summarize
+  assertion/negative/parameterized/property/timing/concurrency/fault-injection signals, and discover
+  conventional root coverage JSON with explicit selection provenance.
+- Compose literal Python router prefixes and same-file web-client base URLs, recover bounded fetch
+  methods, emit method/path compatibility review leads, and generate navigable cross-stack static
+  sequence candidates in JSON and HTML.
 - Add a bounded, integrity-checked, atomically published persistent Python fact cache with exact
   source/runtime/version invalidation, truthful run-manifest reuse metrics, and cold/warm benchmark
   evidence. Whole-repository call resolution and finding generation remain freshly recomputed.

@@ -32,7 +32,10 @@ class ValidationTests(unittest.TestCase):
         self.temp.cleanup()
 
     def rules(self) -> set[str]:
-        return {finding["rule_id"] for finding in validate_analysis(self.analysis)["findings"]}
+        return {
+            finding["rule_id"]
+            for finding in validate_analysis(self.analysis)["findings"]
+        }
 
     def test_accepted_item_requires_trace_effect_severity_and_rationale(self) -> None:
         update_item_review(
@@ -122,7 +125,9 @@ class ValidationTests(unittest.TestCase):
                 "severity": 7,
                 "severity_rationale": "Confidentiality impact.",
                 "detection_controls": ["Authorization integration test"],
-                "actions_taken": ["No further action; risk accepted by the product owner."],
+                "actions_taken": [
+                    "No further action; risk accepted by the product owner."
+                ],
                 "verification_evidence": ["Review record SAF-42"],
                 "post_action_severity": 7,
                 "status": "closed",
@@ -177,9 +182,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         summary = json.loads(output.getvalue())
         self.assertEqual(summary["repository_artifacts"], expected_files)
-        self.assertEqual(
-            summary["repository_inventory"]["status"], "recomputed"
-        )
+        self.assertEqual(summary["repository_inventory"]["status"], "recomputed")
 
     def test_rejection_traceability_and_integrity_checks(self) -> None:
         update_item_review(
@@ -191,7 +194,9 @@ class ValidationTests(unittest.TestCase):
         update_item_review(
             self.analysis,
             self.item["id"],
-            {"disposition_rationale": "Generic omission is not credible for this pure helper."},
+            {
+                "disposition_rationale": "Generic omission is not credible for this pure helper."
+            },
         )
         self.assertNotIn("review.missing_rejection_rationale", self.rules())
 
@@ -231,7 +236,9 @@ class ValidationTests(unittest.TestCase):
     def test_syntax_error_makes_scan_incomplete(self) -> None:
         (self.root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
         analysis = scan_repository(self.root)
-        rules = {finding["rule_id"] for finding in validate_analysis(analysis)["findings"]}
+        rules = {
+            finding["rule_id"] for finding in validate_analysis(analysis)["findings"]
+        }
         self.assertIn("scan.warning", rules)
         scan_finding = next(
             finding
@@ -279,7 +286,9 @@ class ValidationTests(unittest.TestCase):
         self.analysis["repository_inventory"]["summary"] = []
         self.assertIn("coverage.inventory_summary_mismatch", self.rules())
 
-    def test_legacy_zero_file_inventory_retains_null_coverage_compatibility(self) -> None:
+    def test_legacy_zero_file_inventory_retains_null_coverage_compatibility(
+        self,
+    ) -> None:
         self.analysis["repository_inventory"] = legacy_repository_inventory(
             "Historical scan did not capture repository coverage."
         )
@@ -309,13 +318,18 @@ class ValidationTests(unittest.TestCase):
         )
         self.assertTrue(grouped)
         self.assertTrue(all(value["screening_priority"] == "high" for value in grouped))
-        self.assertTrue(all(value["family_id"].startswith("REVIEW-FAMILY-") for value in grouped))
+        self.assertTrue(
+            all(value["family_id"].startswith("REVIEW-FAMILY-") for value in grouped)
+        )
         self.assertTrue(all(value["family_size"] >= 1 for value in grouped))
         self.assertTrue(
             all(value["rule_id"] in value["family_rule_ids"] for value in grouped)
         )
         self.assertTrue(
-            all(value["review_cluster_id"].startswith("REVIEW-CLUSTER-") for value in grouped)
+            all(
+                value["review_cluster_id"].startswith("REVIEW-CLUSTER-")
+                for value in grouped
+            )
         )
         self.assertTrue(all(value["review_cluster_size"] >= 1 for value in grouped))
         self.assertTrue(all(value["selection_reasons"] for value in grouped))
@@ -346,10 +360,14 @@ class ValidationTests(unittest.TestCase):
         )
         self.assertTrue(all(value["diversity_round"] == 1 for value in queue))
 
-    def test_review_queue_caps_components_without_hiding_protected_records(self) -> None:
+    def test_review_queue_caps_components_without_hiding_protected_records(
+        self,
+    ) -> None:
         component_id = self.analysis["items"][0]["component_id"]
         matching = [
-            item for item in self.analysis["items"] if item["component_id"] == component_id
+            item
+            for item in self.analysis["items"]
+            if item["component_id"] == component_id
         ]
         self.assertGreater(len(matching), 2)
         for item in matching:
@@ -365,18 +383,59 @@ class ValidationTests(unittest.TestCase):
         )
         selected = [value for value in queue if value["component_id"] == component_id]
         self.assertIn(protected["id"], {value["id"] for value in selected})
-        self.assertLessEqual(
-            sum(not value["hazard_linked"] for value in selected), 2
-        )
+        self.assertLessEqual(sum(not value["hazard_linked"] for value in selected), 2)
 
         with self.assertRaisesRegex(ValueError, "max_per_component"):
             review_queue(self.analysis, max_per_component=0)
+
+    def test_review_queue_can_reserve_multiple_priority_bands(self) -> None:
+        (self.root / "many.py").write_text(
+            "\n\n".join(
+                f"@app.get('/items/{index}')\n"
+                f"def function_{index}():\n"
+                "    try:\n"
+                "        return requests.get('/external')\n"
+                "    except Exception:\n"
+                "        pass"
+                for index in range(7)
+            )
+            + "\n\ndef plain(value):\n    return value\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        self.assertGreater(len(analysis["items"]), 5)
+        present = {
+            value["scanner"]["screening_priority"] for value in analysis["items"]
+        }
+        self.assertGreater(len(present), 1)
+
+        queue = review_queue(
+            analysis,
+            limit=5,
+            minimum_priority="low",
+            balance_priorities=True,
+        )
+
+        self.assertEqual(len(queue), 5)
+        selected_priorities = {value["screening_priority"] for value in queue}
+        self.assertTrue(present <= selected_priorities)
+        self.assertTrue(
+            any(
+                reason.startswith("priority_reserve:")
+                for value in queue
+                for reason in value["selection_reasons"]
+            )
+        )
 
     def test_repository_baseline_and_component_integrity_are_gated(self) -> None:
         update_item_review(
             self.analysis,
             self.item["id"],
-            {"disposition": "rejected", "disposition_rationale": "Not credible.", "reviewer": "Jordan"},
+            {
+                "disposition": "rejected",
+                "disposition_rationale": "Not credible.",
+                "reviewer": "Jordan",
+            },
         )
         self.analysis["project"]["baseline"]["id"] = "BASELINE-TAMPERED"
         self.analysis["components"].append(dict(self.analysis["components"][0]))

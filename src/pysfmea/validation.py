@@ -1397,12 +1397,22 @@ def validate_analysis(
             field="sfta.reconciliation.top_down_uncovered_events",
         )
     item_by_id = {value.get("id"): value for value in analysis.get("items", [])}
-    for gap in reconciliation.get("bottom_up_unmapped_findings", []):
+    bottom_up_gaps = reconciliation.get("bottom_up_unmapped_findings", [])
+    if bottom_up_gaps:
+        sample_ids = [
+            str(value.get("finding_id", ""))
+            for value in bottom_up_gaps[:5]
+            if isinstance(value, dict) and value.get("finding_id")
+        ]
         add(
             "sfta.unmapped_bottom_up_finding",
             "warning",
-            "Hazard-linked finding is not correlated to an event in the hazard's fault tree.",
-            item=item_by_id.get(gap.get("finding_id")),
+            (
+                f"{len(bottom_up_gaps)} hazard-linked findings are not correlated to an event "
+                "in the hazard's fault tree. Review the complete SFTA reconciliation register; "
+                f"sample finding IDs: {', '.join(sample_ids) or 'unavailable'}."
+            ),
+            item=item_by_id.get(sample_ids[0]) if sample_ids else None,
             field="sfta.reconciliation.bottom_up_unmapped_findings",
         )
     for gap in reconciliation.get("hazard_link_mismatches", []):
@@ -1431,6 +1441,7 @@ def review_queue(
     minimum_priority: str = "low",
     group_families: bool = False,
     max_per_component: int | None = None,
+    balance_priorities: bool = False,
 ) -> list[dict[str, Any]]:
     """Return a bounded, optionally family-grouped human review queue."""
 
@@ -1458,6 +1469,11 @@ def review_queue(
         review = item.get("review", {})
         findings = findings_by_item.get(item.get("id", ""), [])
         errors = sum(finding["level"] == "error" for finding in findings)
+        blocking_errors = sum(
+            finding["level"] == "error"
+            and finding.get("rule_id") not in {"review.unreviewed"}
+            for finding in findings
+        )
         warnings = sum(finding["level"] == "warning" for finding in findings)
         if (
             review.get("status") == "closed"
@@ -1465,9 +1481,7 @@ def review_queue(
             and not review.get("revalidation_required")
         ):
             continue
-        screening_priority = item.get("scanner", {}).get(
-            "screening_priority", ""
-        )
+        screening_priority = item.get("scanner", {}).get("screening_priority", "")
         if (
             screening_priority != "manual"
             and priority_rank.get(screening_priority, 9) > priority_threshold
@@ -1495,12 +1509,13 @@ def review_queue(
                 "status": review.get("status", ""),
                 "revalidation_required": bool(review.get("revalidation_required")),
                 "errors": errors,
+                "blocking_errors": blocking_errors,
                 "warnings": warnings,
                 "finding_rules": [finding["rule_id"] for finding in findings],
                 "_family_key": (component_id, failure_class),
                 "_rank": (
                     0 if review.get("revalidation_required") else 1,
-                    0 if errors else 1,
+                    0 if blocking_errors else 1,
                     change_rank.get(item.get("source_change", ""), 9),
                     priority_rank.get(
                         item.get("scanner", {}).get("screening_priority", ""), 9
@@ -1519,11 +1534,12 @@ def review_queue(
         for family in grouped.values():
             representative = family[0]
             family_material = [
-                representative["component_id"], representative["failure_class"]
+                representative["component_id"],
+                representative["failure_class"],
             ]
-            representative["family_id"] = "REVIEW-FAMILY-" + _digest(
-                family_material
-            )[:12].upper()
+            representative["family_id"] = (
+                "REVIEW-FAMILY-" + _digest(family_material)[:12].upper()
+            )
             representative["family_size"] = len(family)
             representative["family_rule_ids"] = sorted(
                 {str(value["rule_id"]) for value in family}
@@ -1594,7 +1610,7 @@ def review_queue(
                 reasons = [f"priority:{candidate['screening_priority']}"]
                 if candidate["revalidation_required"]:
                     reasons.insert(0, "revalidation_required")
-                if candidate["errors"]:
+                if candidate["blocking_errors"]:
                     reasons.insert(0, "validation_error")
                 if candidate["hazard_linked"]:
                     reasons.insert(0, "hazard_linked")
@@ -1604,6 +1620,57 @@ def review_queue(
                 candidate["selection_reasons"] = reasons
                 diversified.append(candidate)
     candidates = diversified
+    if balance_priorities and limit > 0:
+        # Preserve ranked order while reserving bounded representation for every
+        # priority that survived the caller's explicit priority floor.
+        selected_ids: set[str] = set()
+        balanced: list[dict[str, Any]] = []
+        protected_candidates = [
+            value
+            for value in candidates
+            if value["revalidation_required"]
+            or value["blocking_errors"]
+            or value["hazard_linked"]
+            or value["screening_priority"] == "manual"
+        ]
+        for candidate in protected_candidates[:limit]:
+            balanced.append(candidate)
+            selected_ids.add(str(candidate["id"]))
+        present_priorities = [
+            priority
+            for priority in ("high", "medium", "low")
+            if any(
+                value["screening_priority"] == priority
+                and str(value["id"]) not in selected_ids
+                for value in candidates
+            )
+        ]
+        reserve = max(1, limit // 10)
+        for priority in present_priorities:
+            added = 0
+            for candidate in candidates:
+                if len(balanced) >= limit or added >= reserve:
+                    break
+                candidate_id = str(candidate["id"])
+                if (
+                    candidate_id in selected_ids
+                    or candidate["screening_priority"] != priority
+                ):
+                    continue
+                candidate.setdefault("selection_reasons", []).append(
+                    f"priority_reserve:{priority}"
+                )
+                balanced.append(candidate)
+                selected_ids.add(candidate_id)
+                added += 1
+        for candidate in candidates:
+            if len(balanced) >= limit:
+                break
+            candidate_id = str(candidate["id"])
+            if candidate_id not in selected_ids:
+                balanced.append(candidate)
+                selected_ids.add(candidate_id)
+        candidates = balanced
     for value in candidates:
         value.pop("_rank", None)
         value.pop("_family_key", None)

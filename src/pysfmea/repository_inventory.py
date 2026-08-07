@@ -63,7 +63,9 @@ def summarize_repository_inventory(
         for value in entries
         if isinstance(value.get("boundary_facts"), dict)
     ]
-    python_entries = [value for value in entries if value.get("kind") == "python_source"]
+    python_entries = [
+        value for value in entries if value.get("kind") == "python_source"
+    ]
     web_entries = [
         value
         for value in entries
@@ -71,9 +73,7 @@ def summarize_repository_inventory(
     ]
     analyzed_files = status_counts.get("analyzed", 0)
     indexed_files = status_counts.get("indexed", 0)
-    excluded_files = sum(
-        value.get("status") == "excluded_region" for value in entries
-    )
+    excluded_files = sum(value.get("status") == "excluded_region" for value in entries)
     accounted_files = analyzed_files + indexed_files + excluded_files
 
     def percentage(numerator: int, denominator: int) -> float:
@@ -85,9 +85,7 @@ def summarize_repository_inventory(
         "by_status": dict(sorted(status_counts.items())),
         "by_kind": dict(sorted(kind_counts.items())),
         "by_snapshot_source": dict(sorted(snapshot_counts.items())),
-        "semantic_coverage_percent": round(
-            100 * analyzed_files / len(entries), 1
-        )
+        "semantic_coverage_percent": round(100 * analyzed_files / len(entries), 1)
         if entries
         else 100.0,
         "coverage_dimensions": {
@@ -105,7 +103,9 @@ def summarize_repository_inventory(
                 "percent": percentage(accounted_files, len(entries)),
             },
             "python_semantic": {
-                "files": sum(value.get("status") == "analyzed" for value in python_entries),
+                "files": sum(
+                    value.get("status") == "analyzed" for value in python_entries
+                ),
                 "eligible_files": len(python_entries),
                 "percent": percentage(
                     sum(value.get("status") == "analyzed" for value in python_entries),
@@ -143,7 +143,8 @@ def summarize_repository_inventory(
                 if isinstance(value.get("exports", []), list)
             ),
             "literal_endpoints": sum(
-                len(value.get("endpoint_literals", [])) for value in boundary_records
+                len(value.get("endpoint_literals", []))
+                for value in boundary_records
                 if isinstance(value.get("endpoint_literals", []), list)
             ),
             "external_packages": len(
@@ -203,8 +204,7 @@ def repository_inventory_summary_mismatches(
     return [
         field
         for field in fields
-        if not isinstance(supplied, Mapping)
-        or supplied.get(field) != derived[field]
+        if not isinstance(supplied, Mapping) or supplied.get(field) != derived[field]
     ]
 
 
@@ -304,15 +304,36 @@ def legacy_repository_inventory(reason: str) -> dict[str, Any]:
 
 
 def _matches(path: str, patterns: Iterable[str]) -> bool:
-    return any(fnmatch.fnmatchcase(path, pattern.replace("\\", "/")) for pattern in patterns)
+    return any(
+        fnmatch.fnmatchcase(path, pattern.replace("\\", "/")) for pattern in patterns
+    )
+
+
+def _may_contain_match(directory: str, patterns: Iterable[str]) -> bool:
+    """Conservatively retain an excluded directory needed by an evidence glob."""
+
+    prefix = directory.strip("/") + "/"
+    for raw_pattern in patterns:
+        pattern = raw_pattern.replace("\\", "/").lstrip("./")
+        wildcard_positions = [
+            pattern.find(character) for character in "*[?" if character in pattern
+        ]
+        literal = pattern[: min(wildcard_positions, default=len(pattern))]
+        if not literal or literal.startswith(prefix) or prefix.startswith(literal):
+            return True
+        if _matches(directory, (pattern,)):
+            return True
+    return False
 
 
 def _is_test(path: str) -> bool:
     parts = Path(path).parts
     name = parts[-1].lower() if parts else ""
-    return any(part.lower() in {"test", "tests"} for part in parts[:-1]) or name.startswith(
-        "test_"
-    ) or name.endswith("_test.py")
+    return (
+        any(part.lower() in {"test", "tests"} for part in parts[:-1])
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+    )
 
 
 def _kind(path: str) -> str:
@@ -350,7 +371,12 @@ def _kind(path: str) -> str:
         return "container_or_deployment"
     if suffix in {".tf", ".tfvars"} or "k8s/" in lower or "kubernetes/" in lower:
         return "infrastructure"
-    if "openapi" in name or "swagger" in name or name.endswith(".schema.json") or suffix == ".proto":
+    if (
+        "openapi" in name
+        or "swagger" in name
+        or name.endswith(".schema.json")
+        or suffix == ".proto"
+    ):
         return "api_or_data_schema"
     if "migration" in lower or suffix == ".sql":
         return "database_schema_or_migration"
@@ -364,7 +390,21 @@ def _kind(path: str) -> str:
         return "test_result"
     if suffix in {".toml", ".yaml", ".yml", ".json", ".ini", ".cfg", ".env"}:
         return "configuration"
-    if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".zip", ".gz", ".whl", ".exe", ".dll", ".so", ".pyd"}:
+    if suffix in {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".pdf",
+        ".zip",
+        ".gz",
+        ".whl",
+        ".exe",
+        ".dll",
+        ".so",
+        ".pyd",
+    }:
         return "binary_or_generated"
     return "unclassified"
 
@@ -437,7 +477,18 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
         operation = match.group("operation")
         value = next(value for value in match.groups()[1:] if value is not None)
         leaf = operation.casefold().rsplit(".", 1)[-1]
-        method = leaf.upper() if operation.casefold().startswith("axios.") else "UNKNOWN"
+        method = (
+            leaf.upper() if operation.casefold().startswith("axios.") else "UNKNOWN"
+        )
+        if operation.casefold() == "fetch":
+            options = source[match.end() : match.end() + 500]
+            method_match = re.match(
+                r"\s*,\s*\{[^{}]{0,450}?\bmethod\s*:\s*['\"]([A-Za-z]+)['\"]",
+                options,
+                re.DOTALL,
+            )
+            if method_match:
+                method = method_match.group(1).upper()
         if "websocket" in operation.casefold():
             method = "WEBSOCKET"
         elif "eventsource" in operation.casefold():
@@ -456,7 +507,9 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
     )
     external_packages = sorted(
         {
-            value.split("/", 1)[0] if not value.startswith("@") else "/".join(value.split("/")[:2])
+            value.split("/", 1)[0]
+            if not value.startswith("@")
+            else "/".join(value.split("/")[:2])
             for value in imports
             if not value.startswith((".", "/"))
         }
@@ -470,11 +523,7 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
         "exports": exports,
         "endpoint_literals": endpoints,
         "endpoint_candidates": sorted(
-            [
-                value
-                for value in endpoint_candidates
-                if value["literal"] in endpoints
-            ],
+            [value for value in endpoint_candidates if value["literal"] in endpoints],
             key=lambda value: (value["literal"], value["method"], value["operation"]),
         ),
         "truncated": (
@@ -497,6 +546,7 @@ def build_repository_inventory(
     parsed_python_paths: set[str],
     include_tests: bool,
     exclude_patterns: Iterable[str] = (),
+    boundary_evidence_include_patterns: Iterable[str] = (),
     source_snapshots: Mapping[str, bytes] | None = None,
     test_evidence_snapshots: Mapping[str, bytes] | None = None,
     dependency_snapshots: Mapping[str, bytes] | None = None,
@@ -515,8 +565,11 @@ def build_repository_inventory(
     walk_truncated = False
     hash_truncated = False
     hash_consumed = 0
+    boundary_traversal_roots: set[str] = set()
     relative_dir = "."
-    for directory, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+    for directory, dirnames, filenames in os.walk(
+        root, topdown=True, followlinks=False
+    ):
         base = Path(directory)
         relative_dir = base.relative_to(root).as_posix()
         kept_dirs: list[str] = []
@@ -531,16 +584,30 @@ def build_repository_inventory(
             if candidate.is_symlink():
                 reason = "Symbolic-link directory is not traversed."
                 status = "opaque"
-            elif _matches(rel, exclude_patterns) or _matches(
-                rel + "/__pysfmea_region__", exclude_patterns
-            ):
-                reason = "Directory matches a configured scan exclusion and is not traversed."
-                status = "excluded_region"
             elif dirname in DEFAULT_EXCLUDES:
                 reason = "Default generated, cache, environment, or vendor directory is excluded."
                 status = "excluded_region"
             elif dirname.startswith(".") and dirname not in {".github"}:
                 reason = "Hidden directory is excluded from repository analysis."
+                status = "excluded_region"
+            elif _matches(rel, exclude_patterns) or _matches(
+                rel + "/__pysfmea_region__", exclude_patterns
+            ):
+                if _may_contain_match(rel, boundary_evidence_include_patterns):
+                    kept_dirs.append(dirname)
+                    boundary_traversal_roots.add(rel)
+                    regions.append(
+                        {
+                            "path": rel + "/",
+                            "status": "excluded_region",
+                            "reason": (
+                                "Directory is excluded from semantic analysis but traversed "
+                                "for explicitly configured JS/TS boundary evidence."
+                            ),
+                        }
+                    )
+                    continue
+                reason = "Directory matches a configured scan exclusion and is not traversed."
                 status = "excluded_region"
             else:
                 kept_dirs.append(dirname)
@@ -557,6 +624,24 @@ def build_repository_inventory(
             path = base / filename
             rel = path.relative_to(root).as_posix()
             kind = _kind(rel)
+            configured_excluded = _matches(rel, exclude_patterns)
+            boundary_evidence_override = (
+                configured_excluded
+                and kind in {"javascript_source", "typescript_source"}
+                and _matches(rel, boundary_evidence_include_patterns)
+            )
+            traversed_for_boundary_only = any(
+                rel.startswith(root_path + "/")
+                for root_path in boundary_traversal_roots
+            )
+            if (
+                configured_excluded
+                and traversed_for_boundary_only
+                and not boundary_evidence_override
+            ):
+                # The enclosing excluded region accounts for this path. Do not read
+                # unrelated files solely because an evidence glob required traversal.
+                continue
             record: dict[str, Any] = {
                 "path": rel,
                 "kind": kind,
@@ -642,7 +727,9 @@ def build_repository_inventory(
                     remaining = MAX_TOTAL_HASH_BYTES - hash_consumed
                     if remaining <= 0:
                         hash_truncated = True
-                        record["size"] = len(raw) if raw is not None else metadata.st_size
+                        record["size"] = (
+                            len(raw) if raw is not None else metadata.st_size
+                        )
                         record.update(
                             analysis_depth="metadata_only",
                             reason="Artifact digest omitted after the aggregate hashing limit.",
@@ -656,7 +743,9 @@ def build_repository_inventory(
                                 max_bytes=read_limit,
                             )
                             raw = snapshot.raw
-                            record["snapshot_source"] = "identity_stable_inventory_snapshot"
+                            record["snapshot_source"] = (
+                                "identity_stable_inventory_snapshot"
+                            )
                         record["size"] = len(raw)
                         hash_consumed += min(len(raw), read_limit + 1)
                         if len(raw) > remaining:
@@ -717,7 +806,7 @@ def build_repository_inventory(
                 )
                 entries.append(record)
                 continue
-            if _matches(rel, exclude_patterns):
+            if configured_excluded and not boundary_evidence_override:
                 record.update(
                     status="excluded_region",
                     analysis_depth=(
@@ -737,14 +826,19 @@ def build_repository_inventory(
                     ),
                     reason="Test source was indexed but excluded from component analysis by configuration.",
                 )
-            elif kind in {"python_source", "python_test"} and rel in parsed_python_paths:
+            elif (
+                kind in {"python_source", "python_test"} and rel in parsed_python_paths
+            ):
                 record.update(
                     status="analyzed",
                     analysis_depth="python_ast",
                     reason="Python source parsed and analyzed without repository execution.",
                     adapter_ids=["python.repository_discoverer", "python.ast_parser"],
                 )
-            elif kind in {"python_source", "python_test"} and rel in selected_python_paths:
+            elif (
+                kind in {"python_source", "python_test"}
+                and rel in selected_python_paths
+            ):
                 record.update(
                     status="unresolved",
                     analysis_depth="tokenization_or_parse_failed",
@@ -798,9 +892,7 @@ def build_repository_inventory(
                         "metadata_and_digest" if record["sha256"] else "metadata_only"
                     ),
                     reason=(
-                        (
-                            "No semantic analyzer is registered for this artifact type."
-                        )
+                        ("No semantic analyzer is registered for this artifact type.")
                         if record["sha256"]
                         else boundary_reason
                     ),
@@ -813,7 +905,9 @@ def build_repository_inventory(
                     record.update(
                         status="opaque",
                         analysis_depth=(
-                            "metadata_and_digest" if record["sha256"] else "metadata_only"
+                            "metadata_and_digest"
+                            if record["sha256"]
+                            else "metadata_only"
                         ),
                         reason=(
                             "Language-boundary source could not be decoded as UTF-8 for bounded "
@@ -827,6 +921,11 @@ def build_repository_inventory(
                         reason=(
                             "Language-boundary imports, exports, packages, and literal endpoints "
                             "were indexed without claiming full semantic analysis."
+                            + (
+                                " The path remains excluded from semantic component analysis."
+                                if boundary_evidence_override
+                                else ""
+                            )
                         ),
                         adapter_ids=[
                             "python.repository_discoverer",

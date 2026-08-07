@@ -92,7 +92,9 @@ retention size matters; every downstream loader accepts the bounded deterministi
 The default focused queue admits at most three ordinary families per component and 1,000 total
 records per projection. Revalidation, manual, and hazard-linked records remain eligible despite
 the per-component cap. Configure `review_queue_max_per_component` and
-`review_queue_max_total`, or use `--all-records` for an uncapped exhaustive projection.
+`review_queue_max_total`, or use `--all-records` for an uncapped exhaustive projection. Within the
+configured priority floor, the CLI reserves bounded representation for each present priority band;
+blocking validation errors, revalidation, manual decisions, and hazard links remain protected.
 
 ## 4. Triage and perform engineering review
 
@@ -111,10 +113,12 @@ sfmea queue $analysis --limit 25
 sfmea review $analysis
 ```
 
-Diagnostics are a prioritized improvement plan: P0 repairs provenance or missing governing
-context; P1 closes test,
-runtime, mapping, assurance-planning, or cross-stack evidence gaps; P2 improves guidance
-specificity. Adapter-accounting errors should trigger a current rescan before review.
+Diagnostics are a prioritized improvement plan: P0 repairs provenance, missing governing context,
+unmanageable warning repetition, or priority starvation; P1 closes test, runtime, mapping,
+assurance-planning, cross-stack, or evidence-scope gaps; P2 improves guidance specificity and
+failure-path tests. `validation.aggregates` retains counts and bounded samples while the governed
+analysis/SFTA registers remain complete. Adapter-accounting errors should trigger a current rescan
+before review.
 
 The focused queue groups candidates by component/failure class, adds path/failure-class clusters,
 and round-robins components within each risk tier before repeating a component. This keeps a busy

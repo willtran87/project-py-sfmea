@@ -369,8 +369,12 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init = subparsers.add_parser("init", help="create an sfmea.toml project template")
-    init.add_argument("path", nargs="?", default="sfmea.toml", help="file or directory path")
-    init.add_argument("--force", action="store_true", help="replace an existing template")
+    init.add_argument(
+        "path", nargs="?", default="sfmea.toml", help="file or directory path"
+    )
+    init.add_argument(
+        "--force", action="store_true", help="replace an existing template"
+    )
     init.set_defaults(handler=_init)
 
     schema_command = subparsers.add_parser(
@@ -433,11 +437,14 @@ def _parser() -> argparse.ArgumentParser:
     doctor.set_defaults(handler=_doctor)
 
     status = subparsers.add_parser(
-        "status", help="show the current workflow stage, artifact freshness, and next actions"
+        "status",
+        help="show the current workflow stage, artifact freshness, and next actions",
     )
     status.add_argument("repository", nargs="?", default=".")
     status.add_argument("--config", help="sfmea.toml path; auto-discovered by default")
-    status.add_argument("--analysis", help="analysis JSON path; auto-discovered by default")
+    status.add_argument(
+        "--analysis", help="analysis JSON path; auto-discovered by default"
+    )
     status.add_argument(
         "--assurance-scaffold",
         action="append",
@@ -447,7 +454,9 @@ def _parser() -> argparse.ArgumentParser:
             "names are auto-discovered when omitted"
         ),
     )
-    status.add_argument("--json", action="store_true", help="emit machine-readable status")
+    status.add_argument(
+        "--json", action="store_true", help="emit machine-readable status"
+    )
     status.add_argument(
         "--require-handoff-ready",
         action="store_true",
@@ -461,7 +470,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     diagnostics.add_argument("analysis", help="analysis JSON path")
     diagnostics.add_argument(
-        "--json", action="store_true", help="emit the complete machine-readable diagnostic"
+        "--json",
+        action="store_true",
+        help="emit the complete machine-readable diagnostic",
     )
     diagnostics.add_argument(
         "--strict",
@@ -477,7 +488,10 @@ def _parser() -> argparse.ArgumentParser:
         "--output",
         help="analysis JSON path; defaults to REPOSITORY/sfmea-analysis.json",
     )
-    scan.add_argument("--config", help="sfmea.toml path; defaults to REPOSITORY/sfmea.toml when present")
+    scan.add_argument(
+        "--config",
+        help="sfmea.toml path; defaults to REPOSITORY/sfmea.toml when present",
+    )
     scan.add_argument("--coverage-json", help="coverage.py JSON file")
     scan.add_argument(
         "--allow-ungoverned",
@@ -487,8 +501,18 @@ def _parser() -> argparse.ArgumentParser:
             "not assurance-ready"
         ),
     )
-    scan.add_argument("--exclude", action="append", default=[], help="additional relative-path glob to exclude")
-    scan.add_argument("--focus", action="append", default=[], help="only analyze matching path:qualname glob")
+    scan.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="additional relative-path glob to exclude",
+    )
+    scan.add_argument(
+        "--focus",
+        action="append",
+        default=[],
+        help="only analyze matching path:qualname glob",
+    )
     scan.add_argument(
         "--review-depth",
         choices=("screening", "focused", "exhaustive"),
@@ -530,7 +554,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_false",
         help="exclude nested functions and closures",
     )
-    scan.add_argument("--fresh", action="store_true", help="do not merge review decisions from an existing output")
+    scan.add_argument(
+        "--fresh",
+        action="store_true",
+        help="do not merge review decisions from an existing output",
+    )
     cache = scan.add_mutually_exclusive_group()
     cache.add_argument(
         "--cache",
@@ -549,10 +577,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     scan.set_defaults(handler=_scan)
 
-    review = subparsers.add_parser("review", help="open the local browser review workspace")
+    review = subparsers.add_parser(
+        "review", help="open the local browser review workspace"
+    )
     review.add_argument("analysis", help="analysis JSON path")
-    review.add_argument("--port", type=int, default=8765, help="local port; use 0 for an available port")
-    review.add_argument("--no-browser", action="store_true", help="do not open the browser automatically")
+    review.add_argument(
+        "--port", type=int, default=8765, help="local port; use 0 for an available port"
+    )
+    review.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="do not open the browser automatically",
+    )
     review.set_defaults(handler=_review)
 
     export = subparsers.add_parser("export", help="export the SFMEA worksheet")
@@ -669,24 +705,31 @@ def _parser() -> argparse.ArgumentParser:
     diagram_verify.set_defaults(handler=_diagram_verify)
 
     sfta = subparsers.add_parser(
-        "sfta", help="export Software Fault Trees and bottom-up/top-down reconciliation gaps"
+        "sfta",
+        help="export Software Fault Trees and bottom-up/top-down reconciliation gaps",
     )
     sfta.add_argument("analysis", help="analysis JSON path")
     sfta.add_argument("--format", choices=("json", "csv"), default="json")
     sfta.add_argument("-o", "--output", help="destination path")
     sfta.set_defaults(handler=_sfta)
 
-    sarif = subparsers.add_parser("sarif", help="export SFMEA screening candidates as SARIF 2.1.0")
+    sarif = subparsers.add_parser(
+        "sarif", help="export SFMEA screening candidates as SARIF 2.1.0"
+    )
     sarif.add_argument("analysis", help="analysis JSON path")
     sarif.add_argument("-o", "--output", help="destination .sarif path")
     sarif.set_defaults(handler=_sarif)
 
-    sbom = subparsers.add_parser("sbom", help="export declared dependency inventory as CycloneDX 1.6")
+    sbom = subparsers.add_parser(
+        "sbom", help="export declared dependency inventory as CycloneDX 1.6"
+    )
     sbom.add_argument("analysis", help="analysis JSON path")
     sbom.add_argument("-o", "--output", help="destination CycloneDX JSON path")
     sbom.set_defaults(handler=_sbom)
 
-    difference = subparsers.add_parser("diff", help="compare two canonical SFMEA analysis runs")
+    difference = subparsers.add_parser(
+        "diff", help="compare two canonical SFMEA analysis runs"
+    )
     difference.add_argument("previous", help="previous analysis JSON")
     difference.add_argument("current", help="current analysis JSON")
     difference.add_argument("-o", "--output", help="destination diff JSON path")
@@ -726,8 +769,12 @@ def _parser() -> argparse.ArgumentParser:
     sign_package = subparsers.add_parser(
         "sign-package", help="create an optional detached Ed25519 package signature"
     )
-    sign_package.add_argument("package", help="verified review package directory or ZIP")
-    sign_package.add_argument("--private-key", required=True, help="Ed25519 PEM private key")
+    sign_package.add_argument(
+        "package", help="verified review package directory or ZIP"
+    )
+    sign_package.add_argument(
+        "--private-key", required=True, help="Ed25519 PEM private key"
+    )
     sign_package.add_argument("--signer", required=True, help="signed identity label")
     sign_package.add_argument("-o", "--output", help="detached .sig.json destination")
     sign_package.add_argument(
@@ -745,7 +792,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     verify_package.add_argument("package", help="review package directory or ZIP")
     verify_package.add_argument(
-        "--json", action="store_true", help="emit the complete verification report as JSON"
+        "--json",
+        action="store_true",
+        help="emit the complete verification report as JSON",
     )
     verify_package.add_argument(
         "--signature", help="detached signature produced by sign-package"
@@ -760,10 +809,16 @@ def _parser() -> argparse.ArgumentParser:
     summary.add_argument("--json", action="store_true", help="emit summary JSON")
     summary.set_defaults(handler=_summary)
 
-    validate = subparsers.add_parser("validate", help="check review completeness and quality gates")
+    validate = subparsers.add_parser(
+        "validate", help="check review completeness and quality gates"
+    )
     validate.add_argument("analysis", help="analysis JSON path")
-    validate.add_argument("--strict", action="store_true", help="also fail when warnings are present")
-    validate.add_argument("--json", action="store_true", help="emit the validation report as JSON")
+    validate.add_argument(
+        "--strict", action="store_true", help="also fail when warnings are present"
+    )
+    validate.add_argument(
+        "--json", action="store_true", help="emit the validation report as JSON"
+    )
     validate.add_argument(
         "--max-findings",
         type=int,
@@ -773,10 +828,13 @@ def _parser() -> argparse.ArgumentParser:
     validate.set_defaults(handler=_validate)
 
     architecture = subparsers.add_parser(
-        "architecture", help="export the functional call and system-interface propagation view"
+        "architecture",
+        help="export the functional call and system-interface propagation view",
     )
     architecture.add_argument("analysis", help="analysis JSON path")
-    architecture.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    architecture.add_argument(
+        "--format", choices=("markdown", "json"), default="markdown"
+    )
     architecture.add_argument("-o", "--output", help="destination path")
     architecture.set_defaults(handler=_architecture)
 
@@ -792,7 +850,9 @@ def _parser() -> argparse.ArgumentParser:
     inventory.add_argument("-o", "--output", help="destination Markdown path")
     inventory.set_defaults(handler=_inventory)
 
-    queue = subparsers.add_parser("queue", help="show the next prioritized records to review")
+    queue = subparsers.add_parser(
+        "queue", help="show the next prioritized records to review"
+    )
     queue.add_argument("analysis", help="analysis JSON path")
     queue.add_argument("--limit", type=int, default=25, help="maximum records to show")
     queue.add_argument(
@@ -815,69 +875,117 @@ def _parser() -> argparse.ArgumentParser:
     queue.add_argument("--json", action="store_true", help="emit structured JSON")
     queue.set_defaults(handler=_queue)
 
-    sequence = subparsers.add_parser("sequence", help="export a bounded static/observed sequence view")
+    sequence = subparsers.add_parser(
+        "sequence", help="export a bounded static/observed sequence view"
+    )
     sequence.add_argument("analysis", help="analysis JSON path")
-    sequence.add_argument("--entrypoint", required=True, help="component ID, qualname, or path:qualname")
+    sequence.add_argument(
+        "--entrypoint", required=True, help="component ID, qualname, or path:qualname"
+    )
     sequence.add_argument("--format", choices=("markdown", "json"), default="markdown")
     sequence.add_argument("--max-depth", type=int, default=6)
     sequence.add_argument("--max-interactions", type=int, default=100)
-    sequence.add_argument("--static-only", action="store_true", help="exclude imported runtime edges")
+    sequence.add_argument(
+        "--static-only", action="store_true", help="exclude imported runtime edges"
+    )
     sequence.add_argument("-o", "--output", help="destination path")
     sequence.set_defaults(handler=_sequence)
 
-    traceability = subparsers.add_parser("traceability", help="export requirement-to-hazard trace graph")
+    traceability = subparsers.add_parser(
+        "traceability", help="export requirement-to-hazard trace graph"
+    )
     traceability.add_argument("analysis", help="analysis JSON path")
-    traceability.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    traceability.add_argument(
+        "--format", choices=("markdown", "json"), default="markdown"
+    )
     traceability.add_argument("-o", "--output", help="destination path")
     traceability.set_defaults(handler=_traceability)
 
-    coverage = subparsers.add_parser("coverage", help="report SFMEA linkage and review coverage")
+    coverage = subparsers.add_parser(
+        "coverage", help="report SFMEA linkage and review coverage"
+    )
     coverage.add_argument("analysis", help="analysis JSON path")
     coverage.add_argument("--format", choices=("markdown", "json"), default="markdown")
     coverage.add_argument("-o", "--output", help="destination path")
     coverage.set_defaults(handler=_coverage)
 
-    trace_import = subparsers.add_parser("trace-import", help="import simple or OTLP JSON runtime spans")
+    trace_import = subparsers.add_parser(
+        "trace-import", help="import simple or OTLP JSON runtime spans"
+    )
     trace_import.add_argument("analysis", help="analysis JSON path")
     trace_import.add_argument("trace", help="runtime trace JSON path")
-    trace_import.add_argument("--label", default="", help="human-readable evidence label")
+    trace_import.add_argument(
+        "--label", default="", help="human-readable evidence label"
+    )
     trace_import.set_defaults(handler=_trace_import)
 
-    discover = subparsers.add_parser("discover", help="generate grounded machine suggestions")
+    discover = subparsers.add_parser(
+        "discover", help="generate grounded machine suggestions"
+    )
     discover.add_argument("analysis", help="analysis JSON path")
     discover.add_argument("--scope", default="*", help="path:qualname glob")
-    discover.add_argument("--limit", type=int, default=25, help="maximum component packets")
-    discover.add_argument("--dry-run", action="store_true", help="print evidence packets without calling a model")
+    discover.add_argument(
+        "--limit", type=int, default=25, help="maximum component packets"
+    )
+    discover.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print evidence packets without calling a model",
+    )
     _add_provider_arguments(discover)
     discover.set_defaults(handler=_discover)
 
-    suggestions = subparsers.add_parser("suggestions", help="list governed machine suggestions")
+    suggestions = subparsers.add_parser(
+        "suggestions", help="list governed machine suggestions"
+    )
     suggestions.add_argument("analysis", help="analysis JSON path")
-    suggestions.add_argument("--status", choices=("all", "proposed", "accepted", "rejected", "stale"), default="proposed")
+    suggestions.add_argument(
+        "--status",
+        choices=("all", "proposed", "accepted", "rejected", "stale"),
+        default="proposed",
+    )
     suggestions.add_argument("--json", action="store_true")
     suggestions.set_defaults(handler=_suggestions)
 
-    suggestion_review = subparsers.add_parser("suggestion-review", help="accept or reject a machine suggestion")
+    suggestion_review = subparsers.add_parser(
+        "suggestion-review", help="accept or reject a machine suggestion"
+    )
     suggestion_review.add_argument("analysis", help="analysis JSON path")
     suggestion_review.add_argument("suggestion_id")
-    suggestion_review.add_argument("--decision", choices=("accept", "reject"), required=True)
+    suggestion_review.add_argument(
+        "--decision", choices=("accept", "reject"), required=True
+    )
     suggestion_review.add_argument("--reviewer", required=True)
     suggestion_review.add_argument("--rationale", required=True)
     suggestion_review.set_defaults(handler=_suggestion_review)
 
-    summarize = subparsers.add_parser("summarize", help="produce deterministic or grounded model summaries")
+    summarize = subparsers.add_parser(
+        "summarize", help="produce deterministic or grounded model summaries"
+    )
     summarize.add_argument("analysis", help="analysis JSON path")
-    summarize.add_argument("--by", choices=("project", "subsystem", "hazard", "component"), default="project")
+    summarize.add_argument(
+        "--by",
+        choices=("project", "subsystem", "hazard", "component"),
+        default="project",
+    )
     summarize.add_argument("--key", default="")
-    summarize.add_argument("--llm", action="store_true", help="request a grounded narrative from the configured provider")
+    summarize.add_argument(
+        "--llm",
+        action="store_true",
+        help="request a grounded narrative from the configured provider",
+    )
     summarize.add_argument("--json", action="store_true")
     _add_provider_arguments(summarize)
     summarize.set_defaults(handler=_summarize)
 
-    evaluate = subparsers.add_parser("evaluate", help="compare candidates with an exact-key golden corpus")
+    evaluate = subparsers.add_parser(
+        "evaluate", help="compare candidates with an exact-key golden corpus"
+    )
     evaluate.add_argument("analysis", help="analysis JSON path")
     evaluate.add_argument("expected", help="golden evaluation JSON path")
-    evaluate.add_argument("--json", action="store_true", help="emit the complete result")
+    evaluate.add_argument(
+        "--json", action="store_true", help="emit the complete result"
+    )
     evaluate.add_argument("--max-findings", type=int, default=25)
     evaluate.set_defaults(handler=_evaluate)
 
@@ -892,9 +1000,13 @@ def _parser() -> argparse.ArgumentParser:
         metavar="ID=PATH",
         help="repository ID and governed analysis path; repeat for multiple repositories",
     )
-    program_init.add_argument("-o", "--output", required=True, help="program JSON destination")
+    program_init.add_argument(
+        "-o", "--output", required=True, help="program JSON destination"
+    )
     program_init.add_argument("--name", default="System assurance program")
-    program_init.add_argument("--force", action="store_true", help="replace only a recognized program")
+    program_init.add_argument(
+        "--force", action="store_true", help="replace only a recognized program"
+    )
     program_init.set_defaults(handler=_program_init)
 
     program_seal = subparsers.add_parser(
@@ -912,7 +1024,9 @@ def _parser() -> argparse.ArgumentParser:
     program_verify.add_argument(
         "--format", choices=("human", "json", "markdown", "html"), default="human"
     )
-    program_verify.add_argument("-o", "--output", help="JSON, Markdown, or HTML verification output")
+    program_verify.add_argument(
+        "-o", "--output", help="JSON, Markdown, or HTML verification output"
+    )
     program_verify.add_argument("--max-findings", type=int, default=50)
     program_verify.add_argument(
         "--publication-json",
@@ -928,7 +1042,9 @@ def _parser() -> argparse.ArgumentParser:
         "program-report-verify",
         help="verify a program HTML report and optionally regenerate its exact verdict",
     )
-    program_report_verify.add_argument("report", help="assurance-program HTML report path")
+    program_report_verify.add_argument(
+        "report", help="assurance-program HTML report path"
+    )
     program_report_verify.add_argument(
         "--program",
         help="optional assurance-program JSON for exact content and verdict binding",
@@ -948,7 +1064,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     program_report_verify.set_defaults(handler=_program_report_verify)
 
-    guidance = subparsers.add_parser("guidance", help="show methodology sources and limitations")
+    guidance = subparsers.add_parser(
+        "guidance", help="show methodology sources and limitations"
+    )
     guidance.set_defaults(handler=_guidance)
     citations = subparsers.add_parser(
         "citations", help="export source-to-rule-to-finding guidance traceability"
@@ -1140,10 +1258,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     assurance_run.add_argument("analysis", help="analysis JSON path")
     assurance_run.add_argument("obligation_id")
-    assurance_run.add_argument("--image", required=True, help="preloaded approved image reference")
+    assurance_run.add_argument(
+        "--image", required=True, help="preloaded approved image reference"
+    )
     assurance_run.add_argument("--initiated-by", required=True)
-    assurance_run.add_argument("--engine", choices=("auto", "docker", "podman"), default="auto")
-    assurance_run.add_argument("--evidence-root", help="host directory for immutable execution artifacts")
+    assurance_run.add_argument(
+        "--engine", choices=("auto", "docker", "podman"), default="auto"
+    )
+    assurance_run.add_argument(
+        "--evidence-root", help="host directory for immutable execution artifacts"
+    )
     assurance_run.add_argument("--cpus", type=float, default=1.0)
     assurance_run.add_argument("--memory-mb", type=int, default=1024)
     assurance_run.add_argument("--pids-limit", type=int, default=128)
@@ -1160,9 +1284,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     evidence_import.add_argument("analysis", help="analysis JSON path")
     evidence_import.add_argument("obligation_id")
-    evidence_import.add_argument("--manifest", required=True, help="external evidence manifest JSON")
+    evidence_import.add_argument(
+        "--manifest", required=True, help="external evidence manifest JSON"
+    )
     evidence_import.add_argument("--initiated-by", required=True)
-    evidence_import.add_argument("--evidence-root", help="managed destination for copied evidence")
+    evidence_import.add_argument(
+        "--evidence-root", help="managed destination for copied evidence"
+    )
     evidence_import.set_defaults(handler=_assurance_evidence_import)
 
     evidence_review = subparsers.add_parser(
@@ -1190,7 +1318,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--endpoint", help="OpenAI-compatible chat-completions endpoint")
+    parser.add_argument(
+        "--endpoint", help="OpenAI-compatible chat-completions endpoint"
+    )
     parser.add_argument("--model", help="model identifier")
     parser.add_argument("--api-key-env", default="SFMEA_LLM_API_KEY")
     parser.add_argument("--timeout", type=int, default=60)
@@ -1198,7 +1328,9 @@ def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _provider(args: argparse.Namespace) -> OpenAICompatibleProvider:
     if not args.endpoint or not args.model:
-        raise ValueError("--endpoint and --model are required for model-assisted operation")
+        raise ValueError(
+            "--endpoint and --model are required for model-assisted operation"
+        )
     if not 1 <= args.timeout <= 600:
         raise ValueError("--timeout must be from 1 through 600 seconds")
     return OpenAICompatibleProvider(
@@ -1230,7 +1362,9 @@ def _scan(args: argparse.Namespace) -> int:
     config["scan"]["focus"].extend(args.focus)
     if args.review_depth:
         config["scan"]["review_depth"] = args.review_depth
-    cache_enabled = bool(config["scan"].get("cache_enabled", True)) and not args.no_cache
+    cache_enabled = (
+        bool(config["scan"].get("cache_enabled", True)) and not args.no_cache
+    )
     configured_cache = args.cache or config["scan"].get("cache_path", "")
     cache_path = Path(configured_cache).expanduser() if configured_cache else None
     if cache_path is not None and not cache_path.is_absolute():
@@ -1238,12 +1372,16 @@ def _scan(args: argparse.Namespace) -> int:
     if cache_path is not None:
         cache_path = cache_path.absolute()
     if cache_enabled and cache_path is None:
-        raise ValueError("scanner fact caching is enabled but no cache path is configured")
+        raise ValueError(
+            "scanner fact caching is enabled but no cache path is configured"
+        )
     if cache_enabled and cache_path is not None:
         if cache_path == output.absolute() or (
             resolved_config is not None and cache_path == resolved_config.absolute()
         ):
-            raise ValueError("scanner fact cache must differ from analysis and configuration files")
+            raise ValueError(
+                "scanner fact cache must differ from analysis and configuration files"
+            )
         try:
             cache_relative = cache_path.relative_to(repository)
         except ValueError:
@@ -1343,7 +1481,9 @@ def _scan(args: argparse.Namespace) -> int:
                 "event": "initial_scan",
                 "at": scanned["project"]["scanned_at"],
                 "active_candidate_count": len(scanned["items"]),
-                "baseline_id": scanned.get("project", {}).get("baseline", {}).get("id", ""),
+                "baseline_id": scanned.get("project", {})
+                .get("baseline", {})
+                .get("id", ""),
             }
         ]
     # The run manifest is an immutable projection of the final resolved scan inputs.
@@ -1373,7 +1513,12 @@ def _scan(args: argparse.Namespace) -> int:
         + str(scanned.get("project", {}).get("settings", {}).get("review_depth"))
         + " (complete machine inventory retained)"
     )
-    cache_run = scanned.get("project", {}).get("settings", {}).get("fact_cache", {}).get("run", {})
+    cache_run = (
+        scanned.get("project", {})
+        .get("settings", {})
+        .get("fact_cache", {})
+        .get("run", {})
+    )
     if cache_run.get("enabled"):
         print(
             "Fact cache: "
@@ -1381,7 +1526,7 @@ def _scan(args: argparse.Namespace) -> int:
             f"pruned={cache_run.get('pruned_entries', 0)} "
             "(derived performance artifact)"
         )
-    print(f"Next: sfmea review \"{output}\"")
+    print(f'Next: sfmea review "{output}"')
     return 0
 
 
@@ -1393,7 +1538,9 @@ def _init(args: argparse.Namespace) -> int:
         destination = destination / "sfmea.toml"
     result = write_config_template(destination, overwrite=args.force)
     print(f"Created SFMEA configuration: {result}")
-    print("Edit the system boundary, hazards, critical functions, and rating guidance before scanning.")
+    print(
+        "Edit the system boundary, hazards, critical functions, and rating guidance before scanning."
+    )
     return 0
 
 
@@ -1442,7 +1589,9 @@ def _schema(args: argparse.Namespace) -> int:
     if not args.name:
         if args.force:
             raise ValueError("--force is valid only with --bundle")
-        raise ValueError("provide a schema name or use --list, --bundle, or --verify-bundle")
+        raise ValueError(
+            "provide a schema name or use --list, --bundle, or --verify-bundle"
+        )
     if args.force:
         raise ValueError("--force is valid only with --bundle")
     if args.output:
@@ -1474,9 +1623,7 @@ def _publication_catalog(args: argparse.Namespace) -> int:
     if args.force and not args.output:
         raise ValueError("--force is valid only with --output")
     if args.output:
-        result = export_publication_failure_catalog(
-            args.output, overwrite=args.force
-        )
+        result = export_publication_failure_catalog(args.output, overwrite=args.force)
         if args.json:
             verification = verify_publication_failure_catalog_file(result)
             print(json.dumps(verification, indent=2, ensure_ascii=False))
@@ -1736,7 +1883,9 @@ def _status(args: argparse.Namespace) -> int:
             print(f"  {index}. {action['command']}")
             print(f"     {action['reason']}")
     else:
-        print("Next actions: none; handoff artifacts are current and gates are satisfied.")
+        print(
+            "Next actions: none; handoff artifacts are current and gates are satisfied."
+        )
     print(result["notice"])
     return int(args.require_handoff_ready and not result["ready_for_handoff"])
 
@@ -1813,9 +1962,7 @@ def _html_report(args: argparse.Namespace) -> int:
             check_names=HTML_REPORT_VERIFICATION_CHECKS,
             binding_requested=True,
             code="report.analysis_load_failed",
-            error=ValueError(
-                "Analysis could not be loaded; no report was published."
-            ),
+            error=ValueError("Analysis could not be loaded; no report was published."),
         )
         _html_report_publication_receipt(
             verification,
@@ -1827,9 +1974,7 @@ def _html_report(args: argparse.Namespace) -> int:
         return 2
 
     if args.json:
-        staged = output.with_name(
-            f".{output.name}.{uuid.uuid4().hex}.verified.tmp"
-        )
+        staged = output.with_name(f".{output.name}.{uuid.uuid4().hex}.verified.tmp")
         try:
             try:
                 result = export_html_report(
@@ -1842,9 +1987,7 @@ def _html_report(args: argparse.Namespace) -> int:
                     propagation_record_limit=args.propagation_record_limit,
                     propagation_path_limit=args.propagation_path_limit,
                     propagation_depth=args.propagation_depth,
-                    propagation_include_finding_ids=(
-                        args.propagation_include_finding
-                    ),
+                    propagation_include_finding_ids=(args.propagation_include_finding),
                     max_output_bytes=args.max_output_bytes,
                 )
             except VERIFICATION_EXCEPTIONS:
@@ -2012,15 +2155,9 @@ def _html_report_verify(args: argparse.Namespace) -> int:
         f"scope={verification['integrity_scope']}, "
         f"analysis binding={binding_status}"
     )
-    print(
-        "Report data SHA-256: "
-        f"{verification['declared']['report_data_sha256']}"
-    )
+    print(f"Report data SHA-256: {verification['declared']['report_data_sha256']}")
     if verification["declared"]["document_sha256"]:
-        print(
-            "Document SHA-256: "
-            f"{verification['declared']['document_sha256']}"
-        )
+        print(f"Document SHA-256: {verification['declared']['document_sha256']}")
     if verification["failed_checks"]:
         print(f"Failed checks: {', '.join(verification['failed_checks'])}")
     if verification["unchecked_checks"]:
@@ -2113,7 +2250,9 @@ def _diagram_verify(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps(verification, indent=2, ensure_ascii=False))
         else:
-            print("Diagram bundle integrity: valid=False, analysis binding=not completed")
+            print(
+                "Diagram bundle integrity: valid=False, analysis binding=not completed"
+            )
             print(f"Error: {exc}")
             print(verification["notice"])
         return 1
@@ -2122,13 +2261,10 @@ def _diagram_verify(args: argparse.Namespace) -> int:
         return 0
     binding = verification["checks"]["analysis_binding"]
     binding_status = "matched" if binding is True else "not checked"
-    print(
-        f"Diagram bundle integrity: valid=True, analysis binding={binding_status}"
-    )
+    print(f"Diagram bundle integrity: valid=True, analysis binding={binding_status}")
     print(f"Verified canonical diagram bundle: {verification['path']}")
     print(
-        f"Diagrams: {verification['diagram_count']}; "
-        f"analysis binding: {binding_status}"
+        f"Diagrams: {verification['diagram_count']}; analysis binding: {binding_status}"
     )
     print(f"Content SHA-256: {verification['content_sha256']}")
     print(
@@ -2167,7 +2303,11 @@ def _sarif(args: argparse.Namespace) -> int:
 def _sbom(args: argparse.Namespace) -> int:
     source = Path(args.analysis).expanduser().resolve()
     analysis = load_analysis(source)
-    output = Path(args.output) if args.output else source.with_name(source.stem + "-cdx.json")
+    output = (
+        Path(args.output)
+        if args.output
+        else source.with_name(source.stem + "-cdx.json")
+    )
     result = export_json_document(cyclonedx_document(analysis), output)
     print(f"Exported CycloneDX declared-dependency inventory: {result}")
     return 0
@@ -2249,14 +2389,12 @@ def _package(args: argparse.Namespace) -> int:
         verification["publication"] = {
             "status": "published",
             "phase": (
-                "complete"
-                if verification["valid"]
-                else "post_publication_verification"
+                "complete" if verification["valid"] else "post_publication_verification"
             ),
         }
         print(json.dumps(verification, indent=2, ensure_ascii=False))
         return 0 if verification["valid"] else 1
-    print(f"Next: sfmea verify-package \"{result}\"")
+    print(f'Next: sfmea verify-package "{result}"')
     return 0
 
 
@@ -2394,8 +2532,8 @@ def _sign_package(args: argparse.Namespace) -> int:
     )
     print(f"Created detached Ed25519 signature: {result}")
     print(
-        f"Next: sfmea verify-package \"{args.package}\" "
-        f"--signature \"{result}\" --public-key PUBLIC_KEY.pem"
+        f'Next: sfmea verify-package "{args.package}" '
+        f'--signature "{result}" --public-key PUBLIC_KEY.pem'
     )
     return 0
 
@@ -2422,7 +2560,10 @@ def _summary(args: argparse.Namespace) -> int:
     dispositions = summary.get("review_dispositions", {})
     print(
         "Review: "
-        + ", ".join(f"{name.replace('_', ' ')}={count}" for name, count in sorted(dispositions.items()))
+        + ", ".join(
+            f"{name.replace('_', ' ')}={count}"
+            for name, count in sorted(dispositions.items())
+        )
     )
     print(
         "Failure classes: "
@@ -2488,7 +2629,9 @@ def _validate(args: argparse.Namespace) -> int:
                 f"{finding['rule_id']}: {finding['message']}"
             )
         if len(findings) > args.max_findings:
-            print(f"... {len(findings) - args.max_findings} additional finding(s) omitted")
+            print(
+                f"... {len(findings) - args.max_findings} additional finding(s) omitted"
+            )
     return int(bool(counts["error"] or (args.strict and counts["warning"])))
 
 
@@ -2508,7 +2651,11 @@ def _architecture(args: argparse.Namespace) -> int:
 def _audit(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     source = Path(args.analysis).expanduser().resolve()
-    output = Path(args.output) if args.output else source.with_name(source.stem + ".audit.csv")
+    output = (
+        Path(args.output)
+        if args.output
+        else source.with_name(source.stem + ".audit.csv")
+    )
     result = export_audit(analysis, output)
     print(f"Exported audit history: {result}")
     return 0
@@ -2517,7 +2664,11 @@ def _audit(args: argparse.Namespace) -> int:
 def _inventory(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     source = Path(args.analysis).expanduser().resolve()
-    output = Path(args.output) if args.output else source.with_name(source.stem + ".inventory.md")
+    output = (
+        Path(args.output)
+        if args.output
+        else source.with_name(source.stem + ".inventory.md")
+    )
     result = export_inventory(analysis, output)
     print(f"Exported SFMEA inventory: {result}")
     return 0
@@ -2528,9 +2679,7 @@ def _queue(args: argparse.Namespace) -> int:
         raise ValueError("--limit must be at least 1")
     analysis = load_analysis(args.analysis)
     review_depth = str(
-        analysis.get("project", {}).get("settings", {}).get(
-            "review_depth", "focused"
-        )
+        analysis.get("project", {}).get("settings", {}).get("review_depth", "focused")
     )
     depth_priority = {
         "screening": "high",
@@ -2553,15 +2702,14 @@ def _queue(args: argparse.Namespace) -> int:
             if args.all_records
             else args.max_per_component or governed_per_component
         ),
+        balance_priorities=not args.all_records,
     )
     if args.json:
         print(json.dumps(queue, indent=2))
         return 0
     for item in queue:
         family = (
-            f" | family={item['family_size']}"
-            if item.get("family_size", 1) > 1
-            else ""
+            f" | family={item['family_size']}" if item.get("family_size", 1) > 1 else ""
         )
         cluster = (
             f" | cluster={item['review_cluster_size']}"
@@ -2569,9 +2717,7 @@ def _queue(args: argparse.Namespace) -> int:
             else ""
         )
         diversity = (
-            f" | round={item['diversity_round']}"
-            if item.get("diversity_round")
-            else ""
+            f" | round={item['diversity_round']}" if item.get("diversity_round") else ""
         )
         print(
             f"{item['id']} | {item['screening_priority']} | {item['source_change']} | "
@@ -2588,7 +2734,9 @@ def _sequence(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     source = Path(args.analysis).expanduser().resolve()
     suffix = ".sequence.json" if args.format == "json" else ".sequence.md"
-    output = Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    output = (
+        Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    )
     result = export_sequence(
         analysis,
         output,
@@ -2606,7 +2754,9 @@ def _traceability(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     source = Path(args.analysis).expanduser().resolve()
     suffix = ".traceability.json" if args.format == "json" else ".traceability.md"
-    output = Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    output = (
+        Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    )
     result = export_traceability(analysis, output, format=args.format)
     print(f"Exported traceability {args.format}: {result}")
     return 0
@@ -2616,7 +2766,9 @@ def _coverage(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     source = Path(args.analysis).expanduser().resolve()
     suffix = ".coverage.json" if args.format == "json" else ".coverage.md"
-    output = Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    output = (
+        Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    )
     result = export_coverage(analysis, output, format=args.format)
     print(f"Exported SFMEA coverage {args.format}: {result}")
     return 0
@@ -2643,13 +2795,19 @@ def _discover(args: argparse.Namespace) -> int:
     path = Path(args.analysis).expanduser().resolve()
     analysis = load_analysis(path)
     if args.dry_run:
-        print(json.dumps(evidence_packets(analysis, scope=args.scope, limit=args.limit), indent=2))
+        print(
+            json.dumps(
+                evidence_packets(analysis, scope=args.scope, limit=args.limit), indent=2
+            )
+        )
         return 0
     created = discover_suggestions(
         analysis, _provider(args), scope=args.scope, limit=args.limit
     )
     save_analysis(path, analysis)
-    print(f"Stored {len(created)} new grounded suggestion(s); no reviewer fields were changed.")
+    print(
+        f"Stored {len(created)} new grounded suggestion(s); no reviewer fields were changed."
+    )
     return 0
 
 
@@ -2779,7 +2937,9 @@ def _evaluate(args: argparse.Namespace) -> int:
         for finding in findings[: args.max_findings]:
             print(f"- {finding}")
         if len(findings) > args.max_findings:
-            print(f"... {len(findings) - args.max_findings} additional finding(s) omitted")
+            print(
+                f"... {len(findings) - args.max_findings} additional finding(s) omitted"
+            )
         print(result["notice"])
     return int(
         bool(
@@ -2811,7 +2971,9 @@ def _program_init(args: argparse.Namespace) -> int:
         force=args.force,
     )
     print(f"Created assurance program: {destination}")
-    print("Add relationships, requirements, evidence, validation cohorts, and approvals; then run `sfmea program-seal` and `sfmea program-verify`.")
+    print(
+        "Add relationships, requirements, evidence, validation cohorts, and approvals; then run `sfmea program-seal` and `sfmea program-verify`."
+    )
     return 0
 
 
@@ -2825,9 +2987,7 @@ def _program_verify(args: argparse.Namespace) -> int:
     if args.max_findings < 1:
         raise ValueError("--max-findings must be at least 1")
     if args.publication_json and (args.format != "html" or not args.output):
-        raise ValueError(
-            "--publication-json requires --format html and --output"
-        )
+        raise ValueError("--publication-json requires --format html and --output")
     destination_state = None
     destination_existed = False
     if args.publication_json:
@@ -2899,9 +3059,7 @@ def _program_verify(args: argparse.Namespace) -> int:
             return 2
         if args.publication_json:
             try:
-                verification = verify_program_report_file(
-                    output, program=args.program
-                )
+                verification = verify_program_report_file(output, program=args.program)
             except VERIFICATION_EXCEPTIONS:
                 verification = _program_report_publication_error(
                     destination=args.output,
@@ -2949,7 +3107,9 @@ def _program_verify(args: argparse.Namespace) -> int:
             f"validation_repositories={validation.get('repositories', 0)}"
         )
         for finding in result.get("findings", [])[: args.max_findings]:
-            print(f"- {finding['level'].upper()} {finding['code']}: {finding['message']}")
+            print(
+                f"- {finding['level'].upper()} {finding['code']}: {finding['message']}"
+            )
         remaining = len(result.get("findings", [])) - args.max_findings
         if remaining > 0:
             print(f"... {remaining} additional finding(s) omitted")
@@ -3041,7 +3201,9 @@ def _citations(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     source = Path(args.analysis).expanduser().resolve()
     suffix = ".guidance.json" if args.format == "json" else ".guidance.csv"
-    output = Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    output = (
+        Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    )
     result = export_guidance_traceability(analysis, output, format=args.format)
     print(f"Exported guidance traceability {args.format}: {result}")
     return 0
@@ -3050,10 +3212,15 @@ def _citations(args: argparse.Namespace) -> int:
 def _assurance(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     source = Path(args.analysis).expanduser().resolve()
-    suffix = {"json": ".assurance.json", "work-json": ".assurance-work.json", "csv": ".assurance.csv", "markdown": ".assurance.md"}[
-        args.format
-    ]
-    output = Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    suffix = {
+        "json": ".assurance.json",
+        "work-json": ".assurance-work.json",
+        "csv": ".assurance.csv",
+        "markdown": ".assurance.md",
+    }[args.format]
+    output = (
+        Path(args.output) if args.output else source.with_name(source.stem + suffix)
+    )
     result = export_assurance_register(analysis, output, format=args.format)
     print(f"Exported executable assurance checklist {args.format}: {result}")
     return 0
@@ -3076,9 +3243,7 @@ def _assurance_work_verify(args: argparse.Namespace) -> int:
         print(json.dumps(verification, indent=2, ensure_ascii=False))
         return 2
     try:
-        verification = verify_assurance_work_queue_file(
-            args.queue, analysis=analysis
-        )
+        verification = verify_assurance_work_queue_file(args.queue, analysis=analysis)
     except VERIFICATION_EXCEPTIONS as exc:
         verification = _verification_error_result(
             format_name=ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
@@ -3203,9 +3368,7 @@ def _assurance_fault_complete(args: argparse.Namespace) -> int:
     plan = load_fault_injection_plan(args.plan)
     _analysis, obligation = _bound_fault_plan(plan, args.analysis)
     case = load_fault_injection_case(args.case)
-    result = export_completed_fault_injection_plan(
-        plan, case, obligation, args.output
-    )
+    result = export_completed_fault_injection_plan(plan, case, obligation, args.output)
     print(f"Created validated ready fault-injection plan: {result}")
     return 0
 
@@ -3231,7 +3394,9 @@ def _assurance_fault_scaffold(args: argparse.Namespace) -> int:
     _analysis, obligation = _bound_fault_plan(plan, args.analysis)
     result = export_fault_injection_pytest(plan, obligation, args.output)
     print(f"Created approved-sandbox pytest bridge: {result}")
-    print("Register it with assurance-test-register, then execute it with assurance-run.")
+    print(
+        "Register it with assurance-test-register, then execute it with assurance-run."
+    )
     return 0
 
 
@@ -3256,7 +3421,9 @@ def _assurance_scaffold(args: argparse.Namespace) -> int:
     print(
         f"Created {count} intentionally failing assurance test placeholder(s): {result}"
     )
-    print("Implement and execute them only in an approved sandbox; they are not evidence yet.")
+    print(
+        "Implement and execute them only in an approved sandbox; they are not evidence yet."
+    )
     return 0
 
 
@@ -3270,16 +3437,16 @@ def _assurance_scaffold_refresh(args: argparse.Namespace) -> int:
         f"Refreshed assurance scaffold {manifest['queue']['id']} with "
         f"{len(manifest['obligations'])} placeholder(s): {result}"
     )
-    print("Generated-file edits were not present; no implementation work was overwritten.")
+    print(
+        "Generated-file edits were not present; no implementation work was overwritten."
+    )
     return 0
 
 
 def _assurance_scaffold_archive(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     result = archive_pytest_scaffold(analysis, args.scaffold, args.output)
-    record = json.loads(
-        (result / "retirement-record.json").read_text(encoding="utf-8")
-    )
+    record = json.loads((result / "retirement-record.json").read_text(encoding="utf-8"))
     print(f"Archived assurance scaffold {record['queue']['id']}: {result}")
     print(
         "The original manifest, generated files, contract diff, and integrity-protected "
@@ -3305,8 +3472,7 @@ def _assurance_scaffold_verify(args: argparse.Namespace) -> int:
             f"({result['lifecycle'].replace('_', ' ')})"
         )
         changed = sum(
-            not value["unchanged_from_generated"]
-            for value in result["generated_files"]
+            not value["unchanged_from_generated"] for value in result["generated_files"]
         )
         print(f"Generated starting files changed or missing: {changed}")
         contract_summary = result["contract_change_summary"]
@@ -3319,10 +3485,7 @@ def _assurance_scaffold_verify(args: argparse.Namespace) -> int:
         )
         for change in result["contract_changes"][:25]:
             fields = ", ".join(change["changed_fields"]) or "selection membership"
-            print(
-                f"  - {change['obligation_id']}: {change['status']} "
-                f"({fields})"
-            )
+            print(f"  - {change['obligation_id']}: {change['status']} ({fields})")
         if len(result["contract_changes"]) > 25:
             print(
                 f"  ... {len(result['contract_changes']) - 25} additional contract "
@@ -3417,7 +3580,9 @@ def _criterion_results(values: list[str]) -> dict[int, str]:
             )
         index = int(index_text)
         if index < 1 or index in results:
-            raise ValueError("criterion result indexes must be unique positive integers")
+            raise ValueError(
+                "criterion result indexes must be unique positive integers"
+            )
         results[index] = result
     return results
 
@@ -3431,8 +3596,7 @@ def _assurance_evidence_import(args: argparse.Namespace) -> int:
         else path.parent / "assurance-evidence"
     )
     before = {
-        value.get("id")
-        for value in analysis.get("assurance", {}).get("executions", [])
+        value.get("id") for value in analysis.get("assurance", {}).get("executions", [])
     }
     try:
         result = import_execution_evidence(
