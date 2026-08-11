@@ -1032,11 +1032,16 @@ def export_review_package(
     )
     ensure_assurance_register(package_analysis)
     # A scan can already carry a large derived SFTA projection. It is regenerated
-    # below from the authoritative findings/context, so dropping that stale private
-    # copy before construction avoids holding two complete fault-tree models during
-    # near-limit package builds.
+    # below from the authoritative findings/context. Retain its shared prior model
+    # only as read-only provenance while regenerating: ``build_sfta`` preserves its
+    # generated timestamp when the governed fault-tree content is unchanged. Dropping
+    # it before regeneration would make an otherwise identical package appear stale
+    # across a wall-clock second. The top-level source view avoids another deep copy.
+    previous_sfta = package_analysis.get("sfta")
+    sfta_source = dict(package_analysis)
+    sfta_source["sfta"] = previous_sfta
     package_analysis.pop("sfta", None)
-    package_analysis["sfta"] = build_sfta(package_analysis)
+    package_analysis["sfta"] = build_sfta(sfta_source)
     schema_documents = schema_bundle_documents()
     if set(schema_documents) != REVIEW_PACKAGE_SCHEMA_FILES:
         raise RuntimeError(

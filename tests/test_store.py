@@ -144,6 +144,32 @@ class StoreTests(unittest.TestCase):
                 json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")) + "\n",
             )
 
+    def test_portable_package_preserves_unchanged_sfta_provenance_for_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "code.py").write_text(
+                "def act(value):\n    return value\n", encoding="utf-8"
+            )
+            source = root / "analysis.json"
+            analysis = scan_repository(root)
+            analysis["sfta"]["generated_at"] = "2000-01-01T00:00:00+00:00"
+            save_analysis(source, analysis)
+            persisted = load_analysis(source)
+
+            package = export_review_package(persisted, root / "package", portable=True)
+            manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                manifest["analysis_state_sha256"],
+                analysis_state_sha256(load_analysis(source), portable=True),
+            )
+            self.assertEqual(
+                json.loads((package / "analysis.json").read_text(encoding="utf-8"))["sfta"][
+                    "generated_at"
+                ],
+                "2000-01-01T00:00:00+00:00",
+            )
+
     def test_compressed_analysis_is_deterministic_bounded_and_transparent(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

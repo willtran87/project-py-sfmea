@@ -533,7 +533,13 @@ same-directory architecture mapping proposals. Proposals are never applied autom
 same scorecard, action queue, and calibration summary appear in the HTML coverage workspace.
 
 `sfmea status` is the read-only workflow cockpit. It auto-discovers configuration and
-analysis files in the repository root or `.artifacts`, classifies the current lifecycle
+analysis files in the repository root, `.artifacts`, or the newest regular
+`.artifacts/<run>/sfmea-analysis.json[.gz]` artifact run. Standard locations take
+precedence; when multiple timestamped runs exist, it selects the most recently modified one,
+prints that selection, and recommends `--analysis` for an intentional older-run choice. It
+uses a bounded candidate list; if that limit is reached, status labels the selection as bounded
+instead of claiming it is the newest retained run and requires an explicit `--analysis` choice.
+It never recursively searches the repository or follows linked run directories. It classifies the current lifecycle
 stage, reports review and validation counts, identifies missing or stale HTML/PDF/package
 artifacts, verifies discovered review-package checksums and provenance, and prints ordered
 next commands. The stage names the primary phase; a separate eight-gate checklist exposes

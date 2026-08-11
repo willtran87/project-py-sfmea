@@ -114,7 +114,7 @@ from .synthesis import (
     SYNTHESIS_FORMAT,
     SYNTHESIS_VERIFICATION_FORMAT,
 )
-from .workflow import WORKFLOW_STATUS_FORMAT
+from .workflow import MAX_TIMESTAMPED_ANALYSIS_CANDIDATES, WORKFLOW_STATUS_FORMAT
 
 JSON_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 SCHEMA_CATALOG_FORMAT = "pysfmea-schema-catalog-1"
@@ -2720,6 +2720,55 @@ def _workflow_status_schema() -> dict[str, Any]:
         },
         "additionalProperties": False,
     }
+    analysis_selection = {
+        "type": "object",
+        "required": [
+            "method",
+            "timestamped_candidate_count",
+            "timestamped_candidates_truncated",
+        ],
+        "properties": {
+            "method": {
+                "enum": [
+                    "explicit",
+                    "standard_location",
+                    "latest_timestamped_artifact",
+                    "bounded_timestamped_artifact",
+                    "default_missing_location",
+                ]
+            },
+            "timestamped_candidate_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": MAX_TIMESTAMPED_ANALYSIS_CANDIDATES,
+            },
+            "timestamped_candidates_truncated": {"type": "boolean"},
+        },
+        "additionalProperties": False,
+    }
+    paths = {
+        "type": "object",
+        "required": [
+            "configuration",
+            "analysis",
+            "analysis_selection",
+            "assurance_scaffold",
+            "assurance_scaffolds",
+        ],
+        "properties": {
+            "configuration": nonempty,
+            "analysis": nonempty,
+            "analysis_selection": analysis_selection,
+            "assurance_scaffold": {"type": "string", "maxLength": 16_384},
+            "assurance_scaffolds": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "string", "minLength": 1, "maxLength": 16_384},
+                "uniqueItems": True,
+            },
+        },
+        "additionalProperties": False,
+    }
     return {
         "$schema": JSON_SCHEMA_DRAFT,
         "$id": _schema_id("workflow-status"),
@@ -2788,7 +2837,7 @@ def _workflow_status_schema() -> dict[str, Any]:
                 },
                 "additionalProperties": False,
             },
-            "paths": {"type": "object"},
+            "paths": paths,
             "readiness": {"type": "object"},
             "analysis": {"type": "object"},
             "artifacts": {"type": "object"},

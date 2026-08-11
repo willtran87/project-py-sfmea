@@ -2965,6 +2965,19 @@ def _status(args: argparse.Namespace) -> int:
     print(f"Workflow stage: {result['stage'].replace('_', ' ')}")
     print(f"Repository: {result['repository']}")
     print(f"Configuration: {result['paths']['configuration']}")
+    analysis_selection = result["paths"].get("analysis_selection", {})
+    if analysis_selection.get("method") == "latest_timestamped_artifact":
+        print(
+            "Analysis selection: latest timestamped artifact "
+            f"({analysis_selection.get('timestamped_candidate_count', 0)} candidate(s)); "
+            "pass --analysis to select a different retained run."
+        )
+    elif analysis_selection.get("method") == "bounded_timestamped_artifact":
+        print(
+            "Analysis selection: bounded timestamped-artifact search "
+            f"({analysis_selection.get('timestamped_candidate_count', 0)} candidate limit reached); "
+            "pass --analysis to select a retained run explicitly."
+        )
     print(
         "Readiness: "
         f"errors={readiness['counts']['error']}, "

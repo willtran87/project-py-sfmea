@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import json
 import os
@@ -12,7 +13,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -29,7 +30,12 @@ from pysfmea.report import (
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
 from pysfmea.store import load_analysis, save_analysis, update_item_review
-from pysfmea.workflow import WORKFLOW_STATUS_FORMAT, workflow_status
+from pysfmea.workflow import (
+    MAX_TIMESTAMPED_ANALYSIS_CANDIDATES,
+    WORKFLOW_STATUS_FORMAT,
+    _discover_analysis_path,
+    workflow_status,
+)
 
 
 class WorkflowStatusTests(unittest.TestCase):
@@ -356,7 +362,10 @@ class WorkflowStatusTests(unittest.TestCase):
         self.assertFalse(status["ready_for_handoff"])
 
     def test_artifact_freshness_integrity_and_exact_binding(self) -> None:
-        analysis = self._scan()
+        self._scan()
+        # The workflow cockpit binds artifacts to the persisted governed analysis,
+        # so generate the pair from the exact bytes it will subsequently inspect.
+        analysis = load_analysis(self.analysis_path)
         report = self.root / "sfmea-report.html"
         package = self.root / "authorization-review-package.zip"
         export_html_report(analysis, report)
@@ -1077,6 +1086,79 @@ class WorkflowStatusTests(unittest.TestCase):
         self.assertEqual(result["paths"]["configuration"], str(relocated_config))
         self.assertEqual(result["paths"]["analysis"], str(relocated_analysis))
         self.assertTrue(result["analysis"]["exists"])
+
+    def test_latest_timestamped_artifact_run_is_auto_discovered(self) -> None:
+        artifacts = self.root / ".artifacts"
+        first_run = artifacts / "20260809-090000"
+        latest_run = artifacts / "20260810-090000"
+        first_run.mkdir(parents=True)
+        latest_run.mkdir()
+        config, _ = load_config(self.config_path)
+        first_analysis = first_run / "sfmea-analysis.json"
+        latest_analysis = latest_run / "sfmea-analysis.json.gz"
+        save_analysis(first_analysis, scan_repository(self.root, config=config))
+        save_analysis(latest_analysis, scan_repository(self.root, config=config))
+        os.utime(first_analysis, (1_000_000_000, 1_000_000_000))
+        os.utime(latest_analysis, (1_100_000_000, 1_100_000_000))
+
+        result = workflow_status(self.root)
+
+        self.assertEqual(result["paths"]["analysis"], str(latest_analysis))
+        self.assertEqual(
+            result["paths"]["analysis_selection"],
+            {
+                "method": "latest_timestamped_artifact",
+                "timestamped_candidate_count": 2,
+                "timestamped_candidates_truncated": False,
+            },
+        )
+        self.assertTrue(result["analysis"]["exists"])
+        validator = Draft202012Validator(schema_document("workflow-status"))
+        validator.validate(result)
+        invalid_selection = copy.deepcopy(result)
+        invalid_selection["paths"]["analysis_selection"]["method"] = "implicit"
+        with self.assertRaises(ValidationError):
+            validator.validate(invalid_selection)
+        with contextlib.redirect_stdout(io.StringIO()) as text_output:
+            self.assertEqual(main(["status", str(self.root)]), 0)
+        self.assertIn("Analysis selection: latest timestamped artifact", text_output.getvalue())
+        self.assertIn("--analysis", text_output.getvalue())
+
+    def test_standard_analysis_precedes_timestamped_artifact_runs(self) -> None:
+        self._scan()
+        timestamped_run = self.root / ".artifacts" / "20260811-090000"
+        timestamped_run.mkdir(parents=True)
+        config, _ = load_config(self.config_path)
+        timestamped_analysis = timestamped_run / "sfmea-analysis.json"
+        save_analysis(timestamped_analysis, scan_repository(self.root, config=config))
+        os.utime(timestamped_analysis, (1_200_000_000, 1_200_000_000))
+
+        result = workflow_status(self.root)
+
+        self.assertEqual(result["paths"]["analysis"], str(self.analysis_path))
+        self.assertEqual(
+            result["paths"]["analysis_selection"]["method"], "standard_location"
+        )
+
+    def test_timestamped_candidate_limit_is_disclosed_as_bounded_selection(self) -> None:
+        candidates = [
+            self.root / f"retained-{index:04d}.json"
+            for index in range(MAX_TIMESTAMPED_ANALYSIS_CANDIDATES)
+        ]
+        with mock.patch(
+            "pysfmea.workflow._timestamped_analysis_candidates", return_value=candidates
+        ):
+            selected, selection = _discover_analysis_path(self.root, None)
+
+        self.assertEqual(selected, candidates[0])
+        self.assertEqual(
+            selection,
+            {
+                "method": "bounded_timestamped_artifact",
+                "timestamped_candidate_count": MAX_TIMESTAMPED_ANALYSIS_CANDIDATES,
+                "timestamped_candidates_truncated": True,
+            },
+        )
 
 
 if __name__ == "__main__":

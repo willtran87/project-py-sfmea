@@ -82,8 +82,11 @@ release scripts.
   refreshes only recognized catalogs with `--force`, and preserves prior bytes on failure.
 - Confirm JSON export emits a schema-valid path-bound verification receipt and forced refresh
   rejects format-only spoofing or malformed failure-entry structures without altering the target.
-- Confirm current packages contain 40 public schemas and 68 checked artifacts while genuine
-  twelve- through fifteen-schema packages remain compatible under the current verifier.
+- Confirm the current package manifest enumerates every projection and offline-schema artifact
+  required by the running verifier, and that `sfmea verify-package` reports the corresponding
+  complete checked-file set. Keep genuine twelve- through fifteen-schema legacy packages
+  compatible under the current verifier. Do not hard-code current inventory counts in release
+  evidence: the versioned package contract is authoritative.
 - Confirm assurance-program input and verdict schemas validate current success and structured
   rejection examples, are present in offline bundles/packages, and retain historical 14-schema
   package compatibility. Confirm `program-init` binds every exact analysis state/baseline,

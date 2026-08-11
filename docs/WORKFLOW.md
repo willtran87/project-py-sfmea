@@ -36,6 +36,13 @@ New-Item -ItemType Directory -Path $artifacts | Out-Null
 
 Do not commit generated analyses or assurance evidence unless the repository has an explicit
 policy for doing so. Analyses can contain machine-local paths and engineering review content.
+`sfmea status .` automatically selects the most recently modified regular analysis in a direct
+timestamped run when no repository-root or direct `.artifacts` analysis exists. Its console output
+discloses that selection; pass `--analysis $analysis` whenever you want to inspect a specific
+retained run. This one-level convenience lookup never recursively searches the repository or
+follows linked run directories. If its 1,000-candidate bound is reached, it labels the result as
+a bounded selection rather than claiming it is the newest retained run; pass `--analysis` to make
+the selection explicit.
 
 ## 2. Define the system before scanning
 

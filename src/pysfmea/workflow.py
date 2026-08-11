@@ -30,6 +30,12 @@ WORKFLOW_NOTICE = (
     "or certification."
 )
 
+_TIMESTAMPED_ANALYSIS_FILENAMES = (
+    "sfmea-analysis.json",
+    "sfmea-analysis.json.gz",
+)
+MAX_TIMESTAMPED_ANALYSIS_CANDIDATES = 1_000
+
 
 def _discover_path(
     root: Path,
@@ -40,6 +46,88 @@ def _discover_path(
         return Path(explicit).expanduser().resolve()
     resolved = [value.expanduser().resolve() for value in candidates]
     return next((value for value in resolved if value.exists()), resolved[0])
+
+
+def _timestamped_analysis_candidates(root: Path) -> list[Path]:
+    """Return bounded, regular analysis files from one-level artifact runs.
+
+    The operator workflow recommends ``.artifacts/<timestamp>/`` for each run.
+    Deliberately stay one directory deep: status must not turn a convenience lookup
+    into an unbounded recursive repository walk, and callers can always select an
+    unusual retained artifact explicitly with ``--analysis``.
+    """
+
+    artifacts = root / ".artifacts"
+    if not artifacts.is_dir() or artifacts.is_symlink():
+        return []
+    candidates: list[Path] = []
+    try:
+        run_directories = sorted(artifacts.iterdir(), key=lambda value: value.name)
+    except OSError:
+        return []
+    for run in run_directories:
+        if len(candidates) >= MAX_TIMESTAMPED_ANALYSIS_CANDIDATES:
+            break
+        if not run.is_dir() or run.is_symlink():
+            continue
+        for filename in _TIMESTAMPED_ANALYSIS_FILENAMES:
+            candidate = run / filename
+            if candidate.is_file() and not candidate.is_symlink():
+                candidates.append(candidate.resolve())
+                if len(candidates) >= MAX_TIMESTAMPED_ANALYSIS_CANDIDATES:
+                    break
+    dated: list[tuple[int, str, Path]] = []
+    for candidate in candidates:
+        try:
+            dated.append((candidate.stat().st_mtime_ns, str(candidate), candidate))
+        except OSError:
+            # A concurrent cleanup is not an error in this advisory command.
+            continue
+    return [value[2] for value in sorted(dated, reverse=True)]
+
+
+def _discover_analysis_path(
+    root: Path, explicit: str | Path | None
+) -> tuple[Path, dict[str, Any]]:
+    """Choose an analysis with a disclosed, stable discovery policy."""
+
+    if explicit:
+        selected = Path(explicit).expanduser().resolve()
+        return selected, {
+            "method": "explicit",
+            "timestamped_candidate_count": 0,
+            "timestamped_candidates_truncated": False,
+        }
+    direct = [
+        (root / "sfmea-analysis.json").resolve(),
+        (root / ".artifacts" / "sfmea-analysis.json").resolve(),
+        (root / "sfmea-analysis.json.gz").resolve(),
+        (root / ".artifacts" / "sfmea-analysis.json.gz").resolve(),
+    ]
+    selected_direct = next((value for value in direct if value.is_file()), None)
+    if selected_direct is not None:
+        return selected_direct, {
+            "method": "standard_location",
+            "timestamped_candidate_count": 0,
+            "timestamped_candidates_truncated": False,
+        }
+    timestamped = _timestamped_analysis_candidates(root)
+    if timestamped:
+        limit_reached = len(timestamped) >= MAX_TIMESTAMPED_ANALYSIS_CANDIDATES
+        return timestamped[0], {
+            "method": (
+                "bounded_timestamped_artifact"
+                if limit_reached
+                else "latest_timestamped_artifact"
+            ),
+            "timestamped_candidate_count": len(timestamped),
+            "timestamped_candidates_truncated": limit_reached,
+        }
+    return direct[0], {
+        "method": "default_missing_location",
+        "timestamped_candidate_count": 0,
+        "timestamped_candidates_truncated": False,
+    }
 
 
 def _quote(path: Path) -> str:
@@ -741,14 +829,7 @@ def workflow_status(
         config_path,
         (root / "sfmea.toml", root / ".artifacts" / "sfmea.toml"),
     )
-    analysis_file = _discover_path(
-        root,
-        analysis_path,
-        (
-            root / "sfmea-analysis.json",
-            root / ".artifacts" / "sfmea-analysis.json",
-        ),
-    )
+    analysis_file, analysis_selection = _discover_analysis_path(root, analysis_path)
     readiness = repository_readiness(root, config_path=config)
     requested_values = (
         [assurance_scaffold_path]
@@ -1292,6 +1373,7 @@ def workflow_status(
         "paths": {
             "configuration": str(config),
             "analysis": str(analysis_file),
+            "analysis_selection": analysis_selection,
             "assurance_scaffold": str(
                 scaffold_artifacts[0].get("path", "") if scaffold_artifacts else ""
             ),
