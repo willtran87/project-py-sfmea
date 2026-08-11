@@ -302,12 +302,13 @@ ceilings; the assurance-program input remains limited to 500,000 nodes.
 
 ## Offline review-package use
 
-Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all 40 public
-schema documents under their stable catalog filenames. The package manifest checksums every file and
+Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and the complete
+public schema set under their stable catalog filenames. The package manifest checksums every file and
 binds the catalog format, path, canonical digest, and schema count. `sfmea verify-package`
 additionally cross-checks catalog completeness, schema identities, and each canonical digest.
 This lets a recipient validate public structures while disconnected and retain the exact
-contracts beside the governed evidence.
+contracts beside the governed evidence. Verification accepts a regular directory or ZIP root only;
+final symbolic links and linked directory entries are rejected rather than resolved.
 
 The review-package verification contract optionally defines package-publication state for
 `package --json` receipts. Status is `published` or `not_published`; phase is one of

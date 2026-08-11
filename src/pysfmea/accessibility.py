@@ -41,7 +41,9 @@ def _file_sha256(path: Path) -> str:
 
 
 def build_accessibility_evidence(report: str | Path) -> dict[str, Any]:
-    path = Path(report).expanduser().resolve(strict=True)
+    path = Path(report).expanduser().absolute()
+    if path.is_symlink():
+        raise ValueError(f"HTML report must not be a symbolic link: {path}")
     report_verification = verify_html_report_file(path)
     if not report_verification["valid"]:
         raise ValueError("accessibility evidence requires an internally valid HTML report")
@@ -107,7 +109,9 @@ def export_accessibility_evidence(report: str | Path, output: str | Path) -> Pat
 
 
 def seal_accessibility_evidence(source: str | Path) -> Path:
-    path = Path(source).expanduser().resolve()
+    path = Path(source).expanduser().absolute()
+    if path.is_symlink():
+        raise ValueError(f"accessibility evidence must not be a symbolic link: {path}")
     payload = load_accessibility_evidence(path)
     payload["format"] = ACCESSIBILITY_FORMAT
     payload.pop("content_sha256", None)
@@ -279,7 +283,7 @@ def verify_accessibility_evidence(
     structure_valid = not errors
     binding: bool | None = None
     if report is not None:
-        path = Path(report).expanduser().resolve(strict=True)
+        path = Path(report).expanduser().absolute()
         report_verification = verify_html_report_file(path)
         binding = (
             report_verification["valid"]
@@ -323,7 +327,7 @@ def verify_accessibility_evidence_file(
         result = verify_accessibility_evidence(
             load_accessibility_evidence(supplied), report=report
         )
-        result["path"] = str(supplied.resolve())
+        result["path"] = str(supplied)
         return result
     except (OSError, ValueError) as exc:
         return {

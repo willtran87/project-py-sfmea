@@ -2750,8 +2750,8 @@ def _activate_apply(args: argparse.Namespace) -> int:
 
 
 def _config_authoring_init(args: argparse.Namespace) -> int:
-    analysis_path = Path(args.analysis).expanduser().resolve()
-    config_path = Path(args.config).expanduser().resolve()
+    analysis_path = Path(args.analysis).expanduser().absolute()
+    config_path = Path(args.config).expanduser().absolute()
     output = (
         (
             Path(args.output)
@@ -2777,9 +2777,9 @@ def _config_authoring_init(args: argparse.Namespace) -> int:
 
 
 def _config_authoring_seal(args: argparse.Namespace) -> int:
-    analysis_path = Path(args.analysis).expanduser().resolve()
-    config_path = Path(args.config).expanduser().resolve()
-    draft_path = Path(args.draft).expanduser().resolve()
+    analysis_path = Path(args.analysis).expanduser().absolute()
+    config_path = Path(args.config).expanduser().absolute()
+    draft_path = Path(args.draft).expanduser().absolute()
     output = (
         (
             Path(args.output)
@@ -2822,9 +2822,9 @@ def _config_authoring_verify(args: argparse.Namespace) -> int:
 
 
 def _config_authoring_apply(args: argparse.Namespace) -> int:
-    analysis_path = Path(args.analysis).expanduser().resolve()
-    sealed_path = Path(args.sealed).expanduser().resolve()
-    config_path = Path(args.config).expanduser().resolve()
+    analysis_path = Path(args.analysis).expanduser().absolute()
+    sealed_path = Path(args.sealed).expanduser().absolute()
+    config_path = Path(args.config).expanduser().absolute()
     output = (
         (
             Path(args.output)
@@ -2870,7 +2870,7 @@ def _config_authoring_apply(args: argparse.Namespace) -> int:
 
 
 def _sfta_authoring_init(args: argparse.Namespace) -> int:
-    source = Path(args.analysis).expanduser().resolve()
+    source = Path(args.analysis).expanduser().absolute()
     output = (
         Path(args.output)
         if args.output
@@ -2886,8 +2886,8 @@ def _sfta_authoring_init(args: argparse.Namespace) -> int:
 
 
 def _sfta_authoring_seal(args: argparse.Namespace) -> int:
-    source = Path(args.analysis).expanduser().resolve()
-    draft = Path(args.draft).expanduser().resolve()
+    source = Path(args.analysis).expanduser().absolute()
+    draft = Path(args.draft).expanduser().absolute()
     output = (
         Path(args.output)
         if args.output
@@ -2913,8 +2913,8 @@ def _sfta_authoring_verify(args: argparse.Namespace) -> int:
 
 
 def _sfta_authoring_apply(args: argparse.Namespace) -> int:
-    source = Path(args.analysis).expanduser().resolve()
-    sealed_path = Path(args.sealed).expanduser().resolve()
+    source = Path(args.analysis).expanduser().absolute()
+    sealed_path = Path(args.sealed).expanduser().absolute()
     output = (
         (
             source
@@ -3476,7 +3476,7 @@ def _report_browser_verify(args: argparse.Namespace) -> int:
 
 
 def _accessibility_init(args: argparse.Namespace) -> int:
-    report = Path(args.report).expanduser().resolve()
+    report = Path(args.report).expanduser().absolute()
     output = (
         Path(args.output)
         if args.output
@@ -4309,7 +4309,7 @@ def _plugin_run_verify(args: argparse.Namespace) -> int:
 
 
 def _synthesis_init(args: argparse.Namespace) -> int:
-    source = Path(args.analysis).expanduser().resolve()
+    source = Path(args.analysis).expanduser().absolute()
     analysis = load_analysis(source)
     output = (
         Path(args.output)
@@ -4348,24 +4348,24 @@ def _synthesis_verify(args: argparse.Namespace) -> int:
 
 
 def _synthesis_apply(args: argparse.Namespace) -> int:
-    path = Path(args.analysis).expanduser().resolve()
-    workspace_path = Path(args.workspace).expanduser().resolve()
+    path = Path(args.analysis).expanduser().absolute()
+    workspace_path = Path(args.workspace).expanduser().absolute()
     receipt_path = (
         Path(args.receipt).expanduser().absolute()
         if args.receipt
         else path.with_name(path.stem + "-synthesis-apply-receipt.json")
     )
-    if receipt_path.resolve() in {path, workspace_path}:
+    if receipt_path in {path, workspace_path}:
         raise ValueError("synthesis receipt must differ from analysis and workspace paths")
     source_snapshot_path = (
         Path(args.source_snapshot).expanduser().absolute()
         if args.source_snapshot
         else None
     )
-    if source_snapshot_path is not None and source_snapshot_path.resolve() in {
+    if source_snapshot_path is not None and source_snapshot_path in {
         path,
         workspace_path,
-        receipt_path.resolve(),
+        receipt_path,
     }:
         raise ValueError(
             "synthesis source snapshot must differ from analysis, workspace, and receipt paths"

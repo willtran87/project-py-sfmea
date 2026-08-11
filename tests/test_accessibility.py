@@ -105,6 +105,37 @@ class AccessibilityEvidenceTests(unittest.TestCase):
             schema_document("accessibility-evidence-verification")
         ).validate(unavailable)
 
+    def test_accessibility_inputs_preserve_final_link_identity(self) -> None:
+        report_link = self.root / "linked-report.html"
+        try:
+            report_link.symlink_to(self.report)
+        except OSError:
+            self.skipTest("symbolic links are unavailable on this platform")
+
+        with self.assertRaisesRegex(ValueError, "must not be a symbolic link"):
+            build_accessibility_evidence(report_link)
+
+        draft = build_accessibility_evidence(self.report)
+        evidence = self.root / "accessibility.json"
+        evidence.write_text(json.dumps(draft), encoding="utf-8")
+        evidence_link = self.root / "linked-accessibility.json"
+        evidence_link.symlink_to(evidence)
+        with self.assertRaisesRegex(ValueError, "must not be a symbolic link"):
+            seal_accessibility_evidence(evidence_link)
+
+        verdict = verify_accessibility_evidence_file(evidence_link)
+        self.assertFalse(verdict["valid"])
+        self.assertEqual(verdict["path"], str(evidence_link))
+        Draft202012Validator(
+            schema_document("accessibility-evidence-verification")
+        ).validate(verdict)
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(
+                main(["accessibility-init", str(report_link)]),
+                2,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

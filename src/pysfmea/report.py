@@ -3008,6 +3008,20 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
     supplied = Path(source).expanduser().absolute()
     if supplied.suffix.lower() == ".zip":
         return _verify_review_archive(supplied)
+    if supplied.is_symlink():
+        return _package_verification_result(
+            supplied,
+            [
+                {
+                    "rule_id": "package.symlink",
+                    "level": "error",
+                    "message": "Review package directories must not be symbolic links.",
+                    "path": "",
+                }
+            ],
+            0,
+            "",
+        )
     package = supplied.resolve()
     findings: list[dict[str, str]] = []
 

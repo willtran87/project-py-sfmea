@@ -61,7 +61,8 @@ python scripts/report_browser_gate.py report.html `
 Evidence is bound to the exact report bytes. Required scenarios cover keyboard-only operation,
 200% zoom, 400-CSS-pixel reflow, forced colors, reduced motion, NVDA/Firefox, JAWS/Chrome, and
 VoiceOver/Safari. A completed receipt is qualification evidence, not an unconditional conformance
-or representative-user claim.
+or representative-user claim. The report and accessibility receipt must be regular files; final
+symbolic links are rejected rather than resolved to another evidence artifact.
 
 ## Human-controlled LLM synthesis
 
@@ -90,6 +91,8 @@ Decision validation and in-memory application are transactional and require the 
 and unchanged original suggestion. The command publishes a content-addressed receipt containing
 the source analysis, sealed workspace, and exact persisted resulting-analysis digest; retain it
 with the modified analysis. The receipt is staged and validated before coordinated publication.
+The workspace is a regular evidence file: sealing and verification reject a final symbolic link
+rather than resolving it to an unintended editable artifact.
 If either replacement fails, the command preserves the old analysis and restores the prior receipt
 where the filesystem permits. A host or process failure between the two filesystem replacements is
 still a recoverable reconciliation case, not true multi-file filesystem atomicity, so consumers

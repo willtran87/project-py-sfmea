@@ -537,6 +537,8 @@ Current packages include the governed analysis, human review views, diagram and 
 projections, assurance registers and work queues, provenance, verification results, and the public
 schemas needed for offline validation. Package integrity proves that checked bytes have not
 changed; it does not prove authorship, approval, risk acceptance, or engineering correctness.
+Verification accepts only a regular ZIP or directory root and rejects final or contained symbolic
+links rather than following them into an unrelated artifact tree.
 Use optional detached signing when the handoff also requires authenticity.
 
 ## 8. Federate multiple repositories when the system crosses service boundaries

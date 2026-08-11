@@ -147,6 +147,38 @@ class SynthesisWorkspaceTests(unittest.TestCase):
             schema_document("synthesis-workspace-verification")
         ).validate(unavailable)
 
+    def test_synthesis_workspace_final_link_is_rejected(self) -> None:
+        workspace_path = self.root / "workspace.json"
+        workspace_path.write_text(
+            json.dumps(build_synthesis_workspace(self.analysis)), encoding="utf-8"
+        )
+        linked_workspace = self.root / "linked-workspace.json"
+        try:
+            linked_workspace.symlink_to(workspace_path)
+        except OSError:
+            self.skipTest("symbolic links are unavailable on this platform")
+
+        with self.assertRaisesRegex(ValueError, "must not be a symbolic link"):
+            seal_synthesis_workspace(linked_workspace)
+
+        verdict = verify_synthesis_workspace_file(linked_workspace, self.analysis)
+        self.assertFalse(verdict["valid"])
+        self.assertEqual(verdict["path"], str(linked_workspace))
+        Draft202012Validator(
+            schema_document("synthesis-workspace-verification")
+        ).validate(verdict)
+
+        analysis_path = self.root / "analysis.json"
+        save_analysis(analysis_path, self.analysis)
+        seal_synthesis_workspace(workspace_path)
+        before = analysis_path.read_bytes()
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(
+                main(["synthesis-apply", str(analysis_path), str(linked_workspace)]),
+                2,
+            )
+        self.assertEqual(analysis_path.read_bytes(), before)
+
     def test_cli_apply_publishes_bound_receipt(self) -> None:
         analysis_path = self.root / "analysis.json"
         save_analysis(analysis_path, self.analysis)

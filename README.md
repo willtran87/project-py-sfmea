@@ -670,6 +670,10 @@ sfmea verify-package C:\path\to\python-repo\sfmea-analysis-review-package.zip
 sfmea verify-package C:\path\to\python-repo\sfmea-analysis-review-package --json
 ```
 
+`sfmea verify-package` accepts only a regular ZIP or a regular package directory; it never
+follows a final symbolic link, and it rejects linked package entries before their contents can be
+treated as evidence.
+
 `sfmea report` creates one portable HTML file that can be opened directly in a
 modern browser without a web server or network connection. The report includes an
 executive overview, validation and coverage charts, a searchable and filterable

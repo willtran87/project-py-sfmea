@@ -516,7 +516,9 @@ def load_synthesis_workspace(source: str | Path) -> dict[str, Any]:
 
 
 def seal_synthesis_workspace(source: str | Path) -> Path:
-    path = Path(source).expanduser().resolve()
+    path = Path(source).expanduser().absolute()
+    if path.is_symlink():
+        raise ValueError(f"synthesis workspace must not be a symbolic link: {path}")
     workspace = load_synthesis_workspace(path)
     workspace["format"] = SYNTHESIS_FORMAT
     workspace.pop("content_sha256", None)
@@ -605,7 +607,7 @@ def verify_synthesis_workspace_file(
         result = verify_synthesis_workspace(
             load_synthesis_workspace(supplied), analysis
         )
-        result["path"] = str(supplied.resolve())
+        result["path"] = str(supplied)
         return result
     except (OSError, ValueError) as exc:
         return {

@@ -2965,6 +2965,30 @@ class ExtensionTests(unittest.TestCase):
             {value["rule_id"] for value in limited["findings"]},
         )
 
+    def test_review_package_directory_link_is_rejected(self) -> None:
+        package = export_review_package(
+            self.analysis,
+            self.root / "retained-review-package",
+        )
+        link = self.root / "linked-review-package"
+        try:
+            link.symlink_to(package, target_is_directory=True)
+        except OSError:
+            self.skipTest("symbolic links are unavailable on this platform")
+
+        verdict = verify_review_package(link)
+
+        self.assertFalse(verdict["valid"])
+        self.assertEqual(verdict["container"], "directory")
+        self.assertEqual(verdict["checked_files"], 0)
+        self.assertIn(
+            "package.symlink",
+            {value["rule_id"] for value in verdict["findings"]},
+        )
+        Draft202012Validator(schema_document("review-package-verification")).validate(
+            verdict
+        )
+
     @unittest.skipUnless(
         importlib.util.find_spec("cryptography"),
         "optional signing dependency unavailable",
