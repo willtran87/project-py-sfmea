@@ -524,6 +524,18 @@ def _parser() -> argparse.ArgumentParser:
         "--analysis", help="analysis JSON path; auto-discovered by default"
     )
     status.add_argument(
+        "--report",
+        help="HTML report path; auto-discovered by conventional nearby names by default",
+    )
+    status.add_argument(
+        "--pdf-report",
+        help="PDF report path; auto-discovered by conventional nearby names by default",
+    )
+    status.add_argument(
+        "--package",
+        help="review package directory or ZIP; auto-discovered by conventional nearby names by default",
+    )
+    status.add_argument(
         "--assurance-scaffold",
         action="append",
         default=[],
@@ -2955,6 +2967,9 @@ def _status(args: argparse.Namespace) -> int:
         args.repository,
         config_path=args.config,
         analysis_path=args.analysis,
+        html_report_path=args.report,
+        pdf_report_path=args.pdf_report,
+        review_package_path=args.package,
         assurance_scaffold_path=args.assurance_scaffold,
     )
     if args.json:
@@ -3039,6 +3054,16 @@ def _status(args: argparse.Namespace) -> int:
             )
             binding = artifact.get("binding")
             binding_text = f", binding={binding['status']}" if binding else ""
+            unsafe_candidates = artifact.get("unsafe_candidates", [])
+            unsafe_candidate_count = int(
+                artifact.get("unsafe_candidate_count", len(unsafe_candidates)) or 0
+            )
+            unsafe_text = (
+                f", ignored symbolic links={unsafe_candidate_count}"
+                f"{'+' if artifact.get('unsafe_candidates_truncated') else ''}"
+                if unsafe_candidate_count
+                else ""
+            )
             generated_changes = artifact.get("generated_files_changed")
             generated_text = (
                 f", generated changes={generated_changes}"
@@ -3077,7 +3102,7 @@ def _status(args: argparse.Namespace) -> int:
             print(
                 f"  - {name}: {artifact['status']}"
                 f"{integrity_text}{schema_text}{binding_text}{generated_text}{contract_text}"
-                f"{queue_text}{selection_text} "
+                f"{queue_text}{selection_text}{unsafe_text} "
                 f"({artifact['path']})"
             )
 
@@ -3119,7 +3144,13 @@ def _status(args: argparse.Namespace) -> int:
                     + ", ".join(duplicate["scaffold_paths"])
                 )
     else:
-        print(f"Analysis: not found ({result['paths']['analysis']})")
+        if analysis.get("load_status") in {"invalid", "unsafe"}:
+            print(
+                f"Analysis: {analysis['load_status']} and preserved ({result['paths']['analysis']}); "
+                "create a separate recovery analysis."
+            )
+        else:
+            print(f"Analysis: not found ({result['paths']['analysis']})")
     gate_summary = result["handoff_gate_summary"]
     print(
         "Handoff gates: "

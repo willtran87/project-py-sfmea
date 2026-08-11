@@ -44,6 +44,19 @@ follows linked run directories. If its 1,000-candidate bound is reached, it labe
 a bounded selection rather than claiming it is the newest retained run; pass `--analysis` to make
 the selection explicit.
 
+The cockpit also auto-discovers conventional nearby report, PDF, and review-package names. When
+your retention policy uses an intentional custom name, select it exactly instead of renaming it:
+
+```powershell
+sfmea status . --analysis $analysis `
+  --report (Join-Path $artifacts 'report.html') `
+  --pdf-report (Join-Path $artifacts 'review.pdf') `
+  --package (Join-Path $artifacts 'handoff.zip')
+```
+
+Explicit artifact paths disable filename-pattern discovery for that artifact only. This makes the
+reported integrity, binding, freshness, and generated refresh command refer to the chosen bytes.
+
 ## 2. Define the system before scanning
 
 Create the configuration once, replace every generated example, and run the read-only preflight:

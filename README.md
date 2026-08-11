@@ -567,6 +567,9 @@ sfmea status C:\path\to\python-repo --assurance-scaffold D:\review-queues\paymen
 sfmea status C:\path\to\python-repo `
   --assurance-scaffold D:\review-queues\payments `
   --assurance-scaffold D:\review-queues\platform
+sfmea status C:\path\to\python-repo --analysis C:\artifacts\sfmea-analysis.json `
+  --report C:\artifacts\review.html --pdf-report C:\artifacts\review.pdf `
+  --package C:\artifacts\handoff.zip
 ```
 
 Validate that payload offline with the published `workflow-status` JSON Schema; gate-count,
@@ -580,6 +583,17 @@ package signature, they are not an authentication mechanism. Suggested refresh c
 and replacement flags so they can be run directly. `--require-handoff-ready` returns a
 nonzero exit code until all eight gates pass, making the cockpit usable in CI without
 changing normal interactive behavior.
+Use `--report`, `--pdf-report`, or `--package` to bind an intentionally custom artifact name
+to this inspection. Each explicit path disables discovery only for that artifact, is surfaced as
+`paths.artifact_selection` in JSON, and becomes the exact target of any refresh command.
+Status never follows symbolic-link artifacts; it reports bounded ignored-link diagnostics and
+continues with a regular nearby candidate when one is available.
+If the selected governed analysis is malformed or unreadable, status reports the distinct
+`analysis_invalid` stage and proposes a separately named recovery scan; it never overwrites the
+retained bytes automatically. A symbolic-link analysis is similarly reported as `analysis_unsafe`
+and is never followed. Configuration links are rejected by readiness rather than resolved to a
+target, preserving the same input-integrity boundary. The same final-link protection applies to
+explicit assurance-scaffold paths.
 Conventional `assurance-tests` directories are discovered automatically; use
 `--assurance-scaffold PATH` when a queue is stored elsewhere, repeating the option for
 subsystem- or team-specific queues. Paths are normalized and deduplicated in request order.
@@ -649,6 +663,8 @@ sfmea package C:\path\to\python-repo\sfmea-analysis.json
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable
 sfmea package C:\path\to\python-repo\sfmea-analysis.json --portable --zip
 sfmea package C:\path\to\python-repo\sfmea-analysis.json -o review-package.zip --json
+sfmea status C:\path\to\python-repo --analysis C:\artifacts\sfmea-analysis.json `
+  --report C:\artifacts\review.html --package C:\artifacts\handoff.zip
 sfmea verify-package C:\path\to\python-repo\sfmea-analysis-review-package
 sfmea verify-package C:\path\to\python-repo\sfmea-analysis-review-package.zip
 sfmea verify-package C:\path\to\python-repo\sfmea-analysis-review-package --json

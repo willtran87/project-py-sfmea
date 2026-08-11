@@ -2731,7 +2731,9 @@ def _workflow_status_schema() -> dict[str, Any]:
             "method": {
                 "enum": [
                     "explicit",
+                    "unsafe_explicit",
                     "standard_location",
+                    "unsafe_standard_location",
                     "latest_timestamped_artifact",
                     "bounded_timestamped_artifact",
                     "default_missing_location",
@@ -2759,6 +2761,18 @@ def _workflow_status_schema() -> dict[str, Any]:
             "configuration": nonempty,
             "analysis": nonempty,
             "analysis_selection": analysis_selection,
+            "artifact_selection": {
+                "type": "object",
+                "required": ["html_report", "pdf_report", "review_package"],
+                "properties": {
+                    "html_report": {"enum": ["auto_discovered", "explicit"]},
+                    "pdf_report": {"enum": ["auto_discovered", "explicit"]},
+                    "review_package": {
+                        "enum": ["auto_discovered", "explicit"]
+                    },
+                },
+                "additionalProperties": False,
+            },
             "assurance_scaffold": {"type": "string", "maxLength": 16_384},
             "assurance_scaffolds": {
                 "type": "array",
@@ -2804,6 +2818,8 @@ def _workflow_status_schema() -> dict[str, Any]:
                 "enum": [
                     "configuration_required",
                     "ready_to_scan",
+                    "analysis_invalid",
+                    "analysis_unsafe",
                     "inputs_need_attention",
                     "revalidation_required",
                     "engineering_review",

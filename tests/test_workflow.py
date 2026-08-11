@@ -633,6 +633,200 @@ class WorkflowStatusTests(unittest.TestCase):
             "refresh_report", [value["id"] for value in exact["next_actions"]]
         )
 
+    def test_status_accepts_explicit_custom_artifact_paths(self) -> None:
+        self._scan()
+        analysis = load_analysis(self.analysis_path)
+        report = self.root / "review.html"
+        pdf = self.root / "review.pdf"
+        package = self.root / "handoff.zip"
+        export_html_report(analysis, report)
+        pdf.write_bytes(b"review PDF placeholder")
+        export_review_archive(
+            analysis,
+            package,
+            source_analysis=self.analysis_path,
+            portable=True,
+        )
+
+        automatic = workflow_status(self.root)
+        self.assertEqual(automatic["artifacts"]["html_report"]["status"], "missing")
+        self.assertEqual(automatic["artifacts"]["review_package"]["status"], "missing")
+
+        explicit = workflow_status(
+            self.root,
+            html_report_path=report,
+            pdf_report_path=pdf,
+            review_package_path=package,
+        )
+        self.assertEqual(
+            explicit["paths"]["artifact_selection"],
+            {
+                "html_report": "explicit",
+                "pdf_report": "explicit",
+                "review_package": "explicit",
+            },
+        )
+        self.assertEqual(explicit["artifacts"]["html_report"]["path"], str(report))
+        self.assertEqual(explicit["artifacts"]["html_report"]["status"], "current")
+        self.assertEqual(explicit["artifacts"]["pdf_report"]["path"], str(pdf))
+        self.assertEqual(explicit["artifacts"]["pdf_report"]["status"], "current")
+        self.assertEqual(explicit["artifacts"]["review_package"]["path"], str(package))
+        self.assertEqual(explicit["artifacts"]["review_package"]["status"], "current")
+        self.assertNotIn(
+            "refresh_report", {value["id"] for value in explicit["next_actions"]}
+        )
+        self.assertNotIn(
+            "refresh_package", {value["id"] for value in explicit["next_actions"]}
+        )
+        Draft202012Validator(schema_document("workflow-status")).validate(explicit)
+
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(
+                main(
+                    [
+                        "status",
+                        str(self.root),
+                        "--report",
+                        str(report),
+                        "--pdf-report",
+                        str(pdf),
+                        "--package",
+                        str(package),
+                        "--json",
+                    ]
+                ),
+                0,
+            )
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["paths"]["artifact_selection"], explicit["paths"]["artifact_selection"])
+        self.assertEqual(payload["artifacts"]["html_report"]["path"], str(report))
+        self.assertEqual(payload["artifacts"]["review_package"]["path"], str(package))
+
+    def test_status_does_not_follow_symbolic_link_artifacts(self) -> None:
+        self._scan()
+        target = self.root / "untrusted-report.html"
+        target.write_text("untrusted", encoding="utf-8")
+        report_link = self.root / "sfmea-report.html"
+        try:
+            report_link.symlink_to(target)
+        except OSError:
+            self.skipTest("symbolic links are unavailable on this platform")
+
+        automatic = workflow_status(self.root)
+        report = automatic["artifacts"]["html_report"]
+        self.assertEqual(report["status"], "missing")
+        self.assertEqual(report["path"], str(self.analysis_path.with_name("sfmea-analysis-report.html")))
+        self.assertEqual(report["unsafe_candidates"], [str(report_link)])
+
+        explicit = workflow_status(self.root, html_report_path=report_link)
+        explicit_report = explicit["artifacts"]["html_report"]
+        self.assertEqual(explicit_report["status"], "unsafe")
+        self.assertFalse(explicit_report["exists"])
+        self.assertFalse(explicit_report["current"])
+        self.assertEqual(explicit_report["path"], str(report_link))
+        self.assertEqual(explicit_report["unsafe_candidates"], [str(report_link)])
+        self.assertNotIn("binding", explicit_report)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(main(["status", str(self.root), "--report", str(report_link)]), 0)
+        self.assertIn("ignored symbolic links=1", output.getvalue())
+
+    def test_status_preserves_an_invalid_analysis_and_offers_recovery(self) -> None:
+        self.analysis_path.write_text("{not valid JSON", encoding="utf-8")
+
+        result = workflow_status(self.root)
+
+        self.assertEqual(result["stage"], "analysis_invalid")
+        self.assertFalse(result["analysis"]["exists"])
+        self.assertTrue(result["analysis"]["file_exists"])
+        self.assertEqual(result["analysis"]["load_status"], "invalid")
+        self.assertIn("not changed", result["analysis"]["load_notice"])
+        analysis_gate = next(
+            gate for gate in result["handoff_gates"] if gate["id"] == "analysis_available"
+        )
+        self.assertEqual(analysis_gate["remediation_action_id"], "recover_analysis")
+        recovery = next(
+            action for action in result["next_actions"] if action["id"] == "recover_analysis"
+        )
+        self.assertIn("sfmea-analysis-recovery.json", recovery["command"])
+        self.assertNotIn(f'-o "{self.analysis_path}"', recovery["command"])
+        Draft202012Validator(schema_document("workflow-status")).validate(result)
+
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(main(["status", str(self.root)]), 0)
+        self.assertIn("invalid and preserved", output.getvalue())
+
+    def test_status_does_not_follow_a_symbolic_link_analysis(self) -> None:
+        target = self.root / "untrusted-analysis.json"
+        config, _ = load_config(self.config_path)
+        save_analysis(target, scan_repository(self.root, config=config))
+        try:
+            self.analysis_path.symlink_to(target)
+        except OSError:
+            self.skipTest("symbolic links are unavailable on this platform")
+
+        result = workflow_status(self.root)
+
+        self.assertEqual(result["stage"], "analysis_unsafe")
+        self.assertFalse(result["analysis"]["exists"])
+        self.assertTrue(result["analysis"]["file_exists"])
+        self.assertEqual(result["analysis"]["load_status"], "unsafe")
+        self.assertIn("not followed", result["analysis"]["load_notice"])
+        self.assertEqual(
+            result["paths"]["analysis_selection"]["method"],
+            "unsafe_standard_location",
+        )
+        recovery = next(
+            action for action in result["next_actions"] if action["id"] == "recover_analysis"
+        )
+        self.assertIn("sfmea-analysis-recovery.json", recovery["command"])
+        self.assertNotIn(f'-o "{self.analysis_path}"', recovery["command"])
+        Draft202012Validator(schema_document("workflow-status")).validate(result)
+
+        explicit = workflow_status(self.root, analysis_path=self.analysis_path)
+        self.assertEqual(
+            explicit["paths"]["analysis_selection"]["method"], "unsafe_explicit"
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(main(["status", str(self.root)]), 0)
+        self.assertIn("unsafe and preserved", output.getvalue())
+
+    def test_status_preserves_a_symbolic_link_configuration_for_rejection(self) -> None:
+        target = self.root / "retained-sfmea.toml"
+        self.config_path.replace(target)
+        try:
+            self.config_path.symlink_to(target)
+        except OSError:
+            self.skipTest("symbolic links are unavailable on this platform")
+
+        result = workflow_status(self.root)
+
+        self.assertEqual(result["paths"]["configuration"], str(self.config_path))
+        self.assertFalse(result["readiness"]["ready"])
+        self.assertEqual(result["readiness"]["counts"]["error"], 1)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(main(["status", str(self.root)]), 0)
+        self.assertIn("Readiness: errors=1", output.getvalue())
+
+    def test_status_does_not_follow_an_explicit_scaffold_symbolic_link(self) -> None:
+        analysis = self._scan()
+        target = self.root / "retained-queue"
+        export_pytest_scaffold(analysis, target, limit=1, disposition="all")
+        scaffold_link = self.root / "payments-queue"
+        try:
+            scaffold_link.symlink_to(target, target_is_directory=True)
+        except OSError:
+            self.skipTest("symbolic links are unavailable on this platform")
+
+        result = workflow_status(self.root, assurance_scaffold_path=scaffold_link)
+
+        scaffold = result["artifacts"]["assurance_scaffold"]
+        self.assertEqual(result["paths"]["assurance_scaffold"], str(scaffold_link))
+        self.assertEqual(scaffold["status"], "unsafe")
+        self.assertFalse(scaffold["exists"])
+        self.assertFalse(scaffold["current"])
+        self.assertEqual(scaffold["path"], str(scaffold_link))
+        self.assertEqual(scaffold["unsafe_candidates"], [str(scaffold_link)])
+
     def test_cli_text_and_json_outputs_are_actionable(self) -> None:
         with contextlib.redirect_stdout(io.StringIO()) as text_output:
             result = main(["status", str(self.root)])
@@ -1008,8 +1202,14 @@ class WorkflowStatusTests(unittest.TestCase):
             owner="Platform Assurance",
             purpose="Platform integration hardening",
         )
+        custom_report = self.root / "retained" / "review.html"
+        custom_pdf = self.root / "retained" / "review.pdf"
+        custom_package = self.root / "retained" / "handoff.zip"
         overlapping = workflow_status(
             self.root,
+            html_report_path=custom_report,
+            pdf_report_path=custom_pdf,
+            review_package_path=custom_package,
             assurance_scaffold_path=[custom_scaffold, second_scaffold],
         )
         portfolio = overlapping["assurance_scaffold_portfolio"]
@@ -1038,6 +1238,9 @@ class WorkflowStatusTests(unittest.TestCase):
             if value["id"] == "review_assurance_scaffold_overlap"
         )
         self.assertIn("--json", overlap_action["command"])
+        self.assertIn(f'--report "{custom_report}"', overlap_action["command"])
+        self.assertIn(f'--pdf-report "{custom_pdf}"', overlap_action["command"])
+        self.assertIn(f'--package "{custom_package}"', overlap_action["command"])
         with contextlib.redirect_stdout(io.StringIO()) as text_output:
             self.assertEqual(
                 main(
@@ -1119,6 +1322,12 @@ class WorkflowStatusTests(unittest.TestCase):
         invalid_selection["paths"]["analysis_selection"]["method"] = "implicit"
         with self.assertRaises(ValidationError):
             validator.validate(invalid_selection)
+        invalid_artifact_selection = copy.deepcopy(result)
+        invalid_artifact_selection["paths"]["artifact_selection"][
+            "html_report"
+        ] = "implicit"
+        with self.assertRaises(ValidationError):
+            validator.validate(invalid_artifact_selection)
         with contextlib.redirect_stdout(io.StringIO()) as text_output:
             self.assertEqual(main(["status", str(self.root)]), 0)
         self.assertIn("Analysis selection: latest timestamped artifact", text_output.getvalue())

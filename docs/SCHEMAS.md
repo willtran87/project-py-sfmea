@@ -443,8 +443,10 @@ under a 550 MB identity-checked streaming boundary and reconciled to the fresh v
 lifecycle stages, required gate/action fields, status vocabulary, counts, bounds, configured
 paths, and the disclosed analysis-selection method. The selection contract distinguishes explicit,
 standard-location, latest-timestamped-artifact, bounded-timestamped-artifact, and default-missing
-discovery; timestamped candidate counts are bounded to 1,000. Generate the payload with `sfmea status REPOSITORY --json`. JSON
-Schema validates structure; PySFMEA's workflow implementation supplies the semantic relationships between summary counts,
+discovery, plus explicit unsafe-link outcomes that preserve final path identity; timestamped candidate counts are bounded to 1,000. Generate the payload with `sfmea status REPOSITORY --json`. JSON
+Schema also validates optional `paths.artifact_selection`, which records whether each HTML report,
+PDF report, and review package was conventionally discovered or selected with the status command's
+explicit artifact path. JSON Schema validates structure; PySFMEA's workflow implementation supplies the semantic relationships between summary counts,
 `ready_for_handoff`, gate states, and remediation action IDs.
 
 `pysfmea-assurance-work-queue.schema.json` checks the focused

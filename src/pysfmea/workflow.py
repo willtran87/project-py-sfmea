@@ -35,6 +35,7 @@ _TIMESTAMPED_ANALYSIS_FILENAMES = (
     "sfmea-analysis.json.gz",
 )
 MAX_TIMESTAMPED_ANALYSIS_CANDIDATES = 1_000
+MAX_UNSAFE_ARTIFACT_CANDIDATES = 50
 
 
 def _discover_path(
@@ -43,8 +44,8 @@ def _discover_path(
     candidates: Iterable[Path],
 ) -> Path:
     if explicit:
-        return Path(explicit).expanduser().resolve()
-    resolved = [value.expanduser().resolve() for value in candidates]
+        return Path(explicit).expanduser().absolute()
+    resolved = [value.expanduser().absolute() for value in candidates]
     return next((value for value in resolved if value.exists()), resolved[0])
 
 
@@ -92,22 +93,32 @@ def _discover_analysis_path(
     """Choose an analysis with a disclosed, stable discovery policy."""
 
     if explicit:
-        selected = Path(explicit).expanduser().resolve()
+        selected = Path(explicit).expanduser().absolute()
         return selected, {
-            "method": "explicit",
+            "method": "unsafe_explicit" if selected.is_symlink() else "explicit",
             "timestamped_candidate_count": 0,
             "timestamped_candidates_truncated": False,
         }
     direct = [
-        (root / "sfmea-analysis.json").resolve(),
-        (root / ".artifacts" / "sfmea-analysis.json").resolve(),
-        (root / "sfmea-analysis.json.gz").resolve(),
-        (root / ".artifacts" / "sfmea-analysis.json.gz").resolve(),
+        (root / "sfmea-analysis.json").absolute(),
+        (root / ".artifacts" / "sfmea-analysis.json").absolute(),
+        (root / "sfmea-analysis.json.gz").absolute(),
+        (root / ".artifacts" / "sfmea-analysis.json.gz").absolute(),
     ]
-    selected_direct = next((value for value in direct if value.is_file()), None)
+    selected_direct = next(
+        (value for value in direct if value.is_file() and not value.is_symlink()),
+        None,
+    )
     if selected_direct is not None:
         return selected_direct, {
             "method": "standard_location",
+            "timestamped_candidate_count": 0,
+            "timestamped_candidates_truncated": False,
+        }
+    unsafe_direct = next((value for value in direct if value.is_symlink()), None)
+    if unsafe_direct is not None:
+        return unsafe_direct, {
+            "method": "unsafe_standard_location",
             "timestamped_candidate_count": 0,
             "timestamped_candidates_truncated": False,
         }
@@ -144,14 +155,46 @@ def _artifact_state(
     preferred: list[Path],
     patterns: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    candidates = list(dict.fromkeys(value.resolve() for value in preferred))
+    """Select a nearby artifact without following a final symbolic link.
+
+    Status is advisory, but it is often run against retained CI artifact directories.
+    Preserve the final path identity here so an untrusted link cannot silently become a
+    trusted report or package through ``Path.resolve()`` before a verifier sees it.
+    """
+
+    candidates = list(dict.fromkeys(value.expanduser().absolute() for value in preferred))
     for pattern in patterns:
         candidates.extend(
-            value.resolve()
+            value.absolute()
             for value in sorted(analysis_path.parent.glob(pattern))
-            if value.resolve() not in candidates
+            if value.absolute() not in candidates
         )
-    selected = next((value for value in candidates if value.exists()), candidates[0])
+    unsafe_candidates = [value for value in candidates if value.is_symlink()]
+    unsafe_candidate_count = len(unsafe_candidates)
+    unsafe_paths = [
+        str(value) for value in unsafe_candidates[:MAX_UNSAFE_ARTIFACT_CANDIDATES]
+    ]
+    unsafe_candidates_truncated = (
+        unsafe_candidate_count > MAX_UNSAFE_ARTIFACT_CANDIDATES
+    )
+    safe_candidates = [value for value in candidates if not value.is_symlink()]
+    selected = next(
+        (value for value in safe_candidates if value.exists()),
+        safe_candidates[0] if safe_candidates else candidates[0],
+    )
+    if selected.is_symlink():
+        return {
+            "path": str(selected),
+            "status": "unsafe",
+            "exists": False,
+            "current": False,
+            "timestamp_current": False,
+            "modified_at": "",
+            "unsafe_candidates": unsafe_paths,
+            "unsafe_candidate_count": unsafe_candidate_count,
+            "unsafe_candidates_truncated": unsafe_candidates_truncated,
+            "notice": "Artifact symbolic links are never followed by workflow status.",
+        }
     if not selected.exists():
         return {
             "path": str(selected),
@@ -160,10 +203,14 @@ def _artifact_state(
             "current": False,
             "timestamp_current": False,
             "modified_at": "",
+            "unsafe_candidates": unsafe_paths,
+            "unsafe_candidate_count": unsafe_candidate_count,
+            "unsafe_candidates_truncated": unsafe_candidates_truncated,
         }
     comparison_path = selected
-    if selected.is_dir() and (selected / "manifest.json").is_file():
-        comparison_path = selected / "manifest.json"
+    manifest = selected / "manifest.json"
+    if selected.is_dir() and manifest.is_file() and not manifest.is_symlink():
+        comparison_path = manifest
     current = comparison_path.stat().st_mtime_ns >= analysis_path.stat().st_mtime_ns
     return {
         "path": str(selected),
@@ -172,6 +219,9 @@ def _artifact_state(
         "current": current,
         "timestamp_current": current,
         "modified_at": _modified_at(comparison_path),
+        "unsafe_candidates": unsafe_paths,
+        "unsafe_candidate_count": unsafe_candidate_count,
+        "unsafe_candidates_truncated": unsafe_candidates_truncated,
     }
 
 
@@ -819,6 +869,9 @@ def workflow_status(
     *,
     config_path: str | Path | None = None,
     analysis_path: str | Path | None = None,
+    html_report_path: str | Path | None = None,
+    pdf_report_path: str | Path | None = None,
+    review_package_path: str | Path | None = None,
     assurance_scaffold_path: str | Path | Iterable[str | Path] | None = None,
 ) -> dict[str, Any]:
     """Build a truthful workflow stage and ordered next-action list."""
@@ -837,45 +890,74 @@ def workflow_status(
         else list(assurance_scaffold_path or [])
     )
     requested_scaffolds = list(
-        dict.fromkeys(Path(value).expanduser().resolve() for value in requested_values)
+        dict.fromkeys(Path(value).expanduser().absolute() for value in requested_values)
     )
     analysis: dict[str, Any] | None = None
+    analysis_load_status = "missing"
     counts: dict[str, Any] = {}
     artifacts: dict[str, dict[str, Any]] = {}
     scaffold_artifacts: list[dict[str, Any]] = []
     scaffold_portfolio: dict[str, Any] = {}
-    if analysis_file.is_file():
-        analysis = load_analysis(analysis_file)
+    if analysis_file.is_symlink():
+        analysis_load_status = "unsafe"
+    elif analysis_file.is_file():
+        try:
+            analysis = load_analysis(analysis_file)
+        except (OSError, UnicodeError, ValueError):
+            # Status is a read-only cockpit. A malformed retained analysis must remain
+            # inspectable evidence rather than turning the operator's recovery path into
+            # an exception or an in-place overwrite.
+            analysis_load_status = "invalid"
+        else:
+            analysis_load_status = "loaded"
+    if analysis is not None:
         counts = _analysis_counts(analysis)
         stem = analysis_file.stem
+        html_report_candidates = (
+            [Path(html_report_path).expanduser().absolute()]
+            if html_report_path
+            else [
+                analysis_file.with_name("sfmea-report.html"),
+                analysis_file.with_name(f"{stem}-report.html"),
+            ]
+        )
+        pdf_report_candidates = (
+            [Path(pdf_report_path).expanduser().absolute()]
+            if pdf_report_path
+            else [
+                analysis_file.with_name("sfmea-report.pdf"),
+                analysis_file.with_name(f"{stem}-report.pdf"),
+            ]
+        )
+        review_package_candidates = (
+            [Path(review_package_path).expanduser().absolute()]
+            if review_package_path
+            else [
+                analysis_file.with_name(f"{stem}-review-package.zip"),
+                analysis_file.with_name(f"{stem}-review-package"),
+            ]
+        )
         artifacts = {
             "html_report": _verify_html_report_artifact(
                 _artifact_state(
                     analysis_file,
-                    [
-                        analysis_file.with_name("sfmea-report.html"),
-                        analysis_file.with_name(f"{stem}-report.html"),
-                    ],
-                    ("*sfmea*report.html",),
+                    html_report_candidates,
+                    () if html_report_path else ("*sfmea*report.html",),
                 ),
                 analysis,
             ),
             "pdf_report": _artifact_state(
                 analysis_file,
-                [
-                    analysis_file.with_name("sfmea-report.pdf"),
-                    analysis_file.with_name(f"{stem}-report.pdf"),
-                ],
-                ("*sfmea*report.pdf",),
+                pdf_report_candidates,
+                () if pdf_report_path else ("*sfmea*report.pdf",),
             ),
             "review_package": _verify_package_artifact(
                 _artifact_state(
                     analysis_file,
-                    [
-                        analysis_file.with_name(f"{stem}-review-package.zip"),
-                        analysis_file.with_name(f"{stem}-review-package"),
-                    ],
-                    ("*review-package.zip", "*review-package"),
+                    review_package_candidates,
+                    ()
+                    if review_package_path
+                    else ("*review-package.zip", "*review-package"),
                 ),
                 analysis,
             ),
@@ -973,7 +1055,11 @@ def workflow_status(
 
     analysis_available = analysis is not None
     analysis_remediation_action = (
-        "scan_repository" if readiness["ready"] else "resolve_readiness"
+        "recover_analysis"
+        if analysis_load_status in {"invalid", "unsafe"} and readiness["ready"]
+        else "scan_repository"
+        if readiness["ready"]
+        else "resolve_readiness"
     )
     handoff_gates = [
         handoff_gate(
@@ -995,6 +1081,10 @@ def workflow_status(
             (
                 "A governed analysis is loaded."
                 if analysis_available
+                else "The selected analysis is a symbolic link and was not followed; preserve it and create a separate recovery analysis."
+                if analysis_load_status == "unsafe"
+                else "The selected analysis cannot be loaded safely; preserve it and create a separate recovery analysis."
+                if analysis_load_status == "invalid"
                 else "Scan the repository to create the governed analysis."
             ),
             analysis_remediation_action,
@@ -1117,7 +1207,11 @@ def workflow_status(
         "blocked": len(handoff_gates) - passed_handoff_gates,
     }
     ready_for_handoff = handoff_gate_summary["blocked"] == 0
-    if not analysis and not readiness["ready"]:
+    if analysis_load_status == "unsafe":
+        stage = "analysis_unsafe"
+    elif analysis_load_status == "invalid":
+        stage = "analysis_invalid"
+    elif not analysis and not readiness["ready"]:
         stage = "configuration_required"
     elif not analysis:
         stage = "ready_to_scan"
@@ -1156,7 +1250,22 @@ def workflow_status(
             f"Resolve {readiness['counts']['error']} pre-scan readiness error(s).",
         )
     if not analysis:
-        if readiness["ready"]:
+        if analysis_load_status in {"invalid", "unsafe"} and readiness["ready"]:
+            recovery_path = analysis_file.with_name(
+                f"{analysis_file.stem}-recovery{analysis_file.suffix}"
+            )
+            add(
+                "recover_analysis",
+                (
+                    f"sfmea scan {_quote(root)} --config {_quote(config)} "
+                    f"-o {_quote(recovery_path)}"
+                ),
+                (
+                    "Preserve the unsafe or malformed analysis for inspection and publish "
+                    "a fresh recovery analysis separately."
+                ),
+            )
+        elif readiness["ready"]:
             add(
                 "scan_repository",
                 f"sfmea scan {_quote(root)} --config {_quote(config)} -o {_quote(analysis_file)}",
@@ -1305,6 +1414,15 @@ def workflow_status(
                 f"sfmea status {_quote(root)}",
                 f"--analysis {_quote(analysis_file)}",
             ]
+            for option, selected_path in (
+                ("--report", html_report_path),
+                ("--pdf-report", pdf_report_path),
+                ("--package", review_package_path),
+            ):
+                if selected_path:
+                    status_command.append(
+                        f"{option} {_quote(Path(selected_path).expanduser().absolute())}"
+                    )
             for value in scaffold_artifacts:
                 status_command.append(
                     f"--assurance-scaffold {_quote(Path(value['path']))}"
@@ -1374,6 +1492,13 @@ def workflow_status(
             "configuration": str(config),
             "analysis": str(analysis_file),
             "analysis_selection": analysis_selection,
+            "artifact_selection": {
+                "html_report": "explicit" if html_report_path else "auto_discovered",
+                "pdf_report": "explicit" if pdf_report_path else "auto_discovered",
+                "review_package": (
+                    "explicit" if review_package_path else "auto_discovered"
+                ),
+            },
             "assurance_scaffold": str(
                 scaffold_artifacts[0].get("path", "") if scaffold_artifacts else ""
             ),
@@ -1387,6 +1512,15 @@ def workflow_status(
         },
         "analysis": {
             "exists": analysis is not None,
+            "file_exists": analysis_file.is_file(),
+            "load_status": analysis_load_status,
+            "load_notice": (
+                "The selected analysis could not be loaded safely; its bytes were not changed."
+                if analysis_load_status == "invalid"
+                else "The selected analysis is a symbolic link and was not followed."
+                if analysis_load_status == "unsafe"
+                else ""
+            ),
             "baseline_id": (
                 analysis.get("project", {}).get("baseline", {}).get("id", "")
                 if analysis

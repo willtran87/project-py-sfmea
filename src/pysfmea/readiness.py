@@ -76,7 +76,11 @@ def repository_readiness(
     else:
         add("repository.python_sources", "error", "No Python source files were found.")
 
-    selected_config = Path(config_path).expanduser().resolve() if config_path else root / "sfmea.toml"
+    selected_config = (
+        Path(config_path).expanduser().absolute()
+        if config_path
+        else root / "sfmea.toml"
+    )
     if not selected_config.is_file():
         add(
             "configuration.file",
