@@ -7,6 +7,8 @@ independent analyses.
 
 For a diagram-led overview of scanning, failure cascades, evidence credit, finding lifecycle, and
 multi-repository assurance, see the [visual guide](VISUAL_GUIDE.md).
+For saved report views, accessibility qualification, governed LLM synthesis, exact-commit PR
+analysis, and process plugins, see [advanced review workflows](ADVANCED_REVIEW.md).
 
 ```mermaid
 flowchart LR
@@ -89,6 +91,17 @@ contract, coverage, and repository snapshots remain authoritative. Use `--no-cac
 a cold performance baseline. Use `.json.gz` for the governed analysis when artifact transfer or
 retention size matters; every downstream loader accepts the bounded deterministic gzip form.
 
+For an immutable checkout, publish everything outside the repository and add `--read-only`:
+
+```powershell
+$repository = 'C:\path\to\python-repo'
+$artifacts = 'C:\assurance-artifacts\python-repo\20260809-120000'
+sfmea scan $repository --read-only -o (Join-Path $artifacts 'sfmea-analysis.json.gz')
+```
+
+Read-only mode rejects an output under `$repository`, disables a configured/default in-repository
+fact cache, permits an explicitly external cache, and records the mutation policy in the analysis.
+
 The default focused queue admits at most three ordinary families per component and 1,000 total
 records per projection. Revalidation, manual, and hazard-linked records remain eligible despite
 the per-component cap. Configure `review_queue_max_per_component` and
@@ -108,10 +121,39 @@ sfmea summary $analysis
 sfmea diagnostics $analysis
 $diagnostics = Join-Path $artifacts "sfmea-diagnostics.json"
 sfmea diagnostics $analysis --json | Out-File -Encoding utf8 $diagnostics
+$enhancements = Join-Path $artifacts "enhancement-workbench.json"
+sfmea enhance $analysis -o $enhancements
+$scopePreview = Join-Path $artifacts "enhancement-scope-preview.json"
+sfmea enhance-scope-preview $analysis . -o $scopePreview
+$evidencePreflight = Join-Path $artifacts "evidence-preflight.json"
+sfmea enhance-evidence-preflight $analysis . -o $evidencePreflight
+$onboardingPlan = Join-Path $artifacts "evidence-onboarding-plan.json"
+sfmea evidence-onboard $analysis . --receipt $onboardingPlan
+$evidenceAnalysis = Join-Path $artifacts "sfmea-analysis-with-evidence.json"
+sfmea evidence-onboard $analysis . `
+  --coverage-json (Join-Path $artifacts "coverage.json") `
+  --runtime-trace (Join-Path $artifacts "runtime-trace.json") `
+  --apply -o $evidenceAnalysis `
+  --receipt (Join-Path $artifacts "evidence-onboarding-receipt.json") `
+  --work-queue (Join-Path $artifacts "assurance-work.json")
+sfmea evidence-onboard-verify (Join-Path $artifacts "evidence-onboarding-receipt.json") `
+  --analysis $evidenceAnalysis `
+  -o (Join-Path $artifacts "evidence-onboarding-verification.json")
+$enhancementVerification = Join-Path $artifacts "enhancement-workbench-verification.json"
+sfmea enhance-verify $enhancements --analysis $analysis -o $enhancementVerification
+sfmea activate-init $analysis . -o (Join-Path $artifacts "activation.json")
+sfmea activate-verify (Join-Path $artifacts "activation.json") --analysis $analysis
+sfmea sfta-authoring-init $analysis -o (Join-Path $artifacts "sfta-authoring-draft.json")
 sfmea validate $analysis
 sfmea queue $analysis --limit 25
 sfmea review $analysis
 ```
+
+Evidence onboarding is non-executing in both modes. The default plan performs full bounded import
+validation on an isolated analysis and reports prospective changes. `--apply` is required to
+publish an updated analysis. External CI evidence is selected with repeatable
+`--execution-manifest OBLIGATION_ID=PATH` arguments and also requires `--initiated-by`; imported
+artifacts remain uncredited until independent criterion-by-criterion evidence review.
 
 Diagnostics are a prioritized improvement plan: P0 repairs provenance, missing governing context,
 unmanageable warning repetition, or priority starvation; P1 closes test, runtime, mapping,
@@ -119,6 +161,167 @@ assurance-planning, cross-stack, or evidence-scope gaps; P2 improves guidance sp
 failure-path tests. `validation.aggregates` retains counts and bounded samples while the governed
 analysis/SFTA registers remain complete. Adapter-accounting errors should trigger a current rescan
 before review.
+
+For hazards that need explicit top-down logic, edit the generated SFTA draft, choose `replace`
+only for completed definitions, and record an `approved` review with a named reviewer and
+rationale. Then seal, verify, and apply it:
+
+```powershell
+$draft = Join-Path $artifacts "sfta-authoring-draft.json"
+$sealed = Join-Path $artifacts "sfta-authoring.json"
+$updated = Join-Path $artifacts "sfmea-analysis-with-sfta.json"
+sfmea sfta-authoring-seal $draft --analysis $analysis -o $sealed
+sfmea sfta-authoring-verify $sealed --analysis $analysis
+sfmea sfta-authoring-apply $analysis $sealed -o $updated `
+  --receipt (Join-Path $artifacts "sfta-authoring-receipt.json")
+```
+
+```mermaid
+flowchart LR
+  A["Bound analysis"] --> B["One entry per hazard"]
+  B --> C["Engineer edits explicit events and gates"]
+  C --> D["Named approval and rationale"]
+  D --> E["Seal and exact-binding verification"]
+  E --> F["Apply to a copied analysis"]
+  F --> G["Regenerated SFTA and reconciliation gaps"]
+  G --> H["Bounded qualitative minimal cut sets"]
+```
+
+`retain` preserves an existing definition exactly; `defer` leaves the hazard undeveloped;
+`replace` is the only action that changes the analysis. The applied review binds the exact tree
+definition digest; only that exact approved Boolean structure is eligible for qualitative minimal
+cut sets. A later edit invalidates eligibility. The workflow does not infer causal logic, calculate
+probability, approve independence, or accept residual risk.
+
+Turn approved guidance, architecture, and interface proposals into reusable scan inputs through a
+separate configuration transaction:
+
+```powershell
+$configDraft = Join-Path $artifacts "configuration-authoring-draft.json"
+$configSealed = Join-Path $artifacts "configuration-authoring.json"
+$refinedConfig = Join-Path (Split-Path $config -Parent) "sfmea-refined.toml"
+sfmea config-authoring-init $analysis --config $config -o $configDraft
+sfmea config-authoring-seal $configDraft --analysis $analysis --config $config -o $configSealed
+sfmea config-authoring-verify $configSealed --analysis $analysis --config $config
+sfmea config-authoring-apply $analysis $configSealed --config $config -o $refinedConfig
+sfmea scan . --config $refinedConfig -o (Join-Path $artifacts "sfmea-analysis-refined.json.gz")
+```
+
+The output is always a new sibling TOML file so existing comments and relative paths retain their
+meaning and the governed source is not overwritten. Rescan and validate before relying on the new
+relationships.
+
+The rescan also refreshes the architecture triad. Review `deployment_topology` first for declared
+infrastructure and unplaced components, then `shared_fate_analysis` for common-resource isolation
+questions, and finally `architecture_hierarchy` for nested subsystem coverage and inherited trace.
+The HTML Architecture page summarizes each model and opens its canonical offline diagram. Treat
+component placements and shared-fate membership as review candidates; supplement them with
+observed deployment evidence before making availability or independence claims.
+The enhancement workbench then converts those diagnostics into bounded evidence-acquisition argv
+recipes, root-cause clusters, representative-review aids, a prioritized verification portfolio,
+mapping and interface disposition queues, static system-surface candidates, and qualification
+evidence requirements. Its hardening registers account for the 76 real-repository and 82
+post-hardening audit items plus the 102 real-run recommendations and the E001-E095 outcome
+register. Format 7 adds governed finding consolidation; format 6 added evidence-backed product
+maturity and prevents a planning projection from
+being reported as an implemented analyzer. Format 5 added integrity
+verification, separate freshness/completeness/
+sufficiency health, review-only evidence-scope patches, bounded calibration campaigns, metric
+provenance, report-scale planning, product attestations, and measurable acceptance targets.
+It also emits assignable review batches, evidence-onboarding state, precision specialization,
+architecture/interface activation, timing/resilience fault campaigns, guidance closure,
+phase-level performance ratchets, delivery modes, and LLM/qualification governance.
+Generate `--profile compact` or `--profile management` reports when a complete engineering record
+projection would exceed the delivery budget; the governed JSON remains the complete source.
+Null calibration rates mean no human sample exists; they are not zero or 100 percent. It is
+planning output, not authorization to execute the repository or to
+approve mappings, findings, evidence, waivers, risk, or compliance.
+
+For product rule tuning, retain JSON results from `sfmea evaluate` before and after the proposed
+change against one exact governed corpus, then run `sfmea evaluate-compare`. The comparison blocks
+corpus drift, missing changed-rule metrics, precision regression, excessive finding recall
+regression, and excessive detected-control recall regression. Its eligible verdict advances the
+change to review only; a distinct release/qualification decision remains required.
+
+For tool-level qualification evidence, retain the analysis, corpus, and complete evaluation JSON
+for each preselected representative repository. List those files in a
+`pysfmea-qualification-campaign-manifest-1` and run:
+
+For every control-bearing corpus, declare an exhaustive `control_scope` that includes both
+positive and deliberately selected negative components. Positive-only control cases can measure
+recall but cannot substantiate false-positive-aware precision. Review the disclosed evaluated,
+positive, and negative component counts before accepting the metric, and configure
+`minimum_control_negative_components_per_repository` so positive-only cohorts fail eligibility.
+
+```powershell
+sfmea qualification-build qualification-campaign.json -o qualification-result.json
+sfmea qualification-verify qualification-result.json `
+  --manifest qualification-campaign.json -o qualification-verification.json
+sfmea qualification-report qualification-result.json `
+  --manifest qualification-campaign.json -o qualification-report.html
+sfmea qualification-report-verify qualification-report.html `
+  --result qualification-result.json -o qualification-report-verification.json
+```
+
+Review every repository/rule/framework/domain segment and each false or null gate. Use
+`--require-eligible` in CI only after an independent authority approves the population,
+thresholds, and governance process. Integrity-only verification proves transport consistency;
+complete verification proves exact retained-input regeneration. Neither proves that the sample is
+representative or grants qualification. Global finding metrics and the repository/framework/domain
+minimums must all pass; repository populations with call/control labels are gated separately, and
+duplicate analysis or corpus content cannot earn repeated credit.
+
+To start a federated assurance program without manually transcribing cohort metrics:
+
+```powershell
+sfmea program-init --analysis service-a=service-a/analysis.json `
+  --qualification-result qualification-result.json `
+  --qualification-manifest qualification-campaign.json `
+  -o assurance-program.json
+```
+
+Both qualification arguments are mandatory as a pair. Import requires complete campaign
+reconciliation and independently governed per-repository corpora, then writes exact
+program-relative evaluation references and count-backed cohort records. `program-verify` reopens
+those evaluation files before any validation credit is calculated.
+
+Use the HTML report for review meetings and handoff. It places blockers before passing and
+not-applicable gates; exposes repository, rule, framework, and domain populations; and retains
+artifact digests and authority limits. The embedded JSON remains complete while large rule tables
+are rendered in bounded pages. Report publication rechecks campaign reconciliation against the
+retained manifest and verifies the private stage before replacing the destination.
+
+### Close the loop with an activation workspace
+
+```mermaid
+flowchart LR
+    A["Governed analysis"] --> I["activate-init"]
+    R["Repository metadata and test AST"] --> I
+    I --> W["Integrity-bound activation workspace"]
+    W --> C["Complete consolidation candidates"]
+    C --> D["Named, rationalized decisions"]
+    D --> V["Exact binding verification"]
+    V --> P["Transactional apply"]
+    P --> N["New analysis and apply receipt"]
+    N --> S["Validate, report, package, or rescan"]
+```
+
+Use `activate-assign` to establish ownership and an optional due date, then `activate-decide` once
+per exact queued subject. A cluster representative never disposes its
+members. `activate-apply` defaults to a new `*-activated.json` analysis; use `--in-place` only when
+the source is intentionally being advanced. Any source-analysis change invalidates the workspace,
+so regenerate it instead of carrying decisions across an unverified baseline.
+For a large team campaign, `activate-batch-export` creates a small public-schema-backed JSON
+template. Fill its `assignments` and `decisions`, then use `activate-batch-import`. The import is
+all-or-nothing, rejects duplicate or unknown subjects, validates dates and closed decisions, and
+refuses a template bound to an earlier workspace revision.
+
+Multi-member root-cause clusters are also projected as `consolidation` candidates only when the
+entire membership fits the governed workspace. A named reviewer chooses `consolidate`,
+`retain_separate`, or `needs_information`. `consolidate` creates one canonical review group and
+annotates each member with its role, but preserves every individual finding, source location,
+review disposition, citation, and evidence reference. Candidate tampering or analysis drift is
+rejected by exact regeneration before application.
 
 The focused queue groups candidates by component/failure class, adds path/failure-class clusters,
 and round-robins components within each risk tier before repeating a component. This keeps a busy
@@ -158,6 +361,35 @@ searchable findings, evidence, repository accounting, assurance obligations, arc
 interfaces, propagation, sequences, traceability, circuit-breaker models, and stable record links.
 The canonical diagram bundle is renderer-neutral JSON for other tools; the report renders the same
 general model without a hosted service.
+Use `sfmea diagram $analysis --kind data_flow` for the bounded interprocedural view. Its edges map
+caller expressions to callee parameters and callee returns to caller sinks; ambiguity, omissions,
+and the path-insensitive/static authority boundary remain embedded in the model.
+The analysis also carries `concurrency_model`, a machine-readable inventory of task spawn,
+join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
+relations. Use these records to choose runtime schedules and stress tests; they do not establish
+task identity, scheduler order, or race/deadlock freedom.
+`exception_propagation` similarly records explicit raise and lexical handler facts, then projects
+named exception types through resolved internal calls. Use `caught_by_lexical_handler` and
+`may_propagate` as review/test-selection evidence; neither value proves runtime path feasibility or
+complete Python exception inheritance.
+`state_machine_model` projects assignments to conventional state/status/phase/mode variables into
+stable state and guarded-transition records. Treat missing transitions and invariants as review
+questions: the static projection does not prove reachability, liveness, or completeness.
+`resilience_semantics` composes transaction, side-effect/idempotency, timing-budget, retry,
+circuit-breaker, and resource-bound evidence using the same resolved component graph. Prioritize
+`consistency_risks`, `unprotected_retry_side_effect`, `callee_budget_exceeds_caller`, retry paths
+with high amplification or cycles, breaker `semantic_gaps`, and `unbounded_growth_candidates` when
+designing assurance tests. These are review leads until exercised with representative runtime
+evidence.
+`authorization_scope_flow` overlays identity, tenant, role/permission, scope/claim, and credential
+dimensions on exact interprocedural argument edges and lists observed decorator/call guards. Review
+every reported risk against middleware, infrastructure, and runtime evidence; a recognized guard
+is not proof that it dominates or correctly enforces every path.
+`contract_semantics` is the cross-language review surface. Filter compatibility records for missing
+routes, parameters, success responses, or error responses; review conflicting operation/type
+digests; and inspect evolution records for required additions, removals, and response changes.
+Declared version ordering is a deterministic comparison aid, not the project's compatibility
+policy or proof that generated/runtime clients conform.
 
 The coverage workspace keeps repository accounting, Python semantic coverage, web-boundary
 coverage, and execution coverage visibly distinct. Its cross-stack section lists unmatched client
@@ -172,12 +404,19 @@ machine-readable receipt:
 pip install -e .[browser]
 playwright install chromium
 python scripts/report_browser_gate.py (Join-Path $artifacts "sfmea-report.html") `
-  --analysis $analysis --max-bytes 52428800 --max-load-seconds 5 `
+  --analysis $analysis `
   -o (Join-Path $artifacts "report-browser-quality.json")
+sfmea report-browser-verify (Join-Path $artifacts "report-browser-quality.json") `
+  --report (Join-Path $artifacts "sfmea-report.html") `
+  -o (Join-Path $artifacts "report-browser-quality-verification.json")
 ```
 
-Set repository-specific budgets from a reviewed baseline; the example values are not universal
-acceptance criteria.
+The supported defaults enforce 50 MiB report size, 10-second load time, and 256 MiB measured
+Chromium JavaScript heap. They are product guardrails rather than universal acceptance criteria;
+replace them with reviewed repository-specific `--max-*` budgets when available.
+The standalone verifier checks the receipt's canonical content digest, exact report bytes, closed
+quality checks, and size/load semantics. It returns success only when the receipt is both valid and
+passing; a schema-valid failed gate remains preserved as trustworthy negative evidence.
 
 Sequence views reconcile bounded static and imported runtime relations. Treat
 `runtime_corroborated` as supporting execution evidence, `not_observed` as an instrumentation or
@@ -215,10 +454,18 @@ sfmea assurance-scaffold-verify $analysis $tests
 ```
 
 Each obligation carries stimuli, operating context, expected safe/degraded/recovery behavior,
-oracles, acceptance criteria, and required evidence. Replace the generated failing bodies with
-meaningful repository-specific tests. A scaffold name, textual test reference, or passing status
-alone does not satisfy an obligation. Record implemented test bindings and independently review
-as-run evidence where the assurance policy requires it.
+oracles, acceptance criteria, and required evidence. Property obligations receive bounded,
+deterministic Hypothesis strategies derived from retained signature annotations and conservative
+name heuristics. Contract obligations receive positive and negative producer/consumer cases tied
+to candidate contract digests; an unresolved association becomes a failing
+`establish_contract_binding` case instead of a guessed mapping.
+
+Implement `exercise_property` and `exercise_contract` in
+`sfmea_assurance_adapters.py`, plus the remaining method-specific failing placeholders. Every
+adapter observation must prove stimulus activation, assess every oracle and criterion, and retain
+non-empty evidence references. A scaffold name, generated strategy, textual test reference, or
+passing status alone does not satisfy an obligation. Record implemented test bindings and
+independently review as-run evidence where the assurance policy requires it.
 
 For a high-value dependency or resilience obligation, generate and verify an explicit
 fault-injection plan before implementing the corresponding test:

@@ -1136,7 +1136,17 @@ def _mark_revalidation(item: dict[str, Any], at: str, reasons: list[str]) -> Non
 def update_item_review(
     analysis: dict[str, Any], item_id: str, changes: dict[str, Any]
 ) -> dict[str, Any]:
-    item = next((entry for entry in analysis["items"] if entry.get("id") == item_id), None)
+    items = analysis.get("items", [])
+    if not isinstance(items, list):
+        raise ValueError("analysis items must be an array")
+    item = next(
+        (
+            entry
+            for entry in items
+            if isinstance(entry, dict) and entry.get("id") == item_id
+        ),
+        None,
+    )
     if item is None:
         raise KeyError(item_id)
     unknown = set(changes) - EDITABLE_REVIEW_FIELDS

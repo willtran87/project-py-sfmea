@@ -137,6 +137,11 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn('data-view="failure-modes"', document)
         self.assertIn('data-view="coverage"', document)
         self.assertIn('data-view="architecture"', document)
+        self.assertIn('id="deploymentTopology"', document)
+        self.assertIn('id="sharedFateRegions"', document)
+        self.assertIn('id="architectureHierarchy"', document)
+        self.assertIn('data-open-diagram="declared-deployment-topology"', document)
+        self.assertIn("function renderArchitectureModels", document)
         self.assertIn("Control model review questions", document)
         self.assertIn("Cascade observation context", document)
         self.assertIn('data-kind="unconfirmed_state"', document)
@@ -171,7 +176,33 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn('data-view="sequences"', document)
         self.assertIn('data-view="diagrams"', document)
         self.assertIn("Export filtered CSV", document)
+        self.assertIn('id="savedViewSelect"', document)
+        self.assertIn('id="shareView"', document)
+        self.assertIn("savedViewStorageKey", document)
+        self.assertIn("function sharedFilterHash", document)
+        self.assertIn('href="#mainContent"', document)
+        self.assertIn('<caption class="sr-only">', document)
         self.assertIn("System context and analysis coverage", document)
+        self.assertIn("Diagnostic readiness scorecard", document)
+        self.assertIn('id="diagnosticQualification"', document)
+        self.assertIn('id="diagnosticActions"', document)
+        self.assertIn('id="reviewCalibration"', document)
+        self.assertIn("function renderDiagnostics", document)
+        self.assertIn('data-view="enhancements"', document)
+        self.assertIn('id="enhancementMetrics"', document)
+        self.assertIn('id="enhancementFreshness"', document)
+        self.assertIn('id="enhancementTargets"', document)
+        self.assertIn('id="enhancementScopePatch"', document)
+        self.assertIn('id="enhancementCalibration"', document)
+        self.assertIn('id="enhancementPrecision"', document)
+        self.assertIn('id="enhancementHardening"', document)
+        self.assertIn('id="enhancementPostHardening"', document)
+        self.assertIn('id="enhancementResolution"', document)
+        self.assertIn('id="enhancementOperations"', document)
+        self.assertIn('id="enhancementReviewCampaign"', document)
+        self.assertIn('id="enhancementEvidence"', document)
+        self.assertIn('id="enhancementCapabilities"', document)
+        self.assertIn("function renderEnhancementWorkbench", document)
         self.assertIn('id="inventorySnapshotBars"', document)
         self.assertIn('id="inventorySummaryReconciliation"', document)
         self.assertIn("Snapshot provenance", document)
@@ -189,6 +220,15 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn("function compareRecords", document)
         self.assertIn("function resetFailureModeView", document)
         self.assertIn("function renderAssuranceProgress", document)
+        self.assertIn('id="renderStatus"', document)
+        self.assertIn('dataset.reportRenderMode="progressive-on-demand"', document)
+        self.assertIn("function ensureViewRendered", document)
+        self.assertIn("function renderAllViews", document)
+        self.assertIn('window.addEventListener("beforeprint",renderAllViews)', document)
+        self.assertIn('mode:"progressive_on_demand"', document)
+        self.assertNotIn(
+            "initHeader();renderOverview();renderCoverage();", document
+        )
         self.assertNotIn("<script>bad()</script>", document)
         self.assertNotIn("<script>alert(1)</script>", document)
         self.assertIn(r"\u003c/script\u003e", document)
@@ -208,6 +248,23 @@ class HtmlReportTests(unittest.TestCase):
         self.assertEqual(payload["interfaces"][0]["id"], "IF-API")
         self.assertTrue(payload["sequences"])
         self.assertTrue(payload["diagrams"])
+        self.assertEqual(
+            {
+                "architecture-components",
+                "declared-deployment-topology",
+                "shared-fate-regions",
+                "architecture-hierarchy",
+            },
+            {
+                value["id"]
+                for value in payload["diagrams"]
+                if value.get("metadata", {}).get("category") == "architecture"
+            },
+        )
+        self.assertEqual(
+            payload["architecture"]["hierarchy"]["summary"]["nodes"],
+            self.analysis["architecture_hierarchy"]["summary"]["nodes"],
+        )
         self.assertEqual(
             payload["repository_inventory"]["summary_reconciliation"]["status"],
             "reconciled",
@@ -242,6 +299,46 @@ class HtmlReportTests(unittest.TestCase):
             {node["id"] for node in propagation["nodes"]},
         )
         self.assertIn("planning_percent", payload["assurance"]["progress"])
+        self.assertEqual(
+            payload["enhancement_workbench"]["format"],
+            "pysfmea-enhancement-workbench-7",
+        )
+        self.assertTrue(payload["enhancement_workbench"]["capability_register"])
+        self.assertEqual(
+            len(payload["enhancement_workbench"]["hardening_register"]), 76
+        )
+        self.assertEqual(
+            len(payload["enhancement_workbench"]["post_hardening_register"]), 82
+        )
+        self.assertEqual(
+            len(payload["enhancement_workbench"]["next_generation_register"]), 102
+        )
+        self.assertEqual(
+            len(payload["enhancement_workbench"]["product_outcome_register"]), 95
+        )
+        self.assertIn("review_campaign", payload["enhancement_workbench"])
+        self.assertIn("llm_governance_program", payload["enhancement_workbench"])
+        self.assertEqual(
+            payload["enhancement_workbench"]["assurance_automation_program"][
+                "synthesized_test_designs"
+            ]["property_tests"]["status"],
+            "implemented",
+        )
+        self.assertIn("artifact_freshness", payload["enhancement_workbench"])
+        self.assertIn("artifact_health", payload["enhancement_workbench"])
+        self.assertIn("acceptance_targets", payload["enhancement_workbench"])
+        self.assertEqual(
+            payload["enhancement_workbench"]["activation_progress"]["status"],
+            "not_started",
+        )
+        self.assertEqual(payload["activation"]["decision_history_total"], 0)
+        self.assertIn('id="enhancementActivation"', document)
+        self.assertIn('id="enhancementOutcomes"', document)
+        self.assertEqual(payload["sfta"]["authoring"]["total_applies"], 0)
+        self.assertIn('id="sftaAuthoring"', document)
+        self.assertIn("sfta-authoring-seal", document)
+        self.assertIn("configuration_review", payload)
+        self.assertIn("config-authoring-init", document)
         self.assertIn("work_queue", payload["assurance"]["progress"])
         self.assertTrue(
             all("work" in value for value in payload["assurance"]["obligations"])
@@ -293,6 +390,8 @@ class HtmlReportTests(unittest.TestCase):
         inventory["summary"]["semantic_coverage_percent"] = -1
 
         payload = build_html_report_data(self.analysis)
+        self.assertIn("qualification", payload["diagnostics"])
+        self.assertIn("review_calibration", payload["diagnostics"]["workload"])
         projected = payload["repository_inventory"]
         self.assertEqual(projected["summary_reconciliation"]["status"], "recomputed")
         self.assertEqual(projected["summary"]["files"], actual_files)
@@ -417,6 +516,7 @@ class HtmlReportTests(unittest.TestCase):
         self.assertTrue(report_path.is_file())
         self.assertIn("Created self-contained SFMEA report", output.getvalue())
         self.assertRegex(output.getvalue(), r"\([\d,]+ records; \d+\.\d MiB\)")
+
         self.assertIn(
             "<title>Review report</title>", report_path.read_text(encoding="utf-8")
         )
@@ -596,6 +696,15 @@ class HtmlReportTests(unittest.TestCase):
         self.assertTrue(input_error["binding_requested"])
         self.assertFalse(input_error["binding_checked"])
         self.assertEqual(input_error["errors"][0]["code"], "analysis.load_failed")
+
+    def test_report_profiles_enforce_bounded_projection(self) -> None:
+        compact = build_html_report_data(self.analysis, profile="compact")
+        management = build_html_report_data(self.analysis, profile="management")
+
+        self.assertEqual(compact["report"]["profile"], "compact")
+        self.assertEqual(management["report"]["profile"], "management")
+        with self.assertRaisesRegex(ValueError, "profile must be"):
+            build_html_report_data(self.analysis, profile="unknown")
 
     def test_report_notes_are_bounded_regular_utf8_files(self) -> None:
         notes = self.root / "notes.md"

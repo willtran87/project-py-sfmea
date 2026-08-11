@@ -9,10 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from .assurance import assurance_progress, verify_pytest_scaffold
+from .configuration_authoring import verify_configuration_authoring_file
 from .html_report import verify_html_report_file
 from .model import utc_now
 from .readiness import repository_readiness
 from .report import analysis_state_sha256, verify_review_package
+from .sfta_authoring import verify_sfta_authoring_file
 from .store import load_analysis
 from .validation import validate_analysis
 from .visuals import coverage_metrics
@@ -22,6 +24,7 @@ WORKFLOW_NOTICE = (
     "Workflow status reports file presence, freshness, review progress, and quality-gate "
     "state. Valid package integrity proves the recorded bytes and provenance checks only; "
     "HTML report binding detects accidental staleness and document/payload changes only; "
+    "authoring artifacts expose integrity and exact-input binding but do not approve their engineering content; "
     "an assurance scaffold is optional and its reported state is not a handoff gate; "
     "it does not establish analytical sufficiency, engineering approval, risk acceptance, "
     "or certification."
@@ -485,6 +488,61 @@ def _verify_html_report_artifact(
     return artifact
 
 
+def _verify_configuration_authoring_artifact(
+    artifact: dict[str, Any], analysis: dict[str, Any], config: Path
+) -> dict[str, Any]:
+    if not artifact.get("exists"):
+        return artifact
+    verification = verify_configuration_authoring_file(
+        artifact["path"],
+        analysis=analysis,
+        config_source=config if config.is_file() else None,
+    )
+    artifact["integrity"] = {
+        "valid": bool(verification.get("valid")),
+        "checks": dict(verification.get("checks", {})),
+        "errors": list(verification.get("findings", []))[:20],
+    }
+    matched = verification.get("status") == "matched"
+    artifact["binding"] = {
+        "valid": matched,
+        "status": str(verification.get("status", "invalid")),
+        "analysis_checked": bool(verification.get("analysis_checked")),
+        "configuration_checked": bool(verification.get("configuration_checked")),
+    }
+    artifact["status"] = "current" if matched else str(
+        verification.get("status", "invalid")
+    )
+    artifact["current"] = bool(verification.get("valid") and matched)
+    artifact["notice"] = str(verification.get("notice", ""))
+    return artifact
+
+
+def _verify_sfta_authoring_artifact(
+    artifact: dict[str, Any], analysis: dict[str, Any]
+) -> dict[str, Any]:
+    if not artifact.get("exists"):
+        return artifact
+    verification = verify_sfta_authoring_file(artifact["path"], analysis=analysis)
+    artifact["integrity"] = {
+        "valid": bool(verification.get("valid")),
+        "checks": dict(verification.get("checks", {})),
+        "errors": list(verification.get("findings", []))[:20],
+    }
+    matched = verification.get("status") == "matched"
+    artifact["binding"] = {
+        "valid": matched,
+        "status": str(verification.get("status", "invalid")),
+        "analysis_checked": bool(verification.get("analysis_checked")),
+    }
+    artifact["status"] = "current" if matched else str(
+        verification.get("status", "invalid")
+    )
+    artifact["current"] = bool(verification.get("valid") and matched)
+    artifact["notice"] = str(verification.get("notice", ""))
+    return artifact
+
+
 def _verify_assurance_scaffold_artifact(
     artifact: dict[str, Any], analysis: dict[str, Any]
 ) -> dict[str, Any]:
@@ -737,6 +795,31 @@ def workflow_status(
                         analysis_file.with_name(f"{stem}-review-package"),
                     ],
                     ("*review-package.zip", "*review-package"),
+                ),
+                analysis,
+            ),
+            "configuration_authoring": _verify_configuration_authoring_artifact(
+                _artifact_state(
+                    analysis_file,
+                    [
+                        analysis_file.with_name("configuration-authoring.json"),
+                        analysis_file.with_name(
+                            f"{stem}-configuration-authoring.json"
+                        ),
+                    ],
+                    ("*configuration-authoring.json",),
+                ),
+                analysis,
+                config,
+            ),
+            "sfta_authoring": _verify_sfta_authoring_artifact(
+                _artifact_state(
+                    analysis_file,
+                    [
+                        analysis_file.with_name("sfta-authoring.json"),
+                        analysis_file.with_name(f"{stem}-sfta-authoring.json"),
+                    ],
+                    ("*sfta-authoring.json",),
                 ),
                 analysis,
             ),
@@ -1010,6 +1093,53 @@ def workflow_status(
             f"sfmea validate {_quote(analysis_file)}",
             f"Evaluate the current {validation_errors} validation error(s).",
         )
+        configuration_authoring = artifacts.get("configuration_authoring", {})
+        if configuration_authoring.get("exists"):
+            authoring_path = Path(configuration_authoring["path"])
+            if configuration_authoring.get("current"):
+                refined_config = config.with_name(config.stem + "-refined.toml")
+                add(
+                    "apply_configuration_authoring",
+                    (
+                        f"sfmea config-authoring-apply {_quote(analysis_file)} "
+                        f"{_quote(authoring_path)} --config {_quote(config)} "
+                        f"-o {_quote(refined_config)}"
+                    ),
+                    "Publish the exact-bound approved configuration additions to a new validated sibling TOML.",
+                )
+            else:
+                add(
+                    "verify_configuration_authoring",
+                    (
+                        f"sfmea config-authoring-verify {_quote(authoring_path)} "
+                        f"--analysis {_quote(analysis_file)} --config {_quote(config)}"
+                    ),
+                    "Inspect the stale or invalid configuration authoring input before editing or resealing it.",
+                )
+        sfta_authoring = artifacts.get("sfta_authoring", {})
+        if sfta_authoring.get("exists"):
+            authoring_path = Path(sfta_authoring["path"])
+            if sfta_authoring.get("current"):
+                authored_analysis = analysis_file.with_name(
+                    analysis_file.stem + "-sfta-authored.json.gz"
+                )
+                add(
+                    "apply_sfta_authoring",
+                    (
+                        f"sfmea sfta-authoring-apply {_quote(analysis_file)} "
+                        f"{_quote(authoring_path)} -o {_quote(authored_analysis)}"
+                    ),
+                    "Apply the exact-bound approved fault-tree replacements to a new analysis.",
+                )
+            else:
+                add(
+                    "verify_sfta_authoring",
+                    (
+                        f"sfmea sfta-authoring-verify {_quote(authoring_path)} "
+                        f"--analysis {_quote(analysis_file)}"
+                    ),
+                    "Inspect the stale or invalid fault-tree authoring input before editing or resealing it.",
+                )
         if assurance.get("planning_pending", 0):
             checklist_path = analysis_file.with_name(
                 analysis_file.stem + "-assurance.md"

@@ -30,6 +30,11 @@ flowchart LR
 - [Organizational guidance packs](docs/GUIDANCE_PACKS.md)
 - [Requirements traceability](docs/REQUIREMENTS_TRACEABILITY.md)
 - [NASA/FAA guidance coverage audit](docs/GAP_AUDIT.md)
+- [Product enhancement resolution](docs/ENHANCEMENT_RESOLUTION.md)
+- [Platform support and qualification evidence](docs/PLATFORM_SUPPORT.md)
+- [Service threat model and residual-risk register](docs/THREAT_MODEL.md)
+- [Advanced review workflows](docs/ADVANCED_REVIEW.md) — saved views, accessibility,
+  LLM synthesis, PR analysis, and the plugin SDK
 - [Contributing](CONTRIBUTING.md), [security](SECURITY.md), and the
   [release checklist](docs/RELEASE.md)
 
@@ -73,12 +78,42 @@ flowchart LR
   preventing a few finding-heavy components from crowding out the system overview.
   Scanner and report metadata disclose path-count and depth limits, omitted paths and
   segments, and whether the underlying static caller-path inventory was itself truncated
-- Lightweight annotation-, import-, and constructor-assignment-aware call resolution with
+- Bounded path-insensitive interprocedural value flow that maps caller expressions to callee
+  parameters and callee returns to assignment, argument, attribute, container, or return contexts,
+  plus order-aware local alias/object-flow provenance and lightweight annotation-, import-, and
+  constructor-assignment-aware call resolution with
   explicit provenance, plus Python evaluation-order preservation for nested calls. This improves
   receiver and interface identification without claiming whole-program type inference
+- A bounded static concurrency model that records task spawn, join/wait, cancellation/timeout,
+  synchronization, and awaited-completion operations; relates them through lexical order,
+  await-before-next-operation, and conservative spawn-to-later-join candidates; and indexes the
+  exact embedded records from each component. It deliberately does not claim scheduler behavior,
+  task identity, deadlock/race freedom, or a complete path-sensitive happens-before graph
+- Typed exception-flow records for explicit raises, lexical handlers, rethrows, translations,
+  suppression/control-flow exits, and bounded propagation across resolved internal calls. Handler
+  matching and component indexes are validated, while exception inheritance, dynamic aliases,
+  runtime reachability, and complete path feasibility remain explicit limitations
+- A bounded guarded-state model that turns assignments to state/status/phase/mode variables into
+  component-linked transition candidates, connects lexical `if`/`while` predicates, and retains
+  stable target-state nodes. It supports review and test design without claiming formal
+  reachability, exclusivity, liveness, or state-machine completeness
+- Integrated resilience semantics covering transaction begin/commit/rollback/savepoint and
+  compensation flows, interprocedural side-effect summaries, idempotency controls, literal timing
+  budget constraints, nested retry amplification, class-scoped circuit-breaker completeness, and
+  bounded/unresolved resource-growth candidates. Every projection is count-reconciled and retains
+  its static, path-insensitive authority boundary
+- Bounded authorization-context flow that traces identity, tenant, role/permission, scope/claim,
+  and credential-bearing arguments across resolved calls, correlates decorator/call guards, and
+  highlights unguarded boundary, tenant-side-effect, and credential-verification candidates without
+  claiming access-control correctness or dominance
+- Cross-language contract semantics for OpenAPI, AsyncAPI, protobuf, GraphQL, JSON Schema, and
+  Avro, including request parameters/bodies, response and error status families, message/RPC/type
+  shapes, Python route reconciliation, conflicting definitions, and bounded version-pair breaking-
+  change candidates
 - SFMEA linkage and review-coverage reports with reconciled repository artifact accounting
-- Self-contained interactive HTML reports with executive metrics, filters, record
-  drill-down, architecture, traceability, sequences, notes, CSV extraction, and print styling
+- Self-contained interactive HTML reports with executive metrics, persisted baseline-scoped saved
+  views, bounded share links, filters, record drill-down, architecture, traceability, sequences,
+  notes, CSV extraction, accessibility semantics, and print styling
 - Paginated PDF reports rendered from the same self-contained workspace through a locally installed Edge, Chrome, or Chromium browser
 - Dependency baselines, common-cause records, categorical severity, and review audit history
 - Lockfile and recursively included requirements baselines
@@ -91,14 +126,23 @@ flowchart LR
   failure-mode-specific fault-injection obligations
 - OpenAPI, Swagger, JSON Schema, and protobuf contract inventory with compatibility failure prompts
 - Simple and OpenTelemetry JSON runtime-span evidence import
-- Provider-neutral, grounded machine discovery and summarization with explicit suggestion review
+- Provider-neutral, grounded machine discovery and summarization with deterministic duplicate,
+  contradiction, and divergent-claim leads plus a sealed side-by-side human editing workflow
 - A baseline-aware Verification Obligation Register generated from every active finding,
   with structured direct-caller and bounded upstream-path observation context, inventory
   completeness metadata, and compensating-evidence criteria when discovery is truncated
-- Automation-ready pytest scaffolds that fail until meaningful assurance tests are implemented
+- Executable pytest scaffolds with fail-visible project adapters, bounded Hypothesis property
+  strategies, producer/consumer contract cases, and generic placeholders for other methods
 - CSV and Markdown exports
 - Immutable scan manifests with source/configuration/guidance/adapter/dependency/contract digests, a typed health-reporting adapter registry, and a hashed per-adapter contribution ledger
+- An integrated enhancement workbench with inert evidence-acquisition argv recipes, stable root-cause review clusters, representative-review safeguards, prioritized verification portfolios, architecture/interface disposition queues, and bounded event/data/security/concurrency/resilience/persistence/deployment surface models
 - A local browser reviewer with no hosted service or repository upload
+- Exact-commit pull-request base/head orchestration that does not mutate the worktree or execute
+  repository code, producing two reports, two analyses, a canonical delta, and a checksum receipt
+  with standalone closed-bundle regeneration and binding verification
+- A semantic-versioned public process-plugin SDK with strict manifests, compatibility checks,
+  bounded observation contracts, explicit invocation, standalone run/manifest/analysis binding
+  verification, and a runnable reference plugin
 - A governed system-assurance program that federates multiple repository analyses, external
   requirements and test evidence, cross-service timing, independent validation cohorts, LLM
   quality metrics, and named approval roles into one verifiable HTML/JSON/Markdown result
@@ -131,6 +175,13 @@ sfmea schema diagram-bundle -o diagram-bundle.schema.json
 sfmea schema html-report-verification -o report-verdict.schema.json
 sfmea schema workflow-status -o workflow-status.schema.json
 sfmea schema assurance-work-queue -o assurance-work-queue.schema.json
+sfmea schema enhancement-workbench -o enhancement-workbench.schema.json
+sfmea schema enhancement-workbench-verification -o enhancement-workbench-verification.schema.json
+sfmea schema enhancement-scope-preview -o enhancement-scope-preview.schema.json
+sfmea schema accessibility-evidence -o accessibility-evidence.schema.json
+sfmea schema synthesis-workspace -o synthesis-workspace.schema.json
+sfmea schema pull-request-analysis-verification -o pr-verdict.schema.json
+sfmea schema plugin-run-verification -o plugin-run-verdict.schema.json
 sfmea schema assurance-program -o assurance-program.schema.json
 sfmea schema assurance-program-verification -o assurance-program-verdict.schema.json
 sfmea schema --bundle offline-contracts
@@ -195,6 +246,17 @@ version/runtime-specific, integrity-checked, atomically published, and explicitl
 derived performance artifact rather than source evidence. Use `--no-cache` for a cold scan or
 `--cache FILE` for an isolated cache. Warm-scan hit/miss/prune counts are printed and retained in
 the run manifest. Invalid or incompatible cache content is discarded and recorded as a warning.
+
+Use `--read-only` when the scanned checkout must remain untouched. The analysis output must be
+outside the repository. A configured/default cache inside the repository is disabled; an explicit
+external cache remains available. The resulting governed analysis records the repository-mutation
+policy, making this boundary reviewable downstream:
+
+```powershell
+$repo = 'C:\path\to\python-repo'
+$out = 'C:\assurance-artifacts\python-repo\sfmea-analysis.json.gz'
+sfmea scan $repo --read-only -o $out
+```
 
 For large analyses, choose an output ending in `.json.gz`. Loading is transparent, publication is
 deterministic and atomic, uses a balanced level-6 compression profile to avoid making publication
@@ -270,10 +332,37 @@ Coverage is reported in separate dimensions: all-repository accounting, Python s
 web boundary indexing, exclusions, and opaque/unresolved material. These percentages are not test
 coverage and are never combined into a single implied semantic score. Literal FastAPI/Flask-style
 route decorators are also normalized against indexed JavaScript/TypeScript client endpoints.
-Literal router prefixes and same-file client `baseURL` values are composed, bounded literal fetch
-methods are recovered, and method/path gaps plus cross-stack request sequences are retained under
+Literal router prefixes, bounded imported-router registration tables/loops, named client base
+constants, same-file `baseURL` values, and conventional cross-file request wrappers are composed.
+Bounded literal methods are recovered, web-test literals remain separate test evidence, and
+path-level method/path gaps plus cross-stack request sequences are retained under
 `interface_reconciliation`. These are discovery leads, not proof of schema compatibility or
 deployed connectivity.
+
+Supported Dockerfiles, Compose files, Terraform, Kubernetes YAML, and CI configuration also feed
+three connected architecture projections:
+
+```mermaid
+flowchart LR
+    A["Deployment artifacts"] --> T["Declared topology"]
+    C["Python components"] -->|"review-required placement"| T
+    T --> F["Shared-fate regions"]
+    M["Governed subsystem mappings"] --> H["Nested architecture hierarchy"]
+    C --> H
+    H -->|"upward aggregation only"| R["Requirements / hazards / interfaces"]
+```
+
+- `deployment_topology` retains exact artifact paths and SHA-256 provenance for declared entities
+  and relationships, plus explicit placed/unplaced component accounting.
+- `shared_fate_analysis` groups two or more components that share a deployment candidate,
+  subsystem, or external dependency so common-cause isolation questions are not left implicit.
+- `architecture_hierarchy` builds repository, nested subsystem, and source-package nodes and rolls
+  only supplied requirement, hazard, and interface mappings upward to their ancestors.
+
+All three models are bounded, semantically validated, component-indexed, available in the
+self-contained HTML Architecture view, and rendered through the general offline diagram explorer.
+They do not claim observed replicas, routing, reachability, correlated-failure probability,
+independence, or architecture approval.
 
 When no coverage path is supplied, `coverage_discovery = true` checks only `coverage.json` and
 `.artifacts/coverage.json`; the selection mode, exact digest, coverage timestamp/tool metadata, and
@@ -289,7 +378,148 @@ sfmea diagnostics .artifacts\sfmea-analysis.json.gz
 sfmea diagnostics .artifacts\sfmea-analysis.json.gz --json `
   | Out-File -Encoding utf8 .artifacts\sfmea-diagnostics.json
 sfmea diagnostics .artifacts\sfmea-analysis.json.gz --strict
+sfmea enhance .artifacts\sfmea-analysis.json.gz -o .artifacts\enhancement-workbench.json
+sfmea enhance-scope-preview .artifacts\sfmea-analysis.json.gz C:\path\to\python-repo `
+  -o .artifacts\enhancement-scope-preview.json
+sfmea enhance-evidence-preflight .artifacts\sfmea-analysis.json.gz C:\path\to\python-repo `
+  -o .artifacts\evidence-preflight.json
+sfmea evidence-onboard .artifacts\sfmea-analysis.json.gz C:\path\to\python-repo `
+  --runtime-trace .artifacts\runtime-trace.json `
+  --receipt .artifacts\evidence-onboarding-plan.json
+sfmea evidence-onboard .artifacts\sfmea-analysis.json.gz C:\path\to\python-repo `
+  --runtime-trace .artifacts\runtime-trace.json --apply `
+  -o .artifacts\sfmea-analysis-with-evidence.json.gz `
+  --receipt .artifacts\evidence-onboarding-receipt.json `
+  --work-queue .artifacts\assurance-work.json
+sfmea evidence-onboard-verify .artifacts\evidence-onboarding-receipt.json `
+  --analysis .artifacts\sfmea-analysis-with-evidence.json.gz `
+  -o .artifacts\evidence-onboarding-verification.json
+sfmea enhance-verify .artifacts\enhancement-workbench.json `
+  --analysis .artifacts\sfmea-analysis.json.gz `
+  -o .artifacts\enhancement-workbench-verification.json
+sfmea enhance .artifacts\sfmea-analysis.json.gz --format markdown `
+  -o .artifacts\enhancement-workbench.md
+
+# Turn projected gaps into a governed, editable closure campaign.
+sfmea activate-init .artifacts\sfmea-analysis.json.gz C:\path\to\python-repo `
+  -o .artifacts\activation.json
+sfmea activate-verify .artifacts\activation.json `
+  --analysis .artifacts\sfmea-analysis.json.gz
+sfmea activate-assign .artifacts\activation.json finding SFMEA-ID `
+  --assignee "Safety reviewer" --due-date 2026-08-31
+sfmea activate-decide .artifacts\activation.json finding SFMEA-ID accepted `
+  --reviewer "Reviewer name" --rationale "Confirmed against system context and source evidence."
+# Optional: adjudicate a complete multi-finding candidate as one canonical review group.
+sfmea activate-decide .artifacts\activation.json consolidation CONSOLIDATION-CANDIDATE-ID consolidate `
+  --reviewer "Reviewer name" --rationale "Members share the reviewed mechanism, effects, controls, citations, and verification treatment."
+# For larger campaigns, export, fill, and transactionally re-import a bound JSON batch.
+sfmea activate-batch-export .artifacts\activation.json -o .artifacts\activation-records.json
+sfmea activate-batch-import .artifacts\activation.json .artifacts\activation-records.json `
+  -o .artifacts\activation-import-receipt.json
+sfmea activate-apply .artifacts\sfmea-analysis.json.gz .artifacts\activation.json `
+  -o .artifacts\sfmea-analysis-reviewed.json.gz `
+  --receipt .artifacts\activation-receipt.json
 ```
+
+`evidence-onboard` is the closed evidence-ingestion path. Plan mode runs the same bounded parsers
+and semantic import checks against an isolated copy, reports prospective coverage/runtime/
+assurance changes, and does not claim an import. `--apply` imports coverage, repeated runtime
+traces, and repeated `--execution-manifest OBLIGATION_ID=PATH` records into a copied or explicitly
+in-place analysis; regenerates the run manifest; exactly verifies the assurance work queue; and
+emits a source/result-bound receipt. It never executes repository code or credits evidence as
+sufficient, independently reviewed, approved, or risk-accepting.
+
+`sfmea enhance` accounts for the complete product-enhancement register and turns the current
+analysis into a bounded activation plan. It provides project-specific evidence recipes, deeper
+review clustering, an optimized assurance portfolio, static surface models, and explicit queues
+for mappings and unmatched interfaces. Workbench format 7 adds the governed finding-consolidation
+program and carries the 76-item real-repository
+hardening register, the 82-item post-hardening register, and the 102-item real-run resolution
+register plus the exact E001-E095 product-outcome register and live closure scorecard. Every E-item
+has an explicit `planned`, `partial`, `implemented`, or `validated` product maturity, source/test
+evidence, known limitations, and a next action. Projection presence is never treated as proof of
+implementation, and `validated` requires representative evidence beyond internal regression tests.
+Format 6 introduced evidence-backed product maturity. The workbench separates freshness,
+completeness, and evidence sufficiency; emits review-only scope patches, deterministic calibration
+campaigns, metric provenance, report-scale projections, and capability attestations; and retains
+measurable evidence, architecture, interface, guidance, and performance targets. Every item states
+its product resolution, acceptance criterion, projection, and authority boundary. `enhance-verify`
+checks bounded input, integrity, register completeness, and optional exact regeneration from the
+governed analysis. Format 4 additionally produces assignable review campaigns, evidence-onboarding state, precision
+and specialization plans, architecture/interface activation programs, temporal-resilience fault
+campaigns, guidance-specificity closure, phase-level performance ratchets, report-delivery modes,
+and explicit LLM and qualification governance. Commands in the artifact are inert argv data: creating the
+workbench never executes repository code, and executing any proposed test or trace workflow still
+requires an approved sandbox and independent evidence review. The self-contained HTML report
+contains a bounded navigation view; the JSON export retains the complete governed projection.
+`activate-init` is the closed-loop companion to `enhance`: it combines evidence preflight,
+bounded AST-based test attribution, assignable finding/calibration units, complete finding-
+consolidation candidates, and explicit guidance, SFTA, architecture, and interface queues in one
+exact-analysis-bound workspace. Assignments carry a named owner and optional ISO due date without
+implying disposition. Decisions require
+a named reviewer and rationale, apply only to the exact subject, and are published transactionally
+with a state-bound receipt. Finding decisions update normal review history; other engineering
+dispositions remain governed history and never tune rules, approve risk, or claim compliance.
+An approved consolidation creates a canonical navigation and governance group; it never removes
+a source finding, copies a disposition, or discards member evidence or citations. Use
+`retain_separate` whenever any member needs its own conclusion or treatment.
+Bulk records are all-or-nothing and bind to the exact workspace digest, preventing a stale batch
+from overwriting newer assignments or decisions.
+
+Fault-tree engineering has its own fail-closed publication path. `sfta-authoring-init` creates one
+editable entry per configured hazard and preserves existing explicit definitions. Missing trees
+start as undeveloped skeletons and remain deferred until an engineer supplies logic. A replacement
+can be sealed only with an `approved` decision, named reviewer, rationale, valid references and gate
+semantics, and an exact source-analysis binding. Verification is read-only; application writes a
+new analysis by default, regenerates the SFTA reconciliation, and records the approval history.
+
+```powershell
+sfmea sfta-authoring-init sfmea-analysis.json -o sfta-authoring-draft.json
+# Edit definitions and set selected entries to action=replace with a named approved review.
+sfmea sfta-authoring-seal sfta-authoring-draft.json --analysis sfmea-analysis.json -o sfta-authoring.json
+sfmea sfta-authoring-verify sfta-authoring.json --analysis sfmea-analysis.json -o sfta-authoring-verification.json
+sfmea sfta-authoring-apply sfmea-analysis.json sfta-authoring.json -o sfmea-analysis-with-sfta.json --receipt sfta-authoring-receipt.json
+```
+
+Human-controlled synthesis application can preserve and later reconcile all three governed states:
+
+```powershell
+sfmea synthesis-apply sfmea-analysis.json synthesis.json `
+  --receipt synthesis-apply-receipt.json `
+  --source-snapshot synthesis-source-analysis.json
+sfmea synthesis-apply-verify synthesis-apply-receipt.json `
+  --source-analysis synthesis-source-analysis.json --workspace synthesis.json `
+  --result-analysis sfmea-analysis.json -o synthesis-apply-verification.json
+```
+
+The source snapshot is exact, optional, and never overwrites an existing destination. Complete
+verification checks receipt integrity, all three state bindings, applied/deferred accounting, and
+resulting suggestion statuses. `--integrity-only` verifies transport integrity without claiming
+complete reconciliation.
+
+Reviewed guidance, architecture, and interface decisions can be carried into the next scan without
+rewriting the original project file. `config-authoring-init` produces an editable queue from the
+current analysis. Approved entries are sealed against both the exact analysis and the exact
+normalized/source configuration. Application publishes a new sibling TOML file, validates the
+complete result, preserves relative evidence-path meaning, and refuses in-place replacement.
+
+```powershell
+sfmea config-authoring-init sfmea-analysis.json --config sfmea.toml -o configuration-draft.json
+# Complete selected proposals, set action=apply, and add an approved named review.
+sfmea config-authoring-seal configuration-draft.json --analysis sfmea-analysis.json --config sfmea.toml -o configuration-authoring.json
+sfmea config-authoring-verify configuration-authoring.json --analysis sfmea-analysis.json --config sfmea.toml
+sfmea config-authoring-apply sfmea-analysis.json configuration-authoring.json --config sfmea.toml -o sfmea-refined.toml --receipt configuration-receipt.json
+sfmea scan . --config sfmea-refined.toml -o sfmea-analysis-refined.json.gz
+```
+
+Project rule mappings can add typed direct/supporting/contextual relationships to known built-in
+citations. Interface dispositions remain attached to the stable static endpoint candidate on the
+next scan, including explicit unmatched-disposition reconciliation. Neither record is treated as
+independent regulatory approval, deployed reachability, or effective control evidence.
+
+Use `sfmea report ANALYSIS --profile compact` for a bounded 500-record view or `--profile
+management` for a 250-record decision view; both disclose truncation and retain exact analysis
+binding.
 
 Diagnostics reconcile adapter contribution IDs to governed inventory records, distinguish eligible
 Python-component test/coverage/mapping rates, summarize review families and hotspots, expose
@@ -298,6 +528,9 @@ evidence-scope conflicts, and return ordered P0/P1/P2 actions. The `qualificatio
 diagnostic readiness domains only; it is not tool qualification, compliance, or approval. `--strict`
 fails only for internally inconsistent adapter accounting; missing engineering evidence remains an
 action rather than being mislabeled as a corrupt analysis.
+Diagnostics also expose per-rule human-disposition calibration and bounded same-file or
+same-directory architecture mapping proposals. Proposals are never applied automatically. The
+same scorecard, action queue, and calibration summary appear in the HTML coverage workspace.
 
 `sfmea status` is the read-only workflow cockpit. It auto-discovers configuration and
 analysis files in the repository root or `.artifacts`, classifies the current lifecycle
@@ -1146,15 +1379,34 @@ and carried into portfolio overlap records.
 Scaffold directories are assembled in a sibling staging directory and published with one
 atomic rename, so an interrupted generation does not present a partial checklist as
 complete. The manifest binds the source baseline, schema, and canonical governed-analysis
-state, and records starting hashes for the generated pytest module and operator README.
+state, and records starting hashes for the bounded runtime, project adapter, property and
+contract test modules, generic pytest module, and operator README.
 It also records a minimal digest of the selected verification contracts, dispositions,
 source status, and implementation state, together with the scope, disposition, limit, and
-implemented-test inclusion policy that produced the queue. During collection, the pytest
-module verifies the immutable manifest; editing placeholders into substantive tests remains
-possible and expected. Register implemented source with
+implemented-test inclusion policy that produced the queue. A separate synthesized-design
+digest binds every generated strategy, contract association, case, oracle, and acceptance
+criterion to the analysis. During collection, the generated runtime verifies the immutable
+manifest and complete property/contract obligation accounting; editing the project adapter
+and placeholders into substantive tests remains possible and expected. Register implemented source with
 `sfmea assurance-test-register` to content-hash bind it to its obligation. These digests
 detect accidental manifest drift and stale provenance; they are not approval signatures or
 substitutes for the governed analysis.
+
+Property obligations generate deterministic bounded Hypothesis strategies using exact
+signature annotations where available and conservative parameter-name fallbacks otherwise.
+Each case carries an explicit scenario and invokes `exercise_property` in
+`sfmea_assurance_adapters.py`. Contract obligations generate conforming, missing-input,
+malformed-input, incompatible-response, and declared-error cases for statically associated
+contract operations. When no defensible contract association exists, the scaffold emits an
+`establish_contract_binding` case instead of guessing. Contract associations remain review
+candidates, and the adapter must exercise the actual producer and consumer boundary.
+
+Both adapters fail with `NotImplementedError` until project code is connected. A returned
+observation must identify the exact obligation, prove the intended stimulus occurred, provide
+non-empty evidence references, and explicitly satisfy every recorded oracle and acceptance
+criterion. Empty, skipped, assertion-free, or partially accounted cases cannot pass the
+generated assertion contract. This makes the files executable starting points; it does not
+make their eventual results assurance evidence.
 
 Verify integrity and freshness before consuming or continuing work from a scaffold:
 
@@ -1202,8 +1454,8 @@ Archive performs the same publication-boundary identity comparison before writin
 record, so concurrent queue replacement leaves both the active source and retirement state
 untouched.
 
-Verification distinguishes an invalid manifest, materially changed verification contracts,
-and an analysis whose unrelated state advanced while every selected contract remained
+Verification distinguishes an invalid manifest, materially changed verification contracts or
+synthesized test designs, and an analysis whose unrelated state advanced while every selected contract and design remained
 current. It replays the saved selection and emits an obligation-level diff for added,
 removed, and changed contracts, including the exact fields responsible. Placeholder edits
 are reported as informational because test implementation is expected; they become governed
@@ -1217,9 +1469,9 @@ retirement links as structured verification findings. Generated files are never
 followed through links: an unavailable, linked, or oversized placeholder is reported separately
 as changed and cannot pass the untouched-file precondition for guarded refresh or archival.
 
-The generated pytest cases fail intentionally until an engineer implements the recorded
-stimulus, oracles, and acceptance criteria. Empty, skipped, or assertion-free tests cannot
-silently satisfy the checklist. The scaffold, a named test, coverage, or a passing result is
+The generated pytest cases fail intentionally until an engineer implements the project adapter
+or the remaining method-specific placeholder. Empty, skipped, assertion-free, missing-stimulus,
+or incompletely assessed tests cannot silently satisfy the checklist. The scaffold, a named test, coverage, or a passing result is
 not evidence by itself. Verification and closure require current execution artifacts,
 proof that the failure was triggered, acceptance-criterion evaluation, independent review,
 and any required approval. `assurance-review` can govern planning states but cannot directly
@@ -1357,6 +1609,7 @@ older package remains verifiable while newly generated models use exact ID match
 sfmea sfta sfmea-analysis.json --format json -o sfta.json
 sfmea sfta sfmea-analysis.json --format csv -o sfta-gaps.csv
 sfmea diagram sfmea-analysis.json --type sfta -o sfta-diagrams.json
+sfmea sfta-authoring-init sfmea-analysis.json -o sfta-authoring-draft.json
 ```
 
 Every configured hazard receives a tree record. When explicit logic is absent, PySFMEA
@@ -1367,8 +1620,13 @@ creates an **undeveloped placeholder**, not inferred gate logic. Reconciliation 
 - correlations whose finding does not carry the tree's hazard link.
 
 The self-contained report provides a hazard/SFTA workspace and links each tree to its
-renderer-neutral inline-SVG diagram. Gate logic remains a preliminary engineering model:
-correlation does not establish causation, independence, minimal cut sets, probability, or
+renderer-neutral inline-SVG diagram. It also shows the bounded governed-authoring history and the
+closed-loop commands when no replacement has been applied. An exact definition approved and
+applied through `sfta-authoring-*` receives bounded qualitative minimal cut sets. AND, OR, VOTE,
+and INHIBIT expansion uses superset absorption and fails closed on unsupported event wiring or
+count, width, and operation limits. Editing the definition after approval invalidates cut-set
+eligibility. These sets are consequences of the supplied Boolean structure only: correlation and
+cut-set calculation do not establish causation, independence, probability, risk acceptance, or
 hazard-analysis completeness.
 
 The browser warns before discarding edited fields, constrains numeric ratings to
@@ -1571,6 +1829,9 @@ provenance, external-interface confidence, exact source line and evaluation orde
 and lexical control-flow context within the labeled pipeline components. Results include overall
 and per-resolution recall and precision; these fixture metrics are not assumed to generalize to
 unseen repositories.
+Four exact circuit-breaker control records are evaluated across an explicit seven-component
+control population containing three negative near-misses. Control precision therefore includes
+false-positive exposure rather than inspecting only components already known to contain a control.
 It enumerates every expected candidate in scope,
 requires recall and precision of `1.0`, checks repeated-scan input digest stability,
 and verifies regulatory-profile isolation. It is a deterministic regression fixture, not
@@ -1606,12 +1867,27 @@ gate on a generated report:
 pip install -e .[browser]
 playwright install chromium
 python scripts/report_browser_gate.py sfmea-report.html `
-  --analysis sfmea-analysis.json --max-bytes 52428800 `
-  --max-load-seconds 5 -o report-browser-quality.json
+  --analysis sfmea-analysis.json -o report-browser-quality.json
+sfmea report-browser-verify report-browser-quality.json `
+  --report sfmea-report.html -o report-browser-quality-verification.json
 ```
 
 CI runs the same gate against a generated compressed-analysis fixture in Chromium and retains the
 self-contained report plus its machine-readable quality receipt as workflow artifacts.
+The supported defaults fail when a report exceeds 50 MiB, takes more than 10 seconds to load, or
+uses more than 256 MiB of measured Chromium JavaScript heap. These are product-quality guardrails,
+not representative deployment acceptance evidence; pass reviewed `--max-*` values when a project
+has stricter budgets. A missing or incompatible report UI contract produces a failed JSON receipt
+with a bounded browser-execution error, so CI can distinguish a report regression from a launcher
+failure without parsing a traceback. Reports use progressive on-demand rendering: the requested
+section becomes usable first, every remaining section renders exactly once when opened, deep links
+materialize their target before navigation, and Print/PDF deliberately prepares the complete
+document. The top bar exposes live section readiness without implying that deferred sections were
+discarded. Receipt format 4 carries its own canonical digest, the exact report byte count and
+SHA-256, initial readiness and boot timing, and a reconciled per-section render register.
+`report-browser-verify` performs bounded, link-safe ingestion,
+checks receipt semantics, and optionally requires the exact HTML bytes; valid evidence of a failed
+gate remains distinguishable from a tampered or malformed receipt, but both return nonzero.
 
 Report generation itself can fail closed before publication with
 `sfmea report ... --max-output-bytes BYTES`; an existing destination is preserved when
@@ -1666,6 +1942,19 @@ Maintain a golden JSON corpus of expected component/rule pairs:
       "component": "PaymentService.submit",
       "rule_id": "interface.unavailable"
     }
+  ],
+  "semantic_cases": [
+    {
+      "source": "src/payments/service.py",
+      "component": "PaymentService.submit",
+      "rule_id": "interface.unavailable",
+      "expect": {
+        "failure_mode": "An external dependency used by PaymentService.submit is unavailable, times out, responds late, or disconnects mid-operation.",
+        "verification_method": "integration_test",
+        "direct_citation_ids": ["NASA-SWEHB-8.05-PROCESS"],
+        "confidence": "high"
+      }
+    }
   ]
 }
 ```
@@ -1675,12 +1964,18 @@ Run the exact-key regression check with:
 ```powershell
 sfmea evaluate sfmea-analysis.json expected-sfmea.json
 sfmea evaluate sfmea-analysis.json expected-sfmea.json --json
+sfmea evaluate-compare before-evaluation.json after-evaluation.json calibration-change.json --json
 ```
 
 Without `scope`, evaluation is limited to components named by the cases. Optional
-`path:component` globs define a broader regression boundary. This measures
-deterministic candidate regression; semantic correctness of effects, ratings, and
-controls still requires qualified review.
+`path:component` globs define a broader regression boundary. Finding cases measure
+deterministic candidate regression. Optional `semantic_cases` additionally measure exact curated
+deterministic outputs for failure-mode text, triggers, causes, local effects, recommended actions,
+assurance methods, citation IDs, direct citation IDs, adapter provenance, confidence, and screening
+priority. Sequence fields are order-sensitive; citation and adapter sets are normalized. A missing
+case or any field mismatch makes the command fail and is reported in both case- and claim-level
+metrics by output field and rule. Reviewer-owned next-higher/system effects, ratings, approval, and
+risk acceptance remain outside automatic qualification.
 
 `source` may be omitted when a qualified component name is unique. If the same name
 and rule occur in multiple files, evaluation stops and requests a source rather than
@@ -1692,6 +1987,101 @@ non-finite numbers, unsupported fields, and excessive depth or node count. Case,
 field-length, and active-candidate ceilings keep evaluation bounded. Results identify
 `pysfmea-evaluation-result-1`, the exact verifier version, and a canonical corpus SHA-256 digest,
 so retained release evidence can distinguish a scanner change from a changed golden baseline.
+Optional `control_cases` label exact detected-control kind/role records, while `governance` records
+the repository cohort, labeler, distinct approver, approval date, and whether independence is
+claimed. Evaluation then reports per-rule precision/recall, empirical precision by scanner
+confidence label, monotonic label ordering, and control precision/recall by kind. Optional
+`control_scope` path/component globs define the exhaustive positive-and-negative component
+population used for control precision. Every positive control case must fall within that scope;
+the result discloses evaluated, positive, and negative component counts, and missing or unexpected
+controls make the command fail. Without `control_scope`, compatibility behavior evaluates the
+components named by positive control cases only. A corpus-supplied
+independence claim remains externally verifiable evidence, not a tool assertion.
+The maintained public corpus includes ten exact semantic cases and 78 field claims spanning
+calculation, serialization, dependency outage, storage, subprocess, masked-failure, model-contract,
+logic, concurrency, and response-integrity rules.
+
+`evaluate-compare` accepts two `pysfmea-evaluation-result-1` files produced from the exact same
+corpus plus a change record containing a stable ID, changed rule IDs, rationale, distinct author
+and approver, approval date, and allowed recall regressions. It fails closed on corpus drift and
+emits a content-addressed `pysfmea-calibration-comparison-1` gate result. An eligible comparison is
+permission to review a product change—not an automatic rule edit, release approval, or
+qualification claim.
+
+### Representative-repository qualification campaigns
+
+Use `evaluate` for each independently labeled repository, retain its analysis, corpus, and complete
+evaluation result, then list those relative paths in a closed campaign manifest. Start from
+[`examples/qualification-campaign.json`](examples/qualification-campaign.json) and validate the
+contract with `sfmea schema qualification-campaign-manifest`.
+
+```powershell
+sfmea qualification-build qualification-campaign.json `
+  -o qualification-result.json --require-eligible
+sfmea qualification-verify qualification-result.json `
+  --manifest qualification-campaign.json --require-eligible `
+  -o qualification-verification.json
+sfmea qualification-report qualification-result.json `
+  --manifest qualification-campaign.json -o qualification-report.html
+sfmea qualification-report-verify qualification-report.html `
+  --result qualification-result.json -o qualification-report-verification.json
+sfmea program-init --analysis service-a=service-a/analysis.json `
+  --qualification-result qualification-result.json `
+  --qualification-manifest qualification-campaign.json `
+  -o assurance-program.json
+```
+
+```mermaid
+flowchart LR
+  R["Retained repositories"] --> A["Exact analysis JSON"]
+  R --> C["Independent golden corpora"]
+  A --> E["Regenerated evaluations"]
+  C --> E
+  E --> M["Finding, call, control, and semantic metrics"]
+  M --> S["Rule/field/framework/domain segments"]
+  S --> G{"Governance and thresholds pass?"}
+  G -->|Yes| I["Eligible for independent review"]
+  G -->|No| B["Explicit evidence blockers"]
+```
+
+The builder rejects absolute or escaping artifact paths, stale evaluation outputs, unsupported or
+extra manifest fields, duplicate repository IDs, and malformed thresholds. It aggregates counts
+before calculating recall and precision, so a tiny repository cannot outweigh a larger labeled
+population. Required call/control/semantic populations are separate gates: absent cases cannot silently
+earn accuracy credit. Finding thresholds apply globally and to every repository, framework, and
+domain population; call/control thresholds also apply to each repository population with labeled
+cases, preventing a dominant cohort from hiding a weak segment. Semantic thresholds apply globally
+and per repository, while the result separately aggregates exact semantic cases by rule and field
+claims by output field.
+`minimum_control_negative_components_per_repository` additionally prevents a positive-only
+control corpus from satisfying campaign precision gates; set it to the independently approved
+minimum negative population for each control-bearing repository. Canonically duplicated analyses
+or corpora are rejected rather than counted twice. The complete verifier reopens the exact manifest and artifacts and requires
+byte bindings plus exact regeneration; `--integrity-only` checks a transported result without
+claiming retained-artifact reconciliation.
+
+Eligibility means the machine-verifiable evidence package is ready for an independent authority
+to review. PySFMEA does not authenticate identities, establish that the chosen sample is actually
+representative, assess semantic correctness outside the exact curated labels, qualify the tool, certify a
+system, or approve a release.
+
+`program-init` can import every independently governed repository cohort directly from a completely
+reconciled campaign. It creates program-relative references to the retained evaluation files and
+preserves corpus/result digests, evaluator version, expected/actual/matched counts, call-resolution
+counts, and labeler/approver identities. Stale campaigns, incomplete corpus governance,
+disqualifying evaluator findings, and missing metrics are refused. The assurance program then
+reverifies each referenced evaluation and applies its own macro/micro quality gates; import itself
+does not grant evidence credit or approval.
+
+The self-contained qualification report provides keyboard-accessible navigation across gates,
+repository evidence, framework/domain segments, searchable paginated rule metrics, semantic
+case accuracy by rule, semantic claim accuracy by output field, retained
+artifact identities, governance, and authority limits. It renders summary evidence without
+JavaScript, bounds interactive rule rows, expands a bounded rule set for print, respects reduced
+motion, supports narrow screens and dark/high-contrast preferences, and embeds the complete result.
+Generation verifies the staged HTML and rechecks the exact campaign before atomic replacement.
+The standalone report verifier detects narrative, payload, or metadata changes; complete mode also
+requires the exact result JSON.
 
 ## Recommended review sequence
 
@@ -1849,10 +2239,11 @@ python -m pip_audit . --format cyclonedx-json --output pysfmea-build.cdx.json `
   --progress-spinner off
 ```
 
-Strict typing is an incremental boundary over the extracted interface, planning, fault-plugin, and
-sandbox-policy modules. The focused Linux mutation gate targets plan verification, outcome and
-false-pass verdicts, and sandbox command policy. Coverage has both a complete-package floor and
-higher module-specific floors for these critical boundaries.
+Strict typing covers the complete `pysfmea` package and the release-gate scripts configured in
+`pyproject.toml`; a newly added module is therefore included automatically. The focused Linux
+mutation gate targets plan verification, outcome and false-pass verdicts, and sandbox command
+policy. Coverage has both a complete-package floor and higher module-specific floors for these
+critical boundaries.
 
 Project policies and maintenance references:
 
@@ -1861,3 +2252,4 @@ Project policies and maintenance references:
 - [Release checklist](docs/RELEASE.md)
 - [Changelog](CHANGELOG.md)
 - [Requirements traceability](docs/REQUIREMENTS_TRACEABILITY.md)
+- [Product enhancement resolution](docs/ENHANCEMENT_RESOLUTION.md)

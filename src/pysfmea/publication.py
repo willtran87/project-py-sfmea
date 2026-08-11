@@ -152,7 +152,7 @@ def classify_publication_failure(
     return PUBLICATION_FAILURES["internal_failure"]
 
 
-def _publication_failure_catalog_content() -> dict[str, object]:
+def _publication_failure_catalog_content() -> dict[str, Any]:
     return {
         "format": PUBLICATION_FAILURE_CATALOG_FORMAT,
         "algorithm": PUBLICATION_FAILURE_CATALOG_ALGORITHM,
@@ -177,7 +177,7 @@ PUBLICATION_FAILURE_CATALOG_SHA256 = canonical_json_sha256(
 )
 
 
-def publication_failure_catalog() -> dict[str, object]:
+def publication_failure_catalog() -> dict[str, Any]:
     """Return the deterministic, content-addressed remediation catalog."""
 
     return {
@@ -224,7 +224,7 @@ def export_publication_failure_catalog(
     )
 
 
-def verify_publication_failure_catalog(value: Any) -> dict[str, object]:
+def verify_publication_failure_catalog(value: Any) -> dict[str, Any]:
     """Return a bounded, stable verdict for a decoded catalog candidate."""
 
     expected = publication_failure_catalog()
@@ -309,7 +309,7 @@ def verify_publication_failure_catalog(value: Any) -> dict[str, object]:
         for name, passed in checks.items()
         if not passed
     ]
-    result: dict[str, object] = {
+    result: dict[str, Any] = {
         "format": PUBLICATION_FAILURE_CATALOG_VERIFICATION_FORMAT,
         "source": "<memory>",
         "valid": all(checks.values()),
@@ -328,7 +328,7 @@ def verify_publication_failure_catalog(value: Any) -> dict[str, object]:
     return result
 
 
-def verify_publication_failure_catalog_file(source: str | Path) -> dict[str, object]:
+def verify_publication_failure_catalog_file(source: str | Path) -> dict[str, Any]:
     """Load and verify one strict, bounded, identity-stable catalog JSON file."""
 
     path = Path(source).expanduser().absolute()
@@ -347,13 +347,16 @@ def verify_publication_failure_catalog_file(source: str | Path) -> dict[str, obj
     result = verify_publication_failure_catalog(candidate)
     result["source"] = str(path)
     if input_error:
+        existing_errors = result.get("errors", [])
+        if not isinstance(existing_errors, list):
+            existing_errors = []
         result["errors"] = [
             {
                 "code": "publication_catalog.input",
                 "message": input_error,
                 "path": "",
             },
-            *result["errors"],
+            *existing_errors,
         ]
         result["valid"] = False
     return result

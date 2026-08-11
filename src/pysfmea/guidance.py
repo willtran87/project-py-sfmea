@@ -42,7 +42,7 @@ APPLICABILITY_TYPES = {
 
 DEFAULT_GUIDANCE_PROFILES = ["core_sfmea"]
 
-GUIDELINE_PROFILES = [
+GUIDELINE_PROFILES: list[dict[str, Any]] = [
     {
         "id": "core_sfmea",
         "title": "Core public SFMEA methodology",
@@ -117,7 +117,7 @@ GUIDELINE_PROFILES = [
 ]
 
 
-GUIDANCE_DOCUMENTS = [
+GUIDANCE_DOCUMENTS: list[dict[str, Any]] = [
     {
         "id": "NASA-SWEHB-8.05",
         "publisher": "NASA",
@@ -318,7 +318,7 @@ def _citation(
     return value
 
 
-GUIDANCE_CITATIONS = [
+GUIDANCE_CITATIONS: list[dict[str, Any]] = [
     _citation(
         "NASA-SWEHB-8.05-PROCESS",
         "NASA-SWEHB-8.05",
@@ -666,7 +666,7 @@ def _mapping(
     return value
 
 
-GUIDANCE_RULE_MAPPINGS = [
+GUIDANCE_RULE_MAPPINGS: list[dict[str, Any]] = [
     _mapping(
         "functional.*",
         "NASA-SWEHB-8.05-PROCESS",
@@ -1323,7 +1323,11 @@ def load_organizational_guidance_pack(path: str | Path) -> dict[str, Any]:
     mappings = payload.get("rule_mappings")
     if not isinstance(profile, dict):
         raise ValueError("organizational guidance pack profile must be an object")
-    if not all(isinstance(value, list) for value in (sources, citations, mappings)):
+    if (
+        not isinstance(sources, list)
+        or not isinstance(citations, list)
+        or not isinstance(mappings, list)
+    ):
         raise ValueError(
             "organizational guidance pack sources, citations, and rule_mappings must be arrays"
         )
@@ -1684,6 +1688,102 @@ def apply_guidance_applicability(
     return bundle
 
 
+def apply_project_guidance_mappings(
+    bundle: dict[str, Any], mappings: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """Attach named project-reviewed mappings to built-in source records.
+
+    These relationships are project configuration, not changes to the shipped
+    catalog and not independent regulatory approval. Configuration validation
+    restricts them to known built-in citations and closed relationship types.
+    """
+
+    supplied = copy.deepcopy(mappings or [])
+    citations = {
+        str(value.get("id", "")): value
+        for value in bundle.get("citations", [])
+        if isinstance(value, dict)
+    }
+    profiles = [
+        value for value in bundle.get("profiles", []) if isinstance(value, dict)
+    ]
+    existing = {
+        (
+            str(value.get("rule_selector", "")),
+            str(value.get("citation_id", "")),
+            str(value.get("relationship", "")),
+            str(value.get("strength", "")),
+        )
+        for value in bundle.get("rule_mappings", [])
+        if isinstance(value, dict)
+    }
+    applied: list[str] = []
+    shadowed: list[str] = []
+    for configured in supplied:
+        selector = str(configured.get("rule_selector", ""))
+        citation_id = str(configured.get("citation_id", ""))
+        relationship = str(configured.get("relationship", ""))
+        strength = str(configured.get("strength", ""))
+        identity = (selector, citation_id, relationship, strength)
+        mapping_id = "PROJECT-MAP-" + hashlib.sha256(
+            "\x1f".join(
+                (
+                    selector,
+                    citation_id,
+                    relationship,
+                    strength,
+                    str(configured.get("reviewed_by", "")),
+                    str(configured.get("effective_date", "")),
+                )
+            ).encode("utf-8")
+        ).hexdigest()[:12].upper()
+        if identity in existing:
+            shadowed.append(mapping_id)
+            continue
+        citation = citations[citation_id]
+        source_id = str(citation.get("source_id", ""))
+        profile_ids = [
+            str(profile.get("id", ""))
+            for profile in profiles
+            if source_id in profile.get("source_ids", [])
+        ]
+        value: dict[str, Any] = {
+            "id": mapping_id,
+            "rule_selector": selector,
+            "citation_id": citation_id,
+            "relationship": relationship,
+            "rationale": str(configured.get("rationale", "")),
+            "strength": strength,
+            "profile_ids": profile_ids,
+            "created_by": "project_configuration",
+            "mapping_version": "project-reviewed-1",
+            "review_status": "project_reviewed",
+            "reviewed_at": str(configured.get("effective_date", "")),
+            "independent_approval": False,
+            "review_basis": (
+                f"Named project review by {configured.get('reviewed_by', '')}; "
+                "regulatory applicability and independent approval remain external."
+            ),
+        }
+        value["record_sha256"] = hashlib.sha256(
+            json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        bundle.setdefault("rule_mappings", []).append(value)
+        existing.add(identity)
+        applied.append(mapping_id)
+    bundle["project_mapping_application"] = {
+        "configured": len(supplied),
+        "applied": len(applied),
+        "shadowed_by_existing_mapping": len(shadowed),
+        "mapping_ids": applied,
+        "shadowed_mapping_ids": shadowed,
+        "authority": (
+            "named_project_mapping_review_not_independent_approval_or_compliance"
+        ),
+    }
+    return bundle
+
+
 def ensure_guidance_traceability(
     analysis: dict[str, Any], *, refresh: bool = False
 ) -> dict[str, Any]:
@@ -1706,6 +1806,12 @@ def ensure_guidance_traceability(
         if not isinstance(configured_decisions, list):
             configured_decisions = existing_bundle.get("applicability_decisions", [])
         apply_guidance_applicability(resolved_bundle, configured_decisions)
+        configured_mappings = analysis.get("context", {}).get(
+            "guidance_rule_mappings", []
+        )
+        if not isinstance(configured_mappings, list):
+            configured_mappings = []
+        apply_project_guidance_mappings(resolved_bundle, configured_mappings)
     methodology = analysis.setdefault("methodology", {})
     if refresh:
         methodology["basis"] = selected_sources_from_bundle(resolved_bundle)
@@ -2056,7 +2162,7 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
     return bundle
 
 
-GUIDANCE_SOURCES = copy.deepcopy(GUIDANCE_DOCUMENTS)
+GUIDANCE_SOURCES: list[dict[str, Any]] = copy.deepcopy(GUIDANCE_DOCUMENTS)
 
 
 METHODOLOGY_NOTICE = (

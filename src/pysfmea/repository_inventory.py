@@ -24,6 +24,7 @@ MAX_LANGUAGE_BOUNDARY_IMPORTS = 500
 MAX_LANGUAGE_BOUNDARY_EXPORTS = 500
 MAX_LANGUAGE_BOUNDARY_ENDPOINTS = 200
 MAX_LANGUAGE_BOUNDARY_VALUE_CHARS = 4_096
+MAX_DEPLOYMENT_ENTITIES = 500
 
 SNAPSHOT_SOURCES = frozenset(
     {
@@ -367,15 +368,51 @@ def _kind(path: str) -> str:
         "jenkinsfile",
     }:
         return "ci_configuration"
-    if name.startswith("dockerfile") or name in {"compose.yml", "compose.yaml"}:
+    if name.startswith("dockerfile") or name in {
+        "compose.yml",
+        "compose.yaml",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+    }:
         return "container_or_deployment"
-    if suffix in {".tf", ".tfvars"} or "k8s/" in lower or "kubernetes/" in lower:
+    kubernetes_names = {
+        "configmap.yaml",
+        "configmap.yml",
+        "cronjob.yaml",
+        "cronjob.yml",
+        "daemonset.yaml",
+        "daemonset.yml",
+        "deployment.yaml",
+        "deployment.yml",
+        "ingress.yaml",
+        "ingress.yml",
+        "job.yaml",
+        "job.yml",
+        "namespace.yaml",
+        "namespace.yml",
+        "secret.yaml",
+        "secret.yml",
+        "service.yaml",
+        "service.yml",
+        "statefulset.yaml",
+        "statefulset.yml",
+    }
+    if (
+        suffix in {".tf", ".tfvars"}
+        or "k8s/" in lower
+        or "kubernetes/" in lower
+        or "manifests/" in lower
+        or "helm/templates/" in lower
+        or name in kubernetes_names
+    ):
         return "infrastructure"
     if (
         "openapi" in name
         or "swagger" in name
         or name.endswith(".schema.json")
         or suffix == ".proto"
+        or name.startswith("asyncapi")
+        or suffix in {".graphql", ".graphqls", ".avsc"}
     ):
         return "api_or_data_schema"
     if "migration" in lower or suffix == ".sql":
@@ -448,11 +485,13 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
         MAX_LANGUAGE_BOUNDARY_EXPORTS,
     )
     literal_argument = r"(?:'([^'\r\n]+)'|\"([^\"\r\n]+)\"|`([^`\r\n]+)`)"
-    endpoint_candidates: list[dict[str, str]] = []
+    endpoint_candidates: list[dict[str, Any]] = []
     endpoint_candidate_keys: set[tuple[str, str, str]] = set()
     endpoint_candidates_truncated = False
 
-    def add_endpoint(literal: str, method: str, operation: str) -> None:
+    def add_endpoint(
+        literal: str, method: str, operation: str, *, line: int = 0
+    ) -> None:
         nonlocal endpoint_candidates_truncated
         key = (literal, method, operation)
         if key in endpoint_candidate_keys:
@@ -467,20 +506,67 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
                 "method": method,
                 "operation": operation,
                 "confidence": "lexical_literal",
+                "line": line,
             }
         )
 
+    axios_instances: list[dict[str, str]] = []
     for match in re.finditer(
-        rf"(?P<operation>\bfetch|\baxios\.(?:get|post|put|patch|delete)|new\s+(?:WebSocket|EventSource))\s*\(\s*{literal_argument}",
+        r"\b(?:export\s+)?const\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*"
+        r"axios\.create\s*\(\s*\{(?P<options>[^{}]{0,2000})\}\s*\)",
+        source,
+        re.DOTALL,
+    ):
+        options = match.group("options")
+        literal_base = re.search(rf"\bbaseURL\s*:\s*{literal_argument}", options)
+        symbol_base = re.search(
+            r"\bbaseURL\s*:\s*([A-Za-z_$][\w$]*(?:BASE|URL)[\w$]*)",
+            options,
+            re.IGNORECASE,
+        )
+        instance = {
+            "name": match.group("name"),
+            "base_literal": "",
+            "base_symbol": symbol_base.group(1) if symbol_base else "",
+        }
+        if literal_base:
+            instance["base_literal"] = next(
+                value for value in literal_base.groups() if value is not None
+            )
+            add_endpoint(
+                instance["base_literal"],
+                "BASE",
+                f"instance:{instance['name']}",
+                line=source.count("\n", 0, match.start()) + 1,
+            )
+        axios_instances.append(instance)
+    instance_names = [re.escape(value["name"]) for value in axios_instances[:100]]
+    instance_names.append(
+        r"(?:api|client|http|[A-Za-z_$][\w$]*(?:Api|API|Client|Http|HTTP))"
+    )
+    instance_operation = (
+        rf"|\b(?:{'|'.join(instance_names)})\.(?:get|post|put|patch|delete)"
+    )
+    for match in re.finditer(
+        rf"(?P<operation>\bfetch|\baxios\.(?:get|post|put|patch|delete){instance_operation}|new\s+(?:WebSocket|EventSource)|\b(?:request|apiRequest|httpRequest)(?:\s*<[^;\r\n()]{{1,300}}>)?)\s*\(\s*{literal_argument}",
         source,
     ):
         operation = match.group("operation")
+        normalized_operation = re.sub(r"\s*<.*>\s*$", "", operation).strip()
         value = next(value for value in match.groups()[1:] if value is not None)
-        leaf = operation.casefold().rsplit(".", 1)[-1]
+        leaf = normalized_operation.casefold().rsplit(".", 1)[-1]
         method = (
-            leaf.upper() if operation.casefold().startswith("axios.") else "UNKNOWN"
+            leaf.upper()
+            if "." in normalized_operation
+            and leaf in {"get", "post", "put", "patch", "delete"}
+            else "UNKNOWN"
         )
-        if operation.casefold() == "fetch":
+        if normalized_operation.casefold() in {
+            "fetch",
+            "request",
+            "apirequest",
+            "httprequest",
+        }:
             options = source[match.end() : match.end() + 500]
             method_match = re.match(
                 r"\s*,\s*\{[^{}]{0,450}?\bmethod\s*:\s*['\"]([A-Za-z]+)['\"]",
@@ -489,17 +575,60 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
             )
             if method_match:
                 method = method_match.group(1).upper()
-        if "websocket" in operation.casefold():
+        if "websocket" in normalized_operation.casefold():
             method = "WEBSOCKET"
-        elif "eventsource" in operation.casefold():
+        elif "eventsource" in normalized_operation.casefold():
             method = "EVENTSOURCE"
-        add_endpoint(value, method, operation)
+        add_endpoint(
+            value,
+            method,
+            normalized_operation,
+            line=source.count("\n", 0, match.start()) + 1,
+        )
     for match in re.finditer(rf"\bbaseURL\s*:\s*{literal_argument}", source):
         add_endpoint(
             next(value for value in match.groups() if value is not None),
             "BASE",
             "baseURL",
+            line=source.count("\n", 0, match.start()) + 1,
         )
+    for match in re.finditer(
+        rf"\b(?:export\s+)?const\s+([A-Za-z_$][\w$]*(?:BASE|URL)[\w$]*)\s*=\s*{literal_argument}",
+        source,
+        re.IGNORECASE,
+    ):
+        literal = next(value for value in match.groups()[1:] if value is not None)
+        if literal.startswith(("/", "http://", "https://")):
+            add_endpoint(
+                literal,
+                "BASE",
+                f"constant:{match.group(1)}",
+                line=source.count("\n", 0, match.start()) + 1,
+            )
+    wrapper_bases: list[dict[str, str]] = []
+    for match in re.finditer(
+        r"\b(?:export\s+)?(?:async\s+)?function\s+"
+        r"(?P<operation>request|apiRequest|httpRequest)(?:\s*<[^;\r\n()]{1,300}>)?\s*\(",
+        source,
+    ):
+        window = source[match.end() : match.end() + 4_000]
+        symbols = sorted(
+            set(re.findall(r"\$\{([A-Za-z_$][\w$]*(?:BASE|URL)[\w$]*)\}", window))
+        )
+        for symbol in symbols[:10]:
+            wrapper_bases.append(
+                {"operation": match.group("operation"), "base_symbol": symbol}
+            )
+    for instance in axios_instances:
+        if not instance["base_symbol"]:
+            continue
+        for method in ("get", "post", "put", "patch", "delete"):
+            wrapper_bases.append(
+                {
+                    "operation": f"{instance['name']}.{method}",
+                    "base_symbol": instance["base_symbol"],
+                }
+            )
     endpoint_values = [value["literal"] for value in endpoint_candidates]
     endpoints, endpoints_truncated = _bounded_unique(
         endpoint_values,
@@ -526,6 +655,18 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
             [value for value in endpoint_candidates if value["literal"] in endpoints],
             key=lambda value: (value["literal"], value["method"], value["operation"]),
         ),
+        "client_wrappers": wrapper_bases[:100],
+        "client_instances": axios_instances[:100],
+        "interceptors": sorted(
+            {
+                match.group(1)
+                for match in re.finditer(
+                    r"\b([A-Za-z_$][\w$]*)\.interceptors\."
+                    r"(?:request|response)\.use\s*\(",
+                    source,
+                )
+            }
+        )[:100],
         "truncated": (
             imports_truncated
             or exports_truncated
@@ -533,9 +674,229 @@ def _language_boundary_facts(raw: bytes, kind: str) -> dict[str, Any] | None:
             or endpoint_candidates_truncated
         ),
         "notice": (
-            "Lexical boundary extraction does not resolve types, generated clients, dynamic "
-            "expressions, control flow, or runtime service wiring."
+            "Lexical boundary extraction resolves bounded literal client wrappers, Axios "
+            "instances, interceptors, and base constants but does not resolve types, "
+            "generated clients, arbitrary dynamic expressions, control flow, or runtime "
+            "service wiring."
         ),
+    }
+
+
+def _deployment_boundary_facts(
+    raw: bytes, kind: str, path: str
+) -> dict[str, Any] | None:
+    """Extract bounded deployment entities without evaluating templates or tooling."""
+
+    try:
+        source = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    entities: list[dict[str, Any]] = []
+    relationships: list[dict[str, str]] = []
+    lower_name = Path(path).name.casefold()
+
+    def add_entity(entity_kind: str, name: str, **details: Any) -> None:
+        if not name or len(entities) >= MAX_DEPLOYMENT_ENTITIES:
+            return
+        identifier = f"{entity_kind}:{name}"
+        if any(value["key"] == identifier for value in entities):
+            return
+        entities.append(
+            {"key": identifier, "kind": entity_kind, "name": name, **details}
+        )
+
+    if lower_name.startswith("dockerfile"):
+        for index, match in enumerate(
+            re.finditer(
+                r"(?im)^\s*FROM\s+([^\s]+)(?:\s+AS\s+([A-Za-z0-9_.-]+))?", source
+            )
+        ):
+            add_entity(
+                "container_stage",
+                match.group(2) or f"stage-{index + 1}",
+                image=match.group(1),
+            )
+        for match in re.finditer(r"(?im)^\s*EXPOSE\s+([^\r\n#]+)", source):
+            add_entity("port", match.group(1).strip())
+        for match in re.finditer(r"(?im)^\s*ENV\s+([A-Za-z_][A-Za-z0-9_]*)", source):
+            add_entity("environment_variable", match.group(1))
+        if re.search(r"(?im)^\s*HEALTHCHECK\b", source):
+            add_entity("healthcheck", "container-healthcheck")
+    elif lower_name in {
+        "compose.yml",
+        "compose.yaml",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+    }:
+        in_services = False
+        current_service = ""
+        current_collection = ""
+
+        def add_compose_relationship(collection: str, raw_value: str) -> None:
+            value = raw_value.strip().strip("'\"")
+            if not value:
+                return
+            if collection == "depends_on":
+                target_kind, relation_kind = "service", "depends_on"
+            elif collection == "networks":
+                target_kind, relation_kind = "network", "uses_network"
+            elif collection == "volumes":
+                source = value.split(":", 1)[0]
+                if not source or source.startswith((".", "/", "~")):
+                    return
+                value = source
+                target_kind, relation_kind = "volume", "uses_volume"
+            elif collection in {"configs", "secrets"}:
+                target_kind, relation_kind = "configuration", "uses_configuration"
+            elif collection == "ports":
+                target_kind, relation_kind = "port", "exposes_port"
+            elif collection == "environment":
+                value = re.split(r"=|:", value, maxsplit=1)[0].strip()
+                target_kind, relation_kind = "environment_variable", "uses_environment"
+            else:
+                return
+            add_entity(target_kind, value)
+            relationships.append(
+                {
+                    "source": f"service:{current_service}",
+                    "target": f"{target_kind}:{value}",
+                    "kind": relation_kind,
+                }
+            )
+
+        for line in source.splitlines():
+            if re.match(r"^services:\s*(?:#.*)?$", line):
+                in_services = True
+                current_service = ""
+                current_collection = ""
+                continue
+            service_match = re.match(r"^\s{2}([A-Za-z0-9_.-]+):\s*(?:#.*)?$", line)
+            if in_services and service_match:
+                current_service = service_match.group(1)
+                current_collection = ""
+                add_entity("service", current_service)
+                continue
+            if in_services and line and not line.startswith(" "):
+                in_services = False
+                current_service = ""
+                current_collection = ""
+            if not current_service:
+                continue
+            image_match = re.match(r"^\s{4}image:\s*['\"]?([^'\"\s#]+)", line)
+            if image_match:
+                add_entity("image", image_match.group(1))
+                relationships.append(
+                    {
+                        "source": f"service:{current_service}",
+                        "target": f"image:{image_match.group(1)}",
+                        "kind": "uses_image",
+                    }
+                )
+                current_collection = ""
+                continue
+            depends_inline = re.match(r"^\s{4}depends_on:\s*\[([^]]+)\]", line)
+            if depends_inline:
+                for dependency in re.findall(
+                    r"[A-Za-z0-9_.-]+", depends_inline.group(1)
+                ):
+                    add_compose_relationship("depends_on", dependency)
+                current_collection = ""
+                continue
+            collection_match = re.match(
+                r"^\s{4}(depends_on|networks|volumes|configs|secrets|ports|environment):\s*(?:#.*)?$",
+                line,
+            )
+            if collection_match:
+                current_collection = collection_match.group(1)
+                continue
+            if re.match(r"^\s{4}healthcheck:\s*(?:#.*)?$", line):
+                add_entity("healthcheck", f"{current_service}-healthcheck")
+                relationships.append(
+                    {
+                        "source": f"service:{current_service}",
+                        "target": f"healthcheck:{current_service}-healthcheck",
+                        "kind": "declares_healthcheck",
+                    }
+                )
+                current_collection = ""
+                continue
+            if current_collection:
+                list_item = re.match(r"^\s{6,}-\s*([^#]+?)\s*(?:#.*)?$", line)
+                mapping_item = re.match(r"^\s{6}([A-Za-z0-9_.-]+):(?:\s*[^#]*)?$", line)
+                if list_item:
+                    add_compose_relationship(current_collection, list_item.group(1))
+                    continue
+                if mapping_item:
+                    add_compose_relationship(current_collection, mapping_item.group(1))
+                    continue
+            if re.match(r"^\s{4}\S", line):
+                current_collection = ""
+    elif kind == "infrastructure" and Path(path).suffix.casefold() in {
+        ".tf",
+        ".tfvars",
+    }:
+        for match in re.finditer(
+            r'(?m)^\s*(resource|data|module|provider)\s+"([^"]+)"(?:\s+"([^"]+)")?',
+            source,
+        ):
+            entity_kind = f"terraform_{match.group(1)}"
+            name = ".".join(value for value in match.groups()[1:] if value)
+            add_entity(entity_kind, name)
+        for match in re.finditer(r"\b([A-Za-z_]\w*\.[A-Za-z_]\w*)\b", source):
+            reference = match.group(1)
+            if not reference.startswith(("var.", "local.", "each.", "count.")):
+                add_entity("terraform_reference", reference)
+    elif kind == "infrastructure":
+        documents = re.split(r"(?m)^---\s*$", source)
+        for index, document in enumerate(documents):
+            kind_match = re.search(r"(?m)^kind:\s*([A-Za-z0-9_.-]+)", document)
+            name_match = re.search(
+                r"(?ms)^metadata:\s*\n(?:\s+[^\n]*\n)*?\s+name:\s*([A-Za-z0-9_.-]+)",
+                document,
+            )
+            if not kind_match:
+                continue
+            resource_kind = kind_match.group(1)
+            name = name_match.group(1) if name_match else f"document-{index + 1}"
+            add_entity(f"kubernetes_{resource_kind.casefold()}", name)
+            for image in re.findall(r"(?m)^\s+image:\s*['\"]?([^'\"\s#]+)", document):
+                add_entity("image", image)
+                relationships.append(
+                    {
+                        "source": f"kubernetes_{resource_kind.casefold()}:{name}",
+                        "target": f"image:{image}",
+                        "kind": "uses_image",
+                    }
+                )
+            for dependency in re.findall(
+                r"(?m)^\s+(?:configMapRef|secretRef):\s*\n\s+name:\s*([A-Za-z0-9_.-]+)",
+                document,
+            ):
+                relationships.append(
+                    {
+                        "source": f"kubernetes_{resource_kind.casefold()}:{name}",
+                        "target": f"configuration:{dependency}",
+                        "kind": "uses_configuration",
+                    }
+                )
+    elif kind == "ci_configuration":
+        for environment in re.findall(
+            r"(?m)^\s*environment:\s*['\"]?([^'\"\s#]+)", source
+        ):
+            add_entity("deployment_environment", environment)
+        for image in re.findall(
+            r"(?m)^\s*(?:image|container):\s*['\"]?([^'\"\s#]+)", source
+        ):
+            add_entity("image", image)
+    else:
+        return None
+    return {
+        "format": "pysfmea-deployment-boundary-facts-1",
+        "entities": entities,
+        "relationships": relationships[:MAX_DEPLOYMENT_ENTITIES],
+        "truncated": len(entities) >= MAX_DEPLOYMENT_ENTITIES
+        or len(relationships) > MAX_DEPLOYMENT_ENTITIES,
+        "authority": "bounded_lexical_deployment_declarations_not_deployed_runtime_state",
     }
 
 
@@ -716,9 +1077,10 @@ def build_repository_inventory(
                     )
                     entries.append(record)
                     continue
+                metadata_size = metadata.st_size
             try:
                 if hash_truncated:
-                    record["size"] = len(raw) if raw is not None else metadata.st_size
+                    record["size"] = len(raw) if raw is not None else metadata_size
                     record.update(
                         analysis_depth="metadata_only",
                         reason="Artifact digest omitted after the aggregate hashing limit.",
@@ -728,7 +1090,7 @@ def build_repository_inventory(
                     if remaining <= 0:
                         hash_truncated = True
                         record["size"] = (
-                            len(raw) if raw is not None else metadata.st_size
+                            len(raw) if raw is not None else metadata_size
                         )
                         record.update(
                             analysis_depth="metadata_only",
@@ -932,6 +1294,37 @@ def build_repository_inventory(
                             "web.language_boundary_indexer",
                         ],
                         boundary_facts=boundary_facts,
+                    )
+            elif kind in {
+                "container_or_deployment",
+                "infrastructure",
+                "ci_configuration",
+            }:
+                deployment_facts = (
+                    _deployment_boundary_facts(raw, kind, rel)
+                    if raw is not None
+                    else None
+                )
+                if deployment_facts is None:
+                    record.update(
+                        status="opaque",
+                        analysis_depth=(
+                            "metadata_and_digest"
+                            if record["sha256"]
+                            else "metadata_only"
+                        ),
+                        reason="Deployment artifact could not be decoded for bounded lexical topology indexing.",
+                    )
+                else:
+                    record.update(
+                        status="indexed",
+                        analysis_depth="deployment_topology_index",
+                        reason="Deployment entities and declared relationships were indexed without claiming deployed runtime state.",
+                        adapter_ids=[
+                            "python.repository_discoverer",
+                            "deployment.lexical_topology",
+                        ],
+                        deployment_facts=deployment_facts,
                     )
             entries.append(record)
         if walk_truncated:

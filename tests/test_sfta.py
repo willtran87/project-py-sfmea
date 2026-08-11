@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.config import normalize_config
 from pysfmea.diagrams import build_diagram_models
+from pysfmea.integrity import canonical_json_sha256
 from pysfmea.report import (
     _verify_analysis_diagnostics,
     _verify_sfta_projection,
@@ -98,7 +99,9 @@ class SoftwareFaultTreeTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def test_explicit_tree_correlates_bottom_up_and_reports_both_directions(self) -> None:
+    def test_explicit_tree_correlates_bottom_up_and_reports_both_directions(
+        self,
+    ) -> None:
         model = build_sfta(self.analysis)
         summary = model["reconciliation"]["summary"]
         self.assertEqual(summary["explicit_trees"], 1)
@@ -111,14 +114,95 @@ class SoftwareFaultTreeTests(unittest.TestCase):
         self.assertEqual({edge["kind"] for edge in tree["edges"]}, {"input_to"})
         event = next(value for value in tree["nodes"] if value["id"] == "EV-EXECUTE")
         self.assertTrue(event["linked_finding_ids"])
-        rules = {value["rule_id"] for value in validate_analysis(self.analysis)["findings"]}
+        rules = {
+            value["rule_id"] for value in validate_analysis(self.analysis)["findings"]
+        }
         self.assertIn("sfta.uncovered_top_down_event", rules)
         self.assertNotIn("sfta.missing_top_down_decomposition", rules)
+
+    def test_qualitative_cut_sets_require_exact_authored_approval(self) -> None:
+        definition = self.analysis["context"]["fault_trees"][0]
+        self.analysis["sfta_authoring"] = {
+            "history": [
+                {
+                    "sealed_input_sha256": "a" * 64,
+                    "applied_at": "2026-08-09T12:00:00Z",
+                    "reviews": [
+                        {
+                            "hazard_id": "HZ-LOSS",
+                            "definition_sha256": canonical_json_sha256(definition),
+                            "status": "approved",
+                            "reviewer": "Safety reviewer",
+                            "rationale": "Exact Boolean structure reviewed.",
+                        }
+                    ],
+                }
+            ]
+        }
+
+        model = build_sfta(self.analysis)
+
+        tree = model["trees"][0]
+        cut_sets = tree["cut_set_analysis"]
+        self.assertEqual(tree["logic_status"], "approved_for_qualitative_cut_sets")
+        self.assertEqual(cut_sets["status"], "computed")
+        self.assertEqual(cut_sets["cut_set_count"], 2)
+        self.assertEqual(
+            {tuple(value["event_ids"]) for value in cut_sets["cut_sets"]},
+            {("EV-EXECUTE",), ("EV-UNDEVELOPED",)},
+        )
+        self.assertFalse(cut_sets["independence_assumed"])
+        self.assertFalse(cut_sets["probability_calculated"])
+        self.assertEqual(model["reconciliation"]["summary"]["qualitative_cut_sets"], 2)
+
+        definition["description"] = "Changed after approval"
+        stale = build_sfta(self.analysis)["trees"][0]
+        self.assertEqual(stale["logic_status"], "preliminary_requires_review")
+        self.assertEqual(
+            stale["cut_set_analysis"]["status"], "not_computed_unapproved_tree"
+        )
+
+    def test_cut_set_calculation_fails_closed_on_limits_and_ambiguous_event_logic(
+        self,
+    ) -> None:
+        definition = self.analysis["context"]["fault_trees"][0]
+        self.analysis["sfta_authoring"] = {
+            "history": [
+                {
+                    "sealed_input_sha256": "b" * 64,
+                    "applied_at": "2026-08-09T12:00:00Z",
+                    "reviews": [
+                        {
+                            "hazard_id": "HZ-LOSS",
+                            "definition_sha256": canonical_json_sha256(definition),
+                            "status": "approved",
+                            "reviewer": "Safety reviewer",
+                            "rationale": "Exact Boolean structure reviewed.",
+                        }
+                    ],
+                }
+            ]
+        }
+        with patch("pysfmea.sfta.MAX_CUT_SETS_PER_TREE", 1):
+            bounded = build_sfta(self.analysis)["trees"][0]["cut_set_analysis"]
+        self.assertEqual(bounded["status"], "not_computed_limit_exceeded")
+        self.assertEqual(bounded["cut_sets"], [])
+
+        top = next(value for value in definition["events"] if value["id"] == "TOP-LOSS")
+        top["inputs"] = ["EV-EXECUTE", "EV-UNDEVELOPED"]
+        self.analysis["sfta_authoring"]["history"][0]["reviews"][0][
+            "definition_sha256"
+        ] = canonical_json_sha256(definition)
+        unsupported = build_sfta(self.analysis)["trees"][0]["cut_set_analysis"]
+        self.assertEqual(unsupported["status"], "not_computed_unsupported_logic")
+        self.assertEqual(unsupported["cut_sets"], [])
 
     def test_sfta_exports_and_renderer_neutral_diagram(self) -> None:
         json_path = export_sfta(self.analysis, self.root / "sfta.json", format="json")
         csv_path = export_sfta(self.analysis, self.root / "sfta.csv", format="csv")
-        self.assertEqual(json.loads(json_path.read_text(encoding="utf-8"))["schema_version"], "1.0")
+        self.assertEqual(
+            json.loads(json_path.read_text(encoding="utf-8"))["schema_version"], "1.0"
+        )
         with csv_path.open(encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(rows[0]["gap_type"], "top_down_uncovered_event")
@@ -126,7 +210,9 @@ class SoftwareFaultTreeTests(unittest.TestCase):
         self.assertEqual(len(diagrams), 1)
         self.assertEqual(diagrams[0]["metadata"]["category"], "sfta")
         self.assertIn("sfta_gate", {value["kind"] for value in diagrams[0]["nodes"]})
-        self.assertIn("candidate_correlation", {value["kind"] for value in diagrams[0]["edges"]})
+        self.assertIn(
+            "candidate_correlation", {value["kind"] for value in diagrams[0]["edges"]}
+        )
 
     def test_finding_id_selector_is_exact_and_bypasses_pattern_scan(self) -> None:
         target_id = self.analysis["items"][0]["id"]
@@ -147,9 +233,7 @@ class SoftwareFaultTreeTests(unittest.TestCase):
         model = build_sfta(self.analysis)
 
         correlated = next(
-            value
-            for value in model["trees"][0]["nodes"]
-            if value["id"] == "EV-EXECUTE"
+            value for value in model["trees"][0]["nodes"] if value["id"] == "EV-EXECUTE"
         )
         self.assertEqual(correlated["linked_finding_ids"], [target_id])
         legacy = build_sfta(self.analysis, legacy_id_wildcard=True)
@@ -182,12 +266,8 @@ class SoftwareFaultTreeTests(unittest.TestCase):
             writer.writerows(sfta_gap_rows(legacy))
 
         listed = {"sfta.json", "sfta-gaps.csv"}
-        historical = _verify_sfta_projection(
-            self.root, listed, self.analysis, "0.57.1"
-        )
-        current = _verify_sfta_projection(
-            self.root, listed, self.analysis, "0.57.2"
-        )
+        historical = _verify_sfta_projection(self.root, listed, self.analysis, "0.57.1")
+        current = _verify_sfta_projection(self.root, listed, self.analysis, "0.57.2")
         self.assertTrue(historical["valid"])
         self.assertFalse(current["valid"])
         self.assertFalse(current["checks"]["model_projection"])
@@ -198,9 +278,7 @@ class SoftwareFaultTreeTests(unittest.TestCase):
                 self.analysis, legacy_sfta_id_wildcard=True
             ),
             "system-context.json": self.analysis.get("system_context", {}),
-            "repository-inventory.json": self.analysis.get(
-                "repository_inventory", {}
-            ),
+            "repository-inventory.json": self.analysis.get("repository_inventory", {}),
             "adapter-runs.json": self.analysis.get("adapter_runs", {}),
         }
         for filename, document in diagnostic_documents.items():
@@ -253,9 +331,7 @@ class SoftwareFaultTreeTests(unittest.TestCase):
 
         model = build_sfta(self.analysis)
         correlated = next(
-            value
-            for value in model["trees"][0]["nodes"]
-            if value["id"] == "EV-EXECUTE"
+            value for value in model["trees"][0]["nodes"] if value["id"] == "EV-EXECUTE"
         )
         self.assertIn(direct["id"], correlated["linked_finding_ids"])
         self.assertIn(patterned["id"], correlated["linked_finding_ids"])

@@ -45,6 +45,43 @@ class ToolValidationBenchmarkTests(unittest.TestCase):
             ],
             2,
         )
+        self.assertTrue(result["control_detection"]["enabled"])
+        self.assertEqual(result["corpus"]["control_case_count"], 4)
+        self.assertEqual(result["corpus"]["control_scope_count"], 1)
+        self.assertEqual(result["control_detection"]["expected"], 4)
+        self.assertEqual(result["control_detection"]["actual"], 4)
+        self.assertEqual(result["control_detection"]["matched"], 4)
+        self.assertEqual(result["control_detection"]["missing"], [])
+        self.assertEqual(result["control_detection"]["unexpected"], [])
+        self.assertEqual(result["control_detection"]["recall"], 1.0)
+        self.assertEqual(result["control_detection"]["precision"], 1.0)
+        self.assertEqual(
+            result["control_detection"]["population"],
+            {
+                "scope_basis": "explicit_control_scope",
+                "scope_patterns": ["controls.py:*"],
+                "evaluated_components": 7,
+                "positive_components": 4,
+                "negative_components": 3,
+            },
+        )
+        self.assertEqual(
+            result["control_detection"]["by_kind"]["circuit_breaker"]["matched"],
+            4,
+        )
+        semantics = result["semantic_output"]
+        self.assertTrue(semantics["enabled"])
+        self.assertEqual(result["corpus"]["semantic_case_count"], 10)
+        self.assertEqual(result["corpus"]["semantic_claim_count"], 78)
+        self.assertEqual(semantics["matched"], 10)
+        self.assertEqual(semantics["claim_matched"], 78)
+        self.assertEqual(semantics["recall"], 1.0)
+        self.assertEqual(semantics["precision"], 1.0)
+        self.assertEqual(semantics["claim_recall"], 1.0)
+        self.assertEqual(semantics["claim_precision"], 1.0)
+        self.assertEqual(semantics["missing"], [])
+        self.assertEqual(semantics["mismatches"], [])
+        self.assertEqual(semantics["by_field"]["failure_mode"]["matched"], 10)
 
     def test_repeated_scan_has_stable_source_and_resolved_input_digests(self) -> None:
         first = scan_repository(self.corpus / "repository")

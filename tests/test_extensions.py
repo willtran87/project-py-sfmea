@@ -42,6 +42,7 @@ from pysfmea.publication import (
 )
 from pysfmea.readiness import repository_readiness
 from pysfmea.report import (
+    REVIEW_PACKAGE_FILES,
     REVIEW_PACKAGE_SCHEMA_FILES,
     _verify_analysis_structure,
     _verify_review_views,
@@ -80,16 +81,24 @@ class StaticProvider:
                     "guideword": "Bypass",
                     "failure_mode": "The authorization boundary permits an unauthorized operation.",
                     "trigger": "A crafted request reaches the entrypoint.",
-                    "causes": ["Authorization is evaluated after the protected operation."],
+                    "causes": [
+                        "Authorization is evaluated after the protected operation."
+                    ],
                     "local_effect": "The operation executes without a valid authorization decision.",
                     "next_higher_effect": "The service exposes a protected capability.",
-                    "possible_end_effects": ["Protected data or operations may be exposed."],
+                    "possible_end_effects": [
+                        "Protected data or operations may be exposed."
+                    ],
                     "prevention_controls": [],
                     "detection_controls": [],
-                    "recommended_actions": ["Enforce authorization before side effects."],
+                    "recommended_actions": [
+                        "Enforce authorization before side effects."
+                    ],
                     "evidence_ids": [component_id],
                     "citation_ids": ["NIST-SP-800-218-PW.7"],
-                    "uncertainties": ["The external identity contract was not supplied."],
+                    "uncertainties": [
+                        "The external identity contract was not supplied."
+                    ],
                     "questions": ["Where is authorization enforced?"],
                     "confidence": "medium",
                 }
@@ -161,7 +170,9 @@ class ExtensionTests(unittest.TestCase):
         )
         self.assertIn("sequenceDiagram", sequence_path.read_text(encoding="utf-8"))
         trace = traceability_model(self.analysis)
-        self.assertTrue(any(edge["kind"] == "may_contribute_to" for edge in trace["edges"]))
+        self.assertTrue(
+            any(edge["kind"] == "may_contribute_to" for edge in trace["edges"])
+        )
         self.assertTrue(any(edge["kind"] == "mitigates" for edge in trace["edges"]))
         self.assertIn(
             "flowchart LR",
@@ -207,14 +218,11 @@ class ExtensionTests(unittest.TestCase):
             if value.get("qualname") == "orchestrate"
         )
         candidates = {
-            value["reference"]: value
-            for value in component["external_call_candidates"]
+            value["reference"]: value for value in component["external_call_candidates"]
         }
         self.assertEqual(candidates["httpx.get"]["confidence"], "high")
         self.assertEqual(candidates["client.send"]["confidence"], "medium")
-        self.assertEqual(
-            candidates["db_collection.insert_one"]["confidence"], "medium"
-        )
+        self.assertEqual(candidates["db_collection.insert_one"]["confidence"], "medium")
 
         model = sequence_model(analysis, "flow.py:orchestrate")
         send = next(
@@ -228,7 +236,10 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(send["evidence"], "static_external_candidate")
         self.assertEqual(len(normalized), 2)
         self.assertTrue(
-            any("handler-1" in " ".join(value["control_context"]) for value in normalized)
+            any(
+                "handler-1" in " ".join(value["control_context"])
+                for value in normalized
+            )
         )
 
         sequence_path = export_sequence(
@@ -238,9 +249,7 @@ class ExtensionTests(unittest.TestCase):
         self.assertIn("[static candidate]", document)
         self.assertIn("[await]", document)
         interface_diagram = interface_flow_diagram(analysis)
-        self.assertEqual(
-            interface_diagram["metadata"]["external_candidates_total"], 3
-        )
+        self.assertEqual(interface_diagram["metadata"]["external_candidates_total"], 3)
         self.assertEqual(
             {
                 edge["evidence"]
@@ -251,21 +260,19 @@ class ExtensionTests(unittest.TestCase):
         )
         ambiguous = sequence_model(analysis, "flow.py:ambiguous")
         ambiguous_calls = [
-            value
-            for value in ambiguous["interactions"]
-            if value["label"] == "dispatch"
+            value for value in ambiguous["interactions"] if value["label"] == "dispatch"
         ]
         self.assertEqual(len(ambiguous_calls), 2)
-        self.assertEqual(
-            {value["confidence"] for value in ambiguous_calls}, {"low"}
-        )
+        self.assertEqual({value["confidence"] for value in ambiguous_calls}, {"low"})
         self.assertEqual(
             {value["resolution"] for value in ambiguous_calls},
             {"ambiguous_static_internal_call"},
         )
 
         normalize = next(
-            value for value in analysis["components"] if value.get("qualname") == "normalize"
+            value
+            for value in analysis["components"]
+            if value.get("qualname") == "normalize"
         )
         analysis["runtime_evidence"] = {
             "imports": [],
@@ -356,7 +363,9 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(local_model["interactions"][0]["confidence"], "high")
         constructed_model = sequence_model(analysis, "typed_flow.py:constructed")
         self.assertTrue(
-            any(value["label"] == "fetch" for value in constructed_model["interactions"])
+            any(
+                value["label"] == "fetch" for value in constructed_model["interactions"]
+            )
         )
         nested = components["nested"]
         self.assertEqual(nested["ordered_calls"], ["normalize", "wrap"])
@@ -425,7 +434,9 @@ class ExtensionTests(unittest.TestCase):
             },
         )
         model = traceability_model(analysis)
-        shared = [node for node in model["nodes"] if node.get("reference_id") == "SHARED"]
+        shared = [
+            node for node in model["nodes"] if node.get("reference_id") == "SHARED"
+        ]
         self.assertEqual({node["kind"] for node in shared}, {"requirement", "hazard"})
         self.assertEqual(len({node["id"] for node in shared}), 2)
         metrics = coverage_metrics(self.analysis)
@@ -473,7 +484,10 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(record["mapped_span_count"], 2)
         model = sequence_model(self.analysis, "service.py:checkout")
         self.assertTrue(
-            any(value["evidence"] == "observed_runtime" for value in model["interactions"])
+            any(
+                value["evidence"] == "observed_runtime"
+                for value in model["interactions"]
+            )
         )
         history_count = len(self.analysis["history"])
         duplicate = import_runtime_trace(self.analysis, trace_path, label="duplicate")
@@ -534,7 +548,9 @@ class ExtensionTests(unittest.TestCase):
         with patch(
             "pysfmea.json_ingestion._same_file_identity", side_effect=[True, False]
         ):
-            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+            with self.assertRaisesRegex(
+                ValueError, "changed during bounded consumption"
+            ):
                 import_runtime_trace(self.analysis, trace_path)
         with patch("pysfmea.json_ingestion.stat.S_ISLNK", return_value=True):
             with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
@@ -705,9 +721,7 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_package(destination)
         self.assertFalse(verified["valid"])
         self.assertFalse(verified["analysis_structure"]["valid"])
-        self.assertFalse(
-            verified["analysis_structure"]["checks"]["depth_limit"]
-        )
+        self.assertFalse(verified["analysis_structure"]["checks"]["depth_limit"])
         self.assertGreater(verified["analysis_structure"]["max_depth"], 100)
         self.assertIn(
             "package.analysis_structure_limit",
@@ -717,9 +731,9 @@ class ExtensionTests(unittest.TestCase):
             "package.checksum_mismatch",
             {value["rule_id"] for value in verified["findings"]},
         )
-        Draft202012Validator(
-            schema_document("review-package-verification")
-        ).validate(verified)
+        Draft202012Validator(schema_document("review-package-verification")).validate(
+            verified
+        )
 
         export_review_package(self.analysis, destination, overwrite=True)
         analysis_path = destination / "analysis.json"
@@ -748,14 +762,12 @@ class ExtensionTests(unittest.TestCase):
         self.assertFalse(
             malformed_verified["analysis_structure"]["checks"]["core_contract"]
         )
-        malformed_rules = {
-            value["rule_id"] for value in malformed_verified["findings"]
-        }
+        malformed_rules = {value["rule_id"] for value in malformed_verified["findings"]}
         self.assertIn("package.analysis_contract_invalid", malformed_rules)
         self.assertNotIn("package.checksum_mismatch", malformed_rules)
-        Draft202012Validator(
-            schema_document("review-package-verification")
-        ).validate(malformed_verified)
+        Draft202012Validator(schema_document("review-package-verification")).validate(
+            malformed_verified
+        )
 
         with patch(
             "pysfmea.report._verify_review_package",
@@ -769,9 +781,9 @@ class ExtensionTests(unittest.TestCase):
         )
         self.assertIn("RuntimeError", aborted["findings"][0]["message"])
         self.assertNotIn("sensitive internal detail", aborted["findings"][0]["message"])
-        Draft202012Validator(
-            schema_document("review-package-verification")
-        ).validate(aborted)
+        Draft202012Validator(schema_document("review-package-verification")).validate(
+            aborted
+        )
 
     def test_review_package_is_complete_and_manifested(self) -> None:
         destination = self.root / "review-package"
@@ -801,7 +813,10 @@ class ExtensionTests(unittest.TestCase):
             }.issubset(names)
         )
         self.assertTrue(REVIEW_PACKAGE_SCHEMA_FILES.issubset(names))
-        self.assertEqual(manifest["schema_catalog"]["schema_count"], 19)
+        self.assertEqual(
+            manifest["schema_catalog"]["schema_count"],
+            len(REVIEW_PACKAGE_SCHEMA_FILES) - 1,
+        )
         self.assertEqual(
             manifest["capabilities"],
             [
@@ -831,7 +846,10 @@ class ExtensionTests(unittest.TestCase):
         refreshed = export_review_package(self.analysis, destination, overwrite=True)
         self.assertTrue((refreshed / "manifest.json").is_file())
         self.assertFalse(
-            any(path.name.startswith(f".{destination.name}.tmp-") for path in self.root.iterdir())
+            any(
+                path.name.startswith(f".{destination.name}.tmp-")
+                for path in self.root.iterdir()
+            )
         )
 
         manifest_path = refreshed / "manifest.json"
@@ -841,9 +859,7 @@ class ExtensionTests(unittest.TestCase):
             raw = path.read_bytes()
             normalized = raw.replace(b"\r\n", b"\n")
             alternate = (
-                normalized.replace(b"\n", b"\r\n")
-                if raw == normalized
-                else normalized
+                normalized.replace(b"\n", b"\r\n") if raw == normalized else normalized
             )
             path.write_bytes(alternate)
             entry = next(
@@ -954,9 +970,7 @@ class ExtensionTests(unittest.TestCase):
             catalog_path = compatible / "schema-catalog.json"
             catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
             catalog["schemas"] = [
-                entry
-                for entry in catalog["schemas"]
-                if entry["name"] in retained_names
+                entry for entry in catalog["schemas"] if entry["name"] in retained_names
             ]
             retained_files = {
                 "schema-catalog.json",
@@ -969,9 +983,7 @@ class ExtensionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             manifest_path = compatible / "manifest.json"
-            compatible_manifest = json.loads(
-                manifest_path.read_text(encoding="utf-8")
-            )
+            compatible_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             compatible_manifest["files"] = [
                 entry
                 for entry in compatible_manifest["files"]
@@ -998,9 +1010,7 @@ class ExtensionTests(unittest.TestCase):
             )
             compatible_verification = verify_review_package(compatible)
             self.assertTrue(compatible_verification["valid"])
-            self.assertEqual(
-                compatible_verification["checked_files"], expected_files
-            )
+            self.assertEqual(compatible_verification["checked_files"], expected_files)
 
         pre_diagnostics_analysis = copy.deepcopy(self.analysis)
         pre_diagnostics_analysis["generator"]["version"] = "0.49.0"
@@ -1026,9 +1036,7 @@ class ExtensionTests(unittest.TestCase):
         pre_diagnostics_manifest["capabilities"].remove(
             "interchange_artifacts_projection_v1"
         )
-        pre_diagnostics_manifest["capabilities"].remove(
-            "review_views_projection_v1"
-        )
+        pre_diagnostics_manifest["capabilities"].remove("review_views_projection_v1")
         pre_diagnostics_manifest["capabilities"].remove(
             "package_provenance_projection_v1"
         )
@@ -1061,18 +1069,12 @@ class ExtensionTests(unittest.TestCase):
         pre_guidance_manifest["capabilities"].remove(
             "guidance_traceability_projection_v1"
         )
-        pre_guidance_manifest["capabilities"].remove(
-            "evidence_catalog_projection_v1"
-        )
+        pre_guidance_manifest["capabilities"].remove("evidence_catalog_projection_v1")
         pre_guidance_manifest["capabilities"].remove(
             "interchange_artifacts_projection_v1"
         )
-        pre_guidance_manifest["capabilities"].remove(
-            "review_views_projection_v1"
-        )
-        pre_guidance_manifest["capabilities"].remove(
-            "package_provenance_projection_v1"
-        )
+        pre_guidance_manifest["capabilities"].remove("review_views_projection_v1")
+        pre_guidance_manifest["capabilities"].remove("package_provenance_projection_v1")
         pre_guidance_manifest["capabilities"].remove("sfta_projection_v1")
         pre_guidance_manifest_path.write_text(
             json.dumps(pre_guidance_manifest, indent=2, ensure_ascii=False) + "\n",
@@ -1104,13 +1106,9 @@ class ExtensionTests(unittest.TestCase):
         pre_sfta_manifest["exporter"]["version"] = "0.52.0"
         pre_sfta_manifest["capabilities"].remove("sfta_projection_v1")
         pre_sfta_manifest["capabilities"].remove("evidence_catalog_projection_v1")
-        pre_sfta_manifest["capabilities"].remove(
-            "interchange_artifacts_projection_v1"
-        )
+        pre_sfta_manifest["capabilities"].remove("interchange_artifacts_projection_v1")
         pre_sfta_manifest["capabilities"].remove("review_views_projection_v1")
-        pre_sfta_manifest["capabilities"].remove(
-            "package_provenance_projection_v1"
-        )
+        pre_sfta_manifest["capabilities"].remove("package_provenance_projection_v1")
         pre_sfta_manifest_path.write_text(
             json.dumps(pre_sfta_manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -1140,18 +1138,12 @@ class ExtensionTests(unittest.TestCase):
             pre_evidence_manifest_path.read_text(encoding="utf-8")
         )
         pre_evidence_manifest["exporter"]["version"] = "0.53.0"
-        pre_evidence_manifest["capabilities"].remove(
-            "evidence_catalog_projection_v1"
-        )
+        pre_evidence_manifest["capabilities"].remove("evidence_catalog_projection_v1")
         pre_evidence_manifest["capabilities"].remove(
             "interchange_artifacts_projection_v1"
         )
-        pre_evidence_manifest["capabilities"].remove(
-            "review_views_projection_v1"
-        )
-        pre_evidence_manifest["capabilities"].remove(
-            "package_provenance_projection_v1"
-        )
+        pre_evidence_manifest["capabilities"].remove("review_views_projection_v1")
+        pre_evidence_manifest["capabilities"].remove("package_provenance_projection_v1")
         pre_evidence_manifest_path.write_text(
             json.dumps(pre_evidence_manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -1185,15 +1177,12 @@ class ExtensionTests(unittest.TestCase):
         pre_interchange_manifest["capabilities"].remove(
             "interchange_artifacts_projection_v1"
         )
-        pre_interchange_manifest["capabilities"].remove(
-            "review_views_projection_v1"
-        )
+        pre_interchange_manifest["capabilities"].remove("review_views_projection_v1")
         pre_interchange_manifest["capabilities"].remove(
             "package_provenance_projection_v1"
         )
         pre_interchange_manifest_path.write_text(
-            json.dumps(pre_interchange_manifest, indent=2, ensure_ascii=False)
-            + "\n",
+            json.dumps(pre_interchange_manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
         pre_interchange_verification = verify_review_package(pre_interchange)
@@ -1209,9 +1198,7 @@ class ExtensionTests(unittest.TestCase):
                 "sfta_projection_v1",
             ],
         )
-        self.assertEqual(
-            pre_interchange_verification["interchange_artifacts"], {}
-        )
+        self.assertEqual(pre_interchange_verification["interchange_artifacts"], {})
 
         pre_review_views_analysis = copy.deepcopy(self.analysis)
         pre_review_views_analysis["generator"]["version"] = "0.55.0"
@@ -1225,19 +1212,13 @@ class ExtensionTests(unittest.TestCase):
             pre_review_views_manifest_path.read_text(encoding="utf-8")
         )
         pre_review_views_manifest["exporter"]["version"] = "0.55.0"
-        pre_review_views_manifest["capabilities"].remove(
-            "review_views_projection_v1"
-        )
+        pre_review_views_manifest["capabilities"].remove("review_views_projection_v1")
         pre_review_views_manifest["capabilities"].remove(
             "package_provenance_projection_v1"
         )
         pre_review_sarif_path = pre_review_views / "findings.sarif"
-        pre_review_sarif = json.loads(
-            pre_review_sarif_path.read_text(encoding="utf-8")
-        )
-        pre_review_sarif["runs"][0]["tool"]["driver"]["semanticVersion"] = (
-            "0.55.0"
-        )
+        pre_review_sarif = json.loads(pre_review_sarif_path.read_text(encoding="utf-8"))
+        pre_review_sarif["runs"][0]["tool"]["driver"]["semanticVersion"] = "0.55.0"
         pre_review_sarif["runs"][0]["tool"]["driver"]["informationUri"] = (
             "https://github.com/Will-A-W/project-py-sfmea"
         )
@@ -1249,9 +1230,7 @@ class ExtensionTests(unittest.TestCase):
         pre_review_cyclonedx = json.loads(
             pre_review_cyclonedx_path.read_text(encoding="utf-8")
         )
-        pre_review_cyclonedx["metadata"]["tools"]["components"][0][
-            "version"
-        ] = "0.55.0"
+        pre_review_cyclonedx["metadata"]["tools"]["components"][0]["version"] = "0.55.0"
         pre_review_cyclonedx_path.write_text(
             json.dumps(pre_review_cyclonedx, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -1269,8 +1248,7 @@ class ExtensionTests(unittest.TestCase):
             entry["bytes"] = len(raw)
             entry["sha256"] = hashlib.sha256(raw).hexdigest()
         pre_review_views_manifest_path.write_text(
-            json.dumps(pre_review_views_manifest, indent=2, ensure_ascii=False)
-            + "\n",
+            json.dumps(pre_review_views_manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
         pre_review_views_verification = verify_review_package(pre_review_views)
@@ -1288,9 +1266,7 @@ class ExtensionTests(unittest.TestCase):
             ],
         )
         self.assertEqual(pre_review_views_verification["review_views"], {})
-        self.assertTrue(
-            pre_review_views_verification["interchange_artifacts"]["valid"]
-        )
+        self.assertTrue(pre_review_views_verification["interchange_artifacts"]["valid"])
 
         pre_provenance_analysis = copy.deepcopy(self.analysis)
         pre_provenance_analysis["generator"]["version"] = "0.56.1"
@@ -1311,9 +1287,7 @@ class ExtensionTests(unittest.TestCase):
         pre_provenance_sarif = json.loads(
             pre_provenance_sarif_path.read_text(encoding="utf-8")
         )
-        pre_provenance_sarif["runs"][0]["tool"]["driver"][
-            "semanticVersion"
-        ] = "0.56.1"
+        pre_provenance_sarif["runs"][0]["tool"]["driver"]["semanticVersion"] = "0.56.1"
         pre_provenance_sarif_path.write_text(
             json.dumps(pre_provenance_sarif, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -1322,12 +1296,11 @@ class ExtensionTests(unittest.TestCase):
         pre_provenance_cyclonedx = json.loads(
             pre_provenance_cyclonedx_path.read_text(encoding="utf-8")
         )
-        pre_provenance_cyclonedx["metadata"]["tools"]["components"][0][
-            "version"
-        ] = "0.56.1"
+        pre_provenance_cyclonedx["metadata"]["tools"]["components"][0]["version"] = (
+            "0.56.1"
+        )
         pre_provenance_cyclonedx_path.write_text(
-            json.dumps(pre_provenance_cyclonedx, indent=2, ensure_ascii=False)
-            + "\n",
+            json.dumps(pre_provenance_cyclonedx, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
         pre_provenance_inventory_path = pre_provenance / "inventory.md"
@@ -1358,8 +1331,7 @@ class ExtensionTests(unittest.TestCase):
             entry["bytes"] = len(raw)
             entry["sha256"] = hashlib.sha256(raw).hexdigest()
         pre_provenance_manifest_path.write_text(
-            json.dumps(pre_provenance_manifest, indent=2, ensure_ascii=False)
-            + "\n",
+            json.dumps(pre_provenance_manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
         pre_provenance_verification = verify_review_package(pre_provenance)
@@ -1389,9 +1361,7 @@ class ExtensionTests(unittest.TestCase):
         legacy_manifest.pop("schema_catalog")
         legacy_manifest.pop("capabilities")
         legacy_analysis_path = legacy / "analysis.json"
-        legacy_analysis = json.loads(
-            legacy_analysis_path.read_text(encoding="utf-8")
-        )
+        legacy_analysis = json.loads(legacy_analysis_path.read_text(encoding="utf-8"))
         legacy_analysis["generator"]["version"] = "0.46.0"
         legacy_analysis_path.write_text(
             json.dumps(legacy_analysis, indent=2, ensure_ascii=False) + "\n",
@@ -1602,7 +1572,10 @@ class ExtensionTests(unittest.TestCase):
                 ).validate(receipt)
                 self.assertTrue(receipt["valid"])
                 self.assertEqual(receipt["container"], container)
-                self.assertEqual(receipt["checked_files"], 47)
+                self.assertEqual(
+                    receipt["checked_files"],
+                    len(REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES),
+                )
                 self.assertEqual(len(receipt["capabilities"]), 9)
                 self.assertEqual(Path(receipt["package"]), destination.resolve())
                 self.assertEqual(
@@ -1856,9 +1829,9 @@ class ExtensionTests(unittest.TestCase):
                     1,
                 )
         rejected_receipt = json.loads(rejected_output.getvalue())
-        Draft202012Validator(
-            schema_document("review-package-verification")
-        ).validate(rejected_receipt)
+        Draft202012Validator(schema_document("review-package-verification")).validate(
+            rejected_receipt
+        )
         self.assertFalse(rejected_receipt["valid"])
         self.assertEqual(
             rejected_receipt["publication"],
@@ -1961,26 +1934,18 @@ class ExtensionTests(unittest.TestCase):
                     },
                 )
                 mismatched_failure = copy.deepcopy(failure)
-                mismatched_failure["publication"]["failure_code"] = (
-                    "internal_failure"
-                )
-                self.assertTrue(
-                    list(receipt_validator.iter_errors(mismatched_failure))
-                )
+                mismatched_failure["publication"]["failure_code"] = "internal_failure"
+                self.assertTrue(list(receipt_validator.iter_errors(mismatched_failure)))
                 mismatched_rule = copy.deepcopy(failure)
                 mismatched_rule["publication"]["failure_rule_id"] = (
                     "package.publication.internal_failure"
                 )
-                self.assertTrue(
-                    list(receipt_validator.iter_errors(mismatched_rule))
-                )
+                self.assertTrue(list(receipt_validator.iter_errors(mismatched_rule)))
                 mismatched_catalog = copy.deepcopy(failure)
                 mismatched_catalog["publication"]["catalog_format"] = (
                     "pysfmea-publication-failure-catalog-0"
                 )
-                self.assertTrue(
-                    list(receipt_validator.iter_errors(mismatched_catalog))
-                )
+                self.assertTrue(list(receipt_validator.iter_errors(mismatched_catalog)))
                 mismatched_algorithm = copy.deepcopy(failure)
                 mismatched_algorithm["publication"]["catalog_algorithm"] = "sha1"
                 self.assertTrue(
@@ -1991,17 +1956,11 @@ class ExtensionTests(unittest.TestCase):
                     "catalog_canonicalization"
                 ] = "unspecified"
                 self.assertTrue(
-                    list(
-                        receipt_validator.iter_errors(
-                            mismatched_canonicalization
-                        )
-                    )
+                    list(receipt_validator.iter_errors(mismatched_canonicalization))
                 )
                 mismatched_digest = copy.deepcopy(failure)
                 mismatched_digest["publication"]["catalog_sha256"] = "0" * 64
-                self.assertTrue(
-                    list(receipt_validator.iter_errors(mismatched_digest))
-                )
+                self.assertTrue(list(receipt_validator.iter_errors(mismatched_digest)))
                 for required_identity in (
                     "catalog_format",
                     "catalog_algorithm",
@@ -2009,28 +1968,18 @@ class ExtensionTests(unittest.TestCase):
                     "catalog_sha256",
                     "failure_rule_id",
                 ):
-                    with self.subTest(
-                        case=case, missing_identity=required_identity
-                    ):
+                    with self.subTest(case=case, missing_identity=required_identity):
                         missing_identity = copy.deepcopy(failure)
                         missing_identity["publication"].pop(required_identity)
                         self.assertTrue(
                             list(receipt_validator.iter_errors(missing_identity))
                         )
                 mismatched_action = copy.deepcopy(failure)
-                mismatched_action["publication"]["next_action"] = (
-                    "collect_diagnostics"
-                )
-                self.assertTrue(
-                    list(receipt_validator.iter_errors(mismatched_action))
-                )
+                mismatched_action["publication"]["next_action"] = "collect_diagnostics"
+                self.assertTrue(list(receipt_validator.iter_errors(mismatched_action)))
                 mismatched_retry = copy.deepcopy(failure)
-                mismatched_retry["publication"]["retry_policy"] = (
-                    "manual_diagnostics"
-                )
-                self.assertTrue(
-                    list(receipt_validator.iter_errors(mismatched_retry))
-                )
+                mismatched_retry["publication"]["retry_policy"] = "manual_diagnostics"
+                self.assertTrue(list(receipt_validator.iter_errors(mismatched_retry)))
 
         runtime_output = io.StringIO()
         with patch(
@@ -2051,9 +2000,9 @@ class ExtensionTests(unittest.TestCase):
                     2,
                 )
         runtime_failure = json.loads(runtime_output.getvalue())
-        Draft202012Validator(
-            schema_document("review-package-verification")
-        ).validate(runtime_failure)
+        Draft202012Validator(schema_document("review-package-verification")).validate(
+            runtime_failure
+        )
         self.assertEqual(
             runtime_failure["findings"][0]["rule_id"],
             "package.publication.internal_failure",
@@ -2117,9 +2066,7 @@ class ExtensionTests(unittest.TestCase):
                 Draft202012Validator(
                     schema_document("review-package-verification")
                 ).validate(permission_failure)
-                self.assertEqual(
-                    permission_failure["findings"][0]["rule_id"], rule_id
-                )
+                self.assertEqual(permission_failure["findings"][0]["rule_id"], rule_id)
                 self.assertNotIn(
                     "sensitive local path",
                     permission_failure["findings"][0]["message"],
@@ -2220,7 +2167,9 @@ class ExtensionTests(unittest.TestCase):
             )
         )
 
-    def test_review_package_verification_rejects_tampering_and_unsafe_content(self) -> None:
+    def test_review_package_verification_rejects_tampering_and_unsafe_content(
+        self,
+    ) -> None:
         destination = export_review_package(
             self.analysis,
             self.root / "verified-package",
@@ -2228,7 +2177,10 @@ class ExtensionTests(unittest.TestCase):
         )
         verified = verify_review_package(destination)
         self.assertTrue(verified["valid"])
-        self.assertEqual(verified["checked_files"], 47)
+        self.assertEqual(
+            verified["checked_files"],
+            len(REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES),
+        )
         self.assertEqual(
             verified["verification_format"], REVIEW_PACKAGE_VERIFICATION_FORMAT
         )
@@ -2279,16 +2231,14 @@ class ExtensionTests(unittest.TestCase):
         self.assertTrue(all(verified["package_provenance"]["checks"].values()))
         self.assertTrue(verified["assurance_work_queue"]["valid"])
         self.assertEqual(verified["assurance_work_queue"]["status"], "matched")
-        self.assertTrue(
-            all(verified["assurance_work_queue"]["checks"].values())
-        )
+        self.assertTrue(all(verified["assurance_work_queue"]["checks"].values()))
         self.assertTrue(verified["assurance_register"]["valid"])
         self.assertTrue(all(verified["assurance_register"]["checks"].values()))
         self.assertEqual(
             verified["binding"]["analysis_state_sha256"],
-            json.loads(
-                (destination / "manifest.json").read_text(encoding="utf-8")
-            )["analysis_state_sha256"],
+            json.loads((destination / "manifest.json").read_text(encoding="utf-8"))[
+                "analysis_state_sha256"
+            ],
         )
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["verify-package", str(destination), "--json"]), 0)
@@ -2296,11 +2246,11 @@ class ExtensionTests(unittest.TestCase):
         with contextlib.redirect_stdout(human_output):
             self.assertEqual(main(["verify-package", str(destination)]), 0)
         self.assertIn(
-            "Schema catalog: valid=True, schemas=19", human_output.getvalue()
+            "Schema catalog: valid=True, "
+            f"schemas={len(REVIEW_PACKAGE_SCHEMA_FILES) - 1}",
+            human_output.getvalue(),
         )
-        self.assertIn(
-            "Analysis structure: valid=True, nodes=", human_output.getvalue()
-        )
+        self.assertIn("Analysis structure: valid=True, nodes=", human_output.getvalue())
         self.assertIn(
             "Assurance work queue: valid=True, status=matched",
             human_output.getvalue(),
@@ -2352,9 +2302,7 @@ class ExtensionTests(unittest.TestCase):
         queue["notice"] += " Rewritten after packaging."
         queue_content = dict(queue)
         queue_content.pop("integrity")
-        queue["integrity"]["content_sha256"] = canonical_json_sha256(
-            queue_content
-        )
+        queue["integrity"]["content_sha256"] = canonical_json_sha256(queue_content)
         queue_path.write_text(
             json.dumps(queue, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -2409,16 +2357,12 @@ class ExtensionTests(unittest.TestCase):
             encoding="utf-8",
         )
         register_tampered = verify_review_package(destination)
-        register_rules = {
-            value["rule_id"] for value in register_tampered["findings"]
-        }
+        register_rules = {value["rule_id"] for value in register_tampered["findings"]}
         self.assertFalse(register_tampered["valid"])
         self.assertIn("package.assurance_register_invalid", register_rules)
         self.assertNotIn("package.checksum_mismatch", register_rules)
         self.assertFalse(
-            register_tampered["assurance_register"]["checks"][
-                "semantic_projection"
-            ]
+            register_tampered["assurance_register"]["checks"]["semantic_projection"]
         )
         self.assertTrue(register_tampered["assurance_work_queue"]["valid"])
 
@@ -2435,9 +2379,7 @@ class ExtensionTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         validation_raw = validation_path.read_bytes()
         validation_entry = next(
-            value
-            for value in manifest["files"]
-            if value["path"] == "validation.json"
+            value for value in manifest["files"] if value["path"] == "validation.json"
         )
         validation_entry["bytes"] = len(validation_raw)
         validation_entry["sha256"] = hashlib.sha256(validation_raw).hexdigest()
@@ -2481,9 +2423,7 @@ class ExtensionTests(unittest.TestCase):
             encoding="utf-8",
         )
         guidance_tampered = verify_review_package(destination)
-        guidance_rules = {
-            value["rule_id"] for value in guidance_tampered["findings"]
-        }
+        guidance_rules = {value["rule_id"] for value in guidance_tampered["findings"]}
         self.assertFalse(guidance_tampered["valid"])
         self.assertIn("package.guidance_traceability_invalid", guidance_rules)
         self.assertNotIn("package.checksum_mismatch", guidance_rules)
@@ -2529,9 +2469,7 @@ class ExtensionTests(unittest.TestCase):
         self.assertFalse(sfta_tampered["valid"])
         self.assertIn("package.sfta_projection_invalid", sfta_rules)
         self.assertNotIn("package.checksum_mismatch", sfta_rules)
-        self.assertFalse(
-            sfta_tampered["sfta_projection"]["checks"]["model_projection"]
-        )
+        self.assertFalse(sfta_tampered["sfta_projection"]["checks"]["model_projection"])
         self.assertTrue(
             sfta_tampered["sfta_projection"]["checks"]["gap_register_projection"]
         )
@@ -2566,9 +2504,7 @@ class ExtensionTests(unittest.TestCase):
             encoding="utf-8",
         )
         evidence_tampered = verify_review_package(destination)
-        evidence_rules = {
-            value["rule_id"] for value in evidence_tampered["findings"]
-        }
+        evidence_rules = {value["rule_id"] for value in evidence_tampered["findings"]}
         self.assertFalse(evidence_tampered["valid"])
         self.assertIn("package.evidence_catalog_invalid", evidence_rules)
         self.assertNotIn("package.checksum_mismatch", evidence_rules)
@@ -2588,9 +2524,7 @@ class ExtensionTests(unittest.TestCase):
 
         sarif_path = destination / "findings.sarif"
         sarif = json.loads(sarif_path.read_text(encoding="utf-8"))
-        sarif["runs"][0]["results"][0]["message"]["text"] = (
-            "Rewritten after packaging."
-        )
+        sarif["runs"][0]["results"][0]["message"]["text"] = "Rewritten after packaging."
         sarif_path.write_text(
             json.dumps(sarif, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -2616,9 +2550,7 @@ class ExtensionTests(unittest.TestCase):
             sarif_tampered["interchange_artifacts"]["checks"]["sarif_projection"]
         )
         self.assertTrue(
-            sarif_tampered["interchange_artifacts"]["checks"][
-                "cyclonedx_projection"
-            ]
+            sarif_tampered["interchange_artifacts"]["checks"]["cyclonedx_projection"]
         )
 
         export_review_package(self.analysis, destination, overwrite=True)
@@ -2645,16 +2577,12 @@ class ExtensionTests(unittest.TestCase):
             encoding="utf-8",
         )
         cyclonedx_tampered = verify_review_package(destination)
-        cyclonedx_rules = {
-            value["rule_id"] for value in cyclonedx_tampered["findings"]
-        }
+        cyclonedx_rules = {value["rule_id"] for value in cyclonedx_tampered["findings"]}
         self.assertFalse(cyclonedx_tampered["valid"])
         self.assertIn("package.interchange_artifacts_invalid", cyclonedx_rules)
         self.assertNotIn("package.checksum_mismatch", cyclonedx_rules)
         self.assertTrue(
-            cyclonedx_tampered["interchange_artifacts"]["checks"][
-                "sarif_projection"
-            ]
+            cyclonedx_tampered["interchange_artifacts"]["checks"]["sarif_projection"]
         )
         self.assertFalse(
             cyclonedx_tampered["interchange_artifacts"]["checks"][
@@ -2679,14 +2607,10 @@ class ExtensionTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         architecture_raw = architecture_path.read_bytes()
         architecture_entry = next(
-            value
-            for value in manifest["files"]
-            if value["path"] == "architecture.md"
+            value for value in manifest["files"] if value["path"] == "architecture.md"
         )
         architecture_entry["bytes"] = len(architecture_raw)
-        architecture_entry["sha256"] = hashlib.sha256(
-            architecture_raw
-        ).hexdigest()
+        architecture_entry["sha256"] = hashlib.sha256(architecture_raw).hexdigest()
         manifest_path.write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -2699,14 +2623,10 @@ class ExtensionTests(unittest.TestCase):
         self.assertIn("package.review_views_invalid", review_view_rules)
         self.assertNotIn("package.checksum_mismatch", review_view_rules)
         self.assertFalse(
-            review_views_tampered["review_views"]["checks"][
-                "system_views_projection"
-            ]
+            review_views_tampered["review_views"]["checks"]["system_views_projection"]
         )
         self.assertTrue(
-            review_views_tampered["review_views"]["checks"][
-                "worksheet_projection"
-            ]
+            review_views_tampered["review_views"]["checks"]["worksheet_projection"]
         )
 
         export_review_package(self.analysis, destination, overwrite=True)
@@ -2740,14 +2660,10 @@ class ExtensionTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         run_manifest_raw = run_manifest_path.read_bytes()
         run_manifest_entry = next(
-            value
-            for value in manifest["files"]
-            if value["path"] == "run-manifest.json"
+            value for value in manifest["files"] if value["path"] == "run-manifest.json"
         )
         run_manifest_entry["bytes"] = len(run_manifest_raw)
-        run_manifest_entry["sha256"] = hashlib.sha256(
-            run_manifest_raw
-        ).hexdigest()
+        run_manifest_entry["sha256"] = hashlib.sha256(run_manifest_raw).hexdigest()
         manifest_path.write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -2765,14 +2681,10 @@ class ExtensionTests(unittest.TestCase):
             ]
         )
         self.assertTrue(
-            provenance_tampered["package_provenance"]["checks"][
-                "readme_projection"
-            ]
+            provenance_tampered["package_provenance"]["checks"]["readme_projection"]
         )
         self.assertTrue(
-            provenance_tampered["package_provenance"]["checks"][
-                "timestamp_consistency"
-            ]
+            provenance_tampered["package_provenance"]["checks"]["timestamp_consistency"]
         )
 
         export_review_package(self.analysis, destination, overwrite=True)
@@ -2880,9 +2792,7 @@ class ExtensionTests(unittest.TestCase):
 
         export_review_package(self.analysis, destination, overwrite=True)
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["files"].extend(
-            dict(manifest["files"][0]) for _ in range(61)
-        )
+        manifest["files"].extend(dict(manifest["files"][0]) for _ in range(61))
         manifest_path.write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -2941,7 +2851,10 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_package(archive)
         self.assertTrue(verified["valid"])
         self.assertEqual(verified["container"], "zip")
-        self.assertEqual(verified["checked_files"], 47)
+        self.assertEqual(
+            verified["checked_files"],
+            len(REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES),
+        )
         self.assertTrue(verified["schema_catalog"]["valid"])
         self.assertEqual(
             verified["capabilities"],
@@ -2979,56 +2892,9 @@ class ExtensionTests(unittest.TestCase):
         with zipfile.ZipFile(archive) as bundle:
             self.assertEqual(
                 set(bundle.namelist()),
-                {
-                    "analysis.json",
-                    "assurance-register.csv",
-                    "assurance-register.json",
-                    "assurance-work.json",
-                    "assurance-register.md",
-                    "architecture.md",
-                    "audit.csv",
-                    "coverage.md",
-                    "citations.json",
-                    "evidence-catalog.json",
-                    "sfta.json",
-                    "sfta-gaps.csv",
-                    "findings.sarif",
-                    "components.cdx.json",
-                    "run-manifest.json",
-                    "system-context.json",
-                    "repository-inventory.json",
-                    "adapter-runs.json",
-                    "guidance-traceability.csv",
-                    "guidance-traceability.json",
-                    "inventory.md",
-                    "manifest.json",
-                    "README.md",
-                    "schema-catalog.json",
-                    "pysfmea-assurance-program.schema.json",
-                    "pysfmea-assurance-program-report-verification.schema.json",
-                    "pysfmea-assurance-program-verification.schema.json",
-                    "pysfmea-detached-signature.schema.json",
-                    "pysfmea-diagram.schema.json",
-                    "pysfmea-diagram-bundle.schema.json",
-                    "pysfmea-diagram-bundle-verification.schema.json",
-                    "pysfmea-fault-injection-plan.schema.json",
-                    "pysfmea-fault-injection-plan-verification.schema.json",
-                    "pysfmea-html-report-verification.schema.json",
-                    "pysfmea-publication-failure-catalog.schema.json",
-                    "pysfmea-publication-failure-catalog-verification.schema.json",
-                    "pysfmea-schema-bundle-verification.schema.json",
-                    "pysfmea-schema-catalog.schema.json",
-                    "pysfmea-review-package-manifest.schema.json",
-                    "pysfmea-review-package-verification.schema.json",
-                    "pysfmea-workflow-status.schema.json",
-                    "pysfmea-assurance-work-queue.schema.json",
-                    "pysfmea-assurance-work-queue-verification.schema.json",
-                    "summary.json",
-                    "traceability.md",
-                    "validation.json",
-                    "worksheet.csv",
-                    "worksheet.md",
-                },
+                REVIEW_PACKAGE_FILES
+                | REVIEW_PACKAGE_SCHEMA_FILES
+                | {"manifest.json"},
             )
             contents = {name: bundle.read(name) for name in bundle.namelist()}
         with self.assertRaisesRegex(ValueError, "already exists"):
@@ -3099,7 +2965,8 @@ class ExtensionTests(unittest.TestCase):
         )
 
     @unittest.skipUnless(
-        importlib.util.find_spec("cryptography"), "optional signing dependency unavailable"
+        importlib.util.find_spec("cryptography"),
+        "optional signing dependency unavailable",
     )
     def test_detached_signature_authenticates_package_and_claims(self) -> None:
         from cryptography.hazmat.primitives import serialization
@@ -3136,12 +3003,8 @@ class ExtensionTests(unittest.TestCase):
         verified = verify_review_signature(archive, signature_path, public_path)
         self.assertTrue(verified["valid"])
         self.assertTrue(verified["signature"]["valid"])
-        self.assertEqual(
-            verified["signature"]["signer"], "Quality Engineering Release"
-        )
-        self.assertTrue(
-            verified["signature"]["key_fingerprint"].startswith("sha256:")
-        )
+        self.assertEqual(verified["signature"]["signer"], "Quality Engineering Release")
+        self.assertTrue(verified["signature"]["key_fingerprint"].startswith("sha256:"))
 
         with self.assertRaisesRegex(ValueError, "4096-character limit"):
             sign_review_package(archive, private_path, "x" * 4097)
@@ -3412,9 +3275,7 @@ class ExtensionTests(unittest.TestCase):
             public_path,
         )
         self.assertTrue(verified_directory_signature["valid"])
-        directory_envelope = json.loads(
-            directory_signature.read_text(encoding="utf-8")
-        )
+        directory_envelope = json.loads(directory_signature.read_text(encoding="utf-8"))
         self.assertEqual(
             directory_envelope["statement"]["subject"]["digest_scope"],
             "manifest_bytes",
@@ -3448,11 +3309,7 @@ class ExtensionTests(unittest.TestCase):
         envelope = json.dumps(
             {
                 "choices": [
-                    {
-                        "message": {
-                            "content": '{"suggestions":[],"suggestions":[]}'
-                        }
-                    }
+                    {"message": {"content": '{"suggestions":[],"suggestions":[]}'}}
                 ]
             }
         ).encode("utf-8")
@@ -3472,7 +3329,9 @@ class ExtensionTests(unittest.TestCase):
             def open(self, request: object, *, timeout: int) -> FakeResponse:
                 return FakeResponse()
 
-        with patch("pysfmea.discovery.urllib.request.build_opener", return_value=FakeOpener()):
+        with patch(
+            "pysfmea.discovery.urllib.request.build_opener", return_value=FakeOpener()
+        ):
             with self.assertRaisesRegex(ValueError, "duplicate object key"):
                 OpenAICompatibleProvider(
                     "http://127.0.0.1:9999/v1/chat/completions", "model"
@@ -3489,9 +3348,7 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(len(created), 1)
         self.assertEqual(self.analysis["summary"]["suggestions"]["proposed"], 1)
         self.assertNotIn("severity", created[0]["content"])
-        self.assertEqual(
-            created[0]["proposed_citation_ids"], ["NIST-SP-800-218-PW.7"]
-        )
+        self.assertEqual(created[0]["proposed_citation_ids"], ["NIST-SP-800-218-PW.7"])
         reviewed = review_suggestion(
             self.analysis,
             created[0]["id"],
@@ -3533,14 +3390,19 @@ class ExtensionTests(unittest.TestCase):
             limit=1,
         )[0]
         (self.root / "service.py").write_text(
-            (self.root / "service.py").read_text(encoding="utf-8") + "\n# baseline change\n",
+            (self.root / "service.py").read_text(encoding="utf-8")
+            + "\n# baseline change\n",
             encoding="utf-8",
         )
         merged = merge_rescan(self.analysis, scan_repository(self.root))
-        stale = next(value for value in merged["suggestions"] if value["id"] == proposed["id"])
+        stale = next(
+            value for value in merged["suggestions"] if value["id"] == proposed["id"]
+        )
         self.assertEqual(stale["status"], "stale")
         retained = next(
-            item for item in merged["items"] if item["id"] == reviewed["materialized_item_id"]
+            item
+            for item in merged["items"]
+            if item["id"] == reviewed["materialized_item_id"]
         )
         self.assertEqual(retained["source_change"], "manual")
         self.assertEqual(retained["source_status"], "active")
@@ -3562,9 +3424,7 @@ class ExtensionTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls = 0
 
-            def generate(
-                self, payload: dict[str, Any], *, task: str
-            ) -> dict[str, Any]:
+            def generate(self, payload: dict[str, Any], *, task: str) -> dict[str, Any]:
                 self.calls += 1
                 if self.calls == 2:
                     return {"suggestions": "invalid"}
@@ -3585,9 +3445,7 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(self.analysis, original)
 
         class UnknownFieldProvider(StaticProvider):
-            def generate(
-                self, payload: dict[str, Any], *, task: str
-            ) -> dict[str, Any]:
+            def generate(self, payload: dict[str, Any], *, task: str) -> dict[str, Any]:
                 result = super().generate(payload, task=task)
                 result["suggestions"][0]["hidden_reasoning"] = "must not be retained"
                 result["suggestions"][0]["citation_ids"] = []
@@ -3613,9 +3471,7 @@ class ExtensionTests(unittest.TestCase):
             name = "deep-provider"
             model = "deep-model"
 
-            def generate(
-                self, payload: dict[str, Any], *, task: str
-            ) -> dict[str, Any]:
+            def generate(self, payload: dict[str, Any], *, task: str) -> dict[str, Any]:
                 return deeply_nested
 
         with self.assertRaisesRegex(ValueError, "depth limit"):
@@ -3638,9 +3494,7 @@ class ExtensionTests(unittest.TestCase):
             name = "many-provider"
             model = "many-model"
 
-            def generate(
-                self, payload: dict[str, Any], *, task: str
-            ) -> dict[str, Any]:
+            def generate(self, payload: dict[str, Any], *, task: str) -> dict[str, Any]:
                 return {"suggestions": [{} for _ in range(26)]}
 
         with self.assertRaisesRegex(ValueError, "25-suggestion"):
@@ -3654,9 +3508,7 @@ class ExtensionTests(unittest.TestCase):
 
     def test_suggestion_materialization_rolls_back_on_failure(self) -> None:
         class CitationlessProvider(StaticProvider):
-            def generate(
-                self, payload: dict[str, Any], *, task: str
-            ) -> dict[str, Any]:
+            def generate(self, payload: dict[str, Any], *, task: str) -> dict[str, Any]:
                 result = super().generate(payload, task=task)
                 result["suggestions"][0]["citation_ids"] = []
                 return result
@@ -3692,9 +3544,7 @@ class ExtensionTests(unittest.TestCase):
             def __init__(self, response: dict[str, Any]) -> None:
                 self.response = response
 
-            def generate(
-                self, payload: dict[str, Any], *, task: str
-            ) -> dict[str, Any]:
+            def generate(self, payload: dict[str, Any], *, task: str) -> dict[str, Any]:
                 return self.response
 
         original = copy.deepcopy(self.analysis)
@@ -3745,15 +3595,15 @@ class ExtensionTests(unittest.TestCase):
             encoding="utf-8",
         )
         analysis = scan_repository(self.root)
-        endpoint = next(value for value in analysis["components"] if value["qualname"] == "endpoint")
+        endpoint = next(
+            value for value in analysis["components"] if value["qualname"] == "endpoint"
+        )
         self.assertIn("fastapi", endpoint["frameworks"])
         self.assertIn("http_route", endpoint["entrypoint_types"])
         summary = deterministic_summary(analysis)
         self.assertGreater(summary["counts"]["failure_modes"], 0)
         expected = {
-            "cases": [
-                {"component": "endpoint", "rule_id": "functional.omission"}
-            ]
+            "cases": [{"component": "endpoint", "rule_id": "functional.omission"}]
         }
         result = evaluate_candidates(analysis, expected)
         self.assertEqual(result["recall"], 1.0)
@@ -3781,7 +3631,7 @@ class ExtensionTests(unittest.TestCase):
             encoding="utf-8",
         )
         (self.root / "payments.proto").write_text(
-            "syntax = \"proto3\";\nmessage Payment {}\nservice Billing { rpc Charge(Payment) returns (Payment); }\n",
+            'syntax = "proto3";\nmessage Payment {}\nservice Billing { rpc Charge(Payment) returns (Payment); }\n',
             encoding="utf-8",
         )
         analysis = scan_repository(
@@ -3834,6 +3684,77 @@ class ExtensionTests(unittest.TestCase):
         )
         self.assertEqual(openapi_component["interface_ids"], ["IF-PAY"])
         self.assertEqual(openapi_component["subsystems"], ["Payments"])
+        openapi_contract = next(
+            value
+            for value in analysis["context"]["contracts"]
+            if value["kind"] == "openapi"
+        )
+        self.assertEqual(openapi_contract["version"], "3.1.0")
+        self.assertEqual(
+            openapi_contract["operation_contracts"][0]["operation"],
+            "POST /payments",
+        )
+        protobuf_contract = next(
+            value
+            for value in analysis["context"]["contracts"]
+            if value["kind"] == "protobuf"
+        )
+        self.assertEqual(
+            protobuf_contract["operation_contracts"][0]["request"]["type"],
+            "Payment",
+        )
+
+    def test_asyncapi_graphql_and_avro_contract_semantics_are_bounded(self) -> None:
+        (self.root / "asyncapi.json").write_text(
+            json.dumps(
+                {
+                    "asyncapi": "3.0.0",
+                    "channels": {
+                        "orders.created": {
+                            "publish": {
+                                "operationId": "publishOrder",
+                                "message": {"$ref": "#/components/messages/Order"},
+                            }
+                        }
+                    },
+                    "components": {"messages": {"Order": {"payload": {}}}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (self.root / "schema.graphql").write_text(
+            "type Query { order(id: ID!): Order }\n"
+            "type Mutation { createOrder(id: ID!): Order! }\n"
+            "type Order { id: ID! status: String! }\n",
+            encoding="utf-8",
+        )
+        (self.root / "order.avsc").write_text(
+            json.dumps(
+                {
+                    "type": "record",
+                    "name": "OrderEvent",
+                    "namespace": "events.v1",
+                    "fields": [
+                        {"name": "id", "type": "string"},
+                        {"name": "note", "type": ["null", "string"], "default": None},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        contracts = {value["kind"]: value for value in analysis["context"]["contracts"]}
+        self.assertEqual(set(contracts), {"asyncapi", "graphql", "avro"})
+        self.assertEqual(contracts["asyncapi"]["version"], "3.0.0")
+        self.assertEqual(contracts["asyncapi"]["operations"], ["PUBLISH orders.created"])
+        self.assertEqual(
+            set(contracts["graphql"]["operations"]),
+            {"QUERY order", "MUTATION createOrder"},
+        )
+        avro_type = contracts["avro"]["type_contracts"][0]
+        self.assertEqual(avro_type["required"], ["id"])
+        self.assertEqual(avro_type["properties"], ["id", "note"])
 
     def test_model_cannot_generate_decision_fields(self) -> None:
         with self.assertRaisesRegex(ValueError, "prohibited decision fields"):
@@ -3848,9 +3769,9 @@ class ExtensionTests(unittest.TestCase):
         self.analysis["context"]["project"]["operating_context"] = (
             "API_KEY=super-secret-value and Bearer abc.def.ghi"
         )
-        packet = evidence_packets(
-            self.analysis, scope="service.py:checkout", limit=1
-        )[0]
+        packet = evidence_packets(self.analysis, scope="service.py:checkout", limit=1)[
+            0
+        ]
         serialized = json.dumps(packet)
         self.assertNotIn("super-secret-value", serialized)
         self.assertNotIn("abc.def.ghi", serialized)

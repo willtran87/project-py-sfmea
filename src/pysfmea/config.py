@@ -68,6 +68,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "review_queue_max_total": 1_000,
         "diagnostic_warning_budget": 25_000,
         "diagnostic_per_rule_budget": 10_000,
+        "target_evidence_readiness_percent": 70,
+        "target_architecture_traceability_percent": 90,
+        "target_cross_stack_percent": 90,
+        "target_guidance_specificity_percent": 95,
+        "target_cold_scan_seconds": 10,
         "cache_enabled": True,
         "cache_path": ".artifacts/pysfmea-fact-cache.json",
         "external_call_prefixes": [],
@@ -122,6 +127,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "critical_functions": [],
     "custom_rules": [],
     "guidance_applicability": [],
+    "guidance_rule_mappings": [],
+    "interface_dispositions": [],
 }
 
 RESERVED_SCANNER_RULE_IDS = {
@@ -202,6 +209,26 @@ guidance_packs = []
 # effective_date = "2026-08-06"
 # exclusions = []
 
+# Project-reviewed rule-to-source relationships supplement the built-in catalog.
+# [[guidance_rule_mappings]]
+# rule_selector = "configuration.missing_or_wrong"
+# citation_id = "NASA-SWEHB-8.05-CAUSES"
+# relationship = "failure_taxonomy"
+# strength = "direct" # direct, supporting, or contextual
+# rationale = "The cited passage directly supports this failure-mode prompt."
+# reviewed_by = "Independent guidance reviewer"
+# effective_date = "2026-08-09"
+
+# Stable endpoint dispositions are reapplied on later scans without hiding the
+# underlying static candidate or turning reviewer judgment into runtime evidence.
+# [[interface_dispositions]]
+# endpoint_id = "IFACE-SERVER-..."
+# side = "server" # server or client
+# decision = "intentional_unmatched"
+# rationale = "This administrative endpoint intentionally has no web client."
+# reviewed_by = "Architecture reviewer"
+# effective_date = "2026-08-09"
+
 [scan]
 include_private = true
 include_tests = false
@@ -213,6 +240,12 @@ review_queue_max_total = 1000 # 1-50000; CLI --limit may request a smaller proje
 # Diagnostic budgets do not discard findings; they surface unmanageable repetition.
 diagnostic_warning_budget = 25000 # 1-1000000
 diagnostic_per_rule_budget = 10000 # 1-1000000
+# Proposed diagnostic targets are governance inputs, not qualification thresholds.
+target_evidence_readiness_percent = 70 # 1-100
+target_architecture_traceability_percent = 90 # 1-100
+target_cross_stack_percent = 90 # 1-100
+target_guidance_specificity_percent = 95 # 1-100
+target_cold_scan_seconds = 10 # 1-3600
 # Exact-content derived fact cache; never primary assurance evidence.
 cache_enabled = true
 cache_path = ".artifacts/pysfmea-fact-cache.json"
@@ -344,9 +377,7 @@ confidence = "project"
 """
 
 
-def load_config(path: str | Path | None) -> tuple[dict[str, Any], Path | None]:
-    if path is None:
-        return normalize_config({}), None
+def _read_config_source(path: str | Path) -> tuple[bytes, Path]:
     config_path = Path(os.path.abspath(Path(path).expanduser()))
     if config_path.is_symlink():
         raise ValueError("configuration must be a regular non-symbolic-link file")
@@ -381,6 +412,15 @@ def load_config(path: str | Path | None) -> tuple[dict[str, Any], Path | None]:
         raise ValueError(
             f"configuration exceeds the {MAX_CONFIG_BYTES}-byte import limit"
         )
+    return raw, resolved_config_path
+
+
+def load_config_source(
+    path: str | Path,
+) -> tuple[dict[str, Any], Path, bytes]:
+    """Load one exact safe TOML snapshot and retain its publication bytes."""
+
+    raw, resolved_config_path = _read_config_source(path)
     try:
         supplied = tomllib.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as exc:
@@ -396,13 +436,20 @@ def load_config(path: str | Path | None) -> tuple[dict[str, Any], Path | None]:
     coverage_path = config["scan"].get("coverage_json", "")
     if coverage_path:
         config["scan"]["coverage_json"] = configured_input_path(coverage_path)
-    cache_path = config["scan"].get("cache_path", "")
-    if cache_path:
-        config["scan"]["cache_path"] = configured_input_path(cache_path)
+    # Cache paths are scanner outputs and are resolved against the repository by the
+    # CLI.  Resolving them against the configuration directory made a configuration
+    # stored under ``.artifacts`` turn the default into ``.artifacts/.artifacts``.
     config["analysis"]["guidance_packs"] = [
         configured_input_path(value)
         for value in config["analysis"].get("guidance_packs", [])
     ]
+    return config, resolved_config_path, raw
+
+
+def load_config(path: str | Path | None) -> tuple[dict[str, Any], Path | None]:
+    if path is None:
+        return normalize_config({}), None
+    config, resolved_config_path, _raw = load_config_source(path)
     return config, resolved_config_path
 
 
@@ -431,6 +478,8 @@ def normalize_config(supplied: dict[str, Any] | None = None) -> dict[str, Any]:
         "critical_functions",
         "custom_rules",
         "guidance_applicability",
+        "guidance_rule_mappings",
+        "interface_dispositions",
     ):
         value = supplied.get(section, [])
         if not isinstance(value, list) or not all(
@@ -485,6 +534,11 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "review_queue_max_total",
             "diagnostic_warning_budget",
             "diagnostic_per_rule_budget",
+            "target_evidence_readiness_percent",
+            "target_architecture_traceability_percent",
+            "target_cross_stack_percent",
+            "target_guidance_specificity_percent",
+            "target_cold_scan_seconds",
             "cache_enabled",
             "cache_path",
             "external_call_prefixes",
@@ -564,6 +618,23 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "selected_by",
             "effective_date",
             "exclusions",
+        },
+        "guidance_rule_mappings": {
+            "rule_selector",
+            "citation_id",
+            "relationship",
+            "strength",
+            "rationale",
+            "reviewed_by",
+            "effective_date",
+        },
+        "interface_dispositions": {
+            "endpoint_id",
+            "side",
+            "decision",
+            "rationale",
+            "reviewed_by",
+            "effective_date",
         },
     }
     allowed_sections = set(table_fields) | set(array_fields)
@@ -738,6 +809,135 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 f"guidance_applicability entry {index} exclusions must be strings"
             )
+    from .guidance import (
+        GUIDANCE_CITATIONS,
+        GUIDELINE_PROFILES,
+        MAPPING_STRENGTHS,
+        RELATIONSHIP_TYPES,
+    )
+
+    known_citations = {
+        str(value.get("id", "")): str(value.get("source_id", ""))
+        for value in GUIDANCE_CITATIONS
+        if isinstance(value, dict)
+    }
+    active_source_ids: set[str] = set()
+    for profile in GUIDELINE_PROFILES:
+        if not isinstance(profile, dict) or profile.get("id") not in active_profiles:
+            continue
+        source_ids = profile.get("source_ids", [])
+        if isinstance(source_ids, list):
+            active_source_ids.update(str(source_id) for source_id in source_ids)
+    seen_guidance_mappings: set[tuple[str, str, str, str]] = set()
+    for index, mapping in enumerate(
+        config.get("guidance_rule_mappings", []), start=1
+    ):
+        selector = mapping.get("rule_selector")
+        citation_id = mapping.get("citation_id")
+        relationship = mapping.get("relationship")
+        strength = mapping.get("strength")
+        if not isinstance(selector, str) or not selector.strip():
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} requires rule_selector"
+            )
+        if not isinstance(citation_id, str) or citation_id not in known_citations:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} references an unknown built-in citation"
+            )
+        if known_citations[citation_id] not in active_source_ids:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} citation is outside the active guidance profiles"
+            )
+        if relationship not in RELATIONSHIP_TYPES:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} has an invalid relationship"
+            )
+        if strength not in MAPPING_STRENGTHS:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} has an invalid strength"
+            )
+        identity = (selector, citation_id, str(relationship), str(strength))
+        if identity in seen_guidance_mappings:
+            raise ValueError(
+                f"duplicate guidance rule mapping: {selector} -> {citation_id} ({relationship})"
+            )
+        seen_guidance_mappings.add(identity)
+        for field in ("rationale", "reviewed_by"):
+            if not isinstance(mapping.get(field), str) or not mapping[field].strip():
+                raise ValueError(
+                    f"guidance_rule_mappings entry {index} requires {field}"
+                )
+        effective_date = mapping.get("effective_date")
+        if not isinstance(effective_date, str):
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} requires effective_date"
+            )
+        try:
+            date.fromisoformat(effective_date)
+        except ValueError as exc:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} effective_date must be YYYY-MM-DD"
+            ) from exc
+
+    interface_decisions = {
+        "server": {
+            "intentional_backend_only",
+            "external_or_generated_client",
+            "deprecated_or_unreachable",
+            "missing_client_coverage",
+            "confirmed_defect",
+            "needs_information",
+        },
+        "client": {
+            "confirmed_compatible",
+            "deployment_prefix_or_proxy",
+            "generated_or_external_server",
+            "test_only",
+            "confirmed_mismatch",
+            "confirmed_defect",
+            "needs_information",
+        },
+    }
+    seen_interface_dispositions: set[str] = set()
+    for index, disposition in enumerate(
+        config.get("interface_dispositions", []), start=1
+    ):
+        endpoint_id = disposition.get("endpoint_id")
+        side = disposition.get("side")
+        decision = disposition.get("decision")
+        if not isinstance(endpoint_id, str) or not endpoint_id.strip():
+            raise ValueError(
+                f"interface_dispositions entry {index} requires endpoint_id"
+            )
+        if endpoint_id in seen_interface_dispositions:
+            raise ValueError(f"duplicate interface disposition: {endpoint_id}")
+        seen_interface_dispositions.add(endpoint_id)
+        if side not in interface_decisions:
+            raise ValueError(
+                f"interface_dispositions entry {index} side must be server or client"
+            )
+        if decision not in interface_decisions[str(side)]:
+            raise ValueError(
+                f"interface_dispositions entry {index} has an invalid {side} decision"
+            )
+        for field in ("rationale", "reviewed_by"):
+            if not isinstance(disposition.get(field), str) or not disposition[
+                field
+            ].strip():
+                raise ValueError(
+                    f"interface_dispositions entry {index} requires {field}"
+                )
+        effective_date = disposition.get("effective_date")
+        if not isinstance(effective_date, str):
+            raise ValueError(
+                f"interface_dispositions entry {index} requires effective_date"
+            )
+        try:
+            date.fromisoformat(effective_date)
+        except ValueError as exc:
+            raise ValueError(
+                f"interface_dispositions entry {index} effective_date must be YYYY-MM-DD"
+            ) from exc
     overlap = set(analysis["included_failure_classes"]) & set(
         analysis["excluded_failure_classes"]
     )
@@ -762,6 +962,11 @@ def _validate_config(config: dict[str, Any]) -> None:
         ("review_queue_max_total", 50_000),
         ("diagnostic_warning_budget", 1_000_000),
         ("diagnostic_per_rule_budget", 1_000_000),
+        ("target_evidence_readiness_percent", 100),
+        ("target_architecture_traceability_percent", 100),
+        ("target_cross_stack_percent", 100),
+        ("target_guidance_specificity_percent", 100),
+        ("target_cold_scan_seconds", 3_600),
     ):
         value = scan.get(field)
         if (
@@ -1276,3 +1481,22 @@ def _validate_config(config: dict[str, Any]) -> None:
                 f"analysis.{field} contains unknown failure classes: "
                 + ", ".join(sorted(unknown))
             )
+
+
+def validate_fault_tree_definitions(
+    hazards: list[dict[str, Any]], fault_trees: list[dict[str, Any]]
+) -> None:
+    """Validate standalone fault-tree definitions with the governed config rules."""
+
+    if not isinstance(hazards, list) or not all(
+        isinstance(value, dict) for value in hazards
+    ):
+        raise ValueError("hazards must be a list of objects")
+    if not isinstance(fault_trees, list) or not all(
+        isinstance(value, dict) for value in fault_trees
+    ):
+        raise ValueError("fault trees must be a list of objects")
+    candidate = copy.deepcopy(DEFAULT_CONFIG)
+    candidate["hazards"] = copy.deepcopy(hazards)
+    candidate["fault_trees"] = copy.deepcopy(fault_trees)
+    _validate_config(candidate)

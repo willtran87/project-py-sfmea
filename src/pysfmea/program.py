@@ -12,7 +12,7 @@ from collections import Counter
 from datetime import datetime
 from html import escape
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal, TypedDict, cast
 
 from .file_publication import (
     ArtifactDestinationState,
@@ -95,6 +95,52 @@ class ProgramReportPublicationError(ValueError):
         super().__init__(message)
         self.phase = phase
 
+
+class _ValidationRecord(TypedDict):
+    """Normalized validation cohort used only after structural checks pass."""
+
+    id: str
+    repository: str
+    recall: float
+    precision: float
+    call_recall: float
+    call_precision: float
+    independent: bool
+    case_count: int
+    call_case_count: int
+    count_backed: bool
+    matched_count: int
+    actual_matched_count: int
+    actual_count: int
+    call_count_backed: bool
+    call_matched_count: int
+    call_actual_matched_count: int
+    call_actual_count: int
+    evaluation_artifact_declared: bool
+    evaluation_artifact_verified: bool
+    duplicate_evidence: bool
+
+
+class _LlmValidationRecord(TypedDict):
+    """Normalized LLM evaluation used only after structural checks pass."""
+
+    id: str
+    grounding: float
+    citation_accuracy: float
+    unsupported_claim_rate: float
+    sample_count: int
+    independent: bool
+    count_backed: bool
+    grounded_count: int
+    citation_count: int
+    claim_count: int
+    unsupported_count: int
+    corpus_artifact_declared: bool
+    corpus_artifact_verified: bool
+    semantic_fingerprint_verified: bool
+    subject_binding_verified: bool
+    duplicate_evidence: bool
+
 RELATIONSHIP_KINDS = {
     "calls",
     "publishes",
@@ -150,7 +196,7 @@ def seal_program(program: dict[str, Any]) -> dict[str, Any]:
         "canonicalization": "json-sort-keys-compact-utf8",
         "content_sha256": canonical_json_sha256(sealed),
     }
-    return sealed
+    return cast(dict[str, Any], sealed)
 
 
 def _bounded_text(value: Any, *, label: str, limit: int = 2_000) -> str:
@@ -189,6 +235,7 @@ def build_program_template(
     *,
     destination: str | Path,
     name: str = "System assurance program",
+    validation_cohorts: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """Build a state-bound multi-repository program starter."""
 
@@ -218,6 +265,13 @@ def build_program_template(
         raise ValueError(
             f"program exceeds the {MAX_PROGRAM_REPOSITORIES}-repository limit"
         )
+    cohort_records = json.loads(
+        json.dumps(list(validation_cohorts), ensure_ascii=False)
+    )
+    if len(cohort_records) > MAX_PROGRAM_COHORTS:
+        raise ValueError(
+            f"program exceeds the {MAX_PROGRAM_COHORTS}-cohort limit"
+        )
     program = {
         "format": PROGRAM_FORMAT,
         "name": _bounded_text(name, label="program name", limit=500),
@@ -227,7 +281,7 @@ def build_program_template(
         "relationships": [],
         "requirements_sources": [],
         "external_evidence": [],
-        "validation_cohorts": [],
+        "validation_cohorts": cohort_records,
         "llm_evaluations": [],
         "governance": {
             "required_roles": ["software", "safety"],
@@ -269,6 +323,7 @@ def write_program_template(
     *,
     name: str = "System assurance program",
     force: bool = False,
+    validation_cohorts: Iterable[dict[str, Any]] = (),
 ) -> Path:
     """Publish an assurance-program template without overwriting unrelated content."""
 
@@ -285,7 +340,12 @@ def write_program_template(
         ).value
         if not isinstance(current, dict) or current.get("format") != PROGRAM_FORMAT:
             raise ValueError("--force only replaces a recognized assurance program")
-    program = build_program_template(analyses, destination=state.path, name=name)
+    program = build_program_template(
+        analyses,
+        destination=state.path,
+        name=name,
+        validation_cohorts=validation_cohorts,
+    )
     content = json.dumps(program, indent=2, ensure_ascii=False) + "\n"
     return atomic_publish_text(
         state.path,
@@ -622,7 +682,9 @@ def _evaluation_result_matches_cohort(
         )
     ):
         return False
-    expected, actual, matched = counts
+    expected = cast(int, counts[0])
+    actual = cast(int, counts[1])
+    matched = cast(int, counts[2])
     if (
         result.get("format") != cohort.get("evaluation_result_format")
         or verifier.get("name") != "PySFMEA"
@@ -663,7 +725,9 @@ def _evaluation_result_matches_cohort(
         )
     ):
         return False
-    call_expected, call_actual, call_matched = call_counts
+    call_expected = cast(int, call_counts[0])
+    call_actual = cast(int, call_counts[1])
+    call_matched = cast(int, call_counts[2])
     return bool(
         call_expected == call_case_count
         and call_actual == cohort.get("call_actual_count")
@@ -686,9 +750,9 @@ def _llm_corpus_evidence_fingerprint(
         projection = project_llm_quality_corpus(
             corpus,
             expected_subject={
-                "provider": evaluation.get("provider"),
-                "model": evaluation.get("model"),
-                "prompt_version": evaluation.get("prompt_version"),
+                "provider": str(evaluation.get("provider", "")),
+                "model": str(evaluation.get("model", "")),
+                "prompt_version": str(evaluation.get("prompt_version", "")),
             },
         )
     except ValueError:
@@ -959,15 +1023,17 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                     code="relationship.endpoint_unknown_fields",
                     location=f"{location}.{end}",
                 )
-            repository_id = (
+            endpoint_repository_id = (
                 endpoint.get("repository_id") if isinstance(endpoint, dict) else None
             )
-            component_id = (
+            endpoint_component_id = (
                 endpoint.get("component_id") if isinstance(endpoint, dict) else None
             )
-            analysis = loaded_analyses.get(str(repository_id))
-            component_ids = component_ids_by_repository.get(str(repository_id), set())
-            if not analysis or component_id not in component_ids:
+            endpoint_analysis = loaded_analyses.get(str(endpoint_repository_id))
+            component_ids = component_ids_by_repository.get(
+                str(endpoint_repository_id), set()
+            )
+            if not endpoint_analysis or endpoint_component_id not in component_ids:
                 endpoints_valid = False
                 _finding(
                     findings,
@@ -1361,7 +1427,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 )
 
     total_evidence_bytes = 0
-    evidence_statuses = Counter()
+    evidence_statuses: Counter[str] = Counter()
     trusted_evidence: dict[str, dict[str, Any]] = {}
     evidence_claim_owners: dict[str, str] = {}
     verified_evidence = 0
@@ -1841,7 +1907,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                     f"relationships.{relationship['id']}.circuit_breaker",
                 )
 
-    validation_records = []
+    validation_records: list[_ValidationRecord] = []
     total_evaluation_bytes = 0
     evaluation_artifact_cache: dict[Path, tuple[int, str, Any]] = {}
     cohort_ids: set[str] = set()
@@ -2033,9 +2099,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 )
                 count_backed = False
             else:
-                matched_count = int(matched_value)
-                actual_matched_count = int(actual_matched_value)
-                actual_count = int(actual_value)
+                matched_count = cast(int, matched_value)
+                actual_matched_count = cast(int, actual_matched_value)
+                actual_count = cast(int, actual_value)
                 if (
                     actual_count < 1
                     or matched_count > case_count
@@ -2131,9 +2197,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 )
                 call_count_backed = False
             else:
-                call_matched_count = int(call_matched_value)
-                call_actual_matched_count = int(call_actual_matched_value)
-                call_actual_count = int(call_actual_value)
+                call_matched_count = cast(int, call_matched_value)
+                call_actual_matched_count = cast(int, call_actual_matched_value)
+                call_actual_count = cast(int, call_actual_value)
                 if (
                     call_actual_count < 1
                     or call_matched_count > call_case_count
@@ -2335,19 +2401,29 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "repository": str(cohort.get("repository", "")),
                 "recall": recall,
                 "precision": precision,
-                "call_recall": call_recall,
-                "call_precision": call_precision,
+                "call_recall": call_recall if call_recall is not None else 0.0,
+                "call_precision": call_precision
+                if call_precision is not None
+                else 0.0,
                 "independent": independent,
                 "case_count": case_count,
                 "call_case_count": call_case_count,
                 "count_backed": count_backed,
-                "matched_count": matched_count,
-                "actual_matched_count": actual_matched_count,
-                "actual_count": actual_count,
+                "matched_count": matched_count if matched_count is not None else 0,
+                "actual_matched_count": actual_matched_count
+                if actual_matched_count is not None
+                else 0,
+                "actual_count": actual_count if actual_count is not None else 0,
                 "call_count_backed": call_count_backed,
-                "call_matched_count": call_matched_count,
-                "call_actual_matched_count": call_actual_matched_count,
-                "call_actual_count": call_actual_count,
+                "call_matched_count": call_matched_count
+                if call_matched_count is not None
+                else 0,
+                "call_actual_matched_count": call_actual_matched_count
+                if call_actual_matched_count is not None
+                else 0,
+                "call_actual_count": call_actual_count
+                if call_actual_count is not None
+                else 0,
                 "evaluation_artifact_declared": artifact_declared,
                 "evaluation_artifact_verified": evaluation_artifact_verified,
                 "duplicate_evidence": duplicate_evidence,
@@ -2394,7 +2470,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     total_call_count_backed_actual_matched = sum(
         value["call_actual_matched_count"] for value in call_count_backed_records
     )
-    validation_summary = {
+    validation_summary: dict[str, Any] = {
         "cohorts": len(validation_records),
         "credited_cohorts": len(credited_validation_records),
         "duplicate_evidence": len(validation_records)
@@ -2600,7 +2676,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "validation_cohorts",
             )
 
-    llm_records = []
+    llm_records: list[_LlmValidationRecord] = []
     total_llm_corpus_bytes = 0
     llm_corpus_cache: dict[Path, tuple[int, str, Any]] = {}
     llm_ids: set[str] = set()
@@ -2650,9 +2726,13 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             )
             continue
         llm_ids.add(evaluation_id)
-        if not all(
-            isinstance(evaluation.get(field), str) and evaluation.get(field).strip()
+        provenance_values = tuple(
+            evaluation.get(field)
             for field in ("provider", "model", "prompt_version", "producer", "reviewer")
+        )
+        if not all(
+            isinstance(value, str) and bool(value.strip())
+            for value in provenance_values
         ):
             _finding(
                 findings,
@@ -2978,16 +3058,18 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         llm_records.append(
             {
                 "id": evaluation_id,
-                "grounding": grounding,
-                "citation_accuracy": citation,
-                "unsupported_claim_rate": unsupported,
+                "grounding": cast(float, grounding),
+                "citation_accuracy": cast(float, citation),
+                "unsupported_claim_rate": cast(float, unsupported),
                 "sample_count": samples,
                 "independent": independent,
                 "count_backed": llm_count_backed,
-                "grounded_count": grounded_count,
-                "citation_count": citation_count,
-                "claim_count": claim_count,
-                "unsupported_count": unsupported_count,
+                "grounded_count": grounded_count if grounded_count is not None else 0,
+                "citation_count": citation_count if citation_count is not None else 0,
+                "claim_count": claim_count if claim_count is not None else 0,
+                "unsupported_count": unsupported_count
+                if unsupported_count is not None
+                else 0,
                 "corpus_artifact_declared": corpus_artifact_declared,
                 "corpus_artifact_verified": corpus_artifact_verified,
                 "semantic_fingerprint_verified": semantic_fingerprint is not None,
@@ -3011,7 +3093,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         value["unsupported_count"] for value in llm_count_backed_records
     )
 
-    def weighted(field: str) -> float | None:
+    def weighted(
+        field: Literal["grounding", "citation_accuracy", "unsupported_claim_rate"],
+    ) -> float | None:
         return (
             round(
                 sum(
@@ -3025,7 +3109,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             else None
         )
 
-    llm_summary = {
+    llm_summary: dict[str, Any] = {
         "evaluations": len(llm_records),
         "credited_evaluations": len(credited_llm_records),
         "duplicate_evidence": len(llm_records) - len(credited_llm_records),

@@ -682,7 +682,10 @@ def _handler(state: _ReviewState) -> type[BaseHTTPRequestHandler]:
             supplied = self.headers.get("Host", "")
             try:
                 parsed = urllib.parse.urlsplit("//" + supplied)
-                expected_port = int(self.server.server_address[1])
+                server_address = self.server.server_address
+                if not isinstance(server_address, tuple) or len(server_address) < 2:
+                    raise ValueError("review server has no TCP port")
+                expected_port = int(server_address[1])
                 allowed = (
                     parsed.username is None
                     and parsed.password is None

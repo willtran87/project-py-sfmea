@@ -387,6 +387,17 @@ class ScannerTests(unittest.TestCase):
             <= {role for value in controls for role in value["roles"]}
         )
         self.assertTrue(all(value["detection_basis"] for value in controls))
+        breaker_model = next(
+            value
+            for value in analysis["resilience_semantics"]["circuit_breakers"]
+            if value["scope"] == "CircuitBreaker"
+        )
+        self.assertTrue(
+            {"admission_guard", "failure_recording", "success_reset", "recovery_timer"}
+            <= set(breaker_model["roles"])
+        )
+        self.assertTrue({"closed", "open", "half_open"} <= set(breaker_model["states"]))
+        self.assertEqual(breaker_model["semantic_gaps"], [])
 
     def test_scan_does_not_treat_descriptive_circuit_text_as_a_control(self) -> None:
         (self.root / "documentation.py").write_text(
@@ -669,6 +680,244 @@ class ScannerTests(unittest.TestCase):
             reconciliation["compatibility_findings"][0]["kind"],
             "method_mismatch_candidate",
         )
+
+        reviewed = scan_repository(
+            self.root,
+            config={
+                "interface_dispositions": [
+                    {
+                        "endpoint_id": client["id"],
+                        "side": "client",
+                        "decision": "confirmed_mismatch",
+                        "rationale": "The deployed client method conflicts with the governed route contract.",
+                        "reviewed_by": "Interface reviewer",
+                        "effective_date": "2026-08-09",
+                    }
+                ]
+            },
+        )["interface_reconciliation"]
+        reviewed_client = next(
+            value
+            for value in reviewed["client_endpoints"]
+            if value["id"] == client["id"]
+        )
+        self.assertEqual(
+            reviewed_client["reviewed_disposition"]["decision"],
+            "confirmed_mismatch",
+        )
+        self.assertEqual(reviewed["summary"]["applied_dispositions"], 1)
+        self.assertEqual(
+            reviewed["compatibility_findings"][0]["reviewed_dispositions"][0][
+                "endpoint_id"
+            ],
+            client["id"],
+        )
+        rules = {
+            value["rule_id"]
+            for value in validate_analysis(
+                scan_repository(
+                    self.root,
+                    config={
+                        "interface_dispositions": [
+                            {
+                                "endpoint_id": client["id"],
+                                "side": "client",
+                                "decision": "confirmed_mismatch",
+                                "rationale": "The method conflict is confirmed.",
+                                "reviewed_by": "Interface reviewer",
+                                "effective_date": "2026-08-09",
+                            }
+                        ]
+                    },
+                )
+            )["findings"]
+        }
+        self.assertIn("interface.confirmed_reviewed_defect", rules)
+
+    def test_interface_reconciliation_composes_imported_router_table_mounts(
+        self,
+    ) -> None:
+        package = self.root / "backend" / "app"
+        routes = package / "routers"
+        routes.mkdir(parents=True)
+        (routes / "chat.py").write_text(
+            "from fastapi import APIRouter\n"
+            "router = APIRouter()\n\n"
+            "@router.post('/sessions/{session_id}/messages')\n"
+            "def send_message(session_id: str):\n"
+            "    return {'id': session_id}\n",
+            encoding="utf-8",
+        )
+        (package / "main.py").write_text(
+            "from fastapi import FastAPI\n"
+            "from app.routers import chat\n\n"
+            "app = FastAPI()\n"
+            "_ROUTERS = [(chat.router, 'chat', ['chat'])]\n"
+            "for router_obj, path, tags in _ROUTERS:\n"
+            "    app.include_router(router_obj, prefix=f'/api/v1/{path}', tags=tags)\n"
+            "    app.include_router(router_obj, prefix=f'/api/{path}', tags=tags)\n",
+            encoding="utf-8",
+        )
+        frontend = self.root / "frontend"
+        frontend.mkdir()
+        (frontend / "chat.ts").write_text(
+            "export const send = (id: string) => "
+            "fetch(`/api/v1/chat/sessions/${id}/messages`, {method: 'POST'});\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        reconciliation = analysis["interface_reconciliation"]
+
+        self.assertEqual(reconciliation["summary"]["server_routes"], 2)
+        self.assertEqual(reconciliation["summary"]["exact_matches"], 1)
+        paths = {value["path"] for value in reconciliation["server_routes"]}
+        self.assertEqual(
+            paths,
+            {
+                "/api/v1/chat/sessions/{session_id}/messages",
+                "/api/chat/sessions/{session_id}/messages",
+            },
+        )
+        matched = next(
+            value
+            for value in reconciliation["server_routes"]
+            if value["path"].startswith("/api/v1/")
+        )
+        self.assertEqual(matched["mount_prefix"], "/api/v1/chat")
+        self.assertEqual(matched["registration_source"]["path"], "backend/app/main.py")
+        self.assertEqual(
+            matched["registration_confidence"], "bounded_static_registration_loop"
+        )
+
+    def test_interface_reconciliation_composes_cross_file_client_wrapper_base(
+        self,
+    ) -> None:
+        (self.root / "routes.py").write_text(
+            "from fastapi import APIRouter\n"
+            "router = APIRouter(prefix='/api')\n\n"
+            "@router.post('/widgets/{widget_id}')\n"
+            "def update(widget_id: str): return {'id': widget_id}\n",
+            encoding="utf-8",
+        )
+        frontend = self.root / "frontend"
+        frontend.mkdir()
+        (frontend / "base.ts").write_text(
+            "export const BASE_URL = '/api';\n"
+            "export async function request<T>(path: string, options?: RequestInit) {\n"
+            "  return fetch(`${BASE_URL}${path}`, options);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (frontend / "widgets.ts").write_text(
+            "import { request } from './base';\n"
+            "export const update = (id: string) => "
+            "request<{ok: boolean}>(`/widgets/${id}`, {method: 'POST'});\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        reconciliation = analysis["interface_reconciliation"]
+
+        self.assertEqual(reconciliation["summary"]["exact_matches"], 1)
+        client = next(
+            value
+            for value in reconciliation["client_endpoints"]
+            if value["source_path"] == "frontend/widgets.ts"
+        )
+        self.assertEqual(client["method"], "POST")
+        self.assertIn("/api/widgets/{parameter}", client["composed_normalized_paths"])
+        base_entry = next(
+            value
+            for value in analysis["repository_inventory"]["entries"]
+            if value["path"] == "frontend/base.ts"
+        )
+        self.assertEqual(
+            base_entry["boundary_facts"]["client_wrappers"],
+            [{"operation": "request", "base_symbol": "BASE_URL"}],
+        )
+
+    def test_interface_reconciliation_excludes_web_tests_and_avoids_false_method_gaps(
+        self,
+    ) -> None:
+        (self.root / "routes.py").write_text(
+            "from fastapi import APIRouter\n"
+            "router = APIRouter()\n\n"
+            "@router.get('/api/widgets/{widget_id}')\n"
+            "def get_widget(widget_id: str): return {}\n\n"
+            "@router.put('/api/widgets/{widget_id}')\n"
+            "def put_widget(widget_id: str): return {}\n",
+            encoding="utf-8",
+        )
+        frontend = self.root / "frontend"
+        tests = frontend / "__tests__"
+        tests.mkdir(parents=True)
+        (frontend / "client.ts").write_text(
+            "export const load = (id: string) => "
+            "fetch(`/api/widgets/${id}`, {method: 'GET'});\n",
+            encoding="utf-8",
+        )
+        (tests / "client.test.ts").write_text(
+            "fetch('/api/not-deployed', {method: 'POST'});\n",
+            encoding="utf-8",
+        )
+
+        reconciliation = scan_repository(self.root)["interface_reconciliation"]
+
+        self.assertEqual(reconciliation["summary"]["client_endpoint_candidates"], 1)
+        self.assertEqual(reconciliation["summary"]["test_evidence_candidates"], 1)
+        self.assertEqual(reconciliation["summary"]["matched_client_endpoints"], 1)
+        self.assertEqual(reconciliation["summary"]["compatibility_findings"], 0)
+        test_candidate = next(
+            value
+            for value in reconciliation["client_endpoints"]
+            if value["source_path"].endswith("client.test.ts")
+        )
+        self.assertEqual(test_candidate["classification"], "test_evidence_candidate")
+
+    def test_interface_reconciliation_resolves_imported_axios_instance(self) -> None:
+        (self.root / "routes.py").write_text(
+            "from fastapi import APIRouter\n"
+            "router = APIRouter(prefix='/api')\n\n"
+            "@router.post('/widgets/{widget_id}')\n"
+            "def update(widget_id: str): return {'id': widget_id}\n",
+            encoding="utf-8",
+        )
+        frontend = self.root / "frontend"
+        frontend.mkdir()
+        (frontend / "base.ts").write_text(
+            "import axios from 'axios';\n"
+            "export const BASE_URL = '/api';\n"
+            "export const api = axios.create({baseURL: BASE_URL, timeout: 1000});\n"
+            "api.interceptors.response.use(value => value);\n",
+            encoding="utf-8",
+        )
+        (frontend / "widgets.ts").write_text(
+            "import { api } from './base';\n"
+            "export const update = (id: string) => api.post(`/widgets/${id}`);\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        reconciliation = analysis["interface_reconciliation"]
+
+        self.assertEqual(reconciliation["summary"]["exact_matches"], 1)
+        client = next(
+            value
+            for value in reconciliation["client_endpoints"]
+            if value["source_path"] == "frontend/widgets.ts"
+        )
+        self.assertEqual(client["method"], "POST")
+        self.assertEqual(client["line"], 2)
+        self.assertIn("/api/widgets/{parameter}", client["composed_normalized_paths"])
+        base_entry = next(
+            value
+            for value in analysis["repository_inventory"]["entries"]
+            if value["path"] == "frontend/base.ts"
+        )
+        facts = base_entry["boundary_facts"]
+        self.assertEqual(facts["client_instances"][0]["base_symbol"], "BASE_URL")
+        self.assertEqual(facts["interceptors"], ["api"])
 
     def test_organizational_guidance_pack_is_hashed_and_traced_to_findings(
         self,
@@ -1817,7 +2066,7 @@ class ScannerTests(unittest.TestCase):
             for run in analysis["adapter_runs"]["runs"]
             if run["adapter_id"] == "python.ast_parser"
         )
-        self.assertEqual(parser_run["adapter_version"], "3")
+        self.assertEqual(parser_run["adapter_version"], "4")
         inventory_entries = {
             entry["path"]: entry
             for entry in analysis["repository_inventory"]["entries"]
@@ -2100,6 +2349,552 @@ class ScannerTests(unittest.TestCase):
             "module_initialization", components["<module initialization>"]["signals"]
         )
         self.assertNotIn("entrypoint", components["<module initialization>"]["signals"])
+
+    def test_interprocedural_data_flow_binds_parameters_returns_attributes_and_containers(
+        self,
+    ) -> None:
+        (self.root / "flow.py").write_text(
+            "def normalize(value, *, scale=1):\n"
+            "    result = {'value': value * scale}\n"
+            "    return result['value']\n\n"
+            "def orchestrate(payload, cache):\n"
+            "    cache['latest'] = normalize(payload.amount, scale=payload.scale)\n"
+            "    return cache['latest']\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["interprocedural_data_flow"]
+        edge = next(
+            value
+            for value in model["edges"]
+            if value["caller_reference"] == "flow.py:orchestrate"
+            and value["callee_reference"] == "flow.py:normalize"
+        )
+
+        self.assertEqual(model["format"], "pysfmea-interprocedural-data-flow-1")
+        self.assertEqual(edge["resolution"], "unique_static_target")
+        tampered = json.loads(json.dumps(analysis))
+        tampered["alias_object_flow"]["records"][0]["component_id"] = "CMP-UNKNOWN"
+        validation = validate_analysis(tampered)
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_alias_object_flow"
+                for value in validation["findings"]
+            )
+        )
+        self.assertEqual(
+            [
+                (value["target_parameter"], value["binding_status"])
+                for value in edge["arguments"]
+            ],
+            [("value", "bound"), ("scale", "bound")],
+        )
+        self.assertEqual(
+            edge["arguments"][0]["symbols"][0]["reference"], "payload.amount"
+        )
+        self.assertEqual(edge["result_flow"]["context"]["kind"], "container_item")
+        self.assertEqual(edge["result_flow"]["context"]["targets"], ["cache['latest']"])
+        self.assertTrue(edge["result_flow"]["observed"])
+        self.assertEqual(
+            edge["result_flow"]["callee_return_values"][0]["statement_kind"],
+            "return",
+        )
+        self.assertEqual(
+            edge["flow_dimensions"],
+            {
+                "parameter": True,
+                "return": True,
+                "attribute": True,
+                "container": True,
+            },
+        )
+        components = {value["qualname"]: value for value in analysis["components"]}
+        self.assertIn(
+            edge["id"], components["orchestrate"]["data_flow"]["outbound_edge_ids"]
+        )
+        self.assertIn(
+            edge["id"], components["normalize"]["data_flow"]["inbound_edge_ids"]
+        )
+
+        tampered = json.loads(json.dumps(analysis))
+        tampered["interprocedural_data_flow"]["edges"][0]["callee_component_id"] = (
+            "CMP-UNKNOWN"
+        )
+        validation = validate_analysis(tampered)
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_interprocedural_data_flow"
+                for value in validation["findings"]
+            )
+        )
+
+    def test_alias_and_object_flow_resolves_typed_receiver_and_mutation(self) -> None:
+        (self.root / "aliases.py").write_text(
+            "class Client:\n"
+            "    def send(self, payload):\n"
+            "        return payload\n\n"
+            "def dispatch(client: Client, payload, cache):\n"
+            "    transport = client\n"
+            "    response = transport.send(payload)\n"
+            "    cache['response'] = response\n"
+            "    return cache['response']\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        dispatch = next(
+            value for value in analysis["components"] if value["qualname"] == "dispatch"
+        )
+        send_site = next(
+            value
+            for value in dispatch["call_sites"]
+            if value["reference"] == "Client.send"
+        )
+        self.assertEqual(send_site["resolution"], "local_alias_to_parameter_annotation")
+        model = analysis["alias_object_flow"]
+        self.assertEqual(model["format"], "pysfmea-alias-object-flow-1")
+        records = [
+            value
+            for value in model["records"]
+            if value["component_reference"] == "aliases.py:dispatch"
+        ]
+        self.assertEqual(
+            {value["binding_kind"] for value in records},
+            {
+                "local_alias_or_value_binding",
+                "container_write",
+            },
+        )
+        transport = next(value for value in records if value["target"] == "transport")
+        self.assertEqual(transport["source"]["symbols"][0]["reference"], "client")
+        response_write = next(
+            value for value in records if value["target"] == "cache['response']"
+        )
+        self.assertEqual(
+            response_write["source"]["symbols"][0]["alias_origins"],
+            ["call:Client.send"],
+        )
+        edge = next(
+            value
+            for value in analysis["interprocedural_data_flow"]["edges"]
+            if value["caller_reference"] == "aliases.py:dispatch"
+            and value["callee_reference"] == "aliases.py:Client.send"
+        )
+        self.assertEqual(edge["resolution"], "unique_static_target")
+
+    def test_concurrency_model_links_spawn_join_cancel_lock_and_lexical_order(
+        self,
+    ) -> None:
+        (self.root / "concurrency.py").write_text(
+            "import asyncio\n\n"
+            "async def worker(lock, value):\n"
+            "    async with lock:\n"
+            "        await asyncio.sleep(0)\n"
+            "    return value\n\n"
+            "async def orchestrate(lock):\n"
+            "    task = asyncio.create_task(worker(lock, 1))\n"
+            "    await asyncio.gather(task)\n"
+            "    task.cancel()\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["concurrency_model"]
+        self.assertEqual(model["format"], "pysfmea-concurrency-model-1")
+        categories = {
+            category
+            for operation in model["operations"]
+            for category in operation["categories"]
+        }
+        self.assertTrue(
+            {
+                "task_spawn",
+                "task_join_or_wait",
+                "cancellation_or_timeout",
+                "synchronization",
+                "await_completion",
+            }.issubset(categories)
+        )
+        relation_kinds = {value["kind"] for value in model["relations"]}
+        self.assertTrue(
+            {
+                "lexical_program_order",
+                "await_completion_before_next_operation",
+                "spawn_to_later_join_candidate",
+            }.issubset(relation_kinds)
+        )
+        orchestrate = next(
+            value
+            for value in analysis["components"]
+            if value["qualname"] == "orchestrate"
+        )
+        self.assertTrue(orchestrate["concurrency"]["operation_ids"])
+        self.assertTrue(orchestrate["concurrency"]["relation_ids"])
+
+        tampered = json.loads(json.dumps(analysis))
+        tampered["concurrency_model"]["relations"][0]["target_operation_id"] = (
+            "CONCURRENCY-OP-UNKNOWN"
+        )
+        validation = validate_analysis(tampered)
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_concurrency_model"
+                for value in validation["findings"]
+            )
+        )
+
+    def test_exception_model_propagates_named_types_and_honors_lexical_handlers(
+        self,
+    ) -> None:
+        (self.root / "exceptions.py").write_text(
+            "def leaf(flag):\n"
+            "    if flag:\n"
+            "        raise ValueError('bad value')\n\n"
+            "def handled():\n"
+            "    try:\n"
+            "        leaf(True)\n"
+            "    except ValueError as exc:\n"
+            "        raise RuntimeError('translated') from exc\n\n"
+            "def middle():\n"
+            "    leaf(False)\n\n"
+            "def top():\n"
+            "    middle()\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["exception_propagation"]
+        self.assertEqual(model["format"], "pysfmea-exception-propagation-1")
+        handled_edge = next(
+            value
+            for value in model["edges"]
+            if value["caller_reference"] == "exceptions.py:handled"
+            and value["callee_reference"] == "exceptions.py:leaf"
+            and value["exception_type"] == "ValueError"
+        )
+        self.assertEqual(handled_edge["disposition"], "caught_by_lexical_handler")
+        self.assertTrue(handled_edge["handler_ids"])
+        propagated = {
+            (
+                value["caller_reference"],
+                value["callee_reference"],
+                value["exception_type"],
+                value["disposition"],
+            )
+            for value in model["edges"]
+        }
+        self.assertIn(
+            (
+                "exceptions.py:middle",
+                "exceptions.py:leaf",
+                "ValueError",
+                "may_propagate",
+            ),
+            propagated,
+        )
+        self.assertIn(
+            (
+                "exceptions.py:top",
+                "exceptions.py:middle",
+                "ValueError",
+                "may_propagate",
+            ),
+            propagated,
+        )
+        handler = next(
+            value
+            for value in model["handlers"]
+            if value["component_reference"] == "exceptions.py:handled"
+        )
+        self.assertEqual(handler["exception_types"], ["ValueError"])
+        self.assertIn("translates", handler["actions"])
+        handled = next(
+            value for value in analysis["components"] if value["qualname"] == "handled"
+        )
+        self.assertIn(handler["id"], handled["exception_flow"]["handler_ids"])
+
+        tampered = json.loads(json.dumps(analysis))
+        tampered["exception_propagation"]["edges"][0]["caller_component_id"] = (
+            "CMP-UNKNOWN"
+        )
+        validation = validate_analysis(tampered)
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_exception_propagation"
+                for value in validation["findings"]
+            )
+        )
+
+    def test_state_machine_model_links_guarded_assignments_and_states(self) -> None:
+        (self.root / "states.py").write_text(
+            "from enum import Enum\n\n"
+            "class State(Enum):\n"
+            "    NEW = 'new'\n"
+            "    RUNNING = 'running'\n"
+            "    DONE = 'done'\n\n"
+            "class Workflow:\n"
+            "    def __init__(self):\n"
+            "        self.state = State.NEW\n\n"
+            "    def advance(self):\n"
+            "        if self.state == State.NEW:\n"
+            "            self.state = State.RUNNING\n"
+            "        elif self.state == State.RUNNING:\n"
+            "            self.state = State.DONE\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["state_machine_model"]
+        self.assertEqual(model["format"], "pysfmea-state-machine-model-1")
+        transitions = [
+            value
+            for value in model["transitions"]
+            if value["component_reference"] == "states.py:Workflow.advance"
+        ]
+        self.assertEqual(
+            {value["target_state_expression"] for value in transitions},
+            {"State.RUNNING", "State.DONE"},
+        )
+        self.assertTrue(all(value["guard_ids"] for value in transitions))
+        self.assertTrue(all(value["target_state_id"] for value in transitions))
+        advance = next(
+            value
+            for value in analysis["components"]
+            if value["qualname"] == "Workflow.advance"
+        )
+        self.assertEqual(
+            set(advance["state_machine"]["transition_ids"]),
+            {value["id"] for value in transitions},
+        )
+        tampered = json.loads(json.dumps(analysis))
+        tampered["state_machine_model"]["transitions"][0]["target_state_id"] = (
+            "STATE-UNKNOWN"
+        )
+        validation = validate_analysis(tampered)
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_state_machine_model"
+                for value in validation["findings"]
+            )
+        )
+
+    def test_resilience_semantics_compose_transactions_effects_timing_retries_and_resources(
+        self,
+    ) -> None:
+        (self.root / "resilience.py").write_text(
+            "from queue import Queue\n"
+            "from tenacity import retry\n"
+            "import requests\n\n"
+            "@retry()\n"
+            "def persist(session, payload):\n"
+            "    session.begin()\n"
+            "    session.add(payload)\n"
+            "    session.commit()\n\n"
+            "def downstream(payload):\n"
+            "    return requests.post('/events', json=payload, timeout=8)\n\n"
+            "@retry()\n"
+            "def orchestrate(session, payload):\n"
+            "    jobs = Queue(maxsize=10)\n"
+            "    jobs.put(payload)\n"
+            "    persist(session, payload)\n"
+            "    return downstream(payload, timeout=5)\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["resilience_semantics"]
+        self.assertEqual(model["format"], "pysfmea-resilience-semantics-1")
+        transaction = next(
+            value
+            for value in model["transactions"]
+            if value["component_reference"] == "resilience.py:persist"
+        )
+        self.assertEqual(transaction["open_transaction_depth_at_exit"], 0)
+        self.assertNotIn(
+            "write_without_observed_transaction_boundary",
+            transaction["consistency_risks"],
+        )
+        orchestrate_effects = next(
+            value
+            for value in model["effects"]
+            if value["component_reference"] == "resilience.py:orchestrate"
+        )
+        self.assertIn("persistence_write", orchestrate_effects["transitive_effects"])
+        self.assertTrue(orchestrate_effects["unprotected_retry_side_effect"])
+        retry_path = next(
+            value
+            for value in model["retry_paths"]
+            if value["origin_component_reference"] == "resilience.py:orchestrate"
+        )
+        self.assertGreaterEqual(retry_path["amplification_factor_upper_candidate"], 4)
+        timing = next(
+            value
+            for value in model["timing_relations"]
+            if value["caller_reference"] == "resilience.py:orchestrate"
+            and value["callee_reference"] == "resilience.py:downstream"
+        )
+        self.assertEqual(timing["status"], "callee_budget_exceeds_caller")
+        resource = next(
+            value
+            for value in model["resources"]
+            if value["component_reference"] == "resilience.py:orchestrate"
+        )
+        self.assertEqual(resource["bounded_resources"][0]["bound"], 10.0)
+        orchestrate = next(
+            value
+            for value in analysis["components"]
+            if value["qualname"] == "orchestrate"
+        )
+        self.assertTrue(orchestrate["resilience_semantics"]["operation_ids"])
+        tampered = json.loads(json.dumps(analysis))
+        tampered["resilience_semantics"]["retry_paths"][0]["path"].append(
+            "unknown.py:component"
+        )
+        validation = validate_analysis(tampered)
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_resilience_semantics"
+                for value in validation["findings"]
+            )
+        )
+
+    def test_authorization_scope_flow_tracks_identity_tenant_and_guards(self) -> None:
+        (self.root / "authorization.py").write_text(
+            "import sqlalchemy\n\n"
+            "def require_scope(user_id, scope):\n"
+            "    return True\n\n"
+            "def query_records(tenant_id, user_id):\n"
+            "    return sqlalchemy.execute(tenant_id, user_id)\n\n"
+            "def endpoint(tenant_id, user_id):\n"
+            "    require_scope(user_id, 'records:read')\n"
+            "    return query_records(tenant_id, user_id)\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["authorization_scope_flow"]
+        self.assertEqual(model["format"], "pysfmea-authorization-scope-flow-1")
+        endpoint = next(
+            value
+            for value in model["components"]
+            if value["component_reference"] == "authorization.py:endpoint"
+        )
+        self.assertTrue({"identity", "tenant"} <= set(endpoint["context_dimensions"]))
+        self.assertTrue(endpoint["controls"])
+        flow = next(
+            value
+            for value in model["edges"]
+            if value["caller_component_id"] == endpoint["component_id"]
+            and {"identity", "tenant"} <= set(value["dimensions"])
+        )
+        component = next(
+            value
+            for value in analysis["components"]
+            if value["id"] == endpoint["component_id"]
+        )
+        self.assertIn(flow["id"], component["authorization_scope_flow"]["edge_ids"])
+        tampered = json.loads(json.dumps(analysis))
+        tampered["authorization_scope_flow"]["edges"][0]["data_flow_edge_id"] = (
+            "FLOW-UNKNOWN"
+        )
+        validation = validate_analysis(tampered)
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_authorization_scope_flow"
+                for value in validation["findings"]
+            )
+        )
+
+    def test_contract_semantics_reconcile_route_shape_and_detect_type_conflicts(
+        self,
+    ) -> None:
+        (self.root / "routes.py").write_text(
+            "from fastapi import APIRouter\n"
+            "router = APIRouter()\n\n"
+            "@router.get('/widgets/{widget_id}')\n"
+            "def widget(widget_id: str):\n"
+            "    return {'id': widget_id}\n",
+            encoding="utf-8",
+        )
+        base = {
+            "openapi": "3.1.0",
+            "paths": {
+                "/widgets/{widget_id}": {
+                    "get": {
+                        "operationId": "getWidget",
+                        "parameters": [
+                            {
+                                "name": "widget_id",
+                                "in": "path",
+                                "required": True,
+                                "schema": {"type": "string"},
+                            }
+                        ],
+                        "responses": {"200": {}, "404": {}},
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "Widget": {
+                        "type": "object",
+                        "required": ["id"],
+                        "properties": {"id": {"type": "string"}},
+                    }
+                }
+            },
+        }
+        conflicting = json.loads(json.dumps(base))
+        conflicting["openapi"] = "3.2.0"
+        conflicting["paths"] = {}
+        conflicting["components"]["schemas"]["Widget"]["required"] = ["id", "name"]
+        conflicting["components"]["schemas"]["Widget"]["properties"]["name"] = {
+            "type": "string"
+        }
+        (self.root / "openapi.json").write_text(json.dumps(base), encoding="utf-8")
+        (self.root / "openapi-secondary.json").write_text(
+            json.dumps(conflicting), encoding="utf-8"
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["contract_semantics"]
+        self.assertEqual(model["format"], "pysfmea-contract-semantics-1")
+        route = next(
+            value
+            for value in model["compatibility"]
+            if value.get("operation") == "GET /widgets/{widget_id}"
+        )
+        self.assertEqual(route["status"], "compatible_static_shape")
+        self.assertEqual(route["missing_parameters"], [])
+        self.assertEqual(route["response_statuses"], ["200", "404"])
+        conflict = next(
+            value
+            for value in model["compatibility"]
+            if value.get("kind") == "conflicting_type_contracts"
+        )
+        self.assertEqual(conflict["type_name"], "Widget")
+        evolution = next(
+            value
+            for value in model["evolution"]
+            if value["kind"] == "type_evolution" and value["subject"] == "Widget"
+        )
+        self.assertIn("required_field_added", evolution["breaking_change_candidates"])
+        widget = next(
+            value for value in analysis["components"] if value["qualname"] == "widget"
+        )
+        self.assertIn(route["id"], widget["contract_semantics"]["compatibility_ids"])
+        tampered = json.loads(json.dumps(analysis))
+        tampered["contract_semantics"]["operations"][0]["contract_id"] = (
+            "CONTRACT-UNKNOWN"
+        )
+        validation = validate_analysis(tampered)
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_contract_semantics"
+                for value in validation["findings"]
+            )
+        )
 
     def test_declarative_data_models_are_analysis_components(self) -> None:
         (self.root / "models.py").write_text(
@@ -3120,6 +3915,217 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(
             analysis["generator"]["analysis_schema_version"],
             analysis["schema_version"],
+        )
+
+    def test_deployment_shared_fate_and_hierarchy_models_are_traceable(self) -> None:
+        billing = self.root / "billing"
+        billing.mkdir()
+        (billing / "service.py").write_text(
+            "def billing_handler(value):\n    return value\n\n"
+            "def billing_worker(value):\n    return value + 1\n",
+            encoding="utf-8",
+        )
+        (self.root / "compose.yml").write_text(
+            "services:\n"
+            "  billing:\n"
+            "    image: example/billing:1.2\n"
+            "    depends_on:\n"
+            "      db:\n"
+            "        condition: service_healthy\n"
+            "    networks:\n"
+            "      - backend\n"
+            "    volumes:\n"
+            "      - billing-data:/data\n"
+            "    environment:\n"
+            "      BILLING_MODE: strict\n"
+            "    healthcheck:\n"
+            "      test: [CMD, check]\n"
+            "  db:\n"
+            "    image: postgres:17\n",
+            encoding="utf-8",
+        )
+        (self.root / "deployment.yaml").write_text(
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: billing-api\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      containers:\n"
+            "        - name: billing\n"
+            "          image: example/billing:1.2\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(
+            self.root,
+            config={
+                "project": {
+                    "purpose": "Process billing work.",
+                    "deployment_environments": ["production"],
+                },
+                "hazards": [{"id": "HZ-BILL", "description": "Billing unavailable"}],
+                "requirements": [
+                    {"id": "REQ-BILL", "text": "Billing remains available."}
+                ],
+                "system_interfaces": [
+                    {
+                        "id": "IF-BILL",
+                        "source": "Client",
+                        "target": "Billing",
+                        "description": "Submit billing work.",
+                    }
+                ],
+                "component_mappings": [
+                    {
+                        "pattern": "billing/service.py:*",
+                        "subsystem": "Platform/Payments/Billing",
+                        "requirements": ["REQ-BILL"],
+                        "hazards": ["HZ-BILL"],
+                        "interfaces": ["IF-BILL"],
+                    }
+                ],
+            },
+        )
+
+        topology = analysis["deployment_topology"]
+        node_by_name = {value["name"]: value for value in topology["nodes"]}
+        self.assertIn("billing", node_by_name)
+        self.assertIn("db", node_by_name)
+        self.assertIn("production", node_by_name)
+        self.assertEqual(node_by_name["billing"]["artifact_path"], "compose.yml")
+        self.assertTrue(
+            {
+                "depends_on",
+                "uses_network",
+                "uses_volume",
+                "uses_environment",
+                "declares_healthcheck",
+                "uses_image",
+            }
+            <= {value["kind"] for value in topology["edges"]}
+        )
+        self.assertIn("billing-api", node_by_name)
+        deployment_run = next(
+            value
+            for value in analysis["adapter_runs"]["runs"]
+            if value["adapter_id"] == "deployment.lexical_topology"
+        )
+        self.assertEqual(deployment_run["status"], "completed")
+        self.assertEqual(
+            set(deployment_run["contribution_entity_ids"]),
+            {"compose.yml", "deployment.yaml"},
+        )
+        billing_components = [
+            value
+            for value in analysis["components"]
+            if value.get("source", {}).get("path") == "billing/service.py"
+        ]
+        self.assertEqual(len(billing_components), 2)
+        billing_node_id = node_by_name["billing"]["id"]
+        self.assertTrue(
+            all(
+                billing_node_id in value["deployment_topology"]["node_ids"]
+                for value in billing_components
+            )
+        )
+
+        regions = analysis["shared_fate_analysis"]["regions"]
+        deployment_region = next(
+            value
+            for value in regions
+            if value["kind"] == "deployment_node" and value["key"] == billing_node_id
+        )
+        self.assertEqual(
+            set(deployment_region["affected_component_ids"]),
+            {value["id"] for value in billing_components},
+        )
+        self.assertTrue(
+            all(
+                deployment_region["id"] in value["shared_fate"]["region_ids"]
+                for value in billing_components
+            )
+        )
+
+        hierarchy = analysis["architecture_hierarchy"]
+        paths = {value["path"] for value in hierarchy["nodes"]}
+        self.assertIn("subsystem:Platform/Payments/Billing", paths)
+        root = next(value for value in hierarchy["nodes"] if not value["parent_id"])
+        self.assertIn("REQ-BILL", root["effective_trace"]["requirements"])
+        self.assertIn("HZ-BILL", root["effective_trace"]["hazards"])
+        self.assertIn("IF-BILL", root["effective_trace"]["interfaces"])
+        validation_rules = {
+            value["rule_id"] for value in validate_analysis(analysis)["findings"]
+        }
+        self.assertFalse(
+            {
+                "analysis.invalid_deployment_topology",
+                "analysis.invalid_shared_fate_analysis",
+                "analysis.invalid_architecture_hierarchy",
+            }
+            & validation_rules
+        )
+        architecture_path = export_architecture(
+            analysis, self.root / "architecture-models.md"
+        )
+        architecture_text = architecture_path.read_text(encoding="utf-8")
+        self.assertIn("## Declared deployment topology", architecture_text)
+        self.assertIn("## Shared-fate candidates", architecture_text)
+        self.assertIn(
+            "## Architecture hierarchy and inherited trace", architecture_text
+        )
+        architecture_json = export_architecture(
+            analysis, self.root / "architecture-models.json", format="json"
+        )
+        architecture_payload = json.loads(architecture_json.read_text(encoding="utf-8"))
+        self.assertEqual(
+            architecture_payload["deployment_topology"]["format"],
+            "pysfmea-deployment-topology-1",
+        )
+
+    def test_architecture_model_validation_rejects_tampering(self) -> None:
+        (self.root / "compose.yml").write_text(
+            "services:\n  app:\n    image: example/app:1\n",
+            encoding="utf-8",
+        )
+        config = {
+            "component_mappings": [
+                {"pattern": "app.py:*", "subsystem": "Platform/Application"}
+            ]
+        }
+        analysis = scan_repository(self.root, config=config)
+        topology_tamper = json.loads(json.dumps(analysis))
+        topology_tamper["deployment_topology"]["nodes"][0]["artifact_sha256"] = "0" * 64
+        self.assertIn(
+            "analysis.invalid_deployment_topology",
+            {
+                value["rule_id"]
+                for value in validate_analysis(topology_tamper)["findings"]
+            },
+        )
+
+        fate_tamper = json.loads(json.dumps(analysis))
+        fate_tamper["shared_fate_analysis"]["regions"][0][
+            "affected_component_ids"
+        ].append("UNKNOWN")
+        self.assertIn(
+            "analysis.invalid_shared_fate_analysis",
+            {value["rule_id"] for value in validate_analysis(fate_tamper)["findings"]},
+        )
+
+        hierarchy_tamper = json.loads(json.dumps(analysis))
+        root = next(
+            value
+            for value in hierarchy_tamper["architecture_hierarchy"]["nodes"]
+            if not value["parent_id"]
+        )
+        root["effective_trace"]["requirements"].append("REQ-INVENTED")
+        self.assertIn(
+            "analysis.invalid_architecture_hierarchy",
+            {
+                value["rule_id"]
+                for value in validate_analysis(hierarchy_tamper)["findings"]
+            },
         )
 
 

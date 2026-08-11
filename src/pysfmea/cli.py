@@ -6,12 +6,29 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import uuid
 from os import replace as atomic_replace
 from os.path import lexists
 from pathlib import Path
 from typing import Any
 
+from .accessibility import (
+    export_accessibility_evidence,
+    seal_accessibility_evidence,
+    verify_accessibility_evidence_file,
+)
+from .activation import (
+    DECISION_CHOICES,
+    apply_activation_workspace,
+    export_activation_records_template,
+    export_activation_workspace,
+    import_activation_records,
+    load_activation_workspace,
+    record_activation_assignment,
+    record_activation_decision,
+    verify_activation_workspace_file,
+)
 from .architecture import export_architecture
 from .assurance import (
     ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
@@ -25,7 +42,15 @@ from .assurance import (
     verify_assurance_work_queue_file,
     verify_pytest_scaffold,
 )
+from .browser_quality import verify_browser_quality_receipt_file
 from .config import load_config, write_config_template
+from .configuration_authoring import (
+    apply_configuration_authoring,
+    export_configuration_authoring_draft,
+    load_configuration_authoring,
+    seal_configuration_authoring_draft,
+    verify_configuration_authoring_file,
+)
 from .diagnostics import analysis_diagnostics
 from .diagrams import (
     DEFAULT_PROPAGATION_DEPTH,
@@ -42,6 +67,7 @@ from .diagrams import (
 )
 from .discovery import (
     OpenAICompatibleProvider,
+    compare_evaluation_results,
     deterministic_summary,
     discover_suggestions,
     evaluate_candidates,
@@ -49,6 +75,19 @@ from .discovery import (
     generate_summary,
     load_evaluation_spec,
     review_suggestion,
+)
+from .enhancements import (
+    enhancement_scope_preview,
+    enhancement_workbench,
+    enhancement_workbench_markdown,
+    evidence_preflight,
+    export_enhancement_workbench,
+    verify_enhancement_workbench_file,
+)
+from .evidence_onboarding import (
+    onboard_evidence,
+    verify_evidence_onboarding_receipt,
+    verify_evidence_onboarding_receipt_file,
 )
 from .execution import (
     CRITERION_RESULTS,
@@ -68,7 +107,11 @@ from .fault_injection import (
     load_fault_injection_plan,
     verify_fault_injection_plan,
 )
-from .file_publication import inspect_artifact_destination
+from .file_publication import (
+    atomic_publish_bytes,
+    atomic_publish_pair,
+    inspect_artifact_destination,
+)
 from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
 from .html_report import (
     HTML_REPORT_VERIFICATION_FORMAT,
@@ -77,12 +120,14 @@ from .html_report import (
     export_html_report,
     verify_html_report_file,
 )
+from .integrity import canonical_json_sha256
 from .interchange import (
     cyclonedx_document,
     differential_analysis,
     export_json_document,
     sarif_document,
 )
+from .json_ingestion import load_bounded_file_snapshot, load_bounded_json_document
 from .manifest import create_run_manifest
 from .pdf_report import export_pdf_report
 from .program import (
@@ -102,6 +147,16 @@ from .publication import (
     export_publication_failure_catalog,
     publication_failure_catalog,
     verify_publication_failure_catalog_file,
+)
+from .pull_request import analyze_pull_request, verify_pull_request_analysis
+from .qualification import (
+    build_qualification_campaign,
+    qualification_validation_cohorts,
+    verify_qualification_campaign_file,
+)
+from .qualification_report import (
+    export_qualification_report,
+    verify_qualification_report_file,
 )
 from .readiness import repository_readiness
 from .report import (
@@ -126,14 +181,37 @@ from .schemas import (
     schema_document,
     verify_schema_bundle_path,
 )
+from .sdk.host import (
+    export_plugin_run,
+    load_plugin_manifest,
+    run_plugin,
+    verify_plugin_run_file,
+)
+from .security import export_service_threat_model
 from .server import serve_review
 from .sfta import export_sfta
+from .sfta_authoring import (
+    apply_sfta_authoring,
+    export_sfta_authoring_draft,
+    load_sfta_authoring,
+    seal_sfta_authoring_draft,
+    verify_sfta_authoring_file,
+)
 from .signing import (
     passphrase_from_environment,
     sign_review_package,
     verify_review_signature,
 )
-from .store import load_analysis, merge_rescan, save_analysis
+from .store import MAX_ANALYSIS_BYTES, load_analysis, merge_rescan, save_analysis
+from .synthesis import (
+    apply_synthesis_workspace,
+    export_synthesis_workspace,
+    load_synthesis_workspace,
+    seal_synthesis_workspace,
+    suggestion_relationships,
+    verify_synthesis_apply_receipt_file,
+    verify_synthesis_workspace_file,
+)
 from .validation import review_queue, validate_analysis
 from .version import __version__
 from .visuals import export_coverage, export_sequence, export_traceability
@@ -481,6 +559,328 @@ def _parser() -> argparse.ArgumentParser:
     )
     diagnostics.set_defaults(handler=_diagnostics)
 
+    enhance = subparsers.add_parser(
+        "enhance",
+        help=(
+            "build an integrated evidence, review, architecture, interface, and "
+            "qualification activation workbench"
+        ),
+    )
+    enhance.add_argument("analysis", help="analysis JSON path")
+    enhance.add_argument(
+        "--format",
+        choices=("json", "markdown"),
+        default="json",
+        help="workbench projection format",
+    )
+    enhance.add_argument("-o", "--output", help="atomically publish the workbench")
+    enhance.set_defaults(handler=_enhance)
+
+    enhance_verify = subparsers.add_parser(
+        "enhance-verify",
+        help="verify an enhancement workbench and optional exact analysis binding",
+    )
+    enhance_verify.add_argument("workbench", help="enhancement-workbench JSON path")
+    enhance_verify.add_argument(
+        "--analysis",
+        help="optional governed analysis used for exact deterministic regeneration",
+    )
+    enhance_verify.add_argument(
+        "-o",
+        "--output",
+        help="atomically publish the schema-backed verification verdict",
+    )
+    enhance_verify.set_defaults(handler=_enhance_verify)
+
+    enhance_scope_preview = subparsers.add_parser(
+        "enhance-scope-preview",
+        help="preview files admitted by proposed evidence-only scope changes",
+    )
+    enhance_scope_preview.add_argument("analysis", help="analysis JSON path")
+    enhance_scope_preview.add_argument(
+        "repository", help="repository directory to preview"
+    )
+    enhance_scope_preview.add_argument(
+        "-o", "--output", help="atomically publish the metadata-only preview"
+    )
+    enhance_scope_preview.set_defaults(handler=_enhance_scope_preview)
+
+    enhance_evidence_preflight = subparsers.add_parser(
+        "enhance-evidence-preflight",
+        help="validate evidence readiness without executing repository code",
+    )
+    enhance_evidence_preflight.add_argument("analysis", help="analysis JSON path")
+    enhance_evidence_preflight.add_argument(
+        "repository", help="authorized repository directory to inspect"
+    )
+    enhance_evidence_preflight.add_argument(
+        "-o", "--output", help="atomically publish the evidence-preflight receipt"
+    )
+    enhance_evidence_preflight.set_defaults(handler=_enhance_evidence_preflight)
+
+    evidence_onboard = subparsers.add_parser(
+        "evidence-onboard",
+        help="validate and transactionally import selected repository evidence",
+    )
+    evidence_onboard.add_argument("analysis", help="governed analysis JSON path")
+    evidence_onboard.add_argument(
+        "repository", help="repository root recorded by the governed analysis"
+    )
+    evidence_onboard.add_argument(
+        "--coverage-json",
+        help="coverage.py JSON artifact; discovered coverage is used by default",
+    )
+    evidence_onboard.add_argument(
+        "--no-discovered-coverage",
+        action="store_true",
+        help="do not automatically select ready coverage found by preflight",
+    )
+    evidence_onboard.add_argument(
+        "--runtime-trace",
+        action="append",
+        default=[],
+        help="runtime trace JSON; repeat for multiple traces",
+    )
+    evidence_onboard.add_argument(
+        "--execution-manifest",
+        action="append",
+        default=[],
+        metavar="OBLIGATION_ID=PATH",
+        help="bounded external execution manifest bound to an obligation; repeatable",
+    )
+    evidence_onboard.add_argument(
+        "--initiated-by",
+        default="",
+        help="initiating identity; required when importing execution evidence",
+    )
+    evidence_onboard.add_argument(
+        "--evidence-root",
+        help="managed copied-evidence directory; defaults under REPOSITORY/.artifacts",
+    )
+    evidence_onboard.add_argument(
+        "--apply",
+        action="store_true",
+        help="publish the validated result; otherwise emit a non-mutating validated plan",
+    )
+    evidence_destination = evidence_onboard.add_mutually_exclusive_group()
+    evidence_destination.add_argument(
+        "-o", "--output-analysis", help="updated analysis destination"
+    )
+    evidence_destination.add_argument(
+        "--in-place", action="store_true", help="atomically update the source analysis"
+    )
+    evidence_onboard.add_argument(
+        "--receipt", help="onboarding receipt JSON destination"
+    )
+    evidence_onboard.add_argument(
+        "--work-queue", help="verified assurance work-queue JSON destination"
+    )
+    evidence_onboard.set_defaults(handler=_evidence_onboard)
+
+    evidence_onboard_verify = subparsers.add_parser(
+        "evidence-onboard-verify",
+        help="verify an onboarding receipt and optional exact resulting analysis",
+    )
+    evidence_onboard_verify.add_argument("receipt", help="onboarding receipt JSON")
+    evidence_onboard_verify.add_argument(
+        "--analysis", help="optional resulting analysis for exact binding"
+    )
+    evidence_onboard_verify.add_argument(
+        "-o", "--output", help="verification verdict JSON destination"
+    )
+    evidence_onboard_verify.set_defaults(handler=_evidence_onboard_verify)
+
+    activate_init = subparsers.add_parser(
+        "activate-init",
+        help="create an editable, integrity-bound SFMEA closure workspace",
+    )
+    activate_init.add_argument("analysis", help="analysis JSON path")
+    activate_init.add_argument(
+        "repository", help="authorized repository directory for read-only preflight"
+    )
+    activate_init.add_argument(
+        "-o", "--output", help="activation workspace JSON destination"
+    )
+    activate_init.set_defaults(handler=_activate_init)
+
+    activate_verify = subparsers.add_parser(
+        "activate-verify",
+        help="verify activation-workspace integrity and optional analysis binding",
+    )
+    activate_verify.add_argument("workspace", help="activation workspace JSON path")
+    activate_verify.add_argument(
+        "--analysis",
+        help="optional exact source analysis used for binding verification",
+    )
+    activate_verify.add_argument("-o", "--output", help="verification JSON destination")
+    activate_verify.set_defaults(handler=_activate_verify)
+
+    activate_decide = subparsers.add_parser(
+        "activate-decide",
+        help="transactionally record one governed decision in an activation workspace",
+    )
+    activate_decide.add_argument("workspace", help="activation workspace JSON path")
+    activate_decide.add_argument("kind", choices=tuple(sorted(DECISION_CHOICES)))
+    activate_decide.add_argument("subject_id", help="exact queued subject identifier")
+    activate_decide.add_argument(
+        "decision", help="decision allowed for the selected kind"
+    )
+    activate_decide.add_argument("--reviewer", required=True, help="named reviewer")
+    activate_decide.add_argument(
+        "--rationale", required=True, help="decision rationale"
+    )
+    activate_decide.set_defaults(handler=_activate_decide)
+
+    activate_assign = subparsers.add_parser(
+        "activate-assign",
+        help="assign one activation subject without recording its disposition",
+    )
+    activate_assign.add_argument("workspace", help="activation workspace JSON path")
+    activate_assign.add_argument("kind", choices=tuple(sorted(DECISION_CHOICES)))
+    activate_assign.add_argument("subject_id", help="exact queued subject identifier")
+    activate_assign.add_argument("--assignee", required=True, help="named assignee")
+    activate_assign.add_argument(
+        "--due-date", default="", help="optional due date in YYYY-MM-DD form"
+    )
+    activate_assign.set_defaults(handler=_activate_assign)
+
+    activate_batch_export = subparsers.add_parser(
+        "activate-batch-export",
+        help="export a workspace-bound bulk assignment and decision template",
+    )
+    activate_batch_export.add_argument(
+        "workspace", help="activation workspace JSON path"
+    )
+    activate_batch_export.add_argument(
+        "-o", "--output", help="records JSON destination"
+    )
+    activate_batch_export.set_defaults(handler=_activate_batch_export)
+
+    activate_batch_import = subparsers.add_parser(
+        "activate-batch-import",
+        help="transactionally import workspace-bound assignments and decisions",
+    )
+    activate_batch_import.add_argument(
+        "workspace", help="activation workspace JSON path"
+    )
+    activate_batch_import.add_argument(
+        "records", help="completed activation records JSON"
+    )
+    activate_batch_import.add_argument("-o", "--output", help="import receipt JSON")
+    activate_batch_import.set_defaults(handler=_activate_batch_import)
+
+    activate_apply = subparsers.add_parser(
+        "activate-apply",
+        help="apply reviewed workspace decisions to an exact-bound analysis",
+    )
+    activate_apply.add_argument("analysis", help="source analysis JSON path")
+    activate_apply.add_argument("workspace", help="activation workspace JSON path")
+    apply_destination = activate_apply.add_mutually_exclusive_group()
+    apply_destination.add_argument(
+        "-o", "--output", help="updated analysis destination"
+    )
+    apply_destination.add_argument(
+        "--in-place", action="store_true", help="atomically update the source analysis"
+    )
+    activate_apply.add_argument(
+        "--receipt", help="optional activation-apply receipt JSON destination"
+    )
+    activate_apply.set_defaults(handler=_activate_apply)
+
+    config_authoring_init = subparsers.add_parser(
+        "config-authoring-init",
+        help="create an editable guidance, architecture, and interface configuration draft",
+    )
+    config_authoring_init.add_argument("analysis", help="analysis JSON path")
+    config_authoring_init.add_argument(
+        "--config", required=True, help="exact source sfmea.toml"
+    )
+    config_authoring_init.add_argument("-o", "--output", help="draft JSON destination")
+    config_authoring_init.set_defaults(handler=_config_authoring_init)
+
+    config_authoring_seal = subparsers.add_parser(
+        "config-authoring-seal",
+        help="validate and seal reviewed configuration additions",
+    )
+    config_authoring_seal.add_argument("draft", help="edited authoring draft JSON")
+    config_authoring_seal.add_argument(
+        "--analysis", required=True, help="exact source analysis JSON"
+    )
+    config_authoring_seal.add_argument(
+        "--config", required=True, help="exact source sfmea.toml"
+    )
+    config_authoring_seal.add_argument("-o", "--output", help="sealed JSON destination")
+    config_authoring_seal.set_defaults(handler=_config_authoring_seal)
+
+    config_authoring_verify = subparsers.add_parser(
+        "config-authoring-verify",
+        help="verify sealed configuration additions and optional exact bindings",
+    )
+    config_authoring_verify.add_argument("sealed", help="sealed authoring JSON")
+    config_authoring_verify.add_argument(
+        "--analysis", help="exact source analysis JSON"
+    )
+    config_authoring_verify.add_argument("--config", help="exact source sfmea.toml")
+    config_authoring_verify.add_argument("-o", "--output", help="verification JSON")
+    config_authoring_verify.set_defaults(handler=_config_authoring_verify)
+
+    config_authoring_apply = subparsers.add_parser(
+        "config-authoring-apply",
+        help="publish approved additions as a new validated sfmea.toml",
+    )
+    config_authoring_apply.add_argument("analysis", help="source analysis JSON")
+    config_authoring_apply.add_argument("sealed", help="sealed authoring JSON")
+    config_authoring_apply.add_argument(
+        "--config", required=True, help="exact source sfmea.toml"
+    )
+    config_authoring_apply.add_argument(
+        "-o", "--output", help="new sfmea.toml destination"
+    )
+    config_authoring_apply.add_argument("--receipt", help="apply receipt JSON")
+    config_authoring_apply.set_defaults(handler=_config_authoring_apply)
+
+    sfta_authoring_init = subparsers.add_parser(
+        "sfta-authoring-init",
+        help="create an editable fault-tree authoring draft for every configured hazard",
+    )
+    sfta_authoring_init.add_argument("analysis", help="analysis JSON path")
+    sfta_authoring_init.add_argument("-o", "--output", help="draft JSON destination")
+    sfta_authoring_init.set_defaults(handler=_sfta_authoring_init)
+
+    sfta_authoring_seal = subparsers.add_parser(
+        "sfta-authoring-seal",
+        help="validate and seal a reviewed fault-tree authoring draft",
+    )
+    sfta_authoring_seal.add_argument("draft", help="edited authoring draft JSON")
+    sfta_authoring_seal.add_argument(
+        "--analysis", required=True, help="exact source analysis JSON"
+    )
+    sfta_authoring_seal.add_argument("-o", "--output", help="sealed JSON destination")
+    sfta_authoring_seal.set_defaults(handler=_sfta_authoring_seal)
+
+    sfta_authoring_verify = subparsers.add_parser(
+        "sfta-authoring-verify",
+        help="verify sealed fault-tree inputs and optional exact analysis binding",
+    )
+    sfta_authoring_verify.add_argument("sealed", help="sealed authoring JSON")
+    sfta_authoring_verify.add_argument("--analysis", help="exact source analysis JSON")
+    sfta_authoring_verify.add_argument("-o", "--output", help="verification JSON")
+    sfta_authoring_verify.set_defaults(handler=_sfta_authoring_verify)
+
+    sfta_authoring_apply = subparsers.add_parser(
+        "sfta-authoring-apply",
+        help="apply approved exact-bound fault-tree replacements to an analysis",
+    )
+    sfta_authoring_apply.add_argument("analysis", help="source analysis JSON")
+    sfta_authoring_apply.add_argument("sealed", help="sealed authoring JSON")
+    sfta_apply_destination = sfta_authoring_apply.add_mutually_exclusive_group()
+    sfta_apply_destination.add_argument("-o", "--output", help="updated analysis")
+    sfta_apply_destination.add_argument(
+        "--in-place", action="store_true", help="atomically update the source analysis"
+    )
+    sfta_authoring_apply.add_argument("--receipt", help="apply receipt JSON")
+    sfta_authoring_apply.set_defaults(handler=_sfta_authoring_apply)
+
     scan = subparsers.add_parser("scan", help="scan a Python repository")
     scan.add_argument("repository", help="path to the Python repository")
     scan.add_argument(
@@ -571,6 +971,14 @@ def _parser() -> argparse.ArgumentParser:
         help="disable reading and publishing the configured derived fact cache",
     )
     scan.add_argument(
+        "--read-only",
+        action="store_true",
+        help=(
+            "prohibit writes inside the scanned repository; requires an external analysis "
+            "output and disables any in-repository fact cache"
+        ),
+    )
+    scan.add_argument(
         "--pretty-analysis",
         action="store_true",
         help="write indented JSON for manual inspection (compact JSON is the default)",
@@ -624,6 +1032,12 @@ def _parser() -> argparse.ArgumentParser:
         help=f"maximum embedded records (1-{MAX_REPORT_RECORDS}; default: 10000)",
     )
     report.add_argument(
+        "--profile",
+        choices=("engineering", "compact", "management"),
+        default="engineering",
+        help="bounded report projection profile (default: engineering)",
+    )
+    report.add_argument(
         "--max-output-bytes",
         type=int,
         default=MAX_HTML_REPORT_VERIFY_BYTES,
@@ -648,6 +1062,44 @@ def _parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="emit machine-readable verification JSON"
     )
     report_verify.set_defaults(handler=_html_report_verify)
+
+    report_browser_verify = subparsers.add_parser(
+        "report-browser-verify",
+        help="verify a browser-quality receipt and optional exact report binding",
+    )
+    report_browser_verify.add_argument(
+        "receipt", help="browser-quality receipt JSON path"
+    )
+    report_browser_verify.add_argument(
+        "--report",
+        help="exact HTML report; when supplied, require a byte-for-byte binding",
+    )
+    report_browser_verify.add_argument(
+        "-o", "--output", help="atomically publish the verification JSON"
+    )
+    report_browser_verify.set_defaults(handler=_report_browser_verify)
+
+    accessibility_init = subparsers.add_parser(
+        "accessibility-init",
+        help="create an exact-report assistive-technology qualification checklist",
+    )
+    accessibility_init.add_argument("report", help="self-contained HTML report")
+    accessibility_init.add_argument("-o", "--output", help="evidence JSON path")
+    accessibility_init.set_defaults(handler=_accessibility_init)
+
+    accessibility_seal = subparsers.add_parser(
+        "accessibility-seal", help="seal completed accessibility evidence"
+    )
+    accessibility_seal.add_argument("evidence", help="accessibility evidence JSON")
+    accessibility_seal.set_defaults(handler=_accessibility_seal)
+
+    accessibility_verify = subparsers.add_parser(
+        "accessibility-verify", help="verify accessibility evidence and report binding"
+    )
+    accessibility_verify.add_argument("evidence", help="sealed evidence JSON")
+    accessibility_verify.add_argument("--report", help="exact HTML report")
+    accessibility_verify.add_argument("--json", action="store_true")
+    accessibility_verify.set_defaults(handler=_accessibility_verify)
 
     pdf = subparsers.add_parser(
         "pdf", help="render the complete analysis report as a paginated PDF"
@@ -734,6 +1186,50 @@ def _parser() -> argparse.ArgumentParser:
     difference.add_argument("current", help="current analysis JSON")
     difference.add_argument("-o", "--output", help="destination diff JSON path")
     difference.set_defaults(handler=_diff)
+
+    pr_analysis = subparsers.add_parser(
+        "pr-analyze",
+        help="scan exact Git base/head commits and publish a differential review bundle",
+    )
+    pr_analysis.add_argument("repository", help="local Git repository")
+    pr_analysis.add_argument("--base", required=True, help="base revision")
+    pr_analysis.add_argument("--head", required=True, help="head revision")
+    pr_analysis.add_argument("-o", "--output", required=True, help="new output directory")
+    pr_analysis.set_defaults(handler=_pr_analyze)
+
+    pr_verify = subparsers.add_parser(
+        "pr-verify", help="verify a published pull-request differential bundle"
+    )
+    pr_verify.add_argument("bundle", help="pull-request analysis directory")
+    pr_verify.add_argument("--json", action="store_true")
+    pr_verify.set_defaults(handler=_pr_verify)
+
+    plugin_verify = subparsers.add_parser(
+        "plugin-verify", help="validate a versioned process-plugin manifest"
+    )
+    plugin_verify.add_argument("manifest", help="plugin manifest JSON")
+    plugin_verify.add_argument("--json", action="store_true")
+    plugin_verify.set_defaults(handler=_plugin_verify)
+
+    plugin_run = subparsers.add_parser(
+        "plugin-run", help="run one explicitly selected plugin against an analysis"
+    )
+    plugin_run.add_argument("manifest", help="plugin manifest JSON")
+    plugin_run.add_argument("analysis", help="analysis JSON path")
+    plugin_run.add_argument(
+        "--capability", default="analyze", help="declared capability to invoke"
+    )
+    plugin_run.add_argument("-o", "--output", help="plugin-run JSON path")
+    plugin_run.set_defaults(handler=_plugin_run)
+
+    plugin_run_verify = subparsers.add_parser(
+        "plugin-run-verify", help="verify a plugin-run receipt and optional bindings"
+    )
+    plugin_run_verify.add_argument("run", help="plugin-run JSON path")
+    plugin_run_verify.add_argument("--analysis", help="exact analysis JSON")
+    plugin_run_verify.add_argument("--manifest", help="exact plugin manifest JSON")
+    plugin_run_verify.add_argument("--json", action="store_true")
+    plugin_run_verify.set_defaults(handler=_plugin_run_verify)
 
     package = subparsers.add_parser(
         "package", help="create a complete checksum-manifested review package"
@@ -945,6 +1441,11 @@ def _parser() -> argparse.ArgumentParser:
         default="proposed",
     )
     suggestions.add_argument("--json", action="store_true")
+    suggestions.add_argument(
+        "--relationships",
+        action="store_true",
+        help="include deterministic duplicate, contradiction, and divergence leads",
+    )
     suggestions.set_defaults(handler=_suggestions)
 
     suggestion_review = subparsers.add_parser(
@@ -958,6 +1459,66 @@ def _parser() -> argparse.ArgumentParser:
     suggestion_review.add_argument("--reviewer", required=True)
     suggestion_review.add_argument("--rationale", required=True)
     suggestion_review.set_defaults(handler=_suggestion_review)
+
+    synthesis_init = subparsers.add_parser(
+        "synthesis-init",
+        help="create a side-by-side human editing workspace for machine suggestions",
+    )
+    synthesis_init.add_argument("analysis", help="analysis JSON path")
+    synthesis_init.add_argument("-o", "--output", help="workspace JSON path")
+    synthesis_init.set_defaults(handler=_synthesis_init)
+
+    synthesis_seal = subparsers.add_parser(
+        "synthesis-seal", help="seal an edited suggestion synthesis workspace"
+    )
+    synthesis_seal.add_argument("workspace", help="workspace JSON path")
+    synthesis_seal.set_defaults(handler=_synthesis_seal)
+
+    synthesis_verify = subparsers.add_parser(
+        "synthesis-verify", help="verify synthesis integrity and optional freshness"
+    )
+    synthesis_verify.add_argument("workspace", help="sealed workspace JSON path")
+    synthesis_verify.add_argument("--analysis", help="analysis JSON for exact binding")
+    synthesis_verify.add_argument("--json", action="store_true")
+    synthesis_verify.set_defaults(handler=_synthesis_verify)
+
+    synthesis_apply = subparsers.add_parser(
+        "synthesis-apply", help="apply reviewed synthesis decisions transactionally"
+    )
+    synthesis_apply.add_argument("analysis", help="analysis JSON path")
+    synthesis_apply.add_argument("workspace", help="sealed workspace JSON path")
+    synthesis_apply.add_argument(
+        "--receipt", help="apply-receipt JSON path; defaults beside the analysis"
+    )
+    synthesis_apply.add_argument(
+        "--source-snapshot",
+        help="publish the exact pre-application analysis bytes for later reconciliation",
+    )
+    synthesis_apply.set_defaults(handler=_synthesis_apply)
+
+    synthesis_apply_verify = subparsers.add_parser(
+        "synthesis-apply-verify",
+        help="verify an apply receipt in integrity-only or complete reconciliation mode",
+    )
+    synthesis_apply_verify.add_argument("receipt", help="apply-receipt JSON path")
+    synthesis_apply_verify.add_argument(
+        "--source-analysis", help="exact analysis state before application"
+    )
+    synthesis_apply_verify.add_argument(
+        "--workspace", help="exact sealed synthesis workspace"
+    )
+    synthesis_apply_verify.add_argument(
+        "--result-analysis", help="exact persisted analysis state after application"
+    )
+    synthesis_apply_verify.add_argument(
+        "--integrity-only",
+        action="store_true",
+        help="verify only receipt structure and integrity; do not claim reconciliation",
+    )
+    synthesis_apply_verify.add_argument(
+        "-o", "--output", help="atomically publish the verification JSON"
+    )
+    synthesis_apply_verify.set_defaults(handler=_synthesis_apply_verify)
 
     summarize = subparsers.add_parser(
         "summarize", help="produce deterministic or grounded model summaries"
@@ -986,8 +1547,104 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument(
         "--json", action="store_true", help="emit the complete result"
     )
+    evaluate.add_argument(
+        "-o", "--output", help="atomically publish the complete evaluation result JSON"
+    )
     evaluate.add_argument("--max-findings", type=int, default=25)
     evaluate.set_defaults(handler=_evaluate)
+
+    evaluate_compare = subparsers.add_parser(
+        "evaluate-compare",
+        help="compare governed same-corpus before/after calibration results",
+    )
+    evaluate_compare.add_argument("before", help="before evaluation-result JSON")
+    evaluate_compare.add_argument("after", help="after evaluation-result JSON")
+    evaluate_compare.add_argument("change", help="governed calibration-change JSON")
+    evaluate_compare.add_argument(
+        "--json", action="store_true", help="emit the complete comparison"
+    )
+    evaluate_compare.set_defaults(handler=_evaluate_compare)
+
+    qualification_build = subparsers.add_parser(
+        "qualification-build",
+        help="regenerate a governed multi-repository scanner qualification campaign",
+    )
+    qualification_build.add_argument(
+        "manifest", help="qualification campaign manifest JSON"
+    )
+    qualification_build.add_argument(
+        "-o", "--output", required=True, help="campaign result JSON destination"
+    )
+    qualification_build.add_argument(
+        "--require-eligible",
+        action="store_true",
+        help="return a failing exit status unless every qualification gate passes",
+    )
+    qualification_build.set_defaults(handler=_qualification_build)
+
+    qualification_verify = subparsers.add_parser(
+        "qualification-verify",
+        help="verify campaign integrity and exact retained-artifact regeneration",
+    )
+    qualification_verify.add_argument("result", help="campaign result JSON")
+    qualification_verify.add_argument(
+        "--manifest",
+        help="exact campaign manifest; required unless --integrity-only is used",
+    )
+    qualification_verify.add_argument(
+        "--integrity-only",
+        action="store_true",
+        help="verify internal integrity without claiming retained-artifact reconciliation",
+    )
+    qualification_verify.add_argument(
+        "--require-eligible",
+        action="store_true",
+        help="also fail unless the campaign is eligible for independent review",
+    )
+    qualification_verify.add_argument(
+        "-o", "--output", help="atomically publish the verification JSON"
+    )
+    qualification_verify.set_defaults(handler=_qualification_verify)
+
+    qualification_report = subparsers.add_parser(
+        "qualification-report",
+        help="publish a self-contained qualification campaign review report",
+    )
+    qualification_report.add_argument("result", help="campaign result JSON")
+    qualification_report.add_argument(
+        "--manifest", required=True, help="exact retained-artifact campaign manifest"
+    )
+    qualification_report.add_argument(
+        "-o", "--output", required=True, help="HTML report destination"
+    )
+    qualification_report.add_argument("--title", help="report title override")
+    qualification_report.set_defaults(handler=_qualification_report)
+
+    qualification_report_verify = subparsers.add_parser(
+        "qualification-report-verify",
+        help="verify qualification report integrity and optional exact-result binding",
+    )
+    qualification_report_verify.add_argument("report", help="HTML report path")
+    qualification_report_verify.add_argument(
+        "--result", help="exact campaign result for complete reconciliation"
+    )
+    qualification_report_verify.add_argument(
+        "--integrity-only",
+        action="store_true",
+        help="verify standalone report integrity without claiming result reconciliation",
+    )
+    qualification_report_verify.add_argument(
+        "-o", "--output", help="atomically publish verification JSON"
+    )
+    qualification_report_verify.set_defaults(handler=_qualification_report_verify)
+
+    threat_model = subparsers.add_parser(
+        "threat-model",
+        help="export the versioned service threat and residual-risk model",
+    )
+    threat_model.add_argument("-o", "--output", required=True)
+    threat_model.add_argument("--format", choices=("json", "markdown"), default="json")
+    threat_model.set_defaults(handler=_threat_model)
 
     program_init = subparsers.add_parser(
         "program-init",
@@ -1004,6 +1661,14 @@ def _parser() -> argparse.ArgumentParser:
         "-o", "--output", required=True, help="program JSON destination"
     )
     program_init.add_argument("--name", default="System assurance program")
+    program_init.add_argument(
+        "--qualification-result",
+        help="completely reconciled qualification campaign result to import",
+    )
+    program_init.add_argument(
+        "--qualification-manifest",
+        help="exact retained-artifact manifest for --qualification-result",
+    )
     program_init.add_argument(
         "--force", action="store_true", help="replace only a recognized program"
     )
@@ -1348,6 +2013,15 @@ def _scan(args: argparse.Namespace) -> int:
         if args.output
         else repository / "sfmea-analysis.json"
     )
+    if args.read_only:
+        try:
+            output.relative_to(repository)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(
+                "--read-only requires --output outside the scanned repository"
+            )
     config_path: str | Path | None = args.config
     default_config = repository / "sfmea.toml"
     if config_path is None and default_config.is_file():
@@ -1371,6 +2045,21 @@ def _scan(args: argparse.Namespace) -> int:
         cache_path = repository / cache_path
     if cache_path is not None:
         cache_path = cache_path.absolute()
+    cache_inside_repository = False
+    if cache_path is not None:
+        try:
+            cache_path.resolve().relative_to(repository)
+        except ValueError:
+            pass
+        else:
+            cache_inside_repository = True
+    if args.read_only and cache_inside_repository:
+        if args.cache:
+            raise ValueError(
+                "--read-only cannot publish an explicitly selected cache inside the "
+                "scanned repository; choose an external --cache path or --no-cache"
+            )
+        cache_enabled = False
     if cache_enabled and cache_path is None:
         raise ValueError(
             "scanner fact caching is enabled but no cache path is configured"
@@ -1424,6 +2113,9 @@ def _scan(args: argparse.Namespace) -> int:
     )
     scanned["project"]["settings"]["analysis_serialization"] = (
         "pretty" if args.pretty_analysis else "compact"
+    )
+    scanned["project"]["settings"]["repository_mutation_policy"] = (
+        "read_only" if args.read_only else "outputs_may_be_published_in_repository"
     )
     cache_output: dict[str, Any] = {
         "status": "disabled" if not cache_enabled else "not_published",
@@ -1512,6 +2204,14 @@ def _scan(args: argparse.Namespace) -> int:
         "Review depth: "
         + str(scanned.get("project", {}).get("settings", {}).get("review_depth"))
         + " (complete machine inventory retained)"
+    )
+    print(
+        "Repository mutation: "
+        + (
+            "prohibited by --read-only; analysis and cache outputs are external"
+            if args.read_only
+            else "analysis and derived cache outputs may be published in the repository"
+        )
     )
     cache_run = (
         scanned.get("project", {})
@@ -1606,29 +2306,35 @@ def _publication_catalog(args: argparse.Namespace) -> int:
     if args.verify:
         if args.output or args.force:
             raise ValueError("--verify cannot be combined with --output or --force")
-        result = verify_publication_failure_catalog_file(args.verify)
+        verification_result = verify_publication_failure_catalog_file(args.verify)
         if args.json:
-            print(json.dumps(result, indent=2, ensure_ascii=False))
+            print(json.dumps(verification_result, indent=2, ensure_ascii=False))
         else:
-            status = "valid" if result["valid"] else "invalid"
-            print(f"Publication failure catalog: {status} ({result['source']})")
+            status = "valid" if verification_result["valid"] else "invalid"
             print(
-                f"Failures: {result['failure_count']}; "
-                f"declared digest: {result['declared_content_sha256'] or 'unavailable'}"
+                "Publication failure catalog: "
+                f"{status} ({verification_result['source']})"
             )
-            for error in result["errors"]:
+            print(
+                f"Failures: {verification_result['failure_count']}; "
+                "declared digest: "
+                f"{verification_result['declared_content_sha256'] or 'unavailable'}"
+            )
+            for error in verification_result["errors"]:
                 print(f"[ERROR] {error['code']}: {error['message']}")
-            print(result["notice"])
-        return 0 if result["valid"] else 1
+            print(verification_result["notice"])
+        return 0 if verification_result["valid"] else 1
     if args.force and not args.output:
         raise ValueError("--force is valid only with --output")
     if args.output:
-        result = export_publication_failure_catalog(args.output, overwrite=args.force)
+        output_path = export_publication_failure_catalog(
+            args.output, overwrite=args.force
+        )
         if args.json:
-            verification = verify_publication_failure_catalog_file(result)
+            verification = verify_publication_failure_catalog_file(output_path)
             print(json.dumps(verification, indent=2, ensure_ascii=False))
         else:
-            print(f"Exported publication failure catalog: {result}")
+            print(f"Exported publication failure catalog: {output_path}")
         return 0
     catalog = publication_failure_catalog()
     if args.json:
@@ -1704,6 +2410,544 @@ def _diagnostics(args: argparse.Namespace) -> int:
             )
         print(result["notice"])
     return int(args.strict and not result["accounting"]["valid"])
+
+
+def _enhance(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    if args.output:
+        result = export_enhancement_workbench(
+            analysis, args.output, output_format=args.format
+        )
+        print(f"Exported enhancement workbench: {result}")
+        return 0
+    workbench = enhancement_workbench(analysis)
+    if args.format == "markdown":
+        sys.stdout.write(enhancement_workbench_markdown(workbench))
+    else:
+        print(json.dumps(workbench, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _enhance_verify(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis) if args.analysis else None
+    result = verify_enhancement_workbench_file(
+        args.workbench,
+        analysis=analysis,
+    )
+    if args.output:
+        output = export_json_document(result, args.output)
+        print(f"Exported enhancement workbench verification: {output}")
+    else:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return int(not result["valid"])
+
+
+def _enhance_scope_preview(args: argparse.Namespace) -> int:
+    result = enhancement_scope_preview(load_analysis(args.analysis), args.repository)
+    if args.output:
+        output = export_json_document(result, args.output)
+        print(f"Exported enhancement scope preview: {output}")
+    else:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return int(result.get("summary", {}).get("truncated", False))
+
+
+def _enhance_evidence_preflight(args: argparse.Namespace) -> int:
+    result = evidence_preflight(load_analysis(args.analysis), args.repository)
+    if args.output:
+        output = export_json_document(result, args.output)
+        print(f"Exported evidence preflight: {output}")
+    else:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return int(result.get("summary", {}).get("truncated", False))
+
+
+def _execution_manifest_specs(values: list[str]) -> list[tuple[str, str]]:
+    parsed: list[tuple[str, str]] = []
+    for value in values:
+        obligation_id, separator, path = value.partition("=")
+        if not separator or not obligation_id.strip() or not path.strip():
+            raise ValueError(
+                "--execution-manifest must use the form OBLIGATION_ID=PATH"
+            )
+        parsed.append((obligation_id.strip(), path.strip()))
+    return parsed
+
+
+def _evidence_analysis_sibling(source: Path) -> Path:
+    name = source.name
+    if name.casefold().endswith(".json.gz"):
+        return source.with_name(name[:-8] + "-evidence.json.gz")
+    return source.with_name(source.stem + "-evidence" + source.suffix)
+
+
+def _evidence_onboard(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    if not args.apply and (args.output_analysis or args.in_place or args.work_queue):
+        raise ValueError(
+            "analysis and work-queue destinations require --apply; use --receipt for a plan"
+        )
+    analysis = load_analysis(source)
+    traces = [(value, Path(value).name) for value in args.runtime_trace]
+    execution_specs = _execution_manifest_specs(args.execution_manifest)
+    updated, receipt, queue = onboard_evidence(
+        analysis,
+        args.repository,
+        coverage_json=args.coverage_json,
+        use_discovered_coverage=not args.no_discovered_coverage,
+        runtime_traces=traces,
+        execution_manifests=execution_specs,
+        initiated_by=args.initiated_by,
+        evidence_root=args.evidence_root,
+        apply=args.apply,
+    )
+    if not args.apply:
+        if args.receipt:
+            result = export_json_document(receipt, args.receipt)
+            print(f"Exported validated evidence-onboarding plan: {result}")
+        else:
+            print(json.dumps(receipt, indent=2, ensure_ascii=False))
+        return 0
+
+    if not receipt.get("selected_evidence"):
+        raise ValueError(
+            "--apply requires at least one discovered or explicitly selected artifact"
+        )
+    destination = (
+        source
+        if args.in_place
+        else Path(args.output_analysis).expanduser().resolve()
+        if args.output_analysis
+        else _evidence_analysis_sibling(source)
+    )
+    receipt_path = (
+        Path(args.receipt).expanduser().resolve()
+        if args.receipt
+        else destination.with_name(destination.stem + "-onboarding-receipt.json")
+    )
+    queue_path = (
+        Path(args.work_queue).expanduser().resolve()
+        if args.work_queue
+        else destination.with_name(destination.stem + "-assurance-work.json")
+    )
+    identities = {destination, receipt_path, queue_path}
+    if len(identities) != 3:
+        raise ValueError(
+            "analysis, onboarding receipt, and assurance work queue must use distinct paths"
+        )
+    save_analysis(destination, updated)
+    persisted = load_analysis(destination)
+    verification = verify_evidence_onboarding_receipt(receipt, analysis=persisted)
+    if not verification["valid"]:
+        raise RuntimeError("persisted analysis does not match the onboarding receipt")
+    export_json_document(queue, queue_path)
+    export_json_document(receipt, receipt_path)
+    summary = receipt["summary"]
+    print(f"Evidence onboarding applied: {destination}")
+    print(
+        f"Artifacts: selected={summary['selected']}, imported={summary['imported']}, "
+        f"duplicates={summary['duplicates']}; coverage components="
+        f"{summary['coverage_components']}; runtime imports={summary['runtime_imports']}"
+    )
+    print(f"Verified assurance work queue: {queue_path}")
+    print(f"Exact-bound onboarding receipt: {receipt_path}")
+    print(
+        "No repository code was executed and no evidence was credited as sufficient or approved."
+    )
+    return 0
+
+
+def _evidence_onboard_verify(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis) if args.analysis else None
+    verification = verify_evidence_onboarding_receipt_file(
+        args.receipt, analysis=analysis
+    )
+    if args.output:
+        result = export_json_document(verification, args.output)
+        print(f"Exported evidence-onboarding verification: {result}")
+    else:
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+    return int(not verification["valid"])
+
+
+def _activate_init(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    destination = (
+        Path(args.output)
+        if args.output
+        else source.with_name(source.stem + "-activation.json")
+    )
+    result = export_activation_workspace(
+        load_analysis(source), args.repository, destination
+    )
+    workspace = load_activation_workspace(result)
+    summary = workspace.get("summary", {})
+    print(f"Created governed SFMEA activation workspace: {result}")
+    print(
+        "Queues: "
+        f"findings={summary.get('finding_reviews', 0)}, "
+        f"consolidations={summary.get('finding_consolidation_candidates', 0)}, "
+        f"guidance={summary.get('guidance_dispositions', 0)}, "
+        f"SFTA={summary.get('sfta_authoring_items', 0)}, "
+        f"architecture={summary.get('architecture_dispositions', 0)}, "
+        f"interfaces={summary.get('interface_dispositions', 0)}"
+    )
+    print(f'Next: sfmea activate-verify "{result}" --analysis "{source}"')
+    return int(
+        workspace.get("evidence_onboarding", {})
+        .get("preflight", {})
+        .get("summary", {})
+        .get("truncated", False)
+    )
+
+
+def _activate_verify(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis) if args.analysis else None
+    result = verify_activation_workspace_file(args.workspace, analysis=analysis)
+    if args.output:
+        output = export_json_document(result, args.output)
+        print(f"Exported activation-workspace verification: {output}")
+    else:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return int(not result["valid"])
+
+
+def _activate_decide(args: argparse.Namespace) -> int:
+    result = record_activation_decision(
+        args.workspace,
+        kind=args.kind,
+        subject_id=args.subject_id,
+        decision=args.decision,
+        reviewer=args.reviewer,
+        rationale=args.rationale,
+    )
+    workspace = load_activation_workspace(result)
+    print(
+        f"Recorded {args.kind} decision for {args.subject_id}: {args.decision}; "
+        f"workspace decisions={len(workspace.get('decisions', []))}."
+    )
+    print(f"Updated activation workspace: {result}")
+    return 0
+
+
+def _activate_assign(args: argparse.Namespace) -> int:
+    result = record_activation_assignment(
+        args.workspace,
+        kind=args.kind,
+        subject_id=args.subject_id,
+        assignee=args.assignee,
+        due_date=args.due_date,
+    )
+    workspace = load_activation_workspace(result)
+    print(
+        f"Assigned {args.kind} subject {args.subject_id} to {args.assignee}; "
+        f"workspace assignments={len(workspace.get('assignments', []))}."
+    )
+    print(f"Updated activation workspace: {result}")
+    return 0
+
+
+def _activate_batch_export(args: argparse.Namespace) -> int:
+    workspace_path = Path(args.workspace).expanduser().resolve()
+    output = (
+        Path(args.output)
+        if args.output
+        else workspace_path.with_name(workspace_path.stem + "-records.json")
+    )
+    output = output.expanduser().absolute()
+    if output == workspace_path:
+        raise ValueError(
+            "activation records destination must differ from the workspace"
+        )
+    result = export_activation_records_template(
+        load_activation_workspace(workspace_path), output
+    )
+    print(f"Exported workspace-bound activation records template: {result}")
+    return 0
+
+
+def _activate_batch_import(args: argparse.Namespace) -> int:
+    workspace_path = Path(args.workspace).expanduser().absolute()
+    records_path = Path(args.records).expanduser().absolute()
+    output = (
+        Path(args.output)
+        if args.output
+        else workspace_path.with_name(workspace_path.stem + "-import-receipt.json")
+    )
+    output = output.expanduser().absolute()
+    if output in {workspace_path, records_path}:
+        raise ValueError(
+            "activation import receipt must differ from the workspace and records input"
+        )
+    workspace, receipt = import_activation_records(workspace_path, records_path)
+    result = export_json_document(receipt, output)
+    print(
+        f"Imported activation records: assignments={receipt['assignments_imported']}, "
+        f"decisions={receipt['decisions_imported']}."
+    )
+    print(f"Updated activation workspace: {workspace}")
+    print(f"Import receipt: {result}")
+    return 0
+
+
+def _activate_apply(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    output = (
+        source
+        if args.in_place
+        else Path(args.output)
+        if args.output
+        else source.with_name(source.stem + "-activated.json")
+    )
+    output = output.expanduser().absolute()
+    workspace_path = Path(args.workspace).expanduser().absolute()
+    if output == workspace_path:
+        raise ValueError("updated analysis destination must differ from the workspace")
+    receipt_path = (
+        Path(args.receipt)
+        if args.receipt
+        else output.with_name(
+            output.name.removesuffix(".gz").removesuffix(".json")
+            + "-activation-receipt.json"
+        )
+    )
+    receipt_path = receipt_path.expanduser().absolute()
+    if receipt_path in {output, workspace_path, source}:
+        raise ValueError(
+            "activation receipt destination must differ from the analysis and workspace"
+        )
+    updated, receipt = apply_activation_workspace(
+        load_analysis(source), load_activation_workspace(args.workspace)
+    )
+    save_analysis(output, updated)
+    # Saving refreshes derived state and timestamps, so bind the receipt to the
+    # actual published artifact instead of the private pre-save representation.
+    published = load_analysis(output)
+    receipt["result_analysis_state_sha256"] = canonical_json_sha256(published)
+    receipt.pop("content_sha256", None)
+    receipt["content_sha256"] = canonical_json_sha256(receipt)
+    export_json_document(receipt, receipt_path)
+    print(f"Applied governed activation decisions: {output}")
+    print(
+        f"Finding reviews={receipt['finding_reviews_applied']}; "
+        f"canonical groups={receipt['finding_consolidations_applied']}; "
+        f"governance decisions={receipt['governance_decisions_recorded']}."
+    )
+    print(f"Activation receipt: {receipt_path}")
+    return 0
+
+
+def _config_authoring_init(args: argparse.Namespace) -> int:
+    analysis_path = Path(args.analysis).expanduser().resolve()
+    config_path = Path(args.config).expanduser().resolve()
+    output = (
+        (
+            Path(args.output)
+            if args.output
+            else analysis_path.with_name(
+                analysis_path.stem + "-configuration-draft.json"
+            )
+        )
+        .expanduser()
+        .absolute()
+    )
+    if output in {analysis_path, config_path}:
+        raise ValueError("configuration authoring draft must differ from its inputs")
+    result = export_configuration_authoring_draft(
+        load_analysis(analysis_path), config_path, output
+    )
+    print(f"Created editable configuration authoring draft: {result}")
+    print(
+        "Complete selected proposals, set action=apply, and record an approved named "
+        "review before sealing. Deferred entries remain unchanged."
+    )
+    return 0
+
+
+def _config_authoring_seal(args: argparse.Namespace) -> int:
+    analysis_path = Path(args.analysis).expanduser().resolve()
+    config_path = Path(args.config).expanduser().resolve()
+    draft_path = Path(args.draft).expanduser().resolve()
+    output = (
+        (
+            Path(args.output)
+            if args.output
+            else draft_path.with_name(
+                draft_path.stem.removesuffix("-draft") + "-sealed.json"
+            )
+        )
+        .expanduser()
+        .absolute()
+    )
+    if output in {analysis_path, config_path, draft_path}:
+        raise ValueError(
+            "sealed configuration authoring output must differ from its inputs"
+        )
+    result = seal_configuration_authoring_draft(
+        draft_path, load_analysis(analysis_path), config_path, output
+    )
+    print(f"Published sealed configuration authoring input: {result}")
+    print(
+        f'Next: sfmea config-authoring-verify "{result}" --analysis '
+        f'"{analysis_path}" --config "{config_path}"'
+    )
+    return 0
+
+
+def _config_authoring_verify(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis) if args.analysis else None
+    result = verify_configuration_authoring_file(
+        args.sealed,
+        analysis=analysis,
+        config_source=args.config,
+    )
+    if args.output:
+        output = export_json_document(result, args.output)
+        print(f"Exported configuration authoring verification: {output}")
+    else:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return int(not result["valid"])
+
+
+def _config_authoring_apply(args: argparse.Namespace) -> int:
+    analysis_path = Path(args.analysis).expanduser().resolve()
+    sealed_path = Path(args.sealed).expanduser().resolve()
+    config_path = Path(args.config).expanduser().resolve()
+    output = (
+        (
+            Path(args.output)
+            if args.output
+            else config_path.with_name(config_path.stem + "-refined.toml")
+        )
+        .expanduser()
+        .absolute()
+    )
+    receipt_path = (
+        (
+            Path(args.receipt)
+            if args.receipt
+            else output.with_name(output.stem + "-configuration-authoring-receipt.json")
+        )
+        .expanduser()
+        .absolute()
+    )
+    if output in {analysis_path, sealed_path, config_path}:
+        raise ValueError(
+            "updated configuration destination must differ from every input"
+        )
+    if receipt_path in {analysis_path, sealed_path, config_path, output}:
+        raise ValueError(
+            "configuration authoring receipt must differ from inputs and output"
+        )
+    published, receipt = apply_configuration_authoring(
+        load_analysis(analysis_path),
+        load_configuration_authoring(sealed_path),
+        config_path,
+        output,
+    )
+    export_json_document(receipt, receipt_path)
+    print(f"Published reviewed SFMEA configuration: {published}")
+    print(
+        f"Guidance mappings={receipt['guidance_mappings']}; component mappings="
+        f"{receipt['component_mappings']}; interface dispositions="
+        f"{receipt['interface_dispositions']}."
+    )
+    print(f"Configuration authoring receipt: {receipt_path}")
+    print(f'Next: sfmea scan REPOSITORY --config "{published}"')
+    return 0
+
+
+def _sfta_authoring_init(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    output = (
+        Path(args.output)
+        if args.output
+        else source.with_name(source.stem + "-sfta-authoring-draft.json")
+    )
+    result = export_sfta_authoring_draft(load_analysis(source), output)
+    print(f"Created editable SFTA authoring draft: {result}")
+    print(
+        "Edit each intended replacement, set action=replace, and record an approved "
+        "named review before sealing."
+    )
+    return 0
+
+
+def _sfta_authoring_seal(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    draft = Path(args.draft).expanduser().resolve()
+    output = (
+        Path(args.output)
+        if args.output
+        else draft.with_name(draft.stem.removesuffix("-draft") + "-sealed.json")
+    )
+    if output.expanduser().absolute() in {source, draft}:
+        raise ValueError("sealed SFTA destination must differ from analysis and draft")
+    result = seal_sfta_authoring_draft(draft, load_analysis(source), output)
+    print(f"Published sealed SFTA authoring input: {result}")
+    print(f'Next: sfmea sfta-authoring-verify "{result}" --analysis "{source}"')
+    return 0
+
+
+def _sfta_authoring_verify(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis) if args.analysis else None
+    result = verify_sfta_authoring_file(args.sealed, analysis=analysis)
+    if args.output:
+        output = export_json_document(result, args.output)
+        print(f"Exported SFTA authoring verification: {output}")
+    else:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return int(not result["valid"])
+
+
+def _sfta_authoring_apply(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    sealed_path = Path(args.sealed).expanduser().resolve()
+    output = (
+        (
+            source
+            if args.in_place
+            else Path(args.output)
+            if args.output
+            else source.with_name(source.stem + "-sfta-authored.json")
+        )
+        .expanduser()
+        .absolute()
+    )
+    if output == sealed_path:
+        raise ValueError(
+            "updated analysis destination must differ from sealed SFTA input"
+        )
+    receipt_path = (
+        (
+            Path(args.receipt)
+            if args.receipt
+            else output.with_name(
+                output.name.removesuffix(".gz").removesuffix(".json")
+                + "-sfta-authoring-receipt.json"
+            )
+        )
+        .expanduser()
+        .absolute()
+    )
+    if receipt_path in {source, sealed_path, output}:
+        raise ValueError(
+            "SFTA authoring receipt must differ from analysis and sealed input"
+        )
+    updated, receipt = apply_sfta_authoring(
+        load_analysis(source), load_sfta_authoring(sealed_path)
+    )
+    save_analysis(output, updated)
+    published = load_analysis(output)
+    receipt["result_analysis_state_sha256"] = canonical_json_sha256(published)
+    receipt.pop("content_sha256", None)
+    receipt["content_sha256"] = canonical_json_sha256(receipt)
+    export_json_document(receipt, receipt_path)
+    print(
+        f"Applied {len(receipt['replacement_hazards'])} approved SFTA replacement(s): {output}"
+    )
+    print(f"SFTA authoring receipt: {receipt_path}")
+    return 0
 
 
 def _status(args: argparse.Namespace) -> int:
@@ -1983,6 +3227,7 @@ def _html_report(args: argparse.Namespace) -> int:
                     title=args.title,
                     notes=args.notes,
                     max_records=args.max_records,
+                    profile=args.profile,
                     diagrams=args.diagram,
                     propagation_record_limit=args.propagation_record_limit,
                     propagation_path_limit=args.propagation_path_limit,
@@ -2081,6 +3326,7 @@ def _html_report(args: argparse.Namespace) -> int:
         title=args.title,
         notes=args.notes,
         max_records=args.max_records,
+        profile=args.profile,
         diagrams=args.diagram,
         propagation_record_limit=args.propagation_record_limit,
         propagation_path_limit=args.propagation_path_limit,
@@ -2089,10 +3335,17 @@ def _html_report(args: argparse.Namespace) -> int:
         max_output_bytes=args.max_output_bytes,
     )
     size_mib = result.stat().st_size / (1024 * 1024)
-    embedded_records = min(len(analysis.get("items", [])), args.max_records)
+    profile_limit = {
+        "engineering": args.max_records,
+        "compact": 500,
+        "management": 250,
+    }[args.profile]
+    embedded_records = min(
+        len(analysis.get("items", [])), args.max_records, profile_limit
+    )
     print(
         f"Created self-contained SFMEA report: {result} "
-        f"({embedded_records:,} records; {size_mib:.1f} MiB); propagation "
+        f"({embedded_records:,} records; {size_mib:.1f} MiB); profile={args.profile}; propagation "
         f"records={args.propagation_record_limit}, "
         f"paths/component={args.propagation_path_limit}, "
         f"depth={args.propagation_depth}, "
@@ -2164,6 +3417,57 @@ def _html_report_verify(args: argparse.Namespace) -> int:
         print(f"Unchecked checks: {', '.join(verification['unchecked_checks'])}")
     print(verification["notice"])
     return int(not verification["valid"])
+
+
+def _report_browser_verify(args: argparse.Namespace) -> int:
+    verification = verify_browser_quality_receipt_file(
+        args.receipt, report=args.report
+    )
+    if args.output:
+        output = export_json_document(verification, args.output)
+        print(f"Exported browser-quality verification: {output}")
+    else:
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+    return int(not verification["quality_passed"])
+
+
+def _accessibility_init(args: argparse.Namespace) -> int:
+    report = Path(args.report).expanduser().resolve()
+    output = (
+        Path(args.output)
+        if args.output
+        else report.with_name(report.stem + "-accessibility.json")
+    )
+    result = export_accessibility_evidence(report, output)
+    print(f"Created report-bound accessibility qualification checklist: {result}")
+    print(
+        "Complete every applicable keyboard, zoom, display-preference, and "
+        "screen-reader scenario; then run `sfmea accessibility-seal`."
+    )
+    return 0
+
+
+def _accessibility_seal(args: argparse.Namespace) -> int:
+    result = seal_accessibility_evidence(args.evidence)
+    print(f"Sealed accessibility evidence: {result}")
+    return 0
+
+
+def _accessibility_verify(args: argparse.Namespace) -> int:
+    result = verify_accessibility_evidence_file(args.evidence, report=args.report)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Accessibility evidence valid={result['valid']}; "
+            f"qualified={result['qualified']}"
+        )
+        for identifier, status in result["scenario_statuses"].items():
+            print(f"- {identifier}: {status}")
+        for error in result["errors"]:
+            print(f"- error: {error}")
+        print(result["notice"])
+    return int(not result["qualified"])
 
 
 def _pdf_report(args: argparse.Namespace) -> int:
@@ -2812,11 +4116,18 @@ def _discover(args: argparse.Namespace) -> int:
 
 
 def _suggestions(args: argparse.Namespace) -> int:
-    values = load_analysis(args.analysis).get("suggestions", [])
+    analysis = load_analysis(args.analysis)
+    values = analysis.get("suggestions", [])
     if args.status != "all":
         values = [value for value in values if value.get("status") == args.status]
     if args.json:
-        print(json.dumps(values, indent=2, ensure_ascii=False))
+        payload: Any = values
+        if args.relationships:
+            payload = {
+                "suggestions": values,
+                "relationships": suggestion_relationships(analysis),
+            }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
     for value in values:
         print(
@@ -2825,6 +4136,14 @@ def _suggestions(args: argparse.Namespace) -> int:
         )
     if not values:
         print("No suggestions match this filter.")
+    if args.relationships:
+        summary = suggestion_relationships(analysis)["summary"]
+        print(
+            "Relationship leads: "
+            f"duplicates={summary['duplicates']}, "
+            f"contradictions={summary['contradictions']}, "
+            f"divergences={summary['divergences']}"
+        )
     return 0
 
 
@@ -2853,6 +4172,288 @@ def _suggestion_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pr_analyze(args: argparse.Namespace) -> int:
+    result = analyze_pull_request(
+        args.repository,
+        base=args.base,
+        head=args.head,
+        output=args.output,
+    )
+    print(f"Created pull-request SFMEA review bundle: {result}")
+    print(f"Open the head report: {result / 'head-report.html'}")
+    print(f"Review the canonical delta: {result / 'differential-analysis.json'}")
+    return 0
+
+
+def _pr_verify(args: argparse.Namespace) -> int:
+    result = verify_pull_request_analysis(args.bundle)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Pull-request bundle valid={result['valid']}; "
+            f"base={result['base_commit']}; head={result['head_commit']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return int(not result["valid"])
+
+
+def _plugin_verify(args: argparse.Namespace) -> int:
+    manifest = load_plugin_manifest(args.manifest)
+    result = {
+        "valid": True,
+        "id": manifest.id,
+        "name": manifest.name,
+        "version": manifest.version,
+        "sdk_api": manifest.sdk_api,
+        "capabilities": manifest.capabilities,
+        "execution": (
+            "Explicit separate-process execution; not an operating-system sandbox."
+        ),
+    }
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Plugin manifest valid: {manifest.id} {manifest.version}; "
+            f"SDK API {manifest.sdk_api}; capabilities {', '.join(manifest.capabilities)}"
+        )
+        print(result["execution"])
+    return 0
+
+
+def _plugin_run(args: argparse.Namespace) -> int:
+    analysis_path = Path(args.analysis).expanduser().resolve()
+    run = run_plugin(
+        args.manifest,
+        load_analysis(analysis_path),
+        capability=args.capability,
+    )
+    output = (
+        Path(args.output)
+        if args.output
+        else analysis_path.with_name(analysis_path.stem + "-plugin-run.json")
+    )
+    result = export_plugin_run(run, output)
+    print(
+        f"Recorded {len(run['observations'])} untrusted plugin observation(s): {result}"
+    )
+    print(run["notice"])
+    return 0
+
+
+def _plugin_run_verify(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis) if args.analysis else None
+    result = verify_plugin_run_file(
+        args.run,
+        analysis=analysis,
+        manifest_source=args.manifest,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Plugin run valid={result['valid']}; plugin={result['plugin_id']}; "
+            f"observations={result['observation_count']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return int(not result["valid"])
+
+
+def _synthesis_init(args: argparse.Namespace) -> int:
+    source = Path(args.analysis).expanduser().resolve()
+    analysis = load_analysis(source)
+    output = (
+        Path(args.output)
+        if args.output
+        else source.with_name(source.stem + "-synthesis.json")
+    )
+    result = export_synthesis_workspace(analysis, output)
+    print(f"Created editable suggestion synthesis workspace: {result}")
+    print(
+        "Review existing and proposed claims, edit only evidence-supported content, "
+        "record decisions, then run `sfmea synthesis-seal`."
+    )
+    return 0
+
+
+def _synthesis_seal(args: argparse.Namespace) -> int:
+    result = seal_synthesis_workspace(args.workspace)
+    print(f"Sealed suggestion synthesis workspace: {result}")
+    return 0
+
+
+def _synthesis_verify(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis) if args.analysis else None
+    result = verify_synthesis_workspace_file(args.workspace, analysis)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Synthesis workspace valid={result['valid']}; "
+            f"entries={result['entry_count']}; decisions={result['decision_counts']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return int(not result["valid"])
+
+
+def _synthesis_apply(args: argparse.Namespace) -> int:
+    path = Path(args.analysis).expanduser().resolve()
+    workspace_path = Path(args.workspace).expanduser().resolve()
+    receipt_path = (
+        Path(args.receipt).expanduser().absolute()
+        if args.receipt
+        else path.with_name(path.stem + "-synthesis-apply-receipt.json")
+    )
+    if receipt_path.resolve() in {path, workspace_path}:
+        raise ValueError("synthesis receipt must differ from analysis and workspace paths")
+    source_snapshot_path = (
+        Path(args.source_snapshot).expanduser().absolute()
+        if args.source_snapshot
+        else None
+    )
+    if source_snapshot_path is not None and source_snapshot_path.resolve() in {
+        path,
+        workspace_path,
+        receipt_path.resolve(),
+    }:
+        raise ValueError(
+            "synthesis source snapshot must differ from analysis, workspace, and receipt paths"
+        )
+    analysis_destination = inspect_artifact_destination(
+        path, label="synthesis result analysis"
+    )
+    receipt_destination = inspect_artifact_destination(
+        receipt_path, label="synthesis apply receipt"
+    )
+    source_snapshot_destination = (
+        inspect_artifact_destination(
+            source_snapshot_path, label="synthesis source analysis snapshot"
+        )
+        if source_snapshot_path is not None
+        else None
+    )
+    if (
+        source_snapshot_destination is not None
+        and source_snapshot_destination.snapshot is not None
+    ):
+        raise ValueError(
+            "synthesis source snapshot already exists; choose a new destination"
+        )
+    source_file_snapshot = (
+        load_bounded_file_snapshot(
+            path,
+            label="synthesis source analysis",
+            max_bytes=MAX_ANALYSIS_BYTES,
+        )
+        if source_snapshot_destination is not None
+        else None
+    )
+    analysis = load_analysis(path)
+    if (
+        inspect_artifact_destination(path, label="synthesis result analysis")
+        != analysis_destination
+    ):
+        raise ValueError("analysis changed while preparing synthesis application")
+    workspace = load_synthesis_workspace(workspace_path)
+    receipt = apply_synthesis_workspace(analysis, workspace)
+    compact = (
+        analysis.get("project", {})
+        .get("settings", {})
+        .get("analysis_serialization")
+        == "compact"
+    )
+    with tempfile.TemporaryDirectory(
+        prefix=f".{path.name}.synthesis-", dir=path.parent
+    ) as temporary:
+        staged_analysis_path = Path(temporary) / path.name
+        save_analysis(staged_analysis_path, analysis, compact=compact)
+        staged_analysis = load_analysis(staged_analysis_path)
+        receipt["result_analysis_state_sha256"] = canonical_json_sha256(
+            staged_analysis
+        )
+        receipt.pop("content_sha256", None)
+        receipt["content_sha256"] = canonical_json_sha256(receipt)
+        analysis_content = staged_analysis_path.read_bytes()
+        receipt_content = (
+            json.dumps(receipt, indent=2, ensure_ascii=False) + "\n"
+        ).encode("utf-8")
+        published_source_snapshot: Path | None = None
+        if (
+            source_snapshot_destination is not None
+            and source_file_snapshot is not None
+        ):
+            source_digest = receipt["source_analysis_state_sha256"]
+
+            def verify_source_snapshot(candidate: Path) -> bool:
+                return bool(
+                    canonical_json_sha256(load_analysis(candidate)) == source_digest
+                )
+
+            published_source_snapshot = atomic_publish_bytes(
+                source_snapshot_destination.path,
+                source_file_snapshot.raw,
+                max_bytes=MAX_ANALYSIS_BYTES,
+                label="synthesis source analysis snapshot",
+                expected_destination=source_snapshot_destination,
+                staged_verifier=verify_source_snapshot,
+            )
+        published_analysis, published_receipt = atomic_publish_pair(
+            path,
+            analysis_content,
+            receipt_path,
+            receipt_content,
+            primary_label="synthesis result analysis",
+            secondary_label="synthesis apply receipt",
+            primary_max_bytes=MAX_ANALYSIS_BYTES,
+            secondary_max_bytes=20_000_000,
+            expected_primary=analysis_destination,
+            expected_secondary=receipt_destination,
+        )
+    print(
+        f"Applied {len(receipt['applied_suggestion_ids'])} suggestion decision(s); "
+        f"{receipt['deferred']} deferred."
+    )
+    print(f"Updated analysis: {published_analysis}")
+    print(f"Apply receipt: {published_receipt}")
+    if published_source_snapshot is not None:
+        print(f"Source analysis snapshot: {published_source_snapshot}")
+    print(receipt["notice"])
+    return 0
+
+
+def _synthesis_apply_verify(args: argparse.Namespace) -> int:
+    bindings = (args.source_analysis, args.workspace, args.result_analysis)
+    if args.integrity_only:
+        if any(value is not None for value in bindings):
+            raise ValueError(
+                "--integrity-only cannot be combined with binding artifact options"
+            )
+    elif not all(value is not None for value in bindings):
+        raise ValueError(
+            "complete verification requires --source-analysis, --workspace, and "
+            "--result-analysis; use --integrity-only for receipt-only verification"
+        )
+    result = verify_synthesis_apply_receipt_file(
+        args.receipt,
+        source_analysis_path=args.source_analysis,
+        workspace_path=args.workspace,
+        result_analysis_path=args.result_analysis,
+    )
+    if args.output:
+        output = export_json_document(result, args.output)
+        print(f"Exported synthesis apply verification: {output}")
+    else:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    return int(not (result["valid"] if args.integrity_only else result["reconciled"]))
+
+
 def _summarize(args: argparse.Namespace) -> int:
     if args.by != "project" and not args.key:
         raise ValueError("--key is required unless --by project is selected")
@@ -2875,13 +4476,59 @@ def _summarize(args: argparse.Namespace) -> int:
     return 0
 
 
+def _threat_model(args: argparse.Namespace) -> int:
+    destination = export_service_threat_model(args.output, format=args.format)
+    print(destination)
+    return 0
+
+
+def _evaluate_compare(args: argparse.Namespace) -> int:
+    values: list[dict[str, Any]] = []
+    for source, label in (
+        (args.before, "before evaluation result"),
+        (args.after, "after evaluation result"),
+        (args.change, "calibration change record"),
+    ):
+        document = load_bounded_json_document(
+            source,
+            label=label,
+            max_bytes=20_000_000,
+            max_depth=30,
+            max_nodes=1_000_000,
+        )
+        if not isinstance(document.value, dict):
+            raise ValueError(f"{label} must be a JSON object")
+        values.append(document.value)
+    result = compare_evaluation_results(values[0], values[1], values[2])
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        global_metrics = result["global"]
+        print(
+            "Calibration comparison: "
+            f"{result['decision']}; precision delta="
+            f"{global_metrics.get('precision_delta')}; recall delta="
+            f"{global_metrics.get('recall_delta')}; control recall delta="
+            f"{global_metrics.get('control_recall_delta')}"
+        )
+        for gate, passed in result["gates"].items():
+            print(f"- {'PASS' if passed else 'BLOCK'} {gate}")
+        print(result["authority"])
+    return int(not result["eligible_for_product_change_review"])
+
+
 def _evaluate(args: argparse.Namespace) -> int:
     if args.max_findings < 1:
         raise ValueError("--max-findings must be at least 1")
+    if args.json and args.output:
+        raise ValueError("--json cannot be combined with --output")
     analysis = load_analysis(args.analysis)
     expected = load_evaluation_spec(args.expected)
     result = evaluate_candidates(analysis, expected)
-    if args.json:
+    if args.output:
+        destination = export_json_document(result, args.output)
+        print(destination)
+    elif args.json:
         print(json.dumps(result, indent=2))
     else:
         print(
@@ -2910,6 +4557,39 @@ def _evaluate(args: argparse.Namespace) -> int:
                 f"recall={call_resolution.get('recall')}, "
                 f"precision={call_resolution.get('precision')}"
             )
+        confidence = result.get("confidence_calibration", {})
+        print(
+            "Confidence calibration: "
+            f"population={confidence.get('population')}, "
+            f"monotonic={confidence.get('monotonic_empirical_precision')}, "
+            f"qualification_ready={confidence.get('qualification_ready_corpus')}"
+        )
+        controls = result.get("control_detection", {})
+        if controls.get("enabled"):
+            control_population = controls.get("population", {})
+            print(
+                "Control detection: "
+                f"expected={controls.get('expected')}, "
+                f"actual={controls.get('actual')}, "
+                f"matched={controls.get('matched')}, "
+                f"recall={controls.get('recall')}, "
+                f"precision={controls.get('precision')}; "
+                f"components={control_population.get('evaluated_components')}, "
+                f"positive={control_population.get('positive_components')}, "
+                f"negative={control_population.get('negative_components')}"
+            )
+        semantics = result.get("semantic_output", {})
+        if semantics.get("enabled"):
+            print(
+                "Semantic output: "
+                f"cases={semantics.get('matched')}/{semantics.get('expected')}, "
+                f"recall={semantics.get('recall')}, "
+                f"precision={semantics.get('precision')}; "
+                f"claims={semantics.get('claim_matched')}/"
+                f"{semantics.get('claim_expected')}, "
+                f"claim_recall={semantics.get('claim_recall')}, "
+                f"claim_precision={semantics.get('claim_precision')}"
+            )
         findings = [
             *(
                 f"Missing: {value.get('source') or '*'}:{value['component']} / "
@@ -2933,6 +4613,27 @@ def _evaluate(args: argparse.Namespace) -> int:
                 f"({value['resolution']})"
                 for value in call_resolution.get("unexpected", [])
             ),
+            *(
+                f"Missing control: {value['source']}:{value['component']} / "
+                f"{value['kind']} ({', '.join(value.get('roles', []))})"
+                for value in controls.get("missing", [])
+            ),
+            *(
+                f"Unexpected control: {value['source']}:{value['component']} / "
+                f"{value['kind']} ({', '.join(value.get('roles', []))})"
+                for value in controls.get("unexpected", [])
+            ),
+            *(
+                f"Missing semantic case: {value['source']}:{value['component']} / "
+                f"{value['rule_id']}"
+                for value in semantics.get("missing", [])
+            ),
+            *(
+                f"Semantic mismatch: {value['source']}:{value['component']} / "
+                f"{value['rule_id']} [{value['field']}] "
+                f"expected={value['expected']!r}, actual={value['actual']!r}"
+                for value in semantics.get("mismatches", [])
+            ),
         ]
         for finding in findings[: args.max_findings]:
             print(f"- {finding}")
@@ -2947,6 +4648,10 @@ def _evaluate(args: argparse.Namespace) -> int:
             or result["unexpected"]
             or result.get("call_resolution", {}).get("missing")
             or result.get("call_resolution", {}).get("unexpected")
+            or result.get("control_detection", {}).get("missing")
+            or result.get("control_detection", {}).get("unexpected")
+            or result.get("semantic_output", {}).get("missing")
+            or result.get("semantic_output", {}).get("mismatches")
             or result.get("metrics", {}).get("duplicate_count")
             or result.get("metrics", {}).get("unsupported_verification_claims")
         )
@@ -2964,17 +4669,100 @@ def _program_analysis_references(values: list[str]) -> list[tuple[str, str]]:
 
 
 def _program_init(args: argparse.Namespace) -> int:
+    if bool(args.qualification_result) != bool(args.qualification_manifest):
+        raise ValueError(
+            "--qualification-result and --qualification-manifest must be supplied together"
+        )
+    cohorts = (
+        qualification_validation_cohorts(
+            args.qualification_result,
+            args.qualification_manifest,
+            program_destination=args.output,
+        )
+        if args.qualification_result
+        else []
+    )
     destination = write_program_template(
         args.output,
         _program_analysis_references(args.analysis),
         name=args.name,
         force=args.force,
+        validation_cohorts=cohorts,
     )
-    print(f"Created assurance program: {destination}")
+    print(
+        f"Created assurance program: {destination}; "
+        f"qualification cohorts imported={len(cohorts)}"
+    )
     print(
         "Add relationships, requirements, evidence, validation cohorts, and approvals; then run `sfmea program-seal` and `sfmea program-verify`."
     )
     return 0
+
+
+def _qualification_build(args: argparse.Namespace) -> int:
+    result = build_qualification_campaign(args.manifest)
+    destination = export_json_document(result, args.output)
+    status = str(result["status"])
+    print(
+        f"Qualification campaign: {status}; "
+        f"repositories={result['summary']['repository_count']}; output={destination}"
+    )
+    semantics = result["features"]["semantic_output"]
+    print(
+        "Semantic qualification: "
+        f"matched={semantics['matched']}/{semantics['expected']}; "
+        f"recall={semantics['recall']}; precision={semantics['precision']}"
+    )
+    print(result["notice"])
+    return int(args.require_eligible and not result["eligible_for_independent_review"])
+
+
+def _qualification_verify(args: argparse.Namespace) -> int:
+    if args.integrity_only and args.manifest:
+        raise ValueError("--integrity-only cannot be combined with --manifest")
+    if not args.integrity_only and not args.manifest:
+        raise ValueError("--manifest is required unless --integrity-only is used")
+    verdict = verify_qualification_campaign_file(
+        args.result,
+        manifest=None if args.integrity_only else args.manifest,
+    )
+    if args.output:
+        destination = export_json_document(verdict, args.output)
+        print(destination)
+    else:
+        print(json.dumps(verdict, indent=2, ensure_ascii=False))
+    accepted = verdict["valid"] if args.integrity_only else verdict["reconciled"]
+    if args.require_eligible:
+        accepted = bool(accepted and verdict["eligible_for_independent_review"])
+    return int(not accepted)
+
+
+def _qualification_report(args: argparse.Namespace) -> int:
+    destination = export_qualification_report(
+        args.result,
+        args.manifest,
+        args.output,
+        title=args.title,
+    )
+    print(f"Created qualification report: {destination}")
+    return 0
+
+
+def _qualification_report_verify(args: argparse.Namespace) -> int:
+    if args.integrity_only and args.result:
+        raise ValueError("--integrity-only cannot be combined with --result")
+    if not args.integrity_only and not args.result:
+        raise ValueError("--result is required unless --integrity-only is used")
+    verdict = verify_qualification_report_file(
+        args.report,
+        result_source=None if args.integrity_only else args.result,
+    )
+    if args.output:
+        destination = export_json_document(verdict, args.output)
+        print(destination)
+    else:
+        print(json.dumps(verdict, indent=2, ensure_ascii=False))
+    return int(not (verdict["valid"] if args.integrity_only else verdict["reconciled"]))
 
 
 def _program_seal(args: argparse.Namespace) -> int:
@@ -3413,13 +5201,18 @@ def _assurance_scaffold(args: argparse.Namespace) -> int:
         owner=args.owner,
         purpose=args.purpose,
     )
-    count = len(
-        json.loads((result / "assurance-manifest.json").read_text(encoding="utf-8"))[
-            "obligations"
-        ]
-    )
+    verification = verify_pytest_scaffold(analysis, result)
+    if not verification.get("valid"):
+        raise RuntimeError("generated assurance scaffold failed immediate verification")
+    count = int(verification["obligation_count"])
+    designs = verification.get("test_design_summary", {})
+    print(f"Created {count} fail-visible assurance test starting point(s): {result}")
     print(
-        f"Created {count} intentionally failing assurance test placeholder(s): {result}"
+        "Synthesized designs: "
+        f"properties={designs.get('property_designs', 0)}, "
+        f"contracts={designs.get('contract_designs', 0)}, "
+        f"contract cases={designs.get('contract_cases', 0)}, "
+        f"unresolved contract bindings={designs.get('unresolved_contract_bindings', 0)}"
     )
     print(
         "Implement and execute them only in an approved sandbox; they are not evidence yet."
@@ -3430,12 +5223,12 @@ def _assurance_scaffold(args: argparse.Namespace) -> int:
 def _assurance_scaffold_refresh(args: argparse.Namespace) -> int:
     analysis = load_analysis(args.analysis)
     result = refresh_pytest_scaffold(analysis, args.scaffold)
-    manifest = json.loads(
-        (result / "assurance-manifest.json").read_text(encoding="utf-8")
-    )
+    verification = verify_pytest_scaffold(analysis, result)
+    if not verification.get("valid"):
+        raise RuntimeError("refreshed assurance scaffold failed immediate verification")
     print(
-        f"Refreshed assurance scaffold {manifest['queue']['id']} with "
-        f"{len(manifest['obligations'])} placeholder(s): {result}"
+        f"Refreshed assurance scaffold {verification['queue']['id']} with "
+        f"{verification['obligation_count']} test starting point(s): {result}"
     )
     print(
         "Generated-file edits were not present; no implementation work was overwritten."
@@ -3467,6 +5260,15 @@ def _assurance_scaffold_verify(args: argparse.Namespace) -> int:
             f"(owner: {result['queue']['owner'] or 'unassigned'})"
         )
         print(f"Obligations: {result['obligation_count']}")
+        designs = result.get("test_design_summary", {})
+        print(
+            "Synthesized designs: "
+            f"properties={designs.get('property_designs', 0)}, "
+            f"contracts={designs.get('contract_designs', 0)}, "
+            f"contract cases={designs.get('contract_cases', 0)}, "
+            f"unresolved contract bindings="
+            f"{designs.get('unresolved_contract_bindings', 0)}"
+        )
         print(
             f"Current selection: {result['current_selection']['obligation_count']} "
             f"({result['lifecycle'].replace('_', ' ')})"

@@ -40,7 +40,7 @@ def _component_reference(component: dict[str, Any]) -> str:
 
 
 def _select_component(analysis: dict[str, Any], selector: str) -> dict[str, Any]:
-    matches = []
+    matches: list[dict[str, Any]] = []
     for component in analysis.get("components", []):
         values = {
             component.get("id", ""),

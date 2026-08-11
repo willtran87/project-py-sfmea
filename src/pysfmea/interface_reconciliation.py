@@ -12,7 +12,18 @@ from .model import stable_id
 MAX_INTERFACE_RECORDS = 20_000
 
 
-def _normalized_path(value: str) -> str:
+def _is_web_test_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").casefold()
+    parts = normalized.split("/")
+    name = parts[-1] if parts else ""
+    return (
+        any(part in {"__tests__", "test", "tests", "e2e"} for part in parts[:-1])
+        or ".test." in name
+        or ".spec." in name
+    )
+
+
+def normalize_interface_path(value: str) -> str:
     text = value.strip()
     if not text:
         return ""
@@ -33,7 +44,10 @@ def _normalized_path(value: str) -> str:
 
 
 def reconcile_cross_stack_interfaces(
-    components: list[dict[str, Any]], inventory: dict[str, Any]
+    components: list[dict[str, Any]],
+    inventory: dict[str, Any],
+    *,
+    dispositions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Relate bounded route declarations to bounded JS/TS endpoint literals.
 
@@ -49,7 +63,7 @@ def reconcile_cross_stack_interfaces(
             if not isinstance(endpoint, dict) or endpoint.get("kind") != "http_route":
                 continue
             raw_path = str(endpoint.get("path", ""))
-            normalized = _normalized_path(raw_path)
+            normalized = normalize_interface_path(raw_path)
             if not normalized:
                 continue
             backend.append(
@@ -65,6 +79,7 @@ def reconcile_cross_stack_interfaces(
                     "path": raw_path,
                     "declared_path": endpoint.get("declared_path", raw_path),
                     "router_prefix": endpoint.get("router_prefix", ""),
+                    "mount_prefix": endpoint.get("mount_prefix", ""),
                     "normalized_path": normalized,
                     "methods": list(endpoint.get("methods", [])),
                     "source": {
@@ -72,6 +87,10 @@ def reconcile_cross_stack_interfaces(
                         "line": source.get("line", 0),
                     },
                     "confidence": endpoint.get("confidence", "static_literal"),
+                    "registration_source": endpoint.get("registration_source", {}),
+                    "registration_confidence": endpoint.get(
+                        "registration_confidence", ""
+                    ),
                 }
             )
             if len(backend) >= MAX_INTERFACE_RECORDS:
@@ -80,6 +99,32 @@ def reconcile_cross_stack_interfaces(
             break
 
     clients: list[dict[str, Any]] = []
+    global_base_symbols: dict[str, set[str]] = defaultdict(set)
+    wrapper_base_symbols: dict[str, set[str]] = defaultdict(set)
+    for entry in inventory.get("entries", []):
+        if _is_web_test_path(str(entry.get("path", ""))):
+            continue
+        facts = entry.get("boundary_facts", {})
+        if not isinstance(facts, dict):
+            continue
+        for candidate in facts.get("endpoint_candidates", []):
+            if not isinstance(candidate, dict) or candidate.get("method") != "BASE":
+                continue
+            operation = str(candidate.get("operation", ""))
+            if not operation.startswith("constant:"):
+                continue
+            normalized = normalize_interface_path(str(candidate.get("literal", "")))
+            if normalized:
+                global_base_symbols[operation.partition(":")[2]].add(normalized)
+        for wrapper in facts.get("client_wrappers", []):
+            if (
+                isinstance(wrapper, dict)
+                and wrapper.get("operation")
+                and wrapper.get("base_symbol")
+            ):
+                wrapper_base_symbols[str(wrapper["operation"])].add(
+                    str(wrapper["base_symbol"])
+                )
     for entry in inventory.get("entries", []):
         facts = entry.get("boundary_facts", {})
         if not isinstance(facts, dict):
@@ -88,26 +133,37 @@ def reconcile_cross_stack_interfaces(
         if not isinstance(candidates, list):
             continue
         base_paths = [
-            _normalized_path(str(value.get("literal", "")))
+            normalize_interface_path(str(value.get("literal", "")))
             for value in candidates
             if isinstance(value, dict) and value.get("method") == "BASE"
         ]
         base_paths = sorted({value for value in base_paths if value})
+        test_source = _is_web_test_path(str(entry.get("path", "")))
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
             literal = str(candidate.get("literal", ""))
-            normalized = _normalized_path(literal)
+            normalized = normalize_interface_path(literal)
             composed_paths: list[str] = []
             if candidate.get("method") != "BASE":
+                resolved_base_paths = set(base_paths)
+                leading_symbol = re.match(r"^\$\{([A-Za-z_$][\w$]*)\}", literal)
+                if leading_symbol:
+                    resolved_base_paths.update(
+                        global_base_symbols.get(leading_symbol.group(1), set())
+                    )
+                for symbol in wrapper_base_symbols.get(
+                    str(candidate.get("operation", "")), set()
+                ):
+                    resolved_base_paths.update(global_base_symbols.get(symbol, set()))
                 endpoint_suffix = normalized or (
                     "/" + literal.lstrip("/")
                     if literal and "://" not in literal
                     else ""
                 )
-                for base_path in base_paths:
+                for base_path in sorted(resolved_base_paths):
                     if endpoint_suffix:
-                        composed = _normalized_path(
+                        composed = normalize_interface_path(
                             base_path.rstrip("/") + "/" + endpoint_suffix.lstrip("/")
                         )
                         if composed and composed != normalized:
@@ -121,15 +177,25 @@ def reconcile_cross_stack_interfaces(
                         str(candidate.get("method", "UNKNOWN")),
                     ),
                     "source_path": entry.get("path", ""),
+                    "line": candidate.get("line", 0),
                     "literal": literal,
                     "normalized_path": normalized,
                     "composed_normalized_paths": sorted(set(composed_paths)),
                     "base_configurations": base_paths,
+                    "resolved_base_configurations": sorted(
+                        {
+                            path.rsplit(normalized, 1)[0].rstrip("/") or "/"
+                            for path in composed_paths
+                            if normalized and path.endswith(normalized)
+                        }
+                    ),
                     "method": candidate.get("method", "UNKNOWN"),
                     "operation": candidate.get("operation", ""),
                     "confidence": candidate.get("confidence", "lexical_literal"),
                     "classification": (
-                        "base_configuration"
+                        "test_evidence_candidate"
+                        if test_source
+                        else "base_configuration"
                         if candidate.get("method") == "BASE"
                         else "endpoint_candidate"
                         if normalized or composed_paths
@@ -160,52 +226,58 @@ def reconcile_cross_stack_interfaces(
             ]
             if value
         ]
-        path_routes = [
-            (candidate_path, route)
-            for candidate_path in candidate_paths
-            for route in backend_by_path.get(candidate_path, [])
-        ]
-        for candidate_path, route in path_routes:
+        for candidate_path in candidate_paths:
+            routes = backend_by_path.get(candidate_path, [])
             client_method = str(client["method"])
-            methods = set(route["methods"])
-            method_compatible = client_method == "UNKNOWN" or bool(
-                methods.intersection({client_method, "ANY"})
-            )
-            if not method_compatible:
+            compatible_routes = [
+                route
+                for route in routes
+                if client_method == "UNKNOWN"
+                or bool(set(route["methods"]).intersection({client_method, "ANY"}))
+            ]
+            if routes and not compatible_routes:
+                route_ids = sorted(str(route["id"]) for route in routes)
+                server_methods = sorted(
+                    {method for route in routes for method in route["methods"]}
+                )
                 compatibility_findings.append(
                     {
-                        "id": stable_id("IFACE-METHOD-GAP", client["id"], route["id"]),
+                        "id": stable_id(
+                            "IFACE-METHOD-GAP", client["id"], candidate_path
+                        ),
                         "kind": "method_mismatch_candidate",
                         "client_endpoint_id": client["id"],
-                        "server_route_id": route["id"],
+                        "server_route_id": route_ids[0],
+                        "server_route_ids": route_ids,
                         "normalized_path": candidate_path,
                         "client_method": client_method,
-                        "server_methods": sorted(methods),
+                        "server_methods": server_methods,
                         "severity": "review",
-                        "notice": "Static literals share a path but declare incompatible HTTP methods.",
+                        "notice": "Static literals share a path but no discovered route declares a compatible HTTP method.",
                     }
                 )
                 continue
-            matches.append(
-                {
-                    "id": stable_id("IFACE-MATCH", client["id"], route["id"]),
-                    "client_endpoint_id": client["id"],
-                    "server_route_id": route["id"],
-                    "normalized_path": candidate_path,
-                    "method": client_method,
-                    "confidence": (
-                        "static_literal_composed_base_path"
-                        if candidate_path != client["normalized_path"]
-                        else "static_literal_exact_path"
-                    ),
-                    "evidence": (
-                        "Client and server literals have the same normalized path; "
-                        "unknown client methods match any declared server method."
-                    ),
-                }
-            )
-            matched_client_ids.add(client["id"])
-            matched_backend_ids.add(route["id"])
+            for route in compatible_routes:
+                matches.append(
+                    {
+                        "id": stable_id("IFACE-MATCH", client["id"], route["id"]),
+                        "client_endpoint_id": client["id"],
+                        "server_route_id": route["id"],
+                        "normalized_path": candidate_path,
+                        "method": client_method,
+                        "confidence": (
+                            "static_literal_composed_base_path"
+                            if candidate_path != client["normalized_path"]
+                            else "static_literal_exact_path"
+                        ),
+                        "evidence": (
+                            "Client and server literals have the same normalized path; "
+                            "unknown client methods match any declared server method."
+                        ),
+                    }
+                )
+                matched_client_ids.add(client["id"])
+                matched_backend_ids.add(route["id"])
 
     endpoint_clients = [
         value for value in clients if value["classification"] == "endpoint_candidate"
@@ -236,6 +308,49 @@ def reconcile_cross_stack_interfaces(
                 "notice": "No statically discovered Python route matched this client path candidate.",
             }
         )
+    configured_dispositions = [
+        value for value in (dispositions or []) if isinstance(value, dict)
+    ]
+    dispositions_by_id = {
+        str(value.get("endpoint_id", "")): value
+        for value in configured_dispositions
+        if value.get("endpoint_id")
+    }
+    applied_disposition_ids: set[str] = set()
+    for side, records in (("server", backend), ("client", endpoint_clients)):
+        for record in records:
+            endpoint_id = str(record.get("id", ""))
+            disposition = dispositions_by_id.get(endpoint_id)
+            if disposition is None or disposition.get("side") != side:
+                continue
+            record["reviewed_disposition"] = {
+                "decision": str(disposition.get("decision", "")),
+                "rationale": str(disposition.get("rationale", "")),
+                "reviewed_by": str(disposition.get("reviewed_by", "")),
+                "effective_date": str(disposition.get("effective_date", "")),
+                "authority": "named_static_interface_disposition_not_runtime_evidence",
+            }
+            applied_disposition_ids.add(endpoint_id)
+    for finding in compatibility_findings:
+        endpoint_ids = {
+            str(finding.get("client_endpoint_id", "")),
+            str(finding.get("server_route_id", "")),
+        }
+        linked = [
+            dispositions_by_id[value]
+            for value in sorted(endpoint_ids & applied_disposition_ids)
+            if value in dispositions_by_id
+        ]
+        if linked:
+            finding["reviewed_dispositions"] = [
+                {
+                    "endpoint_id": str(value.get("endpoint_id", "")),
+                    "decision": str(value.get("decision", "")),
+                    "reviewed_by": str(value.get("reviewed_by", "")),
+                    "effective_date": str(value.get("effective_date", "")),
+                }
+                for value in linked
+            ]
     sequences = [
         {
             "id": stable_id("IFACE-SEQUENCE", value["id"]),
@@ -275,6 +390,10 @@ def reconcile_cross_stack_interfaces(
             "dynamic_or_non_path": sum(
                 value["classification"] == "dynamic_or_non_path" for value in clients
             ),
+            "test_evidence_candidates": sum(
+                value["classification"] == "test_evidence_candidate"
+                for value in clients
+            ),
             "exact_matches": len(matches),
             "matched_client_endpoints": len(matched_client_ids),
             "unmatched_client_endpoints": len(endpoint_clients)
@@ -282,6 +401,10 @@ def reconcile_cross_stack_interfaces(
             "matched_server_routes": len(matched_backend_ids),
             "unmatched_server_routes": len(backend) - len(matched_backend_ids),
             "compatibility_findings": len(compatibility_findings),
+            "configured_dispositions": len(configured_dispositions),
+            "applied_dispositions": len(applied_disposition_ids),
+            "unmatched_disposition_ids": len(dispositions_by_id)
+            - len(applied_disposition_ids),
             "static_sequences": len(sequences),
             "truncated": len(backend) >= MAX_INTERFACE_RECORDS
             or len(clients) >= MAX_INTERFACE_RECORDS,
@@ -291,11 +414,20 @@ def reconcile_cross_stack_interfaces(
         "matches": matches,
         "compatibility_findings": compatibility_findings,
         "sequences": sequences,
+        "disposition_reconciliation": {
+            "configured": len(configured_dispositions),
+            "applied": len(applied_disposition_ids),
+            "unmatched_endpoint_ids": sorted(
+                set(dispositions_by_id) - applied_disposition_ids
+            ),
+            "authority": "review_history_not_runtime_reachability_or_compatibility_proof",
+        },
         "limitations": [
             "Exact static path matching does not prove deployed connectivity or compatibility.",
-            "Literal APIRouter/Blueprint prefixes and same-file client baseURL values are composed; include_router prefixes, reverse proxies, generated clients, variables, and runtime configuration remain unresolved.",
+            "Literal APIRouter/Blueprint prefixes, bounded static include_router/register_blueprint registrations, same-file baseURL values, named base constants, and conventional request wrappers are composed; dynamic registrations, reverse proxies, generated clients, arbitrary variables, and runtime configuration can remain unresolved.",
             "Fetch calls without a bounded literal method option are recorded with an unknown method.",
             "Schema and media-type compatibility require governed contracts or runtime evidence and are not inferred from path agreement.",
             "Unmatched records are review leads, not confirmed defects.",
+            "Endpoint literals from conventional web test paths remain indexed as test evidence but are excluded from deployed-client reconciliation metrics.",
         ],
     }

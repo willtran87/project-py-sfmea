@@ -34,6 +34,7 @@ GENERATED_DIAGRAM_KINDS = (
     "all",
     "architecture",
     "interface_flow",
+    "data_flow",
     "traceability",
     "guidance_traceability",
     "assurance_traceability",
@@ -62,9 +63,7 @@ INTEGRITY_REQUIRED_GENERATOR_VERSION = (0, 31, 0)
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
 
 
-def validate_propagation_limits(
-    record_limit: int, path_limit: int, depth: int
-) -> None:
+def validate_propagation_limits(record_limit: int, path_limit: int, depth: int) -> None:
     """Reject invalid or conservatively oversized propagation projections."""
 
     if not 1 <= record_limit <= MAX_PROPAGATION_RECORD_LIMIT:
@@ -106,12 +105,12 @@ def _string(value: Any, field: str, *, required: bool = False) -> str:
         value = ""
     if not isinstance(value, str):
         raise ValueError(f"diagram {field} must be a string")
-    value = value.strip()
-    if required and not value:
+    cleaned = value.strip()
+    if required and not cleaned:
         raise ValueError(f"diagram {field} is required")
-    if len(value) > MAX_TEXT_LENGTH:
+    if len(cleaned) > MAX_TEXT_LENGTH:
         raise ValueError(f"diagram {field} exceeds {MAX_TEXT_LENGTH} characters")
-    return value
+    return cleaned
 
 
 def _identifier(value: Any, field: str) -> str:
@@ -144,9 +143,13 @@ def _metadata(value: Any, field: str) -> dict[str, Any]:
         name = _string(key, f"{field} key", required=True)
         if isinstance(entry, (str, int, float, bool)) or entry is None:
             normalized[name] = entry
-        elif isinstance(entry, list) and len(entry) <= 100 and all(
-            isinstance(part, (str, int, float, bool)) or part is None
-            for part in entry
+        elif (
+            isinstance(entry, list)
+            and len(entry) <= 100
+            and all(
+                isinstance(part, (str, int, float, bool)) or part is None
+                for part in entry
+            )
         ):
             normalized[name] = entry
         else:
@@ -163,9 +166,7 @@ def normalize_diagram_model(model: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("each diagram must be an object")
     diagram_type = _string(model.get("type"), "type", required=True)
     if diagram_type not in DIAGRAM_TYPES:
-        raise ValueError(
-            f"diagram type must be one of: {', '.join(DIAGRAM_TYPES)}"
-        )
+        raise ValueError(f"diagram type must be one of: {', '.join(DIAGRAM_TYPES)}")
     raw_nodes = model.get("nodes", [])
     raw_edges = model.get("edges", [])
     if not isinstance(raw_nodes, list):
@@ -189,20 +190,34 @@ def normalize_diagram_model(model: dict[str, Any]) -> dict[str, Any]:
         layer = raw.get("layer")
         order = raw.get("order")
         if layer is not None and (
-            isinstance(layer, bool) or not isinstance(layer, int) or not 0 <= layer <= 100
+            isinstance(layer, bool)
+            or not isinstance(layer, int)
+            or not 0 <= layer <= 100
         ):
-            raise ValueError(f"diagram node {node_id} layer must be an integer from 0 through 100")
+            raise ValueError(
+                f"diagram node {node_id} layer must be an integer from 0 through 100"
+            )
         if order is not None and (
-            isinstance(order, bool) or not isinstance(order, int) or not 0 <= order <= 100_000
+            isinstance(order, bool)
+            or not isinstance(order, int)
+            or not 0 <= order <= 100_000
         ):
-            raise ValueError(f"diagram node {node_id} order must be a non-negative integer")
+            raise ValueError(
+                f"diagram node {node_id} order must be a non-negative integer"
+            )
         nodes.append(
             {
                 "id": node_id,
-                "label": _string(raw.get("label"), f"node {node_id} label", required=True),
-                "kind": _string(raw.get("kind", "element"), f"node {node_id} kind", required=True),
+                "label": _string(
+                    raw.get("label"), f"node {node_id} label", required=True
+                ),
+                "kind": _string(
+                    raw.get("kind", "element"), f"node {node_id} kind", required=True
+                ),
                 "group": _string(raw.get("group", ""), f"node {node_id} group"),
-                "description": _string(raw.get("description", ""), f"node {node_id} description"),
+                "description": _string(
+                    raw.get("description", ""), f"node {node_id} description"
+                ),
                 "source": _string(raw.get("source", ""), f"node {node_id} source"),
                 "tags": _string_list(raw.get("tags", []), f"node {node_id} tags"),
                 "metrics": _metadata(raw.get("metrics", {}), f"node {node_id} metrics"),
@@ -216,7 +231,9 @@ def normalize_diagram_model(model: dict[str, Any]) -> dict[str, Any]:
     for index, raw in enumerate(raw_edges):
         if not isinstance(raw, dict):
             raise ValueError(f"diagram edge {index + 1} must be an object")
-        edge_id = _identifier(raw.get("id", f"edge-{index + 1}"), f"edge {index + 1} id")
+        edge_id = _identifier(
+            raw.get("id", f"edge-{index + 1}"), f"edge {index + 1} id"
+        )
         if edge_id in edge_ids:
             raise ValueError(f"duplicate diagram edge id: {edge_id}")
         edge_ids.add(edge_id)
@@ -228,18 +245,30 @@ def normalize_diagram_model(model: dict[str, Any]) -> dict[str, Any]:
             )
         order = raw.get("order")
         if order is not None and (
-            isinstance(order, bool) or not isinstance(order, int) or not 0 <= order <= 100_000
+            isinstance(order, bool)
+            or not isinstance(order, int)
+            or not 0 <= order <= 100_000
         ):
-            raise ValueError(f"diagram edge {edge_id} order must be a non-negative integer")
+            raise ValueError(
+                f"diagram edge {edge_id} order must be a non-negative integer"
+            )
         edges.append(
             {
                 "id": edge_id,
                 "source": source,
                 "target": target,
                 "label": _string(raw.get("label", ""), f"edge {edge_id} label"),
-                "kind": _string(raw.get("kind", "relationship"), f"edge {edge_id} kind", required=True),
-                "evidence": _string(raw.get("evidence", ""), f"edge {edge_id} evidence"),
-                "description": _string(raw.get("description", ""), f"edge {edge_id} description"),
+                "kind": _string(
+                    raw.get("kind", "relationship"),
+                    f"edge {edge_id} kind",
+                    required=True,
+                ),
+                "evidence": _string(
+                    raw.get("evidence", ""), f"edge {edge_id} evidence"
+                ),
+                "description": _string(
+                    raw.get("description", ""), f"edge {edge_id} description"
+                ),
                 "order": order,
                 "cycle": bool(raw.get("cycle", False)),
             }
@@ -316,10 +345,14 @@ def _component_group(component: dict[str, Any]) -> str:
         return str(subsystems[0])
     path = str(component.get("source", {}).get("path", ""))
     parts = [part for part in path.replace("\\", "/").split("/") if part]
-    return "/".join(parts[:2]) if len(parts) > 1 else (parts[0] if parts else "Unassigned")
+    return (
+        "/".join(parts[:2]) if len(parts) > 1 else (parts[0] if parts else "Unassigned")
+    )
 
 
-def architecture_diagram(analysis: dict[str, Any], *, component_limit: int = 120) -> dict[str, Any]:
+def architecture_diagram(
+    analysis: dict[str, Any], *, component_limit: int = 120
+) -> dict[str, Any]:
     graph = architecture_graph(analysis)
     components = [
         component
@@ -350,10 +383,18 @@ def architecture_diagram(analysis: dict[str, Any], *, component_limit: int = 120
         for relation in internal_edges:
             source_id = str(relation.get("source", ""))
             target_id = str(relation.get("target", ""))
-            if source_id in selected and target_id in by_id and target_id not in selected:
+            if (
+                source_id in selected
+                and target_id in by_id
+                and target_id not in selected
+            ):
                 selected[target_id] = by_id[target_id]
                 changed = True
-            elif target_id in selected and source_id in by_id and source_id not in selected:
+            elif (
+                target_id in selected
+                and source_id in by_id
+                and source_id not in selected
+            ):
                 selected[source_id] = by_id[source_id]
                 changed = True
             if len(selected) >= component_limit:
@@ -372,7 +413,10 @@ def architecture_diagram(analysis: dict[str, Any], *, component_limit: int = 120
             group=_component_group(component),
             description=str(component.get("docstring_summary", "")),
             source=f"{component.get('source', {}).get('path', '')}:{component.get('source', {}).get('line', '')}",
-            tags=[*component.get("frameworks", []), *component.get("entrypoint_types", [])],
+            tags=[
+                *component.get("frameworks", []),
+                *component.get("entrypoint_types", []),
+            ],
             metrics={
                 "fan_in": component.get("fan_in", 0),
                 "complexity": component.get("complexity", 0),
@@ -412,6 +456,273 @@ def architecture_diagram(analysis: dict[str, Any], *, component_limit: int = 120
     )
 
 
+def deployment_topology_diagram(
+    analysis: dict[str, Any], *, node_limit: int = 250, component_limit: int = 750
+) -> dict[str, Any]:
+    """Project declared deployment entities and candidate component placements."""
+
+    topology = analysis.get("deployment_topology", {})
+    source_nodes = [
+        value for value in topology.get("nodes", []) if isinstance(value, dict)
+    ][:node_limit]
+    selected_node_ids = {str(value.get("id", "")) for value in source_nodes}
+    nodes = [
+        _node(
+            str(value.get("id", "")),
+            str(value.get("name", value.get("id", ""))),
+            str(value.get("kind", "deployment_entity")),
+            group=str(value.get("artifact_path", "Repository declaration")),
+            source=str(value.get("artifact_path", "")),
+            description=str(value.get("authority", "")),
+            tags=[str(value.get("kind", "deployment_entity"))],
+        )
+        for value in source_nodes
+    ]
+    edges = [
+        _edge(
+            str(value.get("id", "")),
+            str(value.get("source_node_id", "")),
+            str(value.get("target_node_id", "")),
+            str(value.get("kind", "relationship")).replace("_", " "),
+            str(value.get("kind", "deployment_relationship")),
+            evidence=str(value.get("artifact_path", "")),
+        )
+        for value in topology.get("edges", [])
+        if isinstance(value, dict)
+        and value.get("source_node_id") in selected_node_ids
+        and value.get("target_node_id") in selected_node_ids
+    ]
+    component_by_id = {
+        str(value.get("id", "")): value
+        for value in analysis.get("components", [])
+        if isinstance(value, dict)
+    }
+    embedded_components = 0
+    for placement in topology.get("placements", []):
+        if not isinstance(placement, dict):
+            continue
+        component_id = str(placement.get("component_id", ""))
+        targets = [
+            str(value)
+            for value in placement.get("node_ids", [])
+            if value in selected_node_ids
+        ]
+        component = component_by_id.get(component_id)
+        if not targets or component is None or embedded_components >= component_limit:
+            continue
+        nodes.append(
+            _node(
+                component_id,
+                str(component.get("qualname", component_id)),
+                "component",
+                group="Candidate placements",
+                source=str(component.get("source", {}).get("path", "")),
+                description=str(placement.get("basis", "")),
+                tags=["heuristic placement"],
+            )
+        )
+        embedded_components += 1
+        edges.extend(
+            _edge(
+                stable_id("DIAGRAM-PLACEMENT", component_id, target),
+                component_id,
+                target,
+                "candidate placement",
+                "candidate_placement",
+                evidence=str(placement.get("basis", "")),
+            )
+            for target in targets
+        )
+    summary = topology.get("summary", {})
+    return normalize_diagram_model(
+        {
+            "id": "declared-deployment-topology",
+            "title": "Declared deployment topology",
+            "type": "directed_graph",
+            "description": "Repository-declared deployment entities, relationships, and review-required component placement candidates.",
+            "notice": "This view is repository evidence, not observed runtime routing or reachability. Placements are heuristic until reviewed.",
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {
+                "category": "architecture",
+                "subtype": "deployment_topology",
+                "source_format": topology.get("format", ""),
+                "nodes_discovered": summary.get("nodes_discovered", 0),
+                "nodes_embedded": len(source_nodes),
+                "placed_components_embedded": embedded_components,
+                "projection_truncated": len(source_nodes)
+                < int(summary.get("nodes_embedded", 0) or 0)
+                or embedded_components < int(summary.get("placed_components", 0) or 0),
+            },
+        }
+    )
+
+
+def shared_fate_diagram(
+    analysis: dict[str, Any], *, region_limit: int = 100, component_limit: int = 1_500
+) -> dict[str, Any]:
+    """Project shared-resource candidates as regions linked to affected components."""
+
+    model = analysis.get("shared_fate_analysis", {})
+    regions = [value for value in model.get("regions", []) if isinstance(value, dict)][
+        :region_limit
+    ]
+    affected_ids: list[str] = []
+    for region in regions:
+        for component_id in region.get("affected_component_ids", []):
+            if component_id not in affected_ids and len(affected_ids) < component_limit:
+                affected_ids.append(str(component_id))
+    component_by_id = {
+        str(value.get("id", "")): value
+        for value in analysis.get("components", [])
+        if isinstance(value, dict)
+    }
+    nodes = [
+        _node(
+            str(region.get("id", "")),
+            str(region.get("key", region.get("id", ""))),
+            "shared_fate_region",
+            group=str(region.get("kind", "shared_fate")),
+            description=str(region.get("authority", "")),
+            tags=[str(region.get("kind", "shared_fate"))],
+            metrics={
+                "affected_components": len(region.get("affected_component_ids", []))
+            },
+        )
+        for region in regions
+    ]
+    nodes.extend(
+        _node(
+            component_id,
+            str(component_by_id.get(component_id, {}).get("qualname", component_id)),
+            "component",
+            group="Affected components",
+            source=str(
+                component_by_id.get(component_id, {}).get("source", {}).get("path", "")
+            ),
+        )
+        for component_id in affected_ids
+    )
+    affected_set = set(affected_ids)
+    edges = [
+        _edge(
+            stable_id("DIAGRAM-SHARED-FATE", str(region.get("id", "")), component_id),
+            str(region.get("id", "")),
+            str(component_id),
+            "may affect",
+            "shared_fate_membership",
+            evidence=str(region.get("authority", "")),
+        )
+        for region in regions
+        for component_id in region.get("affected_component_ids", [])
+        if component_id in affected_set
+    ]
+    summary = model.get("summary", {})
+    return normalize_diagram_model(
+        {
+            "id": "shared-fate-regions",
+            "title": "Shared-fate regions",
+            "type": "cause_effect",
+            "description": "Automatically discovered shared deployment, subsystem, and external-dependency candidates.",
+            "notice": "Membership is a conservative common-cause review lead, not proof of correlated failure or independence.",
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {
+                "category": "architecture",
+                "subtype": "shared_fate",
+                "source_format": model.get("format", ""),
+                "regions_discovered": summary.get("regions_discovered", 0),
+                "regions_embedded": len(regions),
+                "projection_truncated": len(regions)
+                < int(summary.get("regions", 0) or 0),
+            },
+        }
+    )
+
+
+def architecture_hierarchy_diagram(
+    analysis: dict[str, Any], *, node_limit: int = 1_000
+) -> dict[str, Any]:
+    """Render the deterministic repository/subsystem/source-package hierarchy."""
+
+    model = analysis.get("architecture_hierarchy", {})
+    source_nodes = [
+        value for value in model.get("nodes", []) if isinstance(value, dict)
+    ]
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    for value in source_nodes:
+        parent_id = str(value.get("parent_id", ""))
+        if len(selected) >= node_limit:
+            break
+        if parent_id and parent_id not in selected_ids:
+            continue
+        selected.append(value)
+        selected_ids.add(str(value.get("id", "")))
+    nodes = [
+        _node(
+            str(value.get("id", "")),
+            str(value.get("name", value.get("id", ""))),
+            str(value.get("kind", "architecture_node")),
+            group=str(value.get("kind", "architecture")),
+            description=str(value.get("path", "")),
+            tags=[
+                f"{len(value.get('component_ids', []))} components",
+                f"{len(value.get('effective_trace', {}).get('requirements', []))} requirements",
+                f"{len(value.get('effective_trace', {}).get('hazards', []))} hazards",
+            ],
+            metrics={
+                "components": len(value.get("component_ids", [])),
+                "requirements": len(
+                    value.get("effective_trace", {}).get("requirements", [])
+                ),
+                "hazards": len(value.get("effective_trace", {}).get("hazards", [])),
+                "interfaces": len(
+                    value.get("effective_trace", {}).get("interfaces", [])
+                ),
+            },
+        )
+        for value in selected
+    ]
+    edges = [
+        _edge(
+            stable_id(
+                "DIAGRAM-HIERARCHY",
+                str(value.get("parent_id", "")),
+                str(value.get("id", "")),
+            ),
+            str(value.get("parent_id", "")),
+            str(value.get("id", "")),
+            "contains",
+            "architecture_inheritance",
+            evidence="deterministic reviewed mapping or repository path",
+        )
+        for value in selected
+        if value.get("parent_id") in selected_ids
+    ]
+    summary = model.get("summary", {})
+    return normalize_diagram_model(
+        {
+            "id": "architecture-hierarchy",
+            "title": "Architecture hierarchy and inherited trace",
+            "type": "directed_graph",
+            "description": "Nested repository, subsystem, and source-package structure with upward trace aggregation.",
+            "notice": "Only supplied mappings and repository paths are represented; this is not architecture approval.",
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {
+                "category": "architecture",
+                "subtype": "hierarchy",
+                "source_format": model.get("format", ""),
+                "nodes_discovered": summary.get("nodes", 0),
+                "nodes_embedded": len(selected),
+                "projection_truncated": len(selected)
+                < int(summary.get("nodes", 0) or 0),
+            },
+        }
+    )
+
+
 def interface_flow_diagram(analysis: dict[str, Any]) -> dict[str, Any]:
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
@@ -421,7 +732,9 @@ def interface_flow_diagram(analysis: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, dict)
         and isinstance(value.get("external_call_candidates", []), list)
     )
-    for index, interface in enumerate(analysis.get("context", {}).get("system_interfaces", [])):
+    for index, interface in enumerate(
+        analysis.get("context", {}).get("system_interfaces", [])
+    ):
         source_label = str(interface.get("source", "Source"))
         target_label = str(interface.get("target", "Target"))
         source_id = stable_id("boundary", source_label).lower()
@@ -516,6 +829,111 @@ def interface_flow_diagram(analysis: dict[str, Any]) -> dict[str, Any]:
                 "external_candidates_emitted": candidate_count,
                 "external_candidates_total": total_candidates,
                 "external_candidates_truncated": total_candidates > candidate_count,
+            },
+        }
+    )
+
+
+def data_flow_diagram(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Render the bounded interprocedural value-flow projection."""
+
+    model = analysis.get("interprocedural_data_flow", {})
+    raw_edges = model.get("edges", []) if isinstance(model, dict) else []
+    raw_edges = raw_edges if isinstance(raw_edges, list) else []
+    components = {
+        str(value.get("id", "")): value
+        for value in analysis.get("components", [])
+        if isinstance(value, dict) and value.get("id")
+    }
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, Any]] = []
+    omitted_by_node_budget = 0
+    omitted_by_edge_budget = 0
+    for value in raw_edges:
+        if not isinstance(value, dict):
+            continue
+        source = str(value.get("caller_component_id", ""))
+        target = str(value.get("callee_component_id", ""))
+        if source not in components or target not in components:
+            continue
+        if len(edges) >= MAX_DIAGRAM_EDGES:
+            omitted_by_edge_budget += 1
+            continue
+        missing_nodes = sum(identifier not in nodes for identifier in (source, target))
+        if len(nodes) + missing_nodes > MAX_DIAGRAM_NODES:
+            omitted_by_node_budget += 1
+            continue
+        for identifier, layer in ((source, 0), (target, 1)):
+            component = components[identifier]
+            nodes.setdefault(
+                identifier,
+                _node(
+                    identifier,
+                    str(component.get("qualname", identifier)),
+                    "component",
+                    source=(
+                        f"{component.get('source', {}).get('path', '')}:"
+                        f"{component.get('source', {}).get('line', '')}"
+                    ),
+                    tags=[str(component.get("kind", "component"))],
+                    layer=layer,
+                ),
+            )
+        arguments = [
+            str(argument.get("target_parameter", "?"))
+            for argument in value.get("arguments", [])
+            if isinstance(argument, dict)
+        ]
+        dimensions = value.get("flow_dimensions", {})
+        label_parts = ["parameters " + ", ".join(arguments)] if arguments else []
+        if isinstance(dimensions, dict) and dimensions.get("return"):
+            sink = str(
+                value.get("result_flow", {}).get("context", {}).get("kind", "sink")
+            )
+            label_parts.append("return to " + sink.replace("_", " "))
+        edges.append(
+            _edge(
+                str(value.get("id", f"data-flow-{len(edges) + 1}")),
+                source,
+                target,
+                "; ".join(label_parts) or "call value flow",
+                "interprocedural_value_flow",
+                evidence=str(value.get("resolution", "static")),
+                description=(
+                    "Path-insensitive static argument and result flow; dimensions: "
+                    + ", ".join(key for key, enabled in dimensions.items() if enabled)
+                ),
+                order=len(edges),
+            )
+        )
+    total_edges = int(
+        model.get("summary", {}).get("resolved_call_edges", len(raw_edges)) or 0
+    )
+    projected_omissions = max(0, total_edges - len(edges))
+    return normalize_diagram_model(
+        {
+            "id": "interprocedural-data-flow",
+            "title": "Interprocedural value flow",
+            "type": "flow",
+            "description": "Static caller-expression to callee-parameter and callee-return to caller-context relationships.",
+            "notice": (
+                "This bounded, path-insensitive projection does not prove runtime reachability, "
+                "taint, validity, confidentiality, or hazard causality."
+            ),
+            "nodes": list(nodes.values()),
+            "edges": edges,
+            "metadata": {
+                "category": "data_flow",
+                "source_format": str(model.get("format", "unavailable")),
+                "total_flow_edges": total_edges,
+                "embedded_flow_edges": len(edges),
+                "flow_edges_omitted": projected_omissions,
+                "source_edges_omitted": int(
+                    model.get("summary", {}).get("edges_omitted", 0) or 0
+                ),
+                "omitted_by_node_budget": omitted_by_node_budget,
+                "omitted_by_edge_budget": omitted_by_edge_budget,
+                "truncated": projected_omissions > 0,
             },
         }
     )
@@ -904,7 +1322,9 @@ def failure_propagation_diagram(
                     tags=("static_candidate", "control_not_credited", "scope_shared"),
                     metrics={
                         "roles": breaker.get("roles", []),
-                        "evidence_strength": breaker.get("evidence_strength", "static_candidate"),
+                        "evidence_strength": breaker.get(
+                            "evidence_strength", "static_candidate"
+                        ),
                         "control_scope": breaker_scope,
                     },
                     layer=cascade_layer + 1,
@@ -957,7 +1377,9 @@ def failure_propagation_diagram(
                     ),
                     tags=("static_ast", "component_shared"),
                     metrics={
-                        "selected_findings": finding_counts_by_component.get(raw_component_id, 0),
+                        "selected_findings": finding_counts_by_component.get(
+                            raw_component_id, 0
+                        ),
                         "available_static_paths": len(all_upstream_paths),
                         "embedded_static_paths": len(upstream_paths),
                         "paths_omitted_by_diagram_limit": max(
@@ -1028,7 +1450,9 @@ def failure_propagation_diagram(
                     caller_node_id,
                     str(caller.get("qualname") or caller_reference),
                     "cascade_component",
-                    group=_component_group(caller) if caller else "Unresolved static caller",
+                    group=_component_group(caller)
+                    if caller
+                    else "Unresolved static caller",
                     description=(
                         "Caller relation is present in imported runtime evidence."
                         if observed
@@ -1068,7 +1492,9 @@ def failure_propagation_diagram(
                         "observed_upstream_exposure"
                         if observed
                         else "potential_upstream_exposure",
-                        evidence="static_ast + observed_runtime" if observed else "static_ast",
+                        evidence="static_ast + observed_runtime"
+                        if observed
+                        else "static_ast",
                         description="This relationship is exposure evidence, not proof of effect propagation.",
                         order=path_index * 10 + depth,
                         cycle=cycle,
@@ -1093,7 +1519,9 @@ def failure_propagation_diagram(
             if not effect:
                 continue
             effect_id = stable_id(kind, item_id, effect).lower()
-            nodes[effect_id] = _node(effect_id, effect, kind, source=item_id, layer=layer)
+            nodes[effect_id] = _node(
+                effect_id, effect, kind, source=item_id, layer=layer
+            )
             edges.append(
                 _edge(
                     f"{item_id}-{kind}",
@@ -1169,9 +1597,7 @@ def failure_propagation_diagram(
                 "components_truncated": embedded_components < total_active_components,
                 "additional_findings_after_component_pass": max(
                     0,
-                    len(selected_items)
-                    - len(pinned_items)
-                    - component_pass_additions,
+                    len(selected_items) - len(pinned_items) - component_pass_additions,
                 ),
                 "component_coverage_percent": round(
                     100 * embedded_components / total_active_components, 1
@@ -1252,7 +1678,7 @@ def circuit_breaker_diagrams(
                 for component in value[1]["components"]
             ),
             value[0][1],
-        )
+        ),
     )
     diagrams: list[dict[str, Any]] = []
     list_fields = (
@@ -1270,9 +1696,7 @@ def circuit_breaker_diagrams(
         "fallback_indicators",
         "detection_basis",
     )
-    for index, ((path, scope), group) in enumerate(
-        candidates[:breaker_limit], start=1
-    ):
+    for index, ((path, scope), group) in enumerate(candidates[:breaker_limit], start=1):
         components = sorted(
             group["components"],
             key=lambda component: (
@@ -1325,26 +1749,42 @@ def circuit_breaker_diagrams(
             review_gaps.append("Trip threshold expression is not statically evident.")
         recovery_expected = "half_open" in expected_states or "recovery_timer" in roles
         if recovery_expected and not control.get("cooldown_expressions"):
-            review_gaps.append("Cooldown boundary expression is not statically evident.")
+            review_gaps.append(
+                "Cooldown boundary expression is not statically evident."
+            )
         if recovery_expected and not control.get("clock_sources"):
             review_gaps.append("Elapsed-time clock source is not statically evident.")
         if recovery_expected and "half_open" not in observed_states:
-            review_gaps.append("HALF-OPEN state or bounded recovery probe is not explicit.")
+            review_gaps.append(
+                "HALF-OPEN state or bounded recovery probe is not explicit."
+            )
         if recovery_expected and "success_reset" not in roles:
-            review_gaps.append("Successful recovery-to-CLOSED transition is not statically evident.")
+            review_gaps.append(
+                "Successful recovery-to-CLOSED transition is not statically evident."
+            )
         clock_sources = set(control.get("clock_sources", []))
         if any(value.endswith("time") for value in clock_sources) and not any(
             value.endswith(("monotonic", "perf_counter")) for value in clock_sources
         ):
-            review_gaps.append("Wall-clock timing is present without an observed monotonic duration source.")
+            review_gaps.append(
+                "Wall-clock timing is present without an observed monotonic duration source."
+            )
         if recovery_expected and not control.get("synchronization"):
-            review_gaps.append("Concurrent recovery-probe serialization is not statically evident.")
+            review_gaps.append(
+                "Concurrent recovery-probe serialization is not statically evident."
+            )
         if not control.get("scope_keys"):
-            review_gaps.append("Dependency or tenant isolation key is not statically evident.")
+            review_gaps.append(
+                "Dependency or tenant isolation key is not statically evident."
+            )
         if "degraded_fallback" not in roles:
-            review_gaps.append("Caller-visible degraded or fallback contract is not statically evident.")
+            review_gaps.append(
+                "Caller-visible degraded or fallback contract is not statically evident."
+            )
 
-        def state_node(state: str, label: str, description: str, layer: int, order: int) -> dict[str, Any]:
+        def state_node(
+            state: str, label: str, description: str, layer: int, order: int
+        ) -> dict[str, Any]:
             observed = state in observed_states
             return _node(
                 f"{prefix}-{state.replace('_', '-')}",
@@ -1358,7 +1798,9 @@ def circuit_breaker_diagrams(
                 source=source,
                 tags=("observed",) if observed else ("conceptual", "review_required"),
                 metrics={
-                    "evidence_status": "observed in AST" if observed else "not directly observed",
+                    "evidence_status": "observed in AST"
+                    if observed
+                    else "not directly observed",
                     "scope_members": len(member_qualnames),
                 },
                 layer=layer,
@@ -1390,9 +1832,12 @@ def circuit_breaker_diagrams(
                     f"{prefix}-trip",
                     f"{prefix}-closed",
                     f"{prefix}-open",
-                    "failure threshold reached" if threshold_evidence else "trip policy invoked",
+                    "failure threshold reached"
+                    if threshold_evidence
+                    else "trip policy invoked",
                     "state_transition",
-                    evidence=threshold_evidence or "Trip threshold requires definition and review.",
+                    evidence=threshold_evidence
+                    or "Trip threshold requires definition and review.",
                     order=0,
                 )
             )
@@ -1412,9 +1857,12 @@ def circuit_breaker_diagrams(
                     f"{prefix}-cooldown",
                     f"{prefix}-open",
                     f"{prefix}-half-open",
-                    "cooldown elapsed" if cooldown_evidence else "recovery policy permits probe",
+                    "cooldown elapsed"
+                    if cooldown_evidence
+                    else "recovery policy permits probe",
                     "timed_transition",
-                    evidence=cooldown_evidence or "Cooldown boundary requires definition and review.",
+                    evidence=cooldown_evidence
+                    or "Cooldown boundary requires definition and review.",
                     order=1,
                 )
             )
@@ -1534,7 +1982,9 @@ def circuit_breaker_diagrams(
                         "detection_basis": control.get("detection_basis", []),
                         "clock_sources": control.get("clock_sources", []),
                         "scope_keys": control.get("scope_keys", []),
-                        "threshold_expressions": control.get("threshold_expressions", []),
+                        "threshold_expressions": control.get(
+                            "threshold_expressions", []
+                        ),
                         "cooldown_expressions": control.get("cooldown_expressions", []),
                     },
                 }
@@ -1885,7 +2335,9 @@ def control_coverage_diagram(
     )
 
 
-def sfta_diagrams(analysis: dict[str, Any], *, tree_limit: int = 12) -> list[dict[str, Any]]:
+def sfta_diagrams(
+    analysis: dict[str, Any], *, tree_limit: int = 12
+) -> list[dict[str, Any]]:
     """Render explicit or undeveloped Software Fault Trees with SFMEA correlations."""
 
     model = build_sfta(analysis)
@@ -1894,7 +2346,9 @@ def sfta_diagrams(analysis: dict[str, Any], *, tree_limit: int = 12) -> list[dic
     trees = model.get("trees", [])
     for tree_index, tree in enumerate(trees[:tree_limit], start=1):
         node_ids = {
-            str(value["id"]): stable_id("SFTA-NODE", str(tree["id"]), str(value["id"])).lower()
+            str(value["id"]): stable_id(
+                "SFTA-NODE", str(tree["id"]), str(value["id"])
+            ).lower()
             for value in tree.get("nodes", [])
         }
         nodes: list[dict[str, Any]] = []
@@ -1910,13 +2364,17 @@ def sfta_diagrams(analysis: dict[str, Any], *, tree_limit: int = 12) -> list[dic
                     description=str(value.get("description", "")),
                     source=f"{tree.get('id')}:{value.get('id')}",
                     tags=[subtype, *value.get("assumptions", [])[:3]],
-                    metrics={"linked_findings": len(value.get("linked_finding_ids", []))},
+                    metrics={
+                        "linked_findings": len(value.get("linked_finding_ids", []))
+                    },
                     order=order,
                 )
             )
             for finding_id in value.get("linked_finding_ids", [])[:20]:
                 item = items.get(finding_id, {})
-                finding_node = stable_id("SFTA-FINDING", str(tree["id"]), finding_id).lower()
+                finding_node = stable_id(
+                    "SFTA-FINDING", str(tree["id"]), finding_id
+                ).lower()
                 nodes.append(
                     _node(
                         finding_node,
@@ -2018,9 +2476,13 @@ def _selected_sequence_models(
     return selected
 
 
-def sequence_diagrams(analysis: dict[str, Any], *, limit: int = 6) -> list[dict[str, Any]]:
+def sequence_diagrams(
+    analysis: dict[str, Any], *, limit: int = 6
+) -> list[dict[str, Any]]:
     diagrams: list[dict[str, Any]] = []
-    for diagram_index, sequence in enumerate(_selected_sequence_models(analysis, limit=limit)):
+    for diagram_index, sequence in enumerate(
+        _selected_sequence_models(analysis, limit=limit)
+    ):
         nodes = [
             _node(
                 str(participant.get("id", "")),
@@ -2129,17 +2591,20 @@ def build_diagram_models(
         or propagation_path_limit != DEFAULT_PROPAGATION_PATH_LIMIT
         or propagation_depth != DEFAULT_PROPAGATION_DEPTH
     )
-    if (
-        kind not in {"all", "failure_propagation"}
-        and propagation_settings_are_custom
-    ):
+    if kind not in {"all", "failure_propagation"} and propagation_settings_are_custom:
         raise ValueError(
             "propagation projection options require diagram kind "
             "'failure_propagation' or 'all'"
         )
     builders = {
-        "architecture": lambda: [architecture_diagram(analysis)],
+        "architecture": lambda: [
+            architecture_diagram(analysis),
+            deployment_topology_diagram(analysis),
+            shared_fate_diagram(analysis),
+            architecture_hierarchy_diagram(analysis),
+        ],
         "interface_flow": lambda: [interface_flow_diagram(analysis)],
+        "data_flow": lambda: [data_flow_diagram(analysis)],
         "traceability": lambda: [traceability_diagram(analysis)],
         "guidance_traceability": lambda: [guidance_traceability_diagram(analysis)],
         "assurance_traceability": lambda: [assurance_traceability_diagram(analysis)],
@@ -2188,15 +2653,17 @@ def load_diagram_files(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
                 "diagram imports exceed the "
                 f"{MAX_DIAGRAM_IMPORT_TOTAL_BYTES}-byte aggregate import limit"
             )
-        if isinstance(payload, dict) and payload.get(
-            "schema_version"
-        ) == DIAGRAM_BUNDLE_SCHEMA and (
-            "integrity" in payload or _bundle_requires_integrity(payload)
+        if (
+            isinstance(payload, dict)
+            and payload.get("schema_version") == DIAGRAM_BUNDLE_SCHEMA
+            and ("integrity" in payload or _bundle_requires_integrity(payload))
         ):
             try:
                 verify_diagram_bundle_integrity(payload)
             except ValueError as exc:
-                raise ValueError(f"diagram bundle integrity failed: {path}: {exc}") from exc
+                raise ValueError(
+                    f"diagram bundle integrity failed: {path}: {exc}"
+                ) from exc
         if isinstance(payload, dict) and "diagrams" in payload:
             raw_diagrams = payload.get("diagrams")
         elif isinstance(payload, list):
@@ -2280,7 +2747,9 @@ def diagram_bundle(
         "generated_at": utc_now(),
         "project": {
             "name": analysis.get("project", {}).get("name", ""),
-            "baseline_id": analysis.get("project", {}).get("baseline", {}).get("id", ""),
+            "baseline_id": analysis.get("project", {})
+            .get("baseline", {})
+            .get("id", ""),
         },
         "generation": {
             "kind": kind,
@@ -2387,9 +2856,7 @@ def verify_diagram_bundle_file(
 ) -> dict[str, Any]:
     """Verify a bounded bundle file, its diagram schemas, and optional analysis binding."""
 
-    path, payload, size = _read_bounded_diagram_json(
-        source, label="diagram bundle"
-    )
+    path, payload, size = _read_bounded_diagram_json(source, label="diagram bundle")
     if not isinstance(payload, dict):
         raise ValueError("diagram bundle root must be an object")
     verification = verify_diagram_bundle_integrity(payload, analysis=analysis)

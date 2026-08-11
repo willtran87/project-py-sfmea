@@ -49,6 +49,19 @@ MAX_EVALUATION_SCOPES = 100
 MAX_EVALUATION_CANDIDATES = 500_000
 MAX_EVALUATION_VALUE_CHARS = 4096
 MAX_EVALUATION_METADATA_CHARS = 20_000
+SEMANTIC_TEXT_FIELDS = {
+    "failure_mode",
+    "trigger",
+    "local_effect",
+    "verification_method",
+    "confidence",
+    "screening_priority",
+}
+SEMANTIC_SEQUENCE_FIELDS = {"causes", "recommended_actions"}
+SEMANTIC_SET_FIELDS = {"citation_ids", "direct_citation_ids", "adapter_ids"}
+SEMANTIC_EXPECT_FIELDS = (
+    SEMANTIC_TEXT_FIELDS | SEMANTIC_SEQUENCE_FIELDS | SEMANTIC_SET_FIELDS
+)
 ALLOWED_CONTENT_FIELDS = {
     "failure_class",
     "guideword",
@@ -733,7 +746,7 @@ def discover_suggestions(
             )
             refresh_summary(analysis)
         except Exception:
-            for key, previous in (
+            for restore_key, previous in (
                 ("suggestions", prior_suggestions),
                 ("history", prior_history),
                 ("summary", prior_summary),
@@ -742,11 +755,11 @@ def discover_suggestions(
                     "suggestions": had_suggestions,
                     "history": had_history,
                     "summary": had_summary,
-                }[key]
+                }[restore_key]
                 if not existed:
-                    analysis.pop(key, None)
+                    analysis.pop(restore_key, None)
                 else:
-                    analysis[key] = previous
+                    analysis[restore_key] = previous
             raise
     return created
 
@@ -765,11 +778,11 @@ def _review_suggestion_mutation(
         raise ValueError("suggestion decision must be accept or reject")
     if not reviewer.strip() or not rationale.strip():
         raise ValueError("suggestion review requires a reviewer and rationale")
-    suggestion = next(
+    suggestion: dict[str, Any] | None = next(
         (
             value
             for value in analysis.get("suggestions", [])
-            if value.get("id") == suggestion_id
+            if isinstance(value, dict) and value.get("id") == suggestion_id
         ),
         None,
     )
@@ -1101,7 +1114,15 @@ def _reject_evaluation_json_constant(value: str) -> None:
 
 def _validate_evaluation_spec(
     expected: Any,
-) -> tuple[list[dict[str, str]], list[str], list[dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, str]],
+    list[str],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[str],
+    list[dict[str, Any]],
+    dict[str, Any],
+]:
     if not isinstance(expected, dict):
         raise ValueError("evaluation file root must be an object")
     allowed_root = {
@@ -1111,6 +1132,10 @@ def _validate_evaluation_spec(
         "scope",
         "cases",
         "call_cases",
+        "control_cases",
+        "control_scope",
+        "semantic_cases",
+        "governance",
     }
     unknown_root = set(expected) - allowed_root
     if unknown_root:
@@ -1276,7 +1301,255 @@ def _validate_evaluation_spec(
         raise ValueError(
             "evaluation call_cases must not contain duplicate exact records"
         )
-    return cases, scope, call_cases
+    raw_control_cases = expected.get("control_cases", [])
+    if not isinstance(raw_control_cases, list) or not all(
+        isinstance(value, dict) for value in raw_control_cases
+    ):
+        raise ValueError("evaluation control_cases must be an array of objects")
+    if len(raw_control_cases) > MAX_EVALUATION_CASES:
+        raise ValueError(
+            f"evaluation control_cases exceed the {MAX_EVALUATION_CASES}-record limit"
+        )
+    control_cases: list[dict[str, Any]] = []
+    for index, value in enumerate(raw_control_cases, start=1):
+        unknown_case = set(value) - {"source", "component", "kind", "roles"}
+        if unknown_case:
+            raise ValueError(
+                f"evaluation control case {index} contains unsupported fields: "
+                + ", ".join(sorted(unknown_case))
+            )
+        if not all(
+            isinstance(value.get(field, ""), str)
+            for field in ("source", "component", "kind")
+        ):
+            raise ValueError(
+                f"evaluation control case {index} identity fields must be strings"
+            )
+        roles = value.get("roles", [])
+        if (
+            not isinstance(roles, list)
+            or len(roles) > 100
+            or not all(
+                isinstance(role, str)
+                and role.strip()
+                and len(role) <= MAX_EVALUATION_VALUE_CHARS
+                for role in roles
+            )
+        ):
+            raise ValueError(
+                f"evaluation control case {index} roles must be a bounded string array"
+            )
+        control_case = {
+            "source": value.get("source", "").strip(),
+            "component": value.get("component", "").strip(),
+            "kind": value.get("kind", "").strip(),
+            "roles": sorted({role.strip() for role in roles}),
+        }
+        if not all(control_case[field] for field in ("source", "component", "kind")):
+            raise ValueError(
+                "every evaluation control case requires source, component, and kind"
+            )
+        if any(
+            len(str(control_case[field])) > MAX_EVALUATION_VALUE_CHARS
+            for field in ("source", "component", "kind")
+        ):
+            raise ValueError(
+                f"evaluation control case {index} exceeds its field length limit"
+            )
+        control_cases.append(control_case)
+    control_identities = {
+        (
+            value["source"],
+            value["component"],
+            value["kind"],
+            tuple(value["roles"]),
+        )
+        for value in control_cases
+    }
+    if len(control_identities) != len(control_cases):
+        raise ValueError("evaluation control_cases must not contain duplicate records")
+    raw_control_scope = expected.get("control_scope", [])
+    if not isinstance(raw_control_scope, list) or not all(
+        isinstance(value, str) for value in raw_control_scope
+    ):
+        raise ValueError(
+            "evaluation control_scope must be a list of path:component globs"
+        )
+    if len(raw_control_scope) > MAX_EVALUATION_SCOPES:
+        raise ValueError(
+            "evaluation control_scope exceeds the "
+            f"{MAX_EVALUATION_SCOPES}-pattern limit"
+        )
+    control_scope: list[str] = []
+    for value in raw_control_scope:
+        pattern = value.strip()
+        if not pattern or len(pattern) > MAX_EVALUATION_VALUE_CHARS:
+            raise ValueError(
+                "evaluation control_scope contains an invalid or oversized pattern"
+            )
+        control_scope.append(pattern)
+    if len(control_scope) != len(set(control_scope)):
+        raise ValueError("evaluation control_scope must not contain duplicate patterns")
+    outside_control_scope = [
+        f"{value['source']}:{value['component']}"
+        for value in control_cases
+        if control_scope
+        and not any(
+            fnmatch.fnmatchcase(
+                f"{value['source']}:{value['component']}", pattern
+            )
+            for pattern in control_scope
+        )
+    ]
+    if outside_control_scope:
+        raise ValueError(
+            "evaluation control_cases fall outside control_scope: "
+            + ", ".join(sorted(outside_control_scope)[:10])
+        )
+    raw_semantic_cases = expected.get("semantic_cases", [])
+    if not isinstance(raw_semantic_cases, list) or not all(
+        isinstance(value, dict) for value in raw_semantic_cases
+    ):
+        raise ValueError("evaluation semantic_cases must be an array of objects")
+    if len(raw_semantic_cases) > MAX_EVALUATION_CASES:
+        raise ValueError(
+            f"evaluation semantic_cases exceed the {MAX_EVALUATION_CASES}-record limit"
+        )
+    semantic_cases: list[dict[str, Any]] = []
+    for index, value in enumerate(raw_semantic_cases, start=1):
+        unknown_case = set(value) - {"source", "component", "rule_id", "expect"}
+        if unknown_case:
+            raise ValueError(
+                f"evaluation semantic case {index} contains unsupported fields: "
+                + ", ".join(sorted(unknown_case))
+            )
+        identity = {
+            field: value.get(field, "").strip()
+            if isinstance(value.get(field, ""), str)
+            else ""
+            for field in ("source", "component", "rule_id")
+        }
+        if not all(identity.values()):
+            raise ValueError(
+                "every evaluation semantic case requires source, component, and rule_id"
+            )
+        if any(len(entry) > MAX_EVALUATION_VALUE_CHARS for entry in identity.values()):
+            raise ValueError(
+                f"evaluation semantic case {index} exceeds its identity field length limit"
+            )
+        raw_expect = value.get("expect")
+        if not isinstance(raw_expect, dict) or not raw_expect:
+            raise ValueError(
+                f"evaluation semantic case {index} expect must be a non-empty object"
+            )
+        unknown_expect = set(raw_expect) - SEMANTIC_EXPECT_FIELDS
+        if unknown_expect:
+            raise ValueError(
+                f"evaluation semantic case {index} expect contains unsupported fields: "
+                + ", ".join(sorted(unknown_expect))
+            )
+        semantic_expect: dict[str, Any] = {}
+        for field, entry in raw_expect.items():
+            if field in SEMANTIC_TEXT_FIELDS:
+                if (
+                    not isinstance(entry, str)
+                    or not entry.strip()
+                    or len(entry) > MAX_EVALUATION_METADATA_CHARS
+                ):
+                    raise ValueError(
+                        f"evaluation semantic case {index} {field} must be bounded non-empty text"
+                    )
+                semantic_expect[field] = entry.strip()
+                continue
+            if (
+                not isinstance(entry, list)
+                or (field in SEMANTIC_SEQUENCE_FIELDS and not entry)
+                or len(entry) > MAX_GENERATED_LIST_ITEMS
+                or not all(
+                    isinstance(member, str)
+                    and member.strip()
+                    and len(member) <= MAX_EVALUATION_METADATA_CHARS
+                    for member in entry
+                )
+            ):
+                raise ValueError(
+                    f"evaluation semantic case {index} {field} must be a bounded non-empty string array"
+                )
+            normalized = [member.strip() for member in entry]
+            if len(normalized) != len(set(normalized)):
+                raise ValueError(
+                    f"evaluation semantic case {index} {field} must not contain duplicates"
+                )
+            semantic_expect[field] = (
+                sorted(normalized) if field in SEMANTIC_SET_FIELDS else normalized
+            )
+        semantic_cases.append({**identity, "expect": semantic_expect})
+    semantic_identities = {
+        (value["source"], value["component"], value["rule_id"])
+        for value in semantic_cases
+    }
+    if len(semantic_identities) != len(semantic_cases):
+        raise ValueError(
+            "evaluation semantic_cases must not contain duplicate source/component/rule keys"
+        )
+    raw_governance = expected.get("governance", {})
+    if not isinstance(raw_governance, dict):
+        raise ValueError("evaluation governance must be an object")
+    unknown_governance = set(raw_governance) - {
+        "independent",
+        "repositories",
+        "labeled_by",
+        "approved_by",
+        "approval_date",
+    }
+    if unknown_governance:
+        raise ValueError(
+            "evaluation governance contains unsupported fields: "
+            + ", ".join(sorted(unknown_governance))
+        )
+    repositories = raw_governance.get("repositories", [])
+    if not isinstance(repositories, list) or not all(
+        isinstance(value, str)
+        and value.strip()
+        and len(value) <= MAX_EVALUATION_VALUE_CHARS
+        for value in repositories
+    ):
+        raise ValueError("evaluation governance repositories must be a string array")
+    for field in ("labeled_by", "approved_by", "approval_date"):
+        value = raw_governance.get(field, "")
+        if not isinstance(value, str) or len(value) > MAX_EVALUATION_VALUE_CHARS:
+            raise ValueError(f"evaluation governance {field} must be bounded text")
+    if "independent" in raw_governance and not isinstance(
+        raw_governance["independent"], bool
+    ):
+        raise ValueError("evaluation governance independent must be a boolean")
+    governance = {
+        "independent": bool(raw_governance.get("independent", False)),
+        "repositories": list(dict.fromkeys(value.strip() for value in repositories)),
+        "labeled_by": str(raw_governance.get("labeled_by", "")).strip(),
+        "approved_by": str(raw_governance.get("approved_by", "")).strip(),
+        "approval_date": str(raw_governance.get("approval_date", "")).strip(),
+    }
+    governance["qualification_ready"] = bool(
+        governance["independent"]
+        and governance["repositories"]
+        and governance["labeled_by"]
+        and governance["approved_by"]
+        and governance["labeled_by"] != governance["approved_by"]
+        and governance["approval_date"]
+    )
+    governance["authority"] = (
+        "corpus_supplied_governance_claim_requires_external_verification"
+    )
+    return (
+        cases,
+        scope,
+        call_cases,
+        control_cases,
+        control_scope,
+        semantic_cases,
+        governance,
+    )
 
 
 def load_evaluation_spec(source: str | Path) -> dict[str, Any]:
@@ -1345,6 +1618,8 @@ def load_evaluation_spec(source: str | Path) -> dict[str, Any]:
             f"evaluation JSON exceeds the {MAX_EVALUATION_JSON_NODES}-node limit"
         )
     _validate_evaluation_spec(expected)
+    if not isinstance(expected, dict):
+        raise ValueError("evaluation file root must be an object")
     return expected
 
 
@@ -1353,7 +1628,15 @@ def evaluate_candidates(
 ) -> dict[str, Any]:
     """Source-aware exact-key regression hook for curated golden repositories."""
 
-    cases, scope, call_cases = _validate_evaluation_spec(expected)
+    (
+        cases,
+        scope,
+        call_cases,
+        control_cases,
+        control_scope,
+        semantic_cases,
+        governance,
+    ) = _validate_evaluation_spec(expected)
     expected_specs = {
         (
             value["source"],
@@ -1568,6 +1851,282 @@ def evaluate_candidates(
         record["control_context"] = list(record["control_context"])
         return record
 
+    actual_item_by_key = {value[:3]: value[3] for value in all_actual_records}
+    confidence_bins: dict[str, dict[str, int | float | None]] = {}
+    for confidence in sorted(
+        {
+            str(
+                actual_item_by_key[value]
+                .get("scanner", {})
+                .get("confidence", "unclassified")
+            )
+            for value in actual
+        }
+    ):
+        confidence_actual = {
+            value
+            for value in actual
+            if str(
+                actual_item_by_key[value]
+                .get("scanner", {})
+                .get("confidence", "unclassified")
+            )
+            == confidence
+        }
+        confidence_matched = confidence_actual & matched_actual
+        confidence_bins[confidence] = {
+            "actual": len(confidence_actual),
+            "matched": len(confidence_matched),
+            "false_positive": len(confidence_actual - matched_actual),
+            "empirical_precision": round(
+                len(confidence_matched) / len(confidence_actual), 4
+            )
+            if confidence_actual
+            else None,
+        }
+    ranked_precision: list[float] = []
+    for confidence in ("high", "medium", "low"):
+        precision_value = confidence_bins.get(confidence, {}).get(
+            "empirical_precision"
+        )
+        if isinstance(precision_value, (int, float)) and not isinstance(
+            precision_value, bool
+        ):
+            ranked_precision.append(float(precision_value))
+    monotonic_precision = (
+        all(
+            float(ranked_precision[index]) >= float(ranked_precision[index + 1])
+            for index in range(len(ranked_precision) - 1)
+        )
+        if len(ranked_precision) >= 2
+        else None
+    )
+
+    expected_controls = {
+        (
+            value["source"],
+            value["component"],
+            value["kind"],
+            tuple(value["roles"]),
+        )
+        for value in control_cases
+    }
+    positive_control_components = {
+        (value["source"], value["component"]) for value in control_cases
+    }
+    control_components = set(positive_control_components)
+    if control_scope:
+        control_components.update(
+            (source, qualname)
+            for component in analysis.get("components", [])
+            if isinstance(component, dict)
+            for source, qualname in [
+                (
+                    str(component.get("source", {}).get("path", "")),
+                    str(component.get("qualname", "")),
+                )
+            ]
+            if source
+            and qualname
+            and any(
+                fnmatch.fnmatchcase(f"{source}:{qualname}", pattern)
+                for pattern in control_scope
+            )
+        )
+    actual_controls: set[tuple[str, str, str, tuple[str, ...]]] = set()
+    for component in analysis.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        source = str(component.get("source", {}).get("path", ""))
+        qualname = str(component.get("qualname", ""))
+        if (source, qualname) not in control_components:
+            continue
+        for control in component.get("detected_controls", []):
+            if isinstance(control, dict) and control.get("kind"):
+                actual_controls.add(
+                    (
+                        source,
+                        qualname,
+                        str(control.get("kind", "")),
+                        tuple(sorted(str(value) for value in control.get("roles", []))),
+                    )
+                )
+    matched_controls = expected_controls & actual_controls
+    missing_controls = expected_controls - actual_controls
+    unexpected_controls = actual_controls - expected_controls
+
+    def control_finding(value: tuple[str, str, str, tuple[str, ...]]) -> dict[str, Any]:
+        return {
+            "source": value[0],
+            "component": value[1],
+            "kind": value[2],
+            "roles": list(value[3]),
+        }
+
+    control_kinds = sorted({value[2] for value in expected_controls | actual_controls})
+    controls_by_kind = {
+        kind: {
+            "expected": sum(value[2] == kind for value in expected_controls),
+            "actual": sum(value[2] == kind for value in actual_controls),
+            "matched": sum(value[2] == kind for value in matched_controls),
+        }
+        for kind in control_kinds
+    }
+    for values in controls_by_kind.values():
+        values["recall"] = (
+            round(int(values["matched"]) / int(values["expected"]), 4)
+            if values["expected"]
+            else None
+        )
+        values["precision"] = (
+            round(int(values["matched"]) / int(values["actual"]), 4)
+            if values["actual"]
+            else None
+        )
+    by_rule: dict[str, dict[str, int | float | None]] = {}
+    for rule_id in sorted({value[2] for value in expected_specs | actual}):
+        expected_rule = {value for value in expected_specs if value[2] == rule_id}
+        actual_rule = {value for value in actual if value[2] == rule_id}
+        matched_rule = {value for value in matched_actual if value[2] == rule_id}
+        by_rule[rule_id] = {
+            "expected": len(expected_rule),
+            "actual": len(actual_rule),
+            "matched": len(matched_rule),
+            "recall": round(len(matched_rule) / len(expected_rule), 4)
+            if expected_rule
+            else None,
+            "precision": round(len(matched_rule) / len(actual_rule), 4)
+            if actual_rule
+            else None,
+        }
+
+    assurance_by_finding_id = {
+        str(value.get("finding_id", "")): value
+        for value in analysis.get("assurance", {}).get("obligations", [])
+        if isinstance(value, dict)
+        and value.get("source_status", "active") == "active"
+        and value.get("finding_id")
+    }
+
+    def semantic_projection(item: dict[str, Any]) -> dict[str, Any]:
+        review = item.get("review", {})
+        scanner = item.get("scanner", {})
+        citations = scanner.get("citations", [])
+        citation_ids = sorted(
+            {
+                str(value.get("citation_id", ""))
+                for value in citations
+                if isinstance(value, dict) and value.get("citation_id")
+            }
+        )
+        obligation = assurance_by_finding_id.get(str(item.get("id", "")), {})
+        return {
+            "failure_mode": str(review.get("failure_mode", "")),
+            "trigger": str(review.get("trigger", "")),
+            "causes": [str(value) for value in review.get("causes", [])],
+            "local_effect": str(review.get("local_effect", "")),
+            "recommended_actions": [
+                str(value) for value in review.get("recommended_actions", [])
+            ],
+            "verification_method": str(obligation.get("verification_method", "")),
+            "citation_ids": citation_ids,
+            "direct_citation_ids": sorted(
+                {
+                    str(value.get("citation_id", ""))
+                    for value in citations
+                    if isinstance(value, dict)
+                    and value.get("citation_id")
+                    and value.get("strength") == "direct"
+                }
+            ),
+            "adapter_ids": sorted(
+                {
+                    str(value)
+                    for value in scanner.get("adapter_ids", [])
+                    if str(value)
+                }
+            ),
+            "confidence": str(scanner.get("confidence", "")),
+            "screening_priority": str(scanner.get("screening_priority", "")),
+        }
+
+    semantic_items = {value[:3]: value[3] for value in all_actual_records}
+    semantic_missing: list[dict[str, str]] = []
+    semantic_mismatches: list[dict[str, Any]] = []
+    semantic_matched = 0
+    semantic_actual = 0
+    semantic_claim_expected = 0
+    semantic_claim_actual = 0
+    semantic_claim_matched = 0
+    semantic_by_field_counts: dict[str, dict[str, int]] = {}
+    semantic_by_rule_counts: dict[str, dict[str, int]] = {}
+    for case in semantic_cases:
+        identity = (case["source"], case["component"], case["rule_id"])
+        expected_projection = case["expect"]
+        claim_count = len(expected_projection)
+        semantic_claim_expected += claim_count
+        rule_counts = semantic_by_rule_counts.setdefault(
+            case["rule_id"], {"expected": 0, "actual": 0, "matched": 0}
+        )
+        rule_counts["expected"] += 1
+        for field in expected_projection:
+            semantic_by_field_counts.setdefault(
+                field, {"expected": 0, "actual": 0, "matched": 0}
+            )["expected"] += 1
+        item = semantic_items.get(identity)
+        if item is None:
+            semantic_missing.append(finding(identity))
+            continue
+        semantic_actual += 1
+        semantic_claim_actual += claim_count
+        rule_counts["actual"] += 1
+        actual_projection = semantic_projection(item)
+        case_matches = True
+        for field, expected_value in expected_projection.items():
+            field_counts = semantic_by_field_counts[field]
+            field_counts["actual"] += 1
+            actual_value = actual_projection[field]
+            if actual_value == expected_value:
+                semantic_claim_matched += 1
+                field_counts["matched"] += 1
+                continue
+            case_matches = False
+            semantic_mismatches.append(
+                {
+                    "source": case["source"],
+                    "component": case["component"],
+                    "rule_id": case["rule_id"],
+                    "field": field,
+                    "expected": expected_value,
+                    "actual": actual_value,
+                }
+            )
+        if case_matches:
+            semantic_matched += 1
+            rule_counts["matched"] += 1
+
+    def completed_semantic_metrics(
+        values: dict[str, int],
+    ) -> dict[str, int | float | None]:
+        return {
+            **values,
+            "recall": round(values["matched"] / values["expected"], 4)
+            if values["expected"]
+            else None,
+            "precision": round(values["matched"] / values["actual"], 4)
+            if values["actual"]
+            else None,
+        }
+
+    semantic_by_field = {
+        key: completed_semantic_metrics(value)
+        for key, value in sorted(semantic_by_field_counts.items())
+    }
+    semantic_by_rule = {
+        key: completed_semantic_metrics(value)
+        for key, value in sorted(semantic_by_rule_counts.items())
+    }
+
     return {
         "format": "pysfmea-evaluation-result-1",
         "verifier": {"name": "PySFMEA", "version": __version__},
@@ -1576,7 +2135,12 @@ def evaluate_candidates(
             "content_sha256": canonical_json_sha256(expected),
             "case_count": len(cases),
             "call_case_count": len(call_cases),
+            "control_case_count": len(control_cases),
+            "control_scope_count": len(control_scope),
+            "semantic_case_count": len(semantic_cases),
+            "semantic_claim_count": semantic_claim_expected,
             "scope_count": len(scope),
+            "governance": governance,
         },
         "expected": len(expected_specs),
         "actual": len(actual),
@@ -1590,6 +2154,7 @@ def evaluate_candidates(
         "precision": precision,
         "missing": [finding(value) for value in sorted(missing)],
         "unexpected": [finding(value) for value in sorted(unexpected)],
+        "by_rule": by_rule,
         "metrics": {
             "duplicate_count": duplicate_count,
             "duplicate_rate": round(duplicate_count / len(scoped_items), 4)
@@ -1642,5 +2207,314 @@ def evaluate_candidates(
                 "they do not establish confidence calibration on unseen repositories."
             ),
         },
-        "notice": "Candidates are evaluated only for explicit scope globs or components named by the corpus. Exact-key metrics do not measure semantic correctness of effects or ratings, and call-resolution metrics apply only when exhaustive labeled call_cases are supplied.",
+        "confidence_calibration": {
+            "enabled": bool(actual),
+            "bins": confidence_bins,
+            "ranked_labels": ["high", "medium", "low"],
+            "monotonic_empirical_precision": monotonic_precision,
+            "population": len(actual),
+            "qualification_ready_corpus": governance["qualification_ready"],
+            "authority": "empirical_exact_key_precision_by_scanner_label_not_probability_calibration",
+        },
+        "control_detection": {
+            "enabled": bool(control_cases or control_scope),
+            "expected": len(expected_controls),
+            "actual": len(actual_controls),
+            "matched": len(matched_controls),
+            "recall": round(len(matched_controls) / len(expected_controls), 4)
+            if expected_controls
+            else None,
+            "precision": round(len(matched_controls) / len(actual_controls), 4)
+            if actual_controls
+            else None,
+            "missing": [control_finding(value) for value in sorted(missing_controls)],
+            "unexpected": [
+                control_finding(value) for value in sorted(unexpected_controls)
+            ],
+            "by_kind": controls_by_kind,
+            "population": {
+                "scope_basis": (
+                    "explicit_control_scope"
+                    if control_scope
+                    else "positive_case_components"
+                ),
+                "scope_patterns": list(control_scope),
+                "evaluated_components": len(control_components),
+                "positive_components": len(positive_control_components),
+                "negative_components": len(
+                    control_components - positive_control_components
+                ),
+            },
+            "qualification_ready_corpus": governance["qualification_ready"],
+            "notice": "Exact labeled control records and an optional exhaustive control_scope measure static detector recall and false-positive-aware precision only within the declared corpus; they do not prove runtime control effectiveness.",
+        },
+        "semantic_output": {
+            "enabled": bool(semantic_cases),
+            "expected": len(semantic_cases),
+            "actual": semantic_actual,
+            "matched": semantic_matched,
+            "recall": round(semantic_matched / len(semantic_cases), 4)
+            if semantic_cases
+            else None,
+            "precision": round(semantic_matched / semantic_actual, 4)
+            if semantic_actual
+            else None,
+            "claim_expected": semantic_claim_expected,
+            "claim_actual": semantic_claim_actual,
+            "claim_matched": semantic_claim_matched,
+            "claim_recall": round(
+                semantic_claim_matched / semantic_claim_expected, 4
+            )
+            if semantic_claim_expected
+            else None,
+            "claim_precision": round(
+                semantic_claim_matched / semantic_claim_actual, 4
+            )
+            if semantic_claim_actual
+            else None,
+            "missing": semantic_missing,
+            "mismatches": semantic_mismatches,
+            "by_field": semantic_by_field,
+            "by_rule": semantic_by_rule,
+            "qualification_ready_corpus": governance["qualification_ready"],
+            "authority": "exact_curated_deterministic_output_regression_not_engineering_validation",
+            "notice": "Exact curated claims qualify deterministic failure-mode text, local effects, assurance methods, citation links, adapter provenance, confidence, and screening priority only for declared cases. They do not validate reviewer-owned system effects, ratings, approval, risk acceptance, runtime behavior, or certification.",
+        },
+        "notice": "Candidates are evaluated only for explicit scope globs or components named by the corpus. Exact semantic claims measure deterministic scanner and assurance projections only for declared semantic_cases; they do not validate reviewer-owned system effects or ratings. Call-resolution metrics require exhaustive labeled call_cases, and false-positive-aware control precision requires an exhaustive control_scope. Static control detection does not prove runtime effectiveness.",
+    }
+
+
+def compare_evaluation_results(
+    before: dict[str, Any], after: dict[str, Any], change: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a governed, same-corpus before/after rule-calibration decision aid."""
+
+    for label, result in (("before", before), ("after", after)):
+        if (
+            not isinstance(result, dict)
+            or result.get("format") != "pysfmea-evaluation-result-1"
+        ):
+            raise ValueError(f"{label} evaluation result is missing or unsupported")
+    before_digest = str(before.get("corpus", {}).get("content_sha256", ""))
+    after_digest = str(after.get("corpus", {}).get("content_sha256", ""))
+    if not before_digest or before_digest != after_digest:
+        raise ValueError("before and after evaluations must use the exact same corpus")
+    if not isinstance(change, dict):
+        raise ValueError("calibration change record must be an object")
+    allowed_change = {
+        "id",
+        "changed_rule_ids",
+        "rationale",
+        "authored_by",
+        "approved_by",
+        "approval_date",
+        "max_recall_regression",
+        "max_control_recall_regression",
+        "max_semantic_recall_regression",
+        "max_semantic_claim_recall_regression",
+    }
+    unknown = set(change) - allowed_change
+    if unknown:
+        raise ValueError(
+            "calibration change record contains unsupported fields: "
+            + ", ".join(sorted(unknown))
+        )
+    changed_rule_ids = change.get("changed_rule_ids", [])
+    if (
+        not isinstance(changed_rule_ids, list)
+        or not changed_rule_ids
+        or not all(
+            isinstance(value, str) and value.strip() for value in changed_rule_ids
+        )
+        or len(changed_rule_ids) != len(set(changed_rule_ids))
+    ):
+        raise ValueError("calibration change requires unique changed_rule_ids")
+    for field in ("id", "rationale", "authored_by", "approved_by", "approval_date"):
+        value = change.get(field, "")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"calibration change requires {field}")
+        if len(value) > MAX_EVALUATION_METADATA_CHARS:
+            raise ValueError(f"calibration change {field} exceeds its length limit")
+    if change["authored_by"].strip() == change["approved_by"].strip():
+        raise ValueError("calibration change author and approver must be distinct")
+    limits: dict[str, float] = {}
+    for field in (
+        "max_recall_regression",
+        "max_control_recall_regression",
+        "max_semantic_recall_regression",
+        "max_semantic_claim_recall_regression",
+    ):
+        value = change.get(field, 0.0)
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not 0 <= value <= 1
+        ):
+            raise ValueError(f"calibration change {field} must be between 0 and 1")
+        limits[field] = float(value)
+
+    def delta(field: str) -> float | None:
+        left, right = before.get(field), after.get(field)
+        if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
+            return None
+        return round(float(right) - float(left), 4)
+
+    before_control = before.get("control_detection", {})
+    after_control = after.get("control_detection", {})
+    before_semantic = before.get("semantic_output", {})
+    after_semantic = after.get("semantic_output", {})
+    recall_delta = delta("recall")
+    precision_delta = delta("precision")
+    control_recall_delta = None
+    if isinstance(before_control.get("recall"), (int, float)) and isinstance(
+        after_control.get("recall"), (int, float)
+    ):
+        control_recall_delta = round(
+            float(after_control["recall"]) - float(before_control["recall"]), 4
+        )
+
+    def metric_delta(
+        left: dict[str, Any], right: dict[str, Any], field: str
+    ) -> float | None:
+        before_value = left.get(field)
+        after_value = right.get(field)
+        if not isinstance(before_value, (int, float)) or isinstance(
+            before_value, bool
+        ):
+            return None
+        if not isinstance(after_value, (int, float)) or isinstance(after_value, bool):
+            return None
+        return round(float(after_value) - float(before_value), 4)
+
+    semantic_enabled_before = bool(before_semantic.get("enabled"))
+    semantic_enabled_after = bool(after_semantic.get("enabled"))
+    semantic_enabled = semantic_enabled_before and semantic_enabled_after
+    semantic_recall_delta = metric_delta(before_semantic, after_semantic, "recall")
+    semantic_precision_delta = metric_delta(
+        before_semantic, after_semantic, "precision"
+    )
+    semantic_claim_recall_delta = metric_delta(
+        before_semantic, after_semantic, "claim_recall"
+    )
+    semantic_claim_precision_delta = metric_delta(
+        before_semantic, after_semantic, "claim_precision"
+    )
+    rule_comparisons: list[dict[str, Any]] = []
+    for rule_id in changed_rule_ids:
+        before_rule = before.get("by_rule", {}).get(rule_id, {})
+        after_rule = after.get("by_rule", {}).get(rule_id, {})
+        before_semantic_rule = before_semantic.get("by_rule", {}).get(rule_id, {})
+        after_semantic_rule = after_semantic.get("by_rule", {}).get(rule_id, {})
+        rule_comparisons.append(
+            {
+                "rule_id": rule_id,
+                "before": before_rule,
+                "after": after_rule,
+                "precision_delta": (
+                    round(
+                        float(after_rule["precision"])
+                        - float(before_rule["precision"]),
+                        4,
+                    )
+                    if isinstance(before_rule.get("precision"), (int, float))
+                    and isinstance(after_rule.get("precision"), (int, float))
+                    else None
+                ),
+                "recall_delta": (
+                    round(
+                        float(after_rule["recall"]) - float(before_rule["recall"]),
+                        4,
+                    )
+                    if isinstance(before_rule.get("recall"), (int, float))
+                    and isinstance(after_rule.get("recall"), (int, float))
+                    else None
+                ),
+                "semantic_before": before_semantic_rule,
+                "semantic_after": after_semantic_rule,
+                "semantic_precision_delta": metric_delta(
+                    before_semantic_rule, after_semantic_rule, "precision"
+                ),
+                "semantic_recall_delta": metric_delta(
+                    before_semantic_rule, after_semantic_rule, "recall"
+                ),
+            }
+        )
+    qualification_ready = bool(
+        before.get("corpus", {}).get("governance", {}).get("qualification_ready")
+        and after.get("corpus", {}).get("governance", {}).get("qualification_ready")
+    )
+    gates = {
+        "same_corpus": True,
+        "independent_governed_corpus": qualification_ready,
+        "global_precision_non_decreasing": precision_delta is not None
+        and precision_delta >= 0,
+        "global_recall_within_limit": recall_delta is not None
+        and recall_delta >= -limits["max_recall_regression"],
+        "control_recall_within_limit": control_recall_delta is None
+        or control_recall_delta >= -limits["max_control_recall_regression"],
+        "semantic_population_consistent": semantic_enabled_before
+        == semantic_enabled_after,
+        "semantic_precision_non_decreasing": not semantic_enabled
+        or (semantic_precision_delta is not None and semantic_precision_delta >= 0),
+        "semantic_recall_within_limit": not semantic_enabled
+        or (
+            semantic_recall_delta is not None
+            and semantic_recall_delta >= -limits["max_semantic_recall_regression"]
+        ),
+        "semantic_claim_precision_non_decreasing": not semantic_enabled
+        or (
+            semantic_claim_precision_delta is not None
+            and semantic_claim_precision_delta >= 0
+        ),
+        "semantic_claim_recall_within_limit": not semantic_enabled
+        or (
+            semantic_claim_recall_delta is not None
+            and semantic_claim_recall_delta
+            >= -limits["max_semantic_claim_recall_regression"]
+        ),
+        "changed_rules_measured": all(
+            value["before"] and value["after"] for value in rule_comparisons
+        ),
+        "changed_rules_semantically_measured": not semantic_enabled
+        or all(
+            value["semantic_before"] and value["semantic_after"]
+            for value in rule_comparisons
+        ),
+    }
+    eligible = all(gates.values())
+    material = {
+        "corpus_sha256": before_digest,
+        "change": {
+            **change,
+            "changed_rule_ids": list(changed_rule_ids),
+            **limits,
+        },
+        "global": {
+            "before": {
+                "recall": before.get("recall"),
+                "precision": before.get("precision"),
+            },
+            "after": {
+                "recall": after.get("recall"),
+                "precision": after.get("precision"),
+            },
+            "recall_delta": recall_delta,
+            "precision_delta": precision_delta,
+            "control_recall_delta": control_recall_delta,
+            "semantic_enabled": semantic_enabled,
+            "semantic_recall_delta": semantic_recall_delta,
+            "semantic_precision_delta": semantic_precision_delta,
+            "semantic_claim_recall_delta": semantic_claim_recall_delta,
+            "semantic_claim_precision_delta": semantic_claim_precision_delta,
+        },
+        "rules": rule_comparisons,
+        "gates": gates,
+        "eligible_for_product_change_review": eligible,
+        "decision": "eligible_for_review" if eligible else "blocked",
+        "authority": "governed_comparison_does_not_apply_rule_changes_or_establish_external_qualification",
+    }
+    return {
+        "format": "pysfmea-calibration-comparison-1",
+        **material,
+        "content_sha256": canonical_json_sha256(material),
     }

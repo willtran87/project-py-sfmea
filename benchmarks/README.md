@@ -8,6 +8,14 @@ task, message-publishing, typed receiver, nested-call ordering, and multi-compon
 cascade constructs. The current baseline contains 75 exact source-aware cases. Framework imports
 are static fixtures and are never
 executed or required as installed dependencies.
+It also contains four exact circuit-breaker control records inside a seven-component exhaustive
+control scope. Three documentation, electrical-circuit, and generic-counter near-misses are
+explicit negative components, so a false control classification reduces precision and fails the
+release gate.
+Ten exact semantic-output cases add 78 curated field claims across representative calculation,
+serialization, interface, persistence, subprocess, masked-failure, data-model, logic, timing, and
+response rules. These bind deterministic scanner text, assurance methods, citations, adapters,
+confidence, and priority—not reviewer-owned system effects or ratings.
 
 Run the end-to-end public CLI evaluation:
 
@@ -35,6 +43,18 @@ candidate confidence, source line, evaluation order, await state, and lexical co
 The location/context identity prevents repeated identical references at different call sites from
 collapsing into one case. Evaluation reports exact call-resolution recall and precision overall
 and by provenance source; missing or unexpected calls make the CLI evaluation fail.
+
+The optional `control_scope` collection is exhaustive for control detection independently of the
+finding and call scopes. `control_cases` label exact positive kind/role records; every other
+component in `control_scope` is negative. Evaluation reports overall and per-kind control recall
+and false-positive-aware precision together with positive/negative component counts. It measures
+static recognition only and does not credit runtime control effectiveness.
+
+The optional `semantic_cases` collection binds a source/component/rule identity to selected exact
+deterministic outputs. Evaluation reports exact-case and field-claim recall/precision, missing
+cases, field mismatches, and per-field/per-rule populations. Ordered causes/actions remain
+order-sensitive; citation and adapter arrays are normalized sets and may be empty to assert that
+no link is expected. Any mismatch makes the CLI evaluation fail.
 
 `expected.json` follows the closed `pysfmea-golden-corpus-1` contract. Evaluation requires a
 stable regular non-link UTF-8 JSON input, applies byte/structure/record limits, rejects duplicate

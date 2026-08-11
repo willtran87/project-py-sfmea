@@ -8,6 +8,7 @@ dist/
 .coverage
 coverage.json
 coverage.xml
+/.artifacts/
 .pytest_cache/
 .ruff_cache/
 .release-contracts/

@@ -5,7 +5,244 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
+  exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,
+  citations, direct citations, adapter provenance, confidence, and screening priority to an exact
+  source/component/rule identity. Evaluation reports case- and claim-level accuracy, missing cases,
+  field-specific mismatches, and per-field/per-rule metrics; the CLI fails visibly on drift.
+  Campaigns expose semantic output as a required feature with global and per-repository thresholds,
+  public schemas, and a dedicated self-contained report view. The maintained corpus gates ten
+  representative semantic cases and 78 exact claims while explicitly excluding reviewer-owned
+  system effects, ratings, approval, risk acceptance, runtime proof, and certification.
+- Make detected-control qualification false-positive-aware. Golden corpora can declare a bounded
+  exhaustive `control_scope` independently of finding/call scopes; positive `control_cases` must
+  fall inside it, while all other scoped components form the explicit negative population.
+  Evaluation, CLI output, campaign aggregation, schemas, and the self-contained qualification
+  report disclose evaluated/positive/negative component counts and fail on missing or unexpected
+  controls. Campaigns can require a minimum negative population in every control-bearing
+  repository, preventing positive-only cohorts from receiving eligibility. The maintained corpus
+  now gates four breaker-role records against three semantic
+  near-misses, and breaker recognition no longer treats generic electrical-circuit terminology or
+  state assignment alone as admission-control evidence.
+- Expand the strict MyPy release gate from a selected 28-module ratchet to the complete
+  `pysfmea` package plus release-gate scripts. Normalize the assurance obligation/register
+  interfaces, eliminate cross-scope inference ambiguity in the scanner and validators, type
+  bounded XML execution evidence with maintained `defusedxml` stubs, and require all 61 package
+  modules to remain strict-clean.
+- Add governed, multi-repository scanner qualification campaigns. Closed manifests bind retained
+  analyses, independently labeled corpora, and exact evaluation results; the builder regenerates
+  every evaluation before aggregating micro finding, call-resolution, and control-detection
+  metrics by rule, framework, and domain. Public manifest/result/verdict schemas and
+  `qualification-build`/`qualification-verify` commands make incomplete evidence, tampering,
+  path escape, and missing feature populations fail visibly without claiming certification.
+  `program-init` can consume a completely reconciled campaign directly, projecting exact
+  program-relative evaluation artifacts, corpus/result digests, counts, and independent-review
+  identities into validation cohorts without manual transcription. Add a responsive,
+  keyboard-navigable, print-aware self-contained qualification report with blocker-first gates,
+  repository/framework/domain/rule views, exact artifact provenance, embedded complete evidence,
+  staged publication verification, and a public standalone/exact-result verifier schema.
+- Add `scan --read-only` for immutable-checkout operation. It requires analysis publication outside
+  the scanned repository, disables implicit in-repository fact-cache writes, permits an explicit
+  external cache, records the mutation policy, and is regression-tested against an exact target
+  filesystem snapshot.
+- Replace duplicated report-package schema allowlists with one dependency-free public schema
+  filename registry, preventing packaged-schema drift across catalog generation and review-package
+  verification.
+- Give the Chromium report gate supported default limits of 50 MiB, 10 seconds, and 256 MiB of
+  measured JavaScript heap, and retain the effective budgets and their authority in its receipt.
+  Browser/UI contract failures now publish a failed machine-readable receipt with a bounded error
+  summary instead of terminating with a raw Playwright traceback. Reports now render the requested
+  section first, materialize each remaining section once on demand, preserve deep-link behavior,
+  and prepare all sections for Print/PDF. Format 4 adds canonical receipt integrity, exact report
+  byte/digest bindings, initial readiness and boot timing, and reconciled per-section render state
+  and duration. Public receipt/verdict schemas and
+  `sfmea report-browser-verify` provide bounded standalone semantic and exact-report verification.
+- Bind synthesis-apply receipts to the exact final governed-analysis bytes and publish the staged
+  receipt/result pair through a coordinated rollback-capable replacement primitive. This protects
+  ordinary publication failures while explicitly retaining the host/process crash window as a
+  verification requirement rather than claiming unsupported multi-file filesystem atomicity. Add
+  optional non-overwriting exact source snapshots plus public receipt-verification schema and
+  `synthesis-apply-verify` integrity-only/complete modes that reconcile source, sealed workspace,
+  result, applied/deferred accounting, and resulting suggestion statuses.
+- Publish public JSON Schema contracts for accessibility qualification, human-controlled
+  synthesis, exact-commit pull-request analysis, and the process plugin SDK. Add standalone
+  `pr-verify` and `plugin-run-verify` commands with artifact, regeneration, report, analysis,
+  manifest, and process-boundary checks. Synthesis apply now emits a content-addressed receipt
+  bound to the source analysis, sealed workspace, and resulting analysis.
+- Complete the remaining product-maturity backlog. Reports now support baseline-scoped saved views
+  and bounded share links, and browser qualification exercises persistence and restoration. Add a
+  WCAG-mapped automated ruleset plus exact-report manual keyboard, zoom/reflow, display-preference,
+  and NVDA/JAWS/VoiceOver evidence. Add deterministic LLM duplicate/contradiction/divergence leads
+  and a sealed side-by-side human synthesis workflow. Add safe exact-commit `sfmea pr-analyze`
+  orchestration. Publish the semantic-versioned `pysfmea.sdk` 1.0 process protocol, compatibility
+  validation, bounded host, isolation disclosure, CLI, and reference plugin. E071, E075, E080,
+  E081, E084, and E087 advance to implemented; none is claimed independently validated.
+- Add a maintained, versioned `pysfmea-service-threat-model-1` with stable threat/residual-risk
+  IDs, mapped controls, owners, treatments, review triggers, deployment minimums, and explicit
+  acceptance authorities. `sfmea threat-model` exports content-addressed JSON or Markdown. E095
+  advances to implemented without claiming a penetration test, formal proof, deployment
+  authorization, enterprise identity integration, or automatic risk acceptance.
+- Publish a supported Ubuntu/Windows/macOS × CPython 3.11-3.14 matrix with exact JUnit-bound,
+  content-addressed platform receipts. Add a retained scanner performance job with runtime and
+  traced-Python-allocation budgets, plus per-view Chromium JavaScript-heap measurement and an
+  enforced report heap budget. E091 and E093 advance to implemented without claiming untested
+  deployment compatibility or total native/GPU/OS memory coverage.
+- Extend `pysfmea-golden-corpus-1` with optional detected-control cases and corpus-governance
+  metadata. Evaluation now reports per-rule precision/recall, empirical precision by confidence
+  label, monotonic-label diagnostics, and control recall/precision by kind. Add fail-closed
+  `sfmea evaluate-compare` for same-corpus, named, independently approved before/after rule-change
+  evidence with explicit recall-regression gates. E008-E010 advance to implemented without
+  applying rule edits, authenticating independence claims, approving releases, or proving runtime
+  control effectiveness.
+- Add provenance-bearing `pysfmea-deployment-topology-1`, automatic
+  `pysfmea-shared-fate-analysis-1`, and deterministic
+  `pysfmea-architecture-hierarchy-1`. Supported repository deployment declarations now produce
+  bounded nodes/edges and review-required component placements; multi-component shared resources
+  become common-cause leads; and supplied trace links aggregate through nested subsystem and source
+  paths. Semantic validation, component backlinks, workbench observations, and three offline HTML
+  diagrams advance E033, E034, and E064 to implemented without claiming observed deployment,
+  correlated-failure probability, independence, or architecture approval.
+- Expand governed contract ingestion and add `pysfmea-contract-semantics-1` for OpenAPI, AsyncAPI,
+  protobuf, GraphQL, JSON Schema, and Avro. Request/response/error/message/type shapes reconcile
+  with Python routes, conflicting definitions are content-addressed, and declared-version pairs
+  expose bounded breaking-change candidates. E031-E032 advance to implemented without claiming
+  runtime serialization, generated-client behavior, deployed reachability, or version-policy proof.
+- Add `pysfmea-authorization-scope-flow-1`, projecting identity, tenant, role/permission,
+  scope/claim, and credential dimensions onto exact interprocedural argument edges and correlating
+  observed decorator/call guards. Semantic validation reconciles counts and component indexes;
+  E029 advances to implemented without claiming guard dominance, authorization correctness, tenant
+  isolation, least privilege, or token validity.
+- Add `pysfmea-resilience-semantics-1`, integrating bounded transaction lifecycle and consistency
+  risks, fixed-point side-effect/idempotency summaries, literal timing-budget constraints, nested
+  retry amplification, class-scoped breaker semantics, and explicit/unresolved resource growth.
+  Exact links, counts, paths, and component indexes are validated; E022-E027 advance to implemented
+  without claiming runtime atomicity, exactly-once behavior, latency compliance, breaker
+  effectiveness, or symbolic resource-complexity proof.
+- Add `pysfmea-state-machine-model-1`, connecting conventional state/status/phase/mode assignments
+  to stable target-state nodes and lexical `if`/`while` guards with exact component indexes and
+  semantic validation. E021 advances to implemented without claiming formal reachability,
+  exclusivity, liveness, indirect-mutation coverage, or completeness.
+- Add `pysfmea-exception-propagation-1`: bounded typed raise and lexical-handler records retain
+  chaining, rethrow, translation, suppression/control-flow exit, and logging candidates, while a
+  fixed point projects caught versus escaping types across resolved internal calls. Exact counts,
+  omissions, and component indexes are validated; E020 advances to implemented without claiming
+  complete inheritance, dynamic alias, runtime-reachability, ExceptionGroup, or path proof.
+- Add `pysfmea-concurrency-model-1`, a bounded component-linked inventory of task spawn,
+  join/wait, cancellation/timeout, synchronization, and awaited-completion operations with lexical,
+  await-before-next-operation, and conservative spawn-to-later-join relations. Counts and indexes
+  reconcile under semantic validation; E019 advances to implemented without claiming scheduler,
+  task-identity, happens-before, deadlock, or race proof.
+- Add bounded order-aware local alias and object-flow facts, including expanded origins,
+  producer-call provenance, attribute/container writes, component binding, and typed receiver alias
+  resolution. The analysis reconciles all embedded/omitted records and validates relationships;
+  E017 advances to implemented without claiming path-sensitive heap or taint soundness.
+- Add bounded interprocedural value-flow analysis for internal Python calls. Caller expressions
+  are bound to callee parameters, return/yield expressions are linked back to assignment,
+  argument, attribute, container, and return contexts, component records carry edge indexes, and
+  a canonical `data_flow` diagram is available in JSON and the self-contained HTML report. Fact
+  cache format 2 prevents reuse of older incomplete facts. E016 advances to implemented while the
+  model remains explicitly path-insensitive and independently unvalidated.
+- Add human-adjudicated finding consolidation to the exact-bound activation workflow. Complete
+  multi-finding candidates can be consolidated, retained separately, or deferred for information;
+  application creates a canonical review group without removing findings or propagating member
+  dispositions, evidence conclusions, citations, or risk acceptance. Rehashed candidate changes
+  fail exact regeneration, the HTML report exposes applied groups, enhancement workbench format 7
+  describes the executable workflow, and E012 advances to implemented while remaining
+  independently unvalidated.
+- Add `sfmea evidence-onboard`, a single non-executing evidence-ingestion workflow for discovered
+  or explicit coverage.py JSON, repeated runtime traces, and obligation-bound external execution
+  manifests. Plan mode runs the complete bounded semantic import path on an isolated copy; apply
+  mode publishes a regenerated-manifest analysis, an exactly verified assurance queue, and a
+  source/result-bound receipt. New public receipt/verdict schemas ship in review packages, and
+  E001 advances from partial to implemented without claiming evidence sufficiency or independent
+  validation.
+- Advance executable assurance scaffolds to format 7 with deterministic, bounded Hypothesis
+  strategies derived from retained signatures; positive and negative producer/consumer contract
+  cases tied to exact candidate contract digests; explicit unresolved-binding cases; and
+  fail-visible project adapters that require stimulus proof, evidence references, and every
+  oracle/acceptance-criterion result. A separate synthesized-design digest is exactly regenerated
+  during verification, six starting files are content-addressed and lifecycle protected, and new
+  public scaffold/verdict schemas ship in review packages. Generated tests remain unreviewed
+  starting points rather than evidence. E046 and E050 therefore advance from planned to
+  implemented while remaining unvalidated.
+- Added a governed SFTA authoring workflow with one entry per hazard, explicit
+  retain/defer/replace decisions, named approvals, semantic gate/reference/cycle validation,
+  exact-analysis sealing and verification, transactional application receipts, four public JSON
+  Schemas, report history, documentation, CLI coverage, and CI artifacts.
+- Added bounded qualitative minimal cut-set calculation for exact definition-digest-approved SFTA
+  trees. AND/OR/VOTE/INHIBIT expansion performs superset absorption, retains undeveloped/external/
+  conditioning flags, invalidates approval after tree edits, and returns no partial result when
+  logic or count/width/operation bounds are exceeded. No probability or independence is inferred.
+- Added a governed configuration-authoring workflow that converts named guidance,
+  architecture, and interface reviews into a new validated sibling `sfmea.toml`. Drafts and
+  sealed inputs bind to both exact analysis state and exact configuration content; application
+  preserves the source, relative paths, and reviewer authority boundaries. Project citation
+  mappings and stable interface dispositions now survive rescans without becoming independent
+  approval or runtime evidence.
+
+### Outcome-driven enhancement closure
+
+- Advance the enhancement workbench to format 6 with exhaustive, disjoint `planned`, `partial`,
+  `implemented`, and `validated` product maturity for E001-E095. Each outcome now carries its
+  implementation/test evidence, limitation, maturity basis, next action, and authority boundary;
+  standalone verification rejects rehashed semantic overclaims. Projection presence no longer
+  establishes implementation, and internal regression tests cannot establish independent
+  validation.
+- Add the closed-loop `activate-init`, `activate-decide`, `activate-verify`, and `activate-apply`
+  and `activate-assign` workflow. It provides bounded static test attribution, one integrity-bound campaign for finding,
+  calibration, guidance, SFTA, architecture, and interface work, named/rationalized decision
+  recording, exact-state refusal, transactional analysis publication, and a public apply receipt.
+- Add exact-workspace-bound bulk activation export/import with duplicate, subject, decision, date,
+  and staleness validation plus a content-addressed transactional import receipt.
+- Add public schemas for the activation workspace, verifier verdict, and apply receipt, and expose
+  retained activation progress plus the complete E001-E095 outcome register in the HTML report.
+- Advance the enhancement workbench to format 5 with an exact `E001`-`E095` product-outcome
+  register, measurable repository scorecard, and explicit analysis-fidelity, sequence/SFTA,
+  assurance-automation, architecture/interface, evidence, reporting, LLM, and qualification
+  projections. Product capability is kept separate from project evidence and named approval.
+- Add `sfmea enhance-evidence-preflight`, a bounded read-only repository inspection that validates
+  coverage JSON, discovers tests/configuration/contracts, reports runtime/test attribution state,
+  and emits inert remediation argv without executing target code.
+- Add `--profile engineering|compact|management` to HTML reporting. Compact and management modes
+  enforce deterministic 500- and 250-record projections while preserving analysis binding and
+  explicit truncation accounting.
+
 ### Scalable governed discovery and reporting
+
+- Compose imported FastAPI/Flask routers registered through bounded literal tables, tuple
+  unpacking, static branches, and loops without importing or executing repository code. Retain
+  registration source, confidence, local prefix, mount prefix, and effective route provenance.
+- Resolve conventional TypeScript/JavaScript request wrappers and named base-path constants across
+  files, keep web-test endpoint literals as test evidence rather than deployed-client candidates,
+  and reconcile HTTP methods once per path so compatible routes do not produce false mismatch
+  leads.
+- Add human-disposition calibration by rule, proximity-based architecture mapping proposals that
+  require confirmation, and the complete non-certifying diagnostic scorecard and action list to
+  the self-contained HTML report.
+- Resolve fact-cache output paths against the scanned repository, preventing nested
+  `.artifacts/.artifacts` paths when configuration is stored with analysis artifacts.
+- Exercise responsive report navigation through the actual mobile menu in the Chromium quality
+  gate, explicitly scroll long desktop navigation before activation, and reject duplicate IDs,
+  unnamed buttons, unlabeled controls, missing image alternatives, or missing core landmarks.
+- Add `sfmea enhance`, a public schema-backed enhancement workbench covering all 56 backlog items
+  through evidence-acquisition recipes, root-cause clusters, representative-review safeguards,
+  prioritized assurance portfolios, mapping/interface queues, static system-surface models, and a
+  bounded self-contained HTML workspace.
+- Advance the enhancement workbench to format 2 with an append-only 76-item real-repository
+  hardening register, measurable acceptance criteria, exact artifact-freshness bindings,
+  high-volume precision-risk projections, and live readiness targets. Empty rule-review samples
+  now report null acceptance/rejection rates instead of misleading 100 percent values.
+- Advance the enhancement workbench to format 3 with an append-only 82-item post-hardening
+  register, bounded exact-regeneration verification, separate freshness/completeness/sufficiency
+  health, review-only evidence-scope patches, deterministic calibration campaigns, metric
+  provenance, report-scale planning, governed targets, and source/test-backed product attestations.
+- Advance the workbench to format 4 with an append-only 102-item real-run resolution register,
+  assignable review and calibration campaigns, guided evidence onboarding, precision and
+  specialization plans, architecture/interface activation, temporal-resilience campaigns,
+  guidance-closure queues, phase performance ratchets, report-delivery modes, and explicit LLM
+  and independent-qualification governance.
+- Discover conventional imported Axios instances, base symbols, interceptors, methods, and source
+  lines so cross-file client/server reconciliation handles another common production pattern.
 
 - Separate semantic exclusions from explicit evidence-only test and JS/TS boundary scopes. The
   scanner can now attribute excluded test sources and reconcile excluded frontend boundaries

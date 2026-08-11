@@ -53,6 +53,26 @@ def _destination_is_unchanged(
     return current == expected
 
 
+def _descriptor_matches_snapshot(
+    descriptor_state: os.stat_result,
+    snapshot: tuple[int, int, int, int, int],
+) -> bool:
+    """Compare descriptor identity/content metadata to a retained path snapshot.
+
+    Windows can expose a transiently different ``st_ctime_ns`` through ``fstat`` and ``lstat``
+    for the same file. Device/inode identity plus exact size and modification time remain stable;
+    the final path is separately compared against the full retained snapshot before and after the
+    read.
+    """
+
+    return (
+        descriptor_state.st_dev,
+        descriptor_state.st_ino,
+        descriptor_state.st_size,
+        descriptor_state.st_mtime_ns,
+    ) == snapshot[:4]
+
+
 def inspect_artifact_destination(
     destination: str | Path, *, label: str = "artifact"
 ) -> ArtifactDestinationState:
@@ -207,3 +227,137 @@ def atomic_publish_text(
         expected_destination=expected_destination,
         staged_verifier=staged_verifier,
     )
+
+
+def _read_destination_snapshot_bytes(
+    state: ArtifactDestinationState,
+    *,
+    max_bytes: int,
+    label: str,
+) -> bytes | None:
+    """Read an existing destination only while its retained identity remains stable."""
+
+    if state.snapshot is None:
+        return None
+    descriptor: int | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(state.path, flags)
+        opened_before = os.fstat(descriptor)
+        if not _descriptor_matches_snapshot(opened_before, state.snapshot):
+            raise ValueError(f"{label} destination changed while preparing rollback")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            content = handle.read(max_bytes + 1)
+            opened_after = os.fstat(handle.fileno())
+        if len(content) > max_bytes:
+            raise ValueError(f"prior {label} exceeds the rollback byte limit")
+        if not _descriptor_matches_snapshot(
+            opened_after, state.snapshot
+        ) or not _destination_is_unchanged(state.path, state.snapshot):
+            raise ValueError(f"{label} destination changed while preparing rollback")
+        return content
+    except ValueError:
+        raise
+    except OSError as exc:
+        raise ValueError(f"{label} destination could not be retained for rollback") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def atomic_publish_pair(
+    primary_destination: str | Path,
+    primary_content: bytes,
+    secondary_destination: str | Path,
+    secondary_content: bytes,
+    *,
+    primary_label: str = "primary artifact",
+    secondary_label: str = "secondary artifact",
+    primary_max_bytes: int = MAX_ARTIFACT_PUBLICATION_BYTES,
+    secondary_max_bytes: int = MAX_ARTIFACT_PUBLICATION_BYTES,
+    primary_staged_verifier: Callable[[Path], bool] | None = None,
+    secondary_staged_verifier: Callable[[Path], bool] | None = None,
+    expected_primary: ArtifactDestinationState | None = None,
+    expected_secondary: ArtifactDestinationState | None = None,
+) -> tuple[Path, Path]:
+    """Publish a coordinated pair, rolling back the secondary if the primary fails.
+
+    The secondary is committed first so failure cannot leave the primary state changed without
+    its companion receipt.  A process or host crash between filesystem replacements can still
+    leave a receipt whose result binding does not match the primary; consumers must verify that
+    binding before crediting the receipt.
+    """
+
+    primary_state = inspect_artifact_destination(
+        primary_destination, label=primary_label
+    )
+    secondary_state = inspect_artifact_destination(
+        secondary_destination, label=secondary_label
+    )
+    if expected_primary is not None and primary_state != expected_primary:
+        raise ValueError(f"{primary_label} destination changed before coordinated staging")
+    if expected_secondary is not None and secondary_state != expected_secondary:
+        raise ValueError(
+            f"{secondary_label} destination changed before coordinated staging"
+        )
+    if primary_state.path == secondary_state.path:
+        raise ValueError("coordinated artifact destinations must be different files")
+    prior_secondary = _read_destination_snapshot_bytes(
+        secondary_state,
+        max_bytes=secondary_max_bytes,
+        label=secondary_label,
+    )
+    published_secondary = atomic_publish_bytes(
+        secondary_state.path,
+        secondary_content,
+        max_bytes=secondary_max_bytes,
+        label=secondary_label,
+        expected_destination=secondary_state,
+        staged_verifier=secondary_staged_verifier,
+    )
+    published_secondary_state = inspect_artifact_destination(
+        published_secondary, label=secondary_label
+    )
+    try:
+        published_primary = atomic_publish_bytes(
+            primary_state.path,
+            primary_content,
+            max_bytes=primary_max_bytes,
+            label=primary_label,
+            expected_destination=primary_state,
+            staged_verifier=primary_staged_verifier,
+        )
+    except ValueError as primary_error:
+        try:
+            if prior_secondary is None:
+                current = inspect_artifact_destination(
+                    secondary_state.path, label=secondary_label
+                )
+                if current.snapshot != published_secondary_state.snapshot:
+                    raise ValueError(
+                        f"{secondary_label} changed before coordinated rollback"
+                    )
+                current.path.unlink()
+                if _destination_snapshot(current.path) is not None:
+                    raise ValueError(f"{secondary_label} rollback did not remove the file")
+            else:
+                atomic_publish_bytes(
+                    secondary_state.path,
+                    prior_secondary,
+                    max_bytes=secondary_max_bytes,
+                    label=f"prior {secondary_label}",
+                    expected_destination=published_secondary_state,
+                )
+        except (OSError, ValueError) as rollback_error:
+            raise ValueError(
+                f"{primary_label} publication failed and {secondary_label} rollback failed; "
+                "the primary is preserved but the companion requires reconciliation"
+            ) from rollback_error
+        raise ValueError(
+            f"{primary_label} publication failed; {secondary_label} was rolled back"
+        ) from primary_error
+    return published_primary, published_secondary

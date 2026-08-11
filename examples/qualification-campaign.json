@@ -1,0 +1,43 @@
+{
+  "format": "pysfmea-qualification-campaign-manifest-1",
+  "id": "scanner-qualification-2026q3",
+  "title": "Representative Python scanner qualification",
+  "purpose": "Measure finding, call-resolution, control-detection, and deterministic semantic-output accuracy across independently labeled retained repositories.",
+  "governance": {
+    "independent": true,
+    "labeled_by": "Benchmark engineering team",
+    "approved_by": "Independent software assurance authority",
+    "approval_date": "2026-08-09",
+    "selection_method": "Risk-stratified sample across frameworks, domains, sizes, and architecture styles.",
+    "representativeness_rationale": "The campaign includes synchronous and asynchronous services, data workflows, and framework-neutral Python selected before scanner results were reviewed."
+  },
+  "thresholds": {
+    "minimum_repositories": 5,
+    "minimum_frameworks": 3,
+    "minimum_domains": 3,
+    "minimum_expected_findings": 100,
+    "minimum_finding_recall": 0.9,
+    "minimum_finding_precision": 0.85,
+    "require_call_cases": true,
+    "minimum_call_recall": 0.9,
+    "minimum_call_precision": 0.9,
+    "require_control_cases": true,
+    "minimum_control_negative_components_per_repository": 5,
+    "minimum_control_recall": 0.85,
+    "minimum_control_precision": 0.85,
+    "require_semantic_cases": true,
+    "minimum_semantic_recall": 0.9,
+    "minimum_semantic_precision": 0.9
+  },
+  "repositories": [
+    {
+      "id": "service-a",
+      "analysis": "repositories/service-a/analysis.json",
+      "corpus": "repositories/service-a/golden-corpus.json",
+      "evaluation": "repositories/service-a/evaluation.json",
+      "frameworks": ["fastapi", "celery"],
+      "domains": ["workflow", "api"],
+      "selection_rationale": "Representative asynchronous service with HTTP and queue boundaries."
+    }
+  ]
+}

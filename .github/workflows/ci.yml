@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Check out source
@@ -45,7 +45,20 @@ jobs:
         run: python -m ruff check src tests
 
       - name: Test
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=platform-junit.xml
+
+      - name: Create platform qualification receipt
+        run: python scripts/platform_qualification.py platform-junit.xml --output platform-qualification.json
+
+      - name: Publish platform qualification receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: platform-${{ matrix.os }}-python-${{ matrix.python-version }}
+          path: |
+            platform-junit.xml
+            platform-qualification.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Validate published JSON Schemas
         shell: python
@@ -116,7 +129,7 @@ jobs:
       - name: Enforce critical-module coverage ratchets
         run: python scripts/check_coverage_ratchets.py coverage.json
 
-      - name: Enforce typed subsystem boundaries
+      - name: Enforce strict complete-package typing
         run: python -m mypy
 
       - name: Scan source for security defects
@@ -164,6 +177,36 @@ jobs:
         run: |
           mkdir -p .ci-report
           sfmea scan benchmarks/python_sfmea_corpus/repository --allow-ungoverned --no-cache --output .ci-report/analysis.json.gz
+          sfmea enhance .ci-report/analysis.json.gz --output .ci-report/enhancement-workbench.json
+          sfmea enhance-scope-preview .ci-report/analysis.json.gz benchmarks/python_sfmea_corpus/repository --output .ci-report/enhancement-scope-preview.json
+          sfmea enhance-evidence-preflight .ci-report/analysis.json.gz benchmarks/python_sfmea_corpus/repository --output .ci-report/evidence-preflight.json
+          sfmea activate-init .ci-report/analysis.json.gz benchmarks/python_sfmea_corpus/repository --output .ci-report/activation.json
+          sfmea activate-verify .ci-report/activation.json --analysis .ci-report/analysis.json.gz --output .ci-report/activation-verification.json
+          sfmea activate-batch-export .ci-report/activation.json --output .ci-report/activation-records.json
+          sfmea sfta-authoring-init .ci-report/analysis.json.gz --output .ci-report/sfta-authoring-draft.json
+          sfmea init .ci-report/sfmea.toml
+          sfmea config-authoring-init .ci-report/analysis.json.gz --config .ci-report/sfmea.toml --output .ci-report/configuration-authoring-draft.json
+          sfmea enhance-verify .ci-report/enhancement-workbench.json --analysis .ci-report/analysis.json.gz --output .ci-report/enhancement-workbench-verification.json
+          sfmea schema enhancement-scope-preview --output .ci-report/enhancement-scope-preview.schema.json
+          sfmea schema evidence-preflight --output .ci-report/evidence-preflight.schema.json
+          sfmea schema enhancement-workbench --output .ci-report/enhancement-workbench.schema.json
+          sfmea schema enhancement-workbench-verification --output .ci-report/enhancement-workbench-verification.schema.json
+          sfmea schema activation-workspace --output .ci-report/activation-workspace.schema.json
+          sfmea schema activation-workspace-verification --output .ci-report/activation-workspace-verification.schema.json
+          sfmea schema activation-apply-receipt --output .ci-report/activation-apply-receipt.schema.json
+          sfmea schema activation-records --output .ci-report/activation-records.schema.json
+          sfmea schema activation-records-import-receipt --output .ci-report/activation-records-import-receipt.schema.json
+          sfmea schema sfta-authoring-draft --output .ci-report/sfta-authoring-draft.schema.json
+          sfmea schema sfta-authoring --output .ci-report/sfta-authoring.schema.json
+          sfmea schema sfta-authoring-verification --output .ci-report/sfta-authoring-verification.schema.json
+          sfmea schema sfta-authoring-apply-receipt --output .ci-report/sfta-authoring-apply-receipt.schema.json
+          sfmea schema configuration-authoring-draft --output .ci-report/configuration-authoring-draft.schema.json
+          sfmea schema configuration-authoring --output .ci-report/configuration-authoring.schema.json
+          sfmea schema configuration-authoring-verification --output .ci-report/configuration-authoring-verification.schema.json
+          sfmea schema configuration-authoring-apply-receipt --output .ci-report/configuration-authoring-apply-receipt.schema.json
+          sfmea schema report-browser-quality --output .ci-report/report-browser-quality.schema.json
+          sfmea schema report-browser-quality-verification --output .ci-report/report-browser-quality-verification.schema.json
+          sfmea schema synthesis-apply-receipt-verification --output .ci-report/synthesis-apply-receipt-verification.schema.json
           sfmea report .ci-report/analysis.json.gz --output .ci-report/report.html --max-records 500
 
       - name: Exercise report in Chromium
@@ -172,7 +215,14 @@ jobs:
           --analysis .ci-report/analysis.json.gz
           --max-bytes 52428800
           --max-load-seconds 10
+          --max-js-heap-bytes 268435456
           --output .ci-report/browser-quality.json
+
+      - name: Verify browser quality evidence
+        run: >-
+          sfmea report-browser-verify .ci-report/browser-quality.json
+          --report .ci-report/report.html
+          --output .ci-report/browser-quality-verification.json
 
       - name: Publish browser quality evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -181,6 +231,41 @@ jobs:
           path: .ci-report/*
           if-no-files-found: error
           retention-days: 14
+
+  performance:
+    name: Scanner and memory budgets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install benchmark environment
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Enforce scanner runtime and traced-memory budgets
+        run: >-
+          python scripts/benchmark_scan.py benchmarks/python_sfmea_corpus/repository
+          --repeats 2
+          --reuse-facts
+          --max-median-seconds 60
+          --max-peak-bytes 536870912
+          --output scan-performance.json
+
+      - name: Publish performance evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pysfmea-performance-evidence
+          path: scan-performance.json
+          if-no-files-found: error
+          retention-days: 30
 
   mutation:
     name: Focused fault-plugin mutation gate

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from pysfmea.cli import main
 from pysfmea.guidance import (
     citations_for_rule,
+    ensure_guidance_traceability,
     guidance_bundle,
     guidance_traceability,
     validate_guidance_catalog,
@@ -128,6 +129,48 @@ class GuidanceTraceabilityTests(unittest.TestCase):
             value["rule_id"] for value in validate_analysis(analysis)["findings"]
         }
         self.assertIn("guidance.missing_applicability_decision", rules)
+
+    def test_project_reviewed_rule_mapping_is_applied_without_claiming_approval(
+        self,
+    ) -> None:
+        mapping = {
+            "rule_selector": "configuration.missing_or_wrong",
+            "citation_id": "NASA-SWEHB-8.05-DATA-EVENTS",
+            "relationship": "supports_review_question",
+            "strength": "direct",
+            "rationale": "The cited review prompt directly covers missing configuration data.",
+            "reviewed_by": "Independent guidance reviewer",
+            "effective_date": "2026-08-09",
+        }
+        analysis = scan_repository(
+            self.root,
+            config={"guidance_rule_mappings": [mapping]},
+        )
+
+        applied = analysis["guidance"]["project_mapping_application"]
+        self.assertEqual(applied["configured"], 1)
+        self.assertEqual(applied["applied"], 1)
+        project_mapping = next(
+            value
+            for value in analysis["guidance"]["rule_mappings"]
+            if value["created_by"] == "project_configuration"
+        )
+        self.assertEqual(project_mapping["strength"], "direct")
+        self.assertEqual(project_mapping["review_status"], "project_reviewed")
+        self.assertFalse(project_mapping["independent_approval"])
+        self.assertEqual(analysis["context"]["guidance_rule_mappings"], [mapping])
+        links = citations_for_rule(
+            "configuration.missing_or_wrong",
+            catalog=analysis["guidance"],
+        )
+        self.assertIn(project_mapping["id"], {value["mapping_id"] for value in links})
+        ensure_guidance_traceability(analysis, refresh=True)
+        refreshed_ids = {
+            value["id"]
+            for value in analysis["guidance"]["rule_mappings"]
+            if value.get("created_by") == "project_configuration"
+        }
+        self.assertEqual(refreshed_ids, {project_mapping["id"]})
 
     def test_legacy_mapping_without_record_digest_is_explicitly_unverifiable(
         self,

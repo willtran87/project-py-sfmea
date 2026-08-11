@@ -39,6 +39,7 @@ class AutomationContract(TypedDict, total=False):
     test_sha256: str
     implementation_origin: str
     implemented_by: str
+    implemented_at: str
     fault_injection_plugins: list[str]
 
 
@@ -48,21 +49,47 @@ class AssuranceObligation(TypedDict, total=False):
     component_id: str
     source_status: str
     baseline_id: str
+    source_fingerprint: str
     rule_id: str
     failure_class: str
+    priority: str
     component: str
     source: SourceLocation
     title: str
+    objective: str
     failure_condition: str
+    detected_control_model: dict[str, Any] | None
+    control_review_questions: list[str]
+    cascade_context: dict[str, Any]
+    operational_context: dict[str, Any]
+    preconditions: list[str]
+    stimulus: dict[str, Any]
+    expected_results: dict[str, Any]
+    oracles: list[str]
     verification_method: str
+    method_rationale: str
     acceptance_criteria: list[str]
+    required_environment: list[str]
+    repeatability: dict[str, Any]
     planning_gaps: list[str]
     automation: AutomationContract
+    existing_test_candidates: list[str]
+    evidence_requirements: list[str]
+    citation_ids: list[str]
+    assurance_status: str
+    evidence_status: str
+    evidence_artifact_ids: list[str]
+    executions: list[str]
+    review: dict[str, Any]
     provenance: dict[str, Any]
+    history: list[dict[str, Any]]
 
 
 class AssuranceRegister(TypedDict, total=False):
     schema_version: str
+    planner_version: str
+    baseline_id: str
+    generated_at: str
     notice: str
     obligations: list[AssuranceObligation]
     executions: list[dict[str, Any]]

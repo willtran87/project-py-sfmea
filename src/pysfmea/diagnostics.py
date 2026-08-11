@@ -197,6 +197,47 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
         value.get("review", {}).get("disposition", "unreviewed") == "unreviewed"
         for value in items
     )
+    dispositions = Counter(
+        str(value.get("review", {}).get("disposition", "unreviewed")) for value in items
+    )
+    reviewed_total = len(items) - dispositions.get("unreviewed", 0)
+    reviewed_by_rule: dict[str, Counter[str]] = {}
+    for item in items:
+        rule_id = str(item.get("scanner", {}).get("rule_id", "unclassified"))
+        disposition = str(item.get("review", {}).get("disposition", "unreviewed"))
+        reviewed_by_rule.setdefault(rule_id, Counter())[disposition] += 1
+    calibration_rules = []
+    for rule_id, counts in sorted(
+        reviewed_by_rule.items(),
+        key=lambda value: (-sum(value[1].values()), value[0]),
+    )[:100]:
+        reviewed = sum(counts.values()) - counts.get("unreviewed", 0)
+        calibration_rules.append(
+            {
+                "rule_id": rule_id,
+                "findings": sum(counts.values()),
+                "reviewed": reviewed,
+                "accepted": counts.get("accepted", 0),
+                "rejected": counts.get("rejected", 0),
+                "needs_information": counts.get("needs_information", 0),
+                # An empty review sample has no observable acceptance or rejection
+                # rate.  Reporting 100% here made an unreviewed rule look perfectly
+                # calibrated in machine and HTML projections.
+                "acceptance_percent": (
+                    _percent(counts.get("accepted", 0), reviewed) if reviewed else None
+                ),
+                "rejection_percent": (
+                    _percent(counts.get("rejected", 0), reviewed) if reviewed else None
+                ),
+                "calibration_status": (
+                    "unreviewed"
+                    if not reviewed
+                    else "insufficient_sample"
+                    if reviewed < 5
+                    else "observed"
+                ),
+            }
+        )
     with_tests = sum(bool(value.get("test_references")) for value in code_components)
     with_coverage = sum(
         isinstance(value.get("coverage"), dict) for value in code_components
@@ -210,6 +251,95 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
         )
         for value in code_components
     )
+    mapped_components = [
+        value
+        for value in code_components
+        if value.get("mapping_context")
+        or value.get("subsystems")
+        or value.get("requirement_ids")
+        or value.get("interface_ids")
+    ]
+    architecture_mapping_candidates: list[dict[str, Any]] = []
+    for component in code_components:
+        if component in mapped_components:
+            continue
+        source_path = str(component.get("source", {}).get("path", ""))
+        directory = source_path.rpartition("/")[0]
+        supporters = [
+            value
+            for value in mapped_components
+            if str(value.get("source", {}).get("path", "")) == source_path
+        ]
+        confidence = "same_file"
+        if not supporters and directory:
+            supporters = [
+                value
+                for value in mapped_components
+                if str(value.get("source", {}).get("path", "")).rpartition("/")[0]
+                == directory
+            ]
+            confidence = "same_directory"
+        if not supporters:
+            continue
+        subsystems = sorted(
+            {
+                str(value)
+                for supporter in supporters
+                for value in supporter.get("subsystems", [])
+                if value
+            }
+        )
+        requirements = sorted(
+            {
+                str(value)
+                for supporter in supporters
+                for value in supporter.get("requirement_ids", [])
+                if value
+            }
+        )
+        interfaces = sorted(
+            {
+                str(value)
+                for supporter in supporters
+                for value in supporter.get("interface_ids", [])
+                if value
+            }
+        )
+        hazards = sorted(
+            {
+                str(value)
+                for supporter in supporters
+                for context in [
+                    *supporter.get("critical_context", []),
+                    *supporter.get("mapping_context", []),
+                ]
+                if isinstance(context, dict)
+                for value in context.get("hazards", [])
+                if value
+            }
+        )
+        architecture_mapping_candidates.append(
+            {
+                "component_id": component.get("id", ""),
+                "component": component.get("qualname", ""),
+                "source_path": source_path,
+                "confidence": confidence,
+                "suggested_subsystems": subsystems,
+                "suggested_requirements": requirements,
+                "suggested_interfaces": interfaces,
+                "suggested_hazards": hazards,
+                "supporting_component_ids": sorted(
+                    str(value.get("id", "")) for value in supporters if value.get("id")
+                )[:10],
+                "supporting_components_omitted": max(0, len(supporters) - 10),
+                "notice": (
+                    "Proximity-based mapping proposal only; a reviewer must confirm the "
+                    "component's actual architectural and hazard relationships."
+                ),
+            }
+        )
+        if len(architecture_mapping_candidates) >= 500:
+            break
     runtime_imports = len(analysis.get("runtime_evidence", {}).get("imports", []))
     external_call_candidates = sum(
         len(value.get("external_call_candidates", []))
@@ -362,11 +492,13 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
         guidance_coverage.get("direct_finding_coverage_percent", 0.0) or 0.0
     )
     interface_score = 100.0
-    if interface_summary.get("server_routes"):
+    if interface_summary.get("client_endpoint_candidates"):
         interface_score = _percent(
-            int(interface_summary.get("matched_server_routes", 0)),
-            int(interface_summary.get("server_routes", 0)),
+            int(interface_summary.get("matched_client_endpoints", 0)),
+            int(interface_summary.get("client_endpoint_candidates", 0)),
         )
+    elif interface_summary.get("server_routes"):
+        interface_score = 0.0
     evidence_score = round(
         (test_percent + coverage_percent + (100.0 if runtime_imports else 0.0)) / 3,
         1,
@@ -399,7 +531,7 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
         (
             "cross_stack_interfaces",
             interface_score,
-            "Static server-route reconciliation coverage",
+            "Static client-endpoint reconciliation coverage",
         ),
         (
             "guidance_specificity",
@@ -417,13 +549,13 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
             "Configured diagnostic and queue budgets",
         ),
     ]
-    qualification = {
+    overall_qualification_score = round(
+        sum(value[1] for value in qualification_domains) / len(qualification_domains),
+        1,
+    )
+    qualification: dict[str, Any] = {
         "authority": "diagnostic_readiness_score_not_tool_qualification_or_regulatory_approval",
-        "overall_score": round(
-            sum(value[1] for value in qualification_domains)
-            / len(qualification_domains),
-            1,
-        ),
+        "overall_score": overall_qualification_score,
         "domains": [
             {
                 "id": domain_id,
@@ -439,9 +571,7 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
             for domain_id, score, basis in qualification_domains
         ],
     }
-    qualification["overall_grade"] = _grade(
-        float(qualification["overall_score"])
-    )
+    qualification["overall_grade"] = _grade(overall_qualification_score)
     telemetry = settings.get("scan_telemetry", {})
     phase_seconds = (
         telemetry.get("phases_seconds", {}) if isinstance(telemetry, dict) else {}
@@ -548,7 +678,7 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
             "map_architecture",
             "P1",
             f"{len(code_components) - with_mapping} eligible Python components lack a subsystem, requirement, hazard, or interface mapping.",
-            "complete component_mappings and system_interfaces in sfmea.toml",
+            "review diagnostics.evidence.architecture_mapping_candidates, then complete component_mappings and system_interfaces in sfmea.toml",
         )
     if interface_summary.get("unmatched_client_endpoints"):
         action(
@@ -628,6 +758,17 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
             "module_initialization_findings": module_initialization,
             "top_paths": _top(path_hotspots),
             "top_components": _top(component_hotspots),
+            "review_calibration": {
+                "reviewed": reviewed_total,
+                "unreviewed": dispositions.get("unreviewed", 0),
+                "reviewed_percent": _percent(reviewed_total, len(items)),
+                "dispositions": dict(sorted(dispositions.items())),
+                "rules": calibration_rules,
+                "rules_omitted": max(0, len(reviewed_by_rule) - 100),
+                "authority": (
+                    "observed_human_dispositions_not_ground_truth_or_automatic_rule_tuning"
+                ),
+            },
         },
         "evidence": {
             "eligible_python_components": len(code_components),
@@ -643,6 +784,13 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
             "circuit_breaker_controls": circuit_breaker_controls,
             "components_with_governed_mappings": with_mapping,
             "mapping_coverage_percent": _percent(with_mapping, len(code_components)),
+            "architecture_mapping_candidates": architecture_mapping_candidates,
+            "architecture_mapping_candidates_omitted": max(
+                0,
+                len(code_components)
+                - with_mapping
+                - len(architecture_mapping_candidates),
+            ),
             "assurance": assurance,
         },
         "evidence_scope": {

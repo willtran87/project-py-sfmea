@@ -21,7 +21,11 @@ from pysfmea.cli import main
 from pysfmea.config import load_config, write_config_template
 from pysfmea.html_report import export_html_report
 from pysfmea.integrity import verify_run_manifest_integrity
-from pysfmea.report import export_review_archive
+from pysfmea.report import (
+    REVIEW_PACKAGE_FILES,
+    REVIEW_PACKAGE_SCHEMA_FILES,
+    export_review_archive,
+)
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
 from pysfmea.store import load_analysis, save_analysis, update_item_review
@@ -33,8 +37,7 @@ class WorkflowStatusTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         (self.root / "app.py").write_text(
-            "def authorize(actor, request):\n"
-            "    return bool(actor and request)\n",
+            "def authorize(actor, request):\n    return bool(actor and request)\n",
             encoding="utf-8",
         )
         self.config_path = self.root / "sfmea.toml"
@@ -126,13 +129,13 @@ class WorkflowStatusTests(unittest.TestCase):
         settings = analysis["project"]["settings"]
         self.assertEqual(settings["config_file"], str(self.config_path.resolve()))
         self.assertEqual(settings["analysis_serialization"], "compact")
-        self.assertEqual(len(self.analysis_path.read_text(encoding="utf-8").splitlines()), 1)
+        self.assertEqual(
+            len(self.analysis_path.read_text(encoding="utf-8").splitlines()), 1
+        )
         self.assertGreater(settings["fact_cache"]["run"]["misses"], 0)
         self.assertEqual(settings["fact_cache"]["output"]["status"], "published")
         self.assertFalse(analysis["run_manifest"]["cache"]["used"])
-        self.assertGreater(
-            analysis["run_manifest"]["cache"]["entries_recomputed"], 0
-        )
+        self.assertGreater(analysis["run_manifest"]["cache"]["entries_recomputed"], 0)
         self.assertIsNot(
             analysis["run_manifest"]["tool"]["settings"],
             settings,
@@ -233,6 +236,108 @@ class WorkflowStatusTests(unittest.TestCase):
             if not gate["passed"]:
                 self.assertIn(gate["remediation_action_id"], available_actions)
 
+    def test_read_only_scan_never_writes_inside_target_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            repository = workspace / "repository"
+            repository.mkdir()
+            source = repository / "app.py"
+            source.write_text(
+                "def run(value):\n    return value\n", encoding="utf-8"
+            )
+            before = {
+                path.relative_to(repository).as_posix(): path.read_bytes()
+                for path in repository.rglob("*")
+                if path.is_file()
+            }
+            output = workspace / "external-artifacts" / "analysis.json"
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                status = main(
+                    [
+                        "scan",
+                        str(repository),
+                        "--allow-ungoverned",
+                        "--read-only",
+                        "--output",
+                        str(output),
+                    ]
+                )
+            self.assertEqual(status, 0)
+            after = {
+                path.relative_to(repository).as_posix(): path.read_bytes()
+                for path in repository.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(after, before)
+            self.assertNotIn(".artifacts", {path.name for path in repository.iterdir()})
+            analysis = load_analysis(output)
+            settings = analysis["project"]["settings"]
+            self.assertEqual(settings["repository_mutation_policy"], "read_only")
+            self.assertFalse(settings["fact_cache"]["enabled"])
+            self.assertEqual(settings["fact_cache"]["output"]["status"], "disabled")
+            self.assertIn("prohibited by --read-only", stdout.getvalue())
+            self.assertTrue(verify_run_manifest_integrity(analysis)["valid"])
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rejected = main(
+                    [
+                        "scan",
+                        str(repository),
+                        "--allow-ungoverned",
+                        "--read-only",
+                        "--output",
+                        str(repository / "analysis.json"),
+                    ]
+                )
+            self.assertEqual(rejected, 2)
+            self.assertIn("outside the scanned repository", stderr.getvalue())
+            self.assertFalse((repository / "analysis.json").exists())
+
+    def test_read_only_scan_can_publish_an_explicit_external_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            repository = workspace / "repository"
+            repository.mkdir()
+            (repository / "app.py").write_text(
+                "def run(value):\n    return value\n", encoding="utf-8"
+            )
+            before = {
+                path.relative_to(repository).as_posix(): path.read_bytes()
+                for path in repository.rglob("*")
+                if path.is_file()
+            }
+            output = workspace / "external-artifacts" / "analysis.json"
+            cache = workspace / "external-cache" / "facts.json"
+
+            status = main(
+                [
+                    "scan",
+                    str(repository),
+                    "--allow-ungoverned",
+                    "--read-only",
+                    "--output",
+                    str(output),
+                    "--cache",
+                    str(cache),
+                ]
+            )
+
+            self.assertEqual(status, 0)
+            self.assertTrue(output.is_file())
+            self.assertTrue(cache.is_file())
+            after = {
+                path.relative_to(repository).as_posix(): path.read_bytes()
+                for path in repository.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(after, before)
+            settings = load_analysis(output)["project"]["settings"]
+            self.assertEqual(settings["repository_mutation_policy"], "read_only")
+            self.assertTrue(settings["fact_cache"]["enabled"])
+            self.assertEqual(settings["fact_cache"]["output"]["status"], "published")
+
     def test_unreconciled_inventory_summary_blocks_handoff(self) -> None:
         analysis = self._scan()
         analysis["repository_inventory"]["summary"]["files"] += 1
@@ -244,9 +349,7 @@ class WorkflowStatusTests(unittest.TestCase):
         )
         self.assertFalse(validation_gate["passed"])
         self.assertGreaterEqual(validation_gate["evidence"]["error_count"], 1)
-        self.assertEqual(
-            validation_gate["remediation_action_id"], "validate_analysis"
-        )
+        self.assertEqual(validation_gate["remediation_action_id"], "validate_analysis")
         self.assertIn(
             "validate_analysis", {action["id"] for action in status["next_actions"]}
         )
@@ -289,9 +392,7 @@ class WorkflowStatusTests(unittest.TestCase):
         current_gates = {gate["id"]: gate for gate in current["handoff_gates"]}
         self.assertTrue(current_gates["report_current"]["passed"])
         self.assertTrue(current_gates["package_current"]["passed"])
-        self.assertTrue(
-            current["artifacts"]["review_package"]["integrity"]["valid"]
-        )
+        self.assertTrue(current["artifacts"]["review_package"]["integrity"]["valid"])
         self.assertEqual(
             current["artifacts"]["review_package"]["integrity"]["capabilities"],
             [
@@ -311,12 +412,10 @@ class WorkflowStatusTests(unittest.TestCase):
             current["artifacts"]["review_package"]["binding"]["status"],
             "matched",
         )
-        self.assertFalse(
-            current["artifacts"]["review_package"]["timestamp_current"]
-        )
+        self.assertFalse(current["artifacts"]["review_package"]["timestamp_current"])
         self.assertEqual(
             current["artifacts"]["review_package"]["integrity"]["checked_files"],
-            47,
+            len(REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES),
         )
         self.assertTrue(
             current["artifacts"]["review_package"]["integrity"]["schema_catalog"][
@@ -324,14 +423,14 @@ class WorkflowStatusTests(unittest.TestCase):
             ]
         )
         self.assertTrue(
-            current["artifacts"]["review_package"]["integrity"][
-                "analysis_diagnostics"
-            ]["valid"]
+            current["artifacts"]["review_package"]["integrity"]["analysis_diagnostics"][
+                "valid"
+            ]
         )
         self.assertEqual(
-            current["artifacts"]["review_package"]["integrity"][
-                "analysis_diagnostics"
-            ]["artifact_count"],
+            current["artifacts"]["review_package"]["integrity"]["analysis_diagnostics"][
+                "artifact_count"
+            ],
             5,
         )
         self.assertTrue(
@@ -346,25 +445,25 @@ class WorkflowStatusTests(unittest.TestCase):
             2,
         )
         self.assertTrue(
-            current["artifacts"]["review_package"]["integrity"][
-                "sfta_projection"
-            ]["valid"]
+            current["artifacts"]["review_package"]["integrity"]["sfta_projection"][
+                "valid"
+            ]
         )
         self.assertEqual(
-            current["artifacts"]["review_package"]["integrity"][
-                "sfta_projection"
-            ]["artifact_count"],
+            current["artifacts"]["review_package"]["integrity"]["sfta_projection"][
+                "artifact_count"
+            ],
             2,
         )
         self.assertTrue(
-            current["artifacts"]["review_package"]["integrity"][
-                "evidence_catalog"
-            ]["valid"]
+            current["artifacts"]["review_package"]["integrity"]["evidence_catalog"][
+                "valid"
+            ]
         )
         self.assertEqual(
-            current["artifacts"]["review_package"]["integrity"][
-                "evidence_catalog"
-            ]["artifact_count"],
+            current["artifacts"]["review_package"]["integrity"]["evidence_catalog"][
+                "artifact_count"
+            ],
             1,
         )
         self.assertTrue(
@@ -379,26 +478,24 @@ class WorkflowStatusTests(unittest.TestCase):
             2,
         )
         self.assertTrue(
-            current["artifacts"]["review_package"]["integrity"][
-                "analysis_structure"
-            ]["valid"]
+            current["artifacts"]["review_package"]["integrity"]["analysis_structure"][
+                "valid"
+            ]
         )
         self.assertGreater(
-            current["artifacts"]["review_package"]["integrity"][
-                "analysis_structure"
-            ]["node_count"],
+            current["artifacts"]["review_package"]["integrity"]["analysis_structure"][
+                "node_count"
+            ],
             0,
         )
         self.assertEqual(
-            current["artifacts"]["review_package"]["integrity"][
-                "analysis_structure"
-            ]["limits"],
+            current["artifacts"]["review_package"]["integrity"]["analysis_structure"][
+                "limits"
+            ],
             {"max_nodes": 3_000_000, "max_depth": 100},
         )
         self.assertTrue(
-            current["artifacts"]["review_package"]["integrity"]["review_views"][
-                "valid"
-            ]
+            current["artifacts"]["review_package"]["integrity"]["review_views"]["valid"]
         )
         self.assertEqual(
             current["artifacts"]["review_package"]["integrity"]["review_views"][
@@ -407,31 +504,31 @@ class WorkflowStatusTests(unittest.TestCase):
             10,
         )
         self.assertTrue(
-            current["artifacts"]["review_package"]["integrity"][
-                "package_provenance"
-            ]["valid"]
+            current["artifacts"]["review_package"]["integrity"]["package_provenance"][
+                "valid"
+            ]
         )
         self.assertEqual(
-            current["artifacts"]["review_package"]["integrity"][
-                "package_provenance"
-            ]["artifact_count"],
+            current["artifacts"]["review_package"]["integrity"]["package_provenance"][
+                "artifact_count"
+            ],
             2,
         )
         self.assertTrue(
-            current["artifacts"]["review_package"]["integrity"][
-                "assurance_work_queue"
-            ]["valid"]
+            current["artifacts"]["review_package"]["integrity"]["assurance_work_queue"][
+                "valid"
+            ]
         )
         self.assertEqual(
-            current["artifacts"]["review_package"]["integrity"][
-                "assurance_work_queue"
-            ]["status"],
+            current["artifacts"]["review_package"]["integrity"]["assurance_work_queue"][
+                "status"
+            ],
             "matched",
         )
         self.assertTrue(
-            current["artifacts"]["review_package"]["integrity"][
-                "assurance_register"
-            ]["valid"]
+            current["artifacts"]["review_package"]["integrity"]["assurance_register"][
+                "valid"
+            ]
         )
         self.assertTrue(
             all(
@@ -474,9 +571,7 @@ class WorkflowStatusTests(unittest.TestCase):
         os.utime(package, (newer, newer))
         os.utime(report, (newer, newer))
         mismatched = workflow_status(self.root)
-        self.assertEqual(
-            mismatched["artifacts"]["html_report"]["status"], "mismatched"
-        )
+        self.assertEqual(mismatched["artifacts"]["html_report"]["status"], "mismatched")
         self.assertFalse(
             mismatched["artifacts"]["html_report"]["binding"]["checks"][
                 "analysis_state"
@@ -491,12 +586,8 @@ class WorkflowStatusTests(unittest.TestCase):
         self.assertEqual(
             mismatched["artifacts"]["review_package"]["status"], "mismatched"
         )
-        self.assertTrue(
-            mismatched["artifacts"]["review_package"]["integrity"]["valid"]
-        )
-        self.assertFalse(
-            mismatched["artifacts"]["review_package"]["binding"]["valid"]
-        )
+        self.assertTrue(mismatched["artifacts"]["review_package"]["integrity"]["valid"])
+        self.assertFalse(mismatched["artifacts"]["review_package"]["binding"]["valid"])
         self.assertFalse(
             mismatched["artifacts"]["review_package"]["binding"]["checks"][
                 "analysis_state"
@@ -511,14 +602,14 @@ class WorkflowStatusTests(unittest.TestCase):
                 archive.writestr(name, raw)
         invalid = workflow_status(self.root)
         self.assertEqual(invalid["artifacts"]["review_package"]["status"], "invalid")
-        self.assertFalse(
-            invalid["artifacts"]["review_package"]["integrity"]["valid"]
-        )
+        self.assertFalse(invalid["artifacts"]["review_package"]["integrity"]["valid"])
         self.assertIn(
             "refresh_package", [value["id"] for value in invalid["next_actions"]]
         )
         package_action = next(
-            value for value in invalid["next_actions"] if value["id"] == "refresh_package"
+            value
+            for value in invalid["next_actions"]
+            if value["id"] == "refresh_package"
         )
         self.assertIn(f'-o "{package}"', package_action["command"])
         self.assertIn("--force", package_action["command"])
@@ -528,9 +619,7 @@ class WorkflowStatusTests(unittest.TestCase):
         os.utime(report, (older, older))
         exact = workflow_status(self.root)
         self.assertEqual(exact["artifacts"]["html_report"]["status"], "current")
-        self.assertFalse(
-            exact["artifacts"]["html_report"]["timestamp_current"]
-        )
+        self.assertFalse(exact["artifacts"]["html_report"]["timestamp_current"])
         self.assertNotIn(
             "refresh_report", [value["id"] for value in exact["next_actions"]]
         )
@@ -540,17 +629,13 @@ class WorkflowStatusTests(unittest.TestCase):
             result = main(["status", str(self.root)])
         self.assertEqual(result, 0)
         self.assertIn("Workflow stage: ready to scan", text_output.getvalue())
-        self.assertIn(
-            "Handoff gates: passed=1/8, blocked=7", text_output.getvalue()
-        )
+        self.assertIn("Handoff gates: passed=1/8, blocked=7", text_output.getvalue())
         self.assertIn("[BLOCKED] Governed analysis available", text_output.getvalue())
         self.assertIn("Next actions:", text_output.getvalue())
         self.assertIn("sfmea scan", text_output.getvalue())
 
         with contextlib.redirect_stdout(io.StringIO()):
-            result = main(
-                ["status", str(self.root), "--require-handoff-ready"]
-            )
+            result = main(["status", str(self.root), "--require-handoff-ready"])
         self.assertEqual(result, 1)
 
         with contextlib.redirect_stdout(io.StringIO()) as json_output:
@@ -612,9 +697,7 @@ class WorkflowStatusTests(unittest.TestCase):
             implemented["artifacts"]["assurance_scaffold"]["status"], "current"
         )
         self.assertEqual(
-            implemented["artifacts"]["assurance_scaffold"][
-                "generated_files_changed"
-            ],
+            implemented["artifacts"]["assurance_scaffold"]["generated_files_changed"],
             1,
         )
         with contextlib.redirect_stdout(io.StringIO()) as status_output:
@@ -629,9 +712,7 @@ class WorkflowStatusTests(unittest.TestCase):
         advanced_artifact = advanced["artifacts"]["assurance_scaffold"]
         self.assertEqual(advanced_artifact["status"], "current")
         self.assertTrue(advanced_artifact["binding"]["valid"])
-        self.assertEqual(
-            advanced_artifact["binding"]["status"], "contracts_current"
-        )
+        self.assertEqual(advanced_artifact["binding"]["status"], "contracts_current")
         self.assertNotIn(
             "verify_assurance_scaffold",
             {value["id"] for value in advanced["next_actions"]},
@@ -839,9 +920,7 @@ class WorkflowStatusTests(unittest.TestCase):
             self.root,
             assurance_scaffold_path=custom_scaffold,
         )
-        self.assertEqual(
-            missing["paths"]["assurance_scaffold"], str(custom_scaffold)
-        )
+        self.assertEqual(missing["paths"]["assurance_scaffold"], str(custom_scaffold))
         self.assertEqual(
             missing["artifacts"]["assurance_scaffold"]["status"], "missing"
         )
@@ -925,9 +1004,7 @@ class WorkflowStatusTests(unittest.TestCase):
             assurance_scaffold_path=[custom_scaffold, second_scaffold],
         )
         portfolio = overlapping["assurance_scaffold_portfolio"]
-        self.assertEqual(
-            portfolio["format"], "pysfmea-assurance-scaffold-portfolio-1"
-        )
+        self.assertEqual(portfolio["format"], "pysfmea-assurance-scaffold-portfolio-1")
         self.assertEqual(portfolio["queue_count"], 2)
         self.assertEqual(portfolio["current_queues"], 2)
         self.assertEqual(portfolio["coverage_percent"], 100.0)

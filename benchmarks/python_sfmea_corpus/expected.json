@@ -19,6 +19,163 @@
     {"source": "pipeline.py", "component": "run_pipeline", "raw_reference": "fetch_job", "reference": "fetch_job", "resolution": "lexical_name", "candidate_confidence": "", "line": 25, "order": 0, "awaited": false, "control_context": []},
     {"source": "pipeline.py", "component": "run_pipeline", "raw_reference": "asyncio.create_task", "reference": "asyncio.create_task", "resolution": "import_alias", "candidate_confidence": "", "line": 25, "order": 1, "awaited": false, "control_context": []}
   ],
+  "control_scope": ["controls.py:*"],
+  "control_cases": [
+    {"source": "controls.py", "component": "CircuitBreaker.__init__", "kind": "circuit_breaker", "roles": ["breaker_state_management", "failure_recording"]},
+    {"source": "controls.py", "component": "CircuitBreaker.allow_request", "kind": "circuit_breaker", "roles": ["admission_guard", "breaker_state_management", "recovery_timer"]},
+    {"source": "controls.py", "component": "CircuitBreaker.record_failure", "kind": "circuit_breaker", "roles": ["breaker_state_management", "failure_recording"]},
+    {"source": "controls.py", "component": "CircuitBreaker.record_success", "kind": "circuit_breaker", "roles": ["breaker_state_management", "failure_recording", "success_reset"]}
+  ],
+  "semantic_cases": [
+    {
+      "source": "corpus.py",
+      "component": "divide_measurement",
+      "rule_id": "calculation.precision_or_range",
+      "expect": {
+        "failure_mode": "divide_measurement calculates a value with an incorrect equation, operand, sign, unit, precision, rounding, convergence, overflow, or underflow behavior.",
+        "causes": ["Wrong operator or operand", "Unit or sign error", "Inappropriate rounding or precision", "Overflow, underflow, or non-convergence"],
+        "local_effect": "A numerically plausible but incorrect value is returned, stored, displayed, or used for control.",
+        "recommended_actions": ["Specify units, ranges, precision, and rounding", "Use dimensional and boundary tests", "Check overflow, underflow, NaN, infinity, and convergence where applicable"],
+        "verification_method": "property_test",
+        "adapter_ids": ["python.data_flow_signals", "python.failure_rule_analyzer"],
+        "confidence": "medium",
+        "screening_priority": "low"
+      }
+    },
+    {
+      "source": "corpus.py",
+      "component": "fetch_remote_configuration",
+      "rule_id": "interface.unavailable",
+      "expect": {
+        "failure_mode": "An external dependency used by fetch_remote_configuration is unavailable, times out, responds late, or disconnects mid-operation.",
+        "causes": ["Timeout absent or too long", "Connection interruption", "Dependency overload/outage", "Unsafe retry behavior"],
+        "local_effect": "The operation blocks, aborts, retries unexpectedly, or completes only partially.",
+        "recommended_actions": ["Define timeouts and bounded retry behavior", "Make partial operations idempotent or compensatable", "Test dependency outage, latency, and recovery"],
+        "verification_method": "integration_test",
+        "direct_citation_ids": ["NASA-SWEHB-8.05-PROCESS"],
+        "adapter_ids": ["python.failure_rule_analyzer", "python.interface_analyzer"],
+        "confidence": "high",
+        "screening_priority": "low"
+      }
+    },
+    {
+      "source": "corpus.py",
+      "component": "masked_failure",
+      "rule_id": "detection.masked_failure",
+      "expect": {
+        "failure_mode": "masked_failure catches or suppresses a failure without an adequate safe response, diagnostic, or escalation.",
+        "causes": ["Broad exception catch", "Empty/pass handler", "Fallback indistinguishable from valid result", "Diagnostic context lost"],
+        "local_effect": "The caller or operator believes processing succeeded or lacks actionable failure information.",
+        "recommended_actions": ["Catch specific exceptions", "Define safe fallback and explicit failure result", "Log/measure with sufficient context and test the detection path"],
+        "verification_method": "fault_injection_test",
+        "direct_citation_ids": ["NASA-SWEHB-8.05-DETECTION"],
+        "adapter_ids": ["python.failure_rule_analyzer", "python.security_boundary_analyzer"],
+        "confidence": "medium",
+        "screening_priority": "low"
+      }
+    },
+    {
+      "source": "corpus.py",
+      "component": "parse_external_payload",
+      "rule_id": "data.serialization",
+      "expect": {
+        "failure_mode": "parse_external_payload serializes or deserializes corrupt, truncated, ambiguous, or version-incompatible data.",
+        "causes": ["Schema drift", "Truncated payload", "Encoding/precision loss", "Unsafe or ambiguous deserialization"],
+        "local_effect": "Data is rejected, silently changed, or reconstructed incorrectly.",
+        "recommended_actions": ["Version schemas and validate before use", "Test forward/backward compatibility and truncation", "Avoid unsafe deserialization formats"],
+        "verification_method": "property_test",
+        "direct_citation_ids": ["NASA-SWEHB-8.05-DATA-EVENTS"],
+        "adapter_ids": ["python.data_flow_signals", "python.failure_rule_analyzer"],
+        "confidence": "medium",
+        "screening_priority": "low"
+      }
+    },
+    {
+      "source": "corpus.py",
+      "component": "persist_state",
+      "rule_id": "storage.partial_or_corrupt",
+      "expect": {
+        "failure_mode": "A storage operation in persist_state is lost, partial, duplicated, reordered, or reads inconsistent data.",
+        "causes": ["Interrupted write", "Missing transaction boundary", "Concurrent update", "Corrupt/incompatible data", "Non-idempotent retry"],
+        "local_effect": "Persistent state differs from the state assumed by the application.",
+        "recommended_actions": ["Define atomicity and consistency requirements", "Use transactions or atomic replacement", "Test interruption, retry, corruption, and concurrent update"],
+        "verification_method": "fault_injection_test",
+        "direct_citation_ids": ["NASA-SWEHB-8.05-DATA-EVENTS"],
+        "adapter_ids": ["python.data_flow_signals", "python.failure_rule_analyzer"],
+        "confidence": "high",
+        "screening_priority": "low"
+      }
+    },
+    {
+      "source": "corpus.py",
+      "component": "run_worker",
+      "rule_id": "process.uncontrolled_failure",
+      "expect": {
+        "failure_mode": "A process launched by run_worker fails, hangs, returns misleading success, or operates on an unintended target.",
+        "local_effect": "The requested operation is absent, partial, or applied to the wrong resource.",
+        "verification_method": "integration_test",
+        "adapter_ids": ["python.failure_rule_analyzer", "python.security_boundary_analyzer", "repository.configuration_analyzer"],
+        "confidence": "high",
+        "screening_priority": "low"
+      }
+    },
+    {
+      "source": "models.py",
+      "component": "JobRequest",
+      "rule_id": "data.model_contract",
+      "expect": {
+        "failure_mode": "JobRequest defines missing, incorrect, ambiguous, incompatible, or insufficiently constrained fields and representation semantics.",
+        "local_effect": "Data is rejected, accepted incorrectly, silently transformed, or interpreted with the wrong meaning.",
+        "verification_method": "property_test",
+        "direct_citation_ids": ["NASA-SWEHB-8.05-DATA-EVENTS"],
+        "adapter_ids": ["python.data_flow_signals", "python.failure_rule_analyzer"],
+        "confidence": "high",
+        "screening_priority": "low"
+      }
+    },
+    {
+      "source": "pipeline.py",
+      "component": "fetch_job",
+      "rule_id": "logic.condition_or_sequence",
+      "expect": {
+        "failure_mode": "fetch_job evaluates a condition incorrectly, selects the wrong branch, omits a path, or performs steps in the wrong sequence.",
+        "local_effect": "The intended operation is skipped, repeated, or replaced by an inappropriate operation.",
+        "verification_method": "property_test",
+        "direct_citation_ids": ["NASA-SWEHB-8.05-DATA-EVENTS"],
+        "adapter_ids": ["python.control_flow_analyzer", "python.failure_rule_analyzer"],
+        "confidence": "medium",
+        "screening_priority": "high"
+      }
+    },
+    {
+      "source": "web_api.py",
+      "component": "submit_job",
+      "rule_id": "timing.order_or_race",
+      "expect": {
+        "failure_mode": "submit_job executes too early, too late, more than once, out of sequence, or concurrently with conflicting work.",
+        "local_effect": "State or output depends on nondeterministic timing or an incomplete concurrent operation.",
+        "verification_method": "concurrency_test",
+        "direct_citation_ids": ["NASA-SWEHB-8.05-DATA-EVENTS"],
+        "adapter_ids": ["python.concurrency_analyzer", "python.failure_rule_analyzer"],
+        "confidence": "medium",
+        "screening_priority": "high"
+      }
+    },
+    {
+      "source": "worker.py",
+      "component": "publish_results",
+      "rule_id": "interface.bad_response",
+      "expect": {
+        "failure_mode": "An external dependency returns a successful but wrong, partial, stale, duplicated, or schema-incompatible response to publish_results.",
+        "local_effect": "Incorrect external data is accepted and influences local behavior.",
+        "verification_method": "integration_test",
+        "direct_citation_ids": ["NASA-SWEHB-8.05-PROCESS"],
+        "adapter_ids": ["python.failure_rule_analyzer", "python.interface_analyzer"],
+        "confidence": "medium",
+        "screening_priority": "high"
+      }
+    }
+  ],
   "cases": [
     {"source": "corpus.py", "component": "divide_measurement", "rule_id": "calculation.precision_or_range"},
     {"source": "corpus.py", "component": "divide_measurement", "rule_id": "data.invalid_input"},

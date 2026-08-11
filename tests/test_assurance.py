@@ -7,6 +7,7 @@ import io
 import json
 import os
 import runpy
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -334,7 +335,7 @@ class AssuranceRegisterTests(unittest.TestCase):
         manifest = json.loads(original_manifest_text)
         canonical_manifest = dict(manifest)
         manifest_sha256 = canonical_manifest.pop("manifest_sha256")
-        self.assertEqual(manifest["format"], "pysfmea-pytest-assurance-scaffold-6")
+        self.assertEqual(manifest["format"], "pysfmea-pytest-assurance-scaffold-7")
         self.assertEqual(
             manifest_sha256,
             hashlib.sha256(
@@ -372,12 +373,36 @@ class AssuranceRegisterTests(unittest.TestCase):
         generated_test = test_path.read_text(encoding="utf-8")
         self.assertIn("pytest.fail", generated_test)
         self.assertNotIn("pytest.skip", generated_test)
-        self.assertIn("failed its SHA-256 integrity check", generated_test)
-        self.assertIn('path.open("rb")', generated_test)
-        self.assertIn("MAX_MANIFEST_BYTES + 1", generated_test)
-        self.assertIn("regular non-symbolic-link file", generated_test)
-        self.assertNotIn('.read_text(encoding="utf-8")', generated_test)
-        for name in ("README.md", "test_sfmea_assurance.py"):
+        runtime_path = scaffold / "sfmea_assurance_runtime.py"
+        generated_runtime = runtime_path.read_text(encoding="utf-8")
+        sys.path.insert(0, str(scaffold))
+        self.addCleanup(
+            lambda: sys.path.remove(str(scaffold))
+            if str(scaffold) in sys.path
+            else None
+        )
+        self.assertIn("failed its SHA-256 integrity check", generated_runtime)
+        self.assertIn('path.open("rb")', generated_runtime)
+        self.assertIn("MAX_MANIFEST_BYTES + 1", generated_runtime)
+        self.assertIn("regular non-symbolic-link file", generated_runtime)
+        self.assertNotIn('.read_text(encoding="utf-8")', generated_runtime)
+        property_test = (scaffold / "test_sfmea_generated_properties.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("from hypothesis import", property_test)
+        self.assertIn("assert_observation", property_test)
+        self.assertNotIn("pytest.skip", property_test)
+        self.assertIn(
+            "raise NotImplementedError",
+            (scaffold / "sfmea_assurance_adapters.py").read_text(encoding="utf-8"),
+        )
+        self.assertEqual(manifest["test_designs"]["summary"]["property_designs"], 2)
+        self.assertEqual(manifest["test_designs"]["summary"]["contract_designs"], 0)
+        self.assertEqual(
+            manifest["binding"]["test_designs_sha256"],
+            manifest["test_designs"]["content_sha256"],
+        )
+        for name in manifest["generated_files"]:
             self.assertEqual(
                 manifest["generated_files"][name]["sha256"],
                 hashlib.sha256((scaffold / name).read_bytes()).hexdigest(),
@@ -393,8 +418,10 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertTrue(verification["valid"])
         self.assertEqual(verification["status"], "matched")
         self.assertEqual(
-            verification["format"], "pysfmea-assurance-scaffold-verification-5"
+            verification["format"], "pysfmea-assurance-scaffold-verification-6"
         )
+        self.assertTrue(verification["checks"]["test_designs"])
+        self.assertTrue(verification["checks"]["test_designs_sha256"])
         self.assertEqual(
             verification["obligation_ids"],
             [value["id"] for value in manifest["obligations"]],
@@ -425,25 +452,29 @@ class AssuranceRegisterTests(unittest.TestCase):
         self.assertEqual(tampered["status"], "invalid")
         self.assertFalse(tampered["checks"]["manifest_integrity"])
 
-        test_path.write_text(
-            generated_test.replace(
+        runtime_path.write_text(
+            generated_runtime.replace(
                 "MAX_MANIFEST_BYTES = 64 * 1024 * 1024",
                 "MAX_MANIFEST_BYTES = 10",
                 1,
             ),
             encoding="utf-8",
         )
+        sys.modules.pop("sfmea_assurance_runtime", None)
         with self.assertRaisesRegex(RuntimeError, "10-byte collection limit"):
             runpy.run_path(str(test_path))
-        test_path.write_text(generated_test, encoding="utf-8")
+        runtime_path.write_text(generated_runtime, encoding="utf-8")
+        sys.modules.pop("sfmea_assurance_runtime", None)
 
         manifest_path.write_bytes(b"\xff\xfe")
+        sys.modules.pop("sfmea_assurance_runtime", None)
         with self.assertRaisesRegex(RuntimeError, "valid bounded UTF-8 JSON"):
             runpy.run_path(str(test_path))
         manifest_path.write_text(
             '{"format":"ambiguous",' + original_manifest_text[1:],
             encoding="utf-8",
         )
+        sys.modules.pop("sfmea_assurance_runtime", None)
         with self.assertRaisesRegex(RuntimeError, "unambiguous objects"):
             runpy.run_path(str(test_path))
         rejected_manifest = verify_pytest_scaffold(self.analysis, scaffold)
@@ -458,12 +489,15 @@ class AssuranceRegisterTests(unittest.TestCase):
             '{"numeric_probe":1e9999,' + original_manifest_text[1:],
             encoding="utf-8",
         )
+        sys.modules.pop("sfmea_assurance_runtime", None)
         with self.assertRaisesRegex(RuntimeError, "finite numbers"):
             runpy.run_path(str(test_path))
         manifest_path.write_text("[]", encoding="utf-8")
+        sys.modules.pop("sfmea_assurance_runtime", None)
         with self.assertRaisesRegex(RuntimeError, "root must be an object"):
             runpy.run_path(str(test_path))
         manifest_path.write_text(original_manifest_text, encoding="utf-8")
+        sys.modules.pop("sfmea_assurance_runtime", None)
         with mock.patch.object(Path, "is_symlink", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "regular non-symbolic-link"):
                 runpy.run_path(str(test_path))
@@ -480,6 +514,7 @@ class AssuranceRegisterTests(unittest.TestCase):
             ).encode("utf-8")
         ).hexdigest()
         manifest_path.write_text(json.dumps(malformed), encoding="utf-8")
+        sys.modules.pop("sfmea_assurance_runtime", None)
         with self.assertRaisesRegex(RuntimeError, "no valid obligation list"):
             runpy.run_path(str(test_path))
         malformed_result = verify_pytest_scaffold(self.analysis, scaffold)
@@ -562,6 +597,181 @@ class AssuranceRegisterTests(unittest.TestCase):
         directory.mkdir()
         with self.assertRaisesRegex(ValueError, "regular file path"):
             export_assurance_register(self.analysis, directory, format="work-json")
+
+    def test_scaffold_synthesizes_bounded_property_designs_and_rejects_overclaim(
+        self,
+    ) -> None:
+        annotated_root = self.root / "annotated"
+        annotated_root.mkdir()
+        (annotated_root / "calculation.py").write_text(
+            "def calculate(count: int, enabled: bool, name: str, "
+            "values: list[int], options: dict[str, int], maybe: int | None) -> float:\n"
+            "    return float(count) if enabled and name else 0.0\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(annotated_root)
+        property_obligation = next(
+            value
+            for value in analysis["assurance"]["obligations"]
+            if value["verification_method"] == "property_test"
+        )
+        scaffold = export_pytest_scaffold(
+            analysis,
+            self.root / "property-synthesis",
+            scope=property_obligation["id"],
+            limit=1,
+            disposition="all",
+        )
+        manifest_path = scaffold / "assurance-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        design = manifest["test_designs"]["property_tests"][0]
+        strategy_by_name = {
+            value["name"]: value["strategy"] for value in design["parameters"]
+        }
+        self.assertEqual(strategy_by_name["count"]["kind"], "integers")
+        self.assertEqual(strategy_by_name["enabled"]["kind"], "booleans")
+        self.assertEqual(strategy_by_name["name"]["kind"], "text")
+        self.assertEqual(strategy_by_name["values"]["kind"], "lists")
+        self.assertEqual(strategy_by_name["options"]["kind"], "dictionaries")
+        self.assertEqual(strategy_by_name["maybe"]["kind"], "one_of")
+        self.assertTrue(design["oracles"])
+        self.assertTrue(design["acceptance_criteria"])
+        self.assertEqual(design["adapter_status"], "project_implementation_required")
+        self.assertTrue(verify_pytest_scaffold(analysis, scaffold)["valid"])
+        executed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "test_sfmea_generated_properties.py",
+                "-q",
+            ],
+            cwd=scaffold,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        self.assertNotEqual(executed.returncode, 0)
+        self.assertIn("NotImplementedError", executed.stdout + executed.stderr)
+        self.assertIn(property_obligation["id"], executed.stdout + executed.stderr)
+
+        design["parameters"][0]["strategy"]["kind"] = "text"
+        design_projection = dict(manifest["test_designs"])
+        design_projection.pop("content_sha256")
+        forged_design_digest = hashlib.sha256(
+            json.dumps(
+                design_projection,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        manifest["test_designs"]["content_sha256"] = forged_design_digest
+        manifest["binding"]["test_designs_sha256"] = forged_design_digest
+        manifest.pop("manifest_sha256")
+        manifest["manifest_sha256"] = hashlib.sha256(
+            json.dumps(
+                manifest,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        rejected = verify_pytest_scaffold(analysis, scaffold)
+        self.assertFalse(rejected["valid"])
+        self.assertFalse(rejected["checks"]["test_designs_sha256"])
+
+    def test_scaffold_synthesizes_fail_visible_contract_cases(self) -> None:
+        analysis = json.loads(json.dumps(self.analysis))
+        obligation = analysis["assurance"]["obligations"][0]
+        obligation["verification_method"] = "contract_test"
+        analysis["context"]["contracts"] = [
+            {
+                "id": "CONTRACT-EXAMPLE",
+                "path": "openapi.json",
+                "kind": "openapi",
+                "bytes": 128,
+                "sha256": "a" * 64,
+                "operations": [f"POST /{obligation['component']}"],
+                "data_types": ["Request", "Response"],
+            }
+        ]
+        scaffold = export_pytest_scaffold(
+            analysis,
+            self.root / "contract-synthesis",
+            scope=obligation["id"],
+            limit=1,
+            disposition="all",
+        )
+        manifest = json.loads(
+            (scaffold / "assurance-manifest.json").read_text(encoding="utf-8")
+        )
+        design = manifest["test_designs"]["contract_tests"][0]
+        self.assertEqual(
+            design["binding_status"], "static_candidate_match_requires_review"
+        )
+        self.assertEqual(
+            {value["kind"] for value in design["cases"]},
+            {
+                "conforming_exchange",
+                "missing_required_input",
+                "malformed_input",
+                "incompatible_response",
+                "declared_error_exchange",
+            },
+        )
+        self.assertTrue(verify_pytest_scaffold(analysis, scaffold)["valid"])
+        for source in scaffold.glob("*.py"):
+            compile(source.read_text(encoding="utf-8"), str(source), "exec")
+
+        sys.path.insert(0, str(scaffold))
+        try:
+            sys.modules.pop("sfmea_assurance_runtime", None)
+            sys.modules.pop("sfmea_assurance_adapters", None)
+            with self.assertRaisesRegex(NotImplementedError, obligation["id"]):
+                namespace = runpy.run_path(
+                    str(scaffold / "test_sfmea_generated_contracts.py")
+                )
+                namespace["test_sfmea_generated_contract"](
+                    design,
+                    design["cases"][0],
+                )
+        finally:
+            if str(scaffold) in sys.path:
+                sys.path.remove(str(scaffold))
+            sys.modules.pop("sfmea_assurance_runtime", None)
+            sys.modules.pop("sfmea_assurance_adapters", None)
+
+        analysis["context"]["contracts"] = [
+            {
+                "id": f"CONTRACT-{index}",
+                "path": f"unrelated-{index}.json",
+                "kind": "json_schema",
+                "bytes": 64,
+                "sha256": str(index) * 64,
+                "operations": [f"unrelated_operation_{index}"],
+                "data_types": [],
+            }
+            for index in (1, 2)
+        ]
+        unresolved_scaffold = export_pytest_scaffold(
+            analysis,
+            self.root / "unresolved-contract-synthesis",
+            scope=obligation["id"],
+            limit=1,
+            disposition="all",
+        )
+        unresolved_manifest = json.loads(
+            (unresolved_scaffold / "assurance-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        unresolved = unresolved_manifest["test_designs"]["contract_tests"][0]
+        self.assertEqual(unresolved["binding_status"], "unresolved")
+        self.assertEqual(unresolved["contracts"], [])
+        self.assertEqual(unresolved["cases"][0]["kind"], "establish_contract_binding")
 
     def test_scaffold_publication_cleans_staging_after_failure(self) -> None:
         destination = self.root / "assurance-tests"
@@ -756,7 +966,10 @@ class AssuranceRegisterTests(unittest.TestCase):
             for value in oversized_generated["findings"]
             if value["rule_id"] == "scaffold.generated_file_unreadable"
         ]
-        self.assertEqual(len(generated_errors), 2)
+        self.assertEqual(
+            len(generated_errors),
+            len(json.loads(manifest_bytes)["generated_files"]),
+        )
         self.assertTrue(
             all("10-byte verification limit" in value for value in generated_errors)
         )

@@ -16,7 +16,7 @@ import tempfile
 import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 from .architecture import export_architecture
 from .assurance import (
@@ -45,6 +45,7 @@ from .publication import (
     classify_publication_failure,
 )
 from .repository_inventory import repository_inventory_summary_projection
+from .schema_registry import PUBLIC_SCHEMA_BUNDLE_FILES
 from .sfta import SFTA_GAP_FIELDS, build_sfta, export_sfta, sfta_gap_rows
 from .validation import validate_analysis
 from .version import __version__
@@ -155,28 +156,7 @@ REVIEW_PACKAGE_FILES = {
     "README.md",
 }
 LEGACY_REVIEW_PACKAGE_FILES = REVIEW_PACKAGE_FILES - {"assurance-work.json"}
-REVIEW_PACKAGE_SCHEMA_FILES = {
-    "schema-catalog.json",
-    "pysfmea-assurance-program.schema.json",
-    "pysfmea-assurance-program-report-verification.schema.json",
-    "pysfmea-assurance-program-verification.schema.json",
-    "pysfmea-assurance-work-queue.schema.json",
-    "pysfmea-assurance-work-queue-verification.schema.json",
-    "pysfmea-detached-signature.schema.json",
-    "pysfmea-diagram.schema.json",
-    "pysfmea-diagram-bundle.schema.json",
-    "pysfmea-diagram-bundle-verification.schema.json",
-    "pysfmea-fault-injection-plan.schema.json",
-    "pysfmea-fault-injection-plan-verification.schema.json",
-    "pysfmea-html-report-verification.schema.json",
-    "pysfmea-publication-failure-catalog.schema.json",
-    "pysfmea-publication-failure-catalog-verification.schema.json",
-    "pysfmea-schema-bundle-verification.schema.json",
-    "pysfmea-schema-catalog.schema.json",
-    "pysfmea-review-package-manifest.schema.json",
-    "pysfmea-review-package-verification.schema.json",
-    "pysfmea-workflow-status.schema.json",
-}
+REVIEW_PACKAGE_SCHEMA_FILES = PUBLIC_SCHEMA_BUNDLE_FILES
 REVIEW_PACKAGE_ALLOWED_FILES = REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES
 REVIEW_PACKAGE_ALL_FILES = REVIEW_PACKAGE_ALLOWED_FILES | {"manifest.json"}
 MAX_ARCHIVE_ENTRIES = 100
@@ -186,26 +166,18 @@ MAX_ANALYSIS_JSON_DEPTH = MAX_GOVERNED_JSON_DEPTH
 MAX_ANALYSIS_JSON_NODES = MAX_GOVERNED_JSON_NODES
 REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
 REVIEW_PACKAGE_VERIFICATION_FORMAT = "pysfmea-review-package-verification-1"
-ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = (
-    "pysfmea-analysis-structure-verification-1"
-)
-ANALYSIS_DIAGNOSTICS_VERIFICATION_FORMAT = (
-    "pysfmea-analysis-diagnostics-verification-1"
-)
+ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = "pysfmea-analysis-structure-verification-1"
+ANALYSIS_DIAGNOSTICS_VERIFICATION_FORMAT = "pysfmea-analysis-diagnostics-verification-1"
 GUIDANCE_TRACEABILITY_VERIFICATION_FORMAT = (
     "pysfmea-guidance-traceability-verification-1"
 )
 SFTA_PROJECTION_VERIFICATION_FORMAT = "pysfmea-sfta-projection-verification-1"
-EVIDENCE_CATALOG_VERIFICATION_FORMAT = (
-    "pysfmea-evidence-catalog-verification-1"
-)
+EVIDENCE_CATALOG_VERIFICATION_FORMAT = "pysfmea-evidence-catalog-verification-1"
 INTERCHANGE_ARTIFACTS_VERIFICATION_FORMAT = (
     "pysfmea-interchange-artifacts-verification-1"
 )
 REVIEW_VIEWS_VERIFICATION_FORMAT = "pysfmea-review-views-verification-1"
-PACKAGE_PROVENANCE_VERIFICATION_FORMAT = (
-    "pysfmea-package-provenance-verification-1"
-)
+PACKAGE_PROVENANCE_VERIFICATION_FORMAT = "pysfmea-package-provenance-verification-1"
 ASSURANCE_WORK_QUEUE_PACKAGE_VERSION = (0, 47, 0)
 CAPABILITY_DECLARATION_PACKAGE_VERSION = (0, 48, 0)
 ASSURANCE_REGISTER_PACKAGE_VERSION = (0, 49, 0)
@@ -264,7 +236,10 @@ def _package_requires_assurance_register_projection(
     manifest: dict[str, Any],
 ) -> bool:
     capabilities = manifest.get("capabilities", [])
-    if isinstance(capabilities, list) and "assurance_register_projection" in capabilities:
+    if (
+        isinstance(capabilities, list)
+        and "assurance_register_projection" in capabilities
+    ):
         return True
     versions = (
         manifest.get("exporter", {}).get("version", ""),
@@ -468,7 +443,7 @@ def _csv_safe(value: Any) -> Any:
     return value
 
 
-def _write_csv_row(writer: csv.DictWriter, row: dict[str, Any]) -> None:
+def _write_csv_row(writer: csv.DictWriter[str], row: dict[str, Any]) -> None:
     writer.writerow({field: _csv_safe(value) for field, value in row.items()})
 
 
@@ -482,9 +457,7 @@ def item_row(
     scanner = item.get("scanner", {})
     review = item.get("review", {})
     citation_links = [
-        link
-        for link in scanner.get("citations", [])
-        if isinstance(link, dict)
+        link for link in scanner.get("citations", []) if isinstance(link, dict)
     ]
     return {
         "id": item.get("id", ""),
@@ -496,7 +469,9 @@ def item_row(
         "revalidation_required": review.get("revalidation_required", False),
         "source_fingerprint": scanner.get("source_fingerprint", ""),
         "validated_fingerprint": review.get("validated_fingerprint", ""),
-        "validated_context_fingerprint": review.get("validated_context_fingerprint", ""),
+        "validated_context_fingerprint": review.get(
+            "validated_context_fingerprint", ""
+        ),
         "validated_analysis_context_fingerprint": review.get(
             "validated_analysis_context_fingerprint", ""
         ),
@@ -560,12 +535,20 @@ def item_row(
         "actions_taken": _join(review.get("actions_taken", [])),
         "verification_evidence": _join(review.get("verification_evidence", [])),
         "post_action_severity": review.get("post_action_severity", ""),
-        "post_action_severity_category": review.get("post_action_severity_category", ""),
-        "post_action_severity_rationale": review.get("post_action_severity_rationale", ""),
+        "post_action_severity_category": review.get(
+            "post_action_severity_category", ""
+        ),
+        "post_action_severity_rationale": review.get(
+            "post_action_severity_rationale", ""
+        ),
         "post_action_occurrence": review.get("post_action_occurrence", ""),
-        "post_action_occurrence_rationale": review.get("post_action_occurrence_rationale", ""),
+        "post_action_occurrence_rationale": review.get(
+            "post_action_occurrence_rationale", ""
+        ),
         "post_action_detection": review.get("post_action_detection", ""),
-        "post_action_detection_rationale": review.get("post_action_detection_rationale", ""),
+        "post_action_detection_rationale": review.get(
+            "post_action_detection_rationale", ""
+        ),
         "post_action_rpn": calculate_rpn(item, post_action=True) or "",
         "residual_risk": review.get("residual_risk", ""),
         "screening_priority": scanner.get("screening_priority", ""),
@@ -603,7 +586,7 @@ def export_csv(
                 item,
                 findings_by_item.get(item.get("id", ""), []),
                 analysis.get("project", {}).get("baseline", {}).get("id", ""),
-            )
+            ),
         )
     return atomic_publish_text(
         destination,
@@ -688,7 +671,9 @@ def export_markdown(
         )
     lines.extend(["", "## Guidance basis", ""])
     for source in analysis.get("methodology", {}).get("basis", []):
-        lines.append(f"- [{source.get('title')}]({source.get('url')}) — {source.get('use')}")
+        lines.append(
+            f"- [{source.get('title')}]({source.get('url')}) — {source.get('use')}"
+        )
     return atomic_publish_text(
         destination,
         "\n".join(lines) + "\n",
@@ -809,7 +794,7 @@ def export_audit(analysis: dict[str, Any], destination: str | Path) -> Path:
                 "event": event.get("event", ""),
                 "at": event.get("at", ""),
                 "details": json.dumps(event, ensure_ascii=False, sort_keys=True),
-            }
+            },
         )
     for item in analysis.get("items", []):
         for event in item.get("review_history", []):
@@ -833,7 +818,7 @@ def export_audit(analysis: dict[str, Any], destination: str | Path) -> Path:
                         "after": json.dumps(
                             change.get("after"), ensure_ascii=False, sort_keys=True
                         ),
-                    }
+                    },
                 )
     return atomic_publish_text(
         destination,
@@ -866,9 +851,10 @@ def export_inventory(
     repository_summary = repository["summary"]
     repository_status = repository_summary.get("by_status", {})
     snapshot_counts = repository_summary.get("by_snapshot_source", {})
-    snapshot_text = ", ".join(
-        f"{name}={count}" for name, count in sorted(snapshot_counts.items())
-    ) or "unavailable"
+    snapshot_text = (
+        ", ".join(f"{name}={count}" for name, count in sorted(snapshot_counts.items()))
+        or "unavailable"
+    )
     semantic_coverage = repository_summary.get("semantic_coverage_percent")
     lines = [
         f"# SFMEA system and component inventory — {analysis.get('project', {}).get('name', '')}",
@@ -893,11 +879,7 @@ def export_inventory(
                 f"- Indexed: {repository_status.get('indexed', 'unavailable')}",
                 f"- Opaque or unresolved: {repository_summary.get('opaque_or_unresolved', 'unavailable')}",
                 "- Semantic accounting coverage: "
-                + (
-                    f"{semantic_coverage}%"
-                    if semantic_coverage is not None
-                    else "n/a"
-                ),
+                + (f"{semantic_coverage}%" if semantic_coverage is not None else "n/a"),
                 f"- Snapshot provenance: {snapshot_text}",
                 "",
                 "> " + repository["notice"],
@@ -913,7 +895,9 @@ def export_inventory(
         *project.get("assumptions", []),
         *analysis_context.get("fault_tolerance_assumptions", []),
     ]
-    lines.extend(f"- {_markdown_text(value)}" for value in [*ground_rules, *assumptions])
+    lines.extend(
+        f"- {_markdown_text(value)}" for value in [*ground_rules, *assumptions]
+    )
     if not ground_rules and not assumptions:
         lines.append("- Not configured")
     lines.extend(
@@ -965,10 +949,16 @@ def export_inventory(
         if not values:
             lines.append("Not configured.")
             continue
-        lines.append("| " + " | ".join(column.replace("_", " ").title() for column in columns) + " |")
+        lines.append(
+            "| "
+            + " | ".join(column.replace("_", " ").title() for column in columns)
+            + " |"
+        )
         lines.append("|" + "|".join("---" for _column in columns) + "|")
         for value in values:
-            lines.append("| " + " | ".join(_cell(value.get(column)) for column in columns) + " |")
+            lines.append(
+                "| " + " | ".join(_cell(value.get(column)) for column in columns) + " |"
+            )
     return atomic_publish_text(
         destination,
         "\n".join(lines) + "\n",
@@ -983,9 +973,7 @@ def evidence_catalog_document(analysis: dict[str, Any]) -> dict[str, Any]:
     return {
         "baseline_id": analysis.get("project", {}).get("baseline", {}).get("id", ""),
         "executions": copy.deepcopy(assurance.get("executions", [])),
-        "evidence_artifacts": copy.deepcopy(
-            assurance.get("evidence_artifacts", [])
-        ),
+        "evidence_artifacts": copy.deepcopy(assurance.get("evidence_artifacts", [])),
         "notice": (
             "Catalog records execution and artifact provenance. Raw external evidence files "
             "must be transferred and verified separately unless an organization-approved "
@@ -1046,7 +1034,9 @@ def export_review_package(
     package_analysis["sfta"] = build_sfta(package_analysis)
     schema_documents = schema_bundle_documents()
     if set(schema_documents) != REVIEW_PACKAGE_SCHEMA_FILES:
-        raise RuntimeError("public schema bundle does not match review-package contract")
+        raise RuntimeError(
+            "public schema bundle does not match review-package contract"
+        )
     if package.exists() and not package.is_dir():
         raise ValueError(f"review package destination is not a directory: {package}")
     output_names = REVIEW_PACKAGE_ALL_FILES
@@ -1069,7 +1059,7 @@ def export_review_package(
     package_generated_at = utc_now()
     backup: Path | None = None
     try:
-        outputs = {
+        outputs: dict[str, Callable[[Path], Any]] = {
             "analysis.json": lambda path: path.write_text(
                 json.dumps(package_analysis, indent=2, ensure_ascii=False) + "\n",
                 encoding="utf-8",
@@ -1138,7 +1128,9 @@ def export_review_package(
                 package_analysis, path, format="csv"
             ),
             "findings.sarif": lambda path: path.write_text(
-                json.dumps(sarif_document(package_analysis), indent=2, ensure_ascii=False)
+                json.dumps(
+                    sarif_document(package_analysis), indent=2, ensure_ascii=False
+                )
                 + "\n",
                 encoding="utf-8",
             ),
@@ -1295,8 +1287,7 @@ def _require_generated_package_verification(package: Path) -> None:
         {
             str(finding.get("rule_id", "")).strip()
             for finding in verification.get("findings", [])
-            if isinstance(finding, dict)
-            and str(finding.get("rule_id", "")).strip()
+            if isinstance(finding, dict) and str(finding.get("rule_id", "")).strip()
         }
     )
     reason = ", ".join(rule_ids[:8]) or "unknown verification failure"
@@ -1321,7 +1312,9 @@ def export_review_archive(
         raise ValueError("review package archive destination must end in .zip")
     if archive.exists():
         if archive.is_dir():
-            raise ValueError(f"review package archive destination is a directory: {archive}")
+            raise ValueError(
+                f"review package archive destination is a directory: {archive}"
+            )
         if not overwrite:
             raise ValueError(
                 f"review package archive already exists: {archive}; use --force to replace it"
@@ -1379,9 +1372,9 @@ def _portable_analysis_snapshot(analysis: dict[str, Any]) -> dict[str, Any]:
             "fields": ["repository.root"],
         }
         scan_manifest["manifest_sha256"] = hashlib.sha256(
-            json.dumps(
-                scan_manifest, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
+            json.dumps(scan_manifest, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
         ).hexdigest()
     settings = project.setdefault("settings", {})
     for field in ("config_file", "coverage_json"):
@@ -1421,9 +1414,7 @@ def _portable_analysis_snapshot(analysis: dict[str, Any]) -> dict[str, Any]:
     return snapshot
 
 
-def analysis_state_sha256(
-    analysis: dict[str, Any], *, portable: bool = False
-) -> str:
+def analysis_state_sha256(analysis: dict[str, Any], *, portable: bool = False) -> str:
     """Hash the governed analysis state, optionally after portable redaction."""
 
     snapshot = _portable_analysis_snapshot(analysis) if portable else analysis
@@ -1446,9 +1437,7 @@ def _verify_review_archive(source: Path) -> dict[str, Any]:
             "package.archive_missing",
             f"A regular ZIP review package is required: {archive}",
         )
-        return _package_verification_result(
-            archive, findings, 0, "", container="zip"
-        )
+        return _package_verification_result(archive, findings, 0, "", container="zip")
 
     staging = Path(tempfile.mkdtemp(prefix="pysfmea-verify-"))
     try:
@@ -1549,12 +1538,16 @@ def _verify_review_archive(source: Path) -> dict[str, Any]:
                 for entry in safe_entries:
                     target = staging / entry.filename
                     written = 0
-                    with bundle.open(entry, "r") as source_file, target.open(
-                        "wb"
-                    ) as target_file:
+                    with (
+                        bundle.open(entry, "r") as source_file,
+                        target.open("wb") as target_file,
+                    ):
                         while chunk := source_file.read(1024 * 1024):
                             written += len(chunk)
-                            if written > entry.file_size or written > MAX_ARCHIVE_FILE_BYTES:
+                            if (
+                                written > entry.file_size
+                                or written > MAX_ARCHIVE_FILE_BYTES
+                            ):
                                 raise ValueError(
                                     f"archive entry expanded beyond its declared size: {entry.filename}"
                                 )
@@ -1581,9 +1574,7 @@ def _verify_review_archive(source: Path) -> dict[str, Any]:
         result["container"] = "zip"
         result["archive_sha256"] = _sha256_file(archive)
         if result.get("assurance_work_queue"):
-            result["assurance_work_queue"]["path"] = (
-                f"{archive}!/assurance-work.json"
-            )
+            result["assurance_work_queue"]["path"] = f"{archive}!/assurance-work.json"
         return result
     finally:
         shutil.rmtree(staging)
@@ -1635,9 +1626,9 @@ def _read_bounded_utf8(path: Path, *, limit: int) -> str:
 def _canonical_text_sha256_bounded(path: Path, *, limit: int) -> tuple[str, int]:
     """Hash UTF-8 text after portable CRLF/CR-to-LF normalization."""
 
-    normalized = _read_bounded_utf8(path, limit=limit).replace("\r\n", "\n")
-    normalized = normalized.replace("\r", "\n").encode("utf-8")
-    return hashlib.sha256(normalized).hexdigest(), len(normalized)
+    normalized_text = _read_bounded_utf8(path, limit=limit).replace("\r\n", "\n")
+    normalized_bytes = normalized_text.replace("\r", "\n").encode("utf-8")
+    return hashlib.sha256(normalized_bytes).hexdigest(), len(normalized_bytes)
 
 
 def _read_bounded_json(path: Path, *, limit: int) -> Any:
@@ -1680,7 +1671,8 @@ def _verify_analysis_structure(
         errors.append(
             {
                 "code": "analysis_structure.unavailable",
-                "message": unavailable_reason or "analysis.json is unavailable or invalid.",
+                "message": unavailable_reason
+                or "analysis.json is unavailable or invalid.",
                 "path": "analysis.json",
             }
         )
@@ -1773,8 +1765,8 @@ def _analysis_core_contract_errors(
             value = value[segment]
         return value
 
-    required_objects = (("project",), ("context",))
-    optional_objects = tuple(
+    required_objects: tuple[tuple[str, ...], ...] = (("project",), ("context",))
+    optional_objects: tuple[tuple[str, ...], ...] = tuple(
         (field,)
         for field in (
             "generator",
@@ -1804,12 +1796,12 @@ def _analysis_core_contract_errors(
         ("run_manifest", "adapters"),
         ("run_manifest", "cache"),
     )
-    required_lists = (("items",), ("components",))
-    optional_lists = tuple(
+    required_lists: tuple[tuple[str, ...], ...] = (("items",), ("components",))
+    optional_lists: tuple[tuple[str, ...], ...] = tuple(
         (field,)
         for field in ("history", "warnings", "suggestions", "generated_summaries")
     )
-    object_list_paths = (
+    object_list_paths: tuple[tuple[str, ...], ...] = (
         ("items",),
         ("components",),
         ("history",),
@@ -1960,11 +1952,7 @@ def _analysis_core_contract_errors(
     if isinstance(context, dict):
         try:
             normalize_config(
-                {
-                    field: context[field]
-                    for field in DEFAULT_CONFIG
-                    if field in context
-                }
+                {field: context[field] for field in DEFAULT_CONFIG if field in context}
             )
         except (KeyError, TypeError, ValueError) as exc:
             detail = str(exc).replace("\r", " ").replace("\n", " ")[:500]
@@ -2019,9 +2007,7 @@ def _verify_analysis_diagnostics(
                     raise ValueError("artifact is not a regular file")
                 if path.stat().st_size > MAX_ARCHIVE_FILE_BYTES:
                     raise ValueError("artifact exceeds the 100 MB verification limit")
-                actual = _read_bounded_json_object(
-                    path, limit=MAX_ARCHIVE_FILE_BYTES
-                )
+                actual = _read_bounded_json_object(path, limit=MAX_ARCHIVE_FILE_BYTES)
                 if name == "validation":
                     actual_generated_at = actual.pop("generated_at", None)
                     expected[name].pop("generated_at", None)
@@ -2331,9 +2317,7 @@ def _verify_evidence_catalog(
                 raise ValueError("artifact is not recorded in the manifest")
             if path.is_symlink() or not path.is_file():
                 raise ValueError("artifact is not a regular file")
-            document = _read_bounded_json_object(
-                path, limit=MAX_ARCHIVE_FILE_BYTES
-            )
+            document = _read_bounded_json_object(path, limit=MAX_ARCHIVE_FILE_BYTES)
         except (OSError, ValueError) as exc:
             errors.append(
                 {
@@ -2350,9 +2334,7 @@ def _verify_evidence_catalog(
                     == expected["baseline_id"],
                     "execution_inventory": document.get("executions")
                     == expected["executions"],
-                    "evidence_artifact_inventory": document.get(
-                        "evidence_artifacts"
-                    )
+                    "evidence_artifact_inventory": document.get("evidence_artifacts")
                     == expected["evidence_artifacts"],
                 }
             )
@@ -2384,9 +2366,7 @@ def _verify_evidence_catalog(
         "errors": errors,
         "artifact_count": 1,
         "execution_count": len((expected or {}).get("executions", [])),
-        "evidence_artifact_count": len(
-            (expected or {}).get("evidence_artifacts", [])
-        ),
+        "evidence_artifact_count": len((expected or {}).get("evidence_artifacts", [])),
         "notice": (
             "Catalog reconciliation establishes inventory consistency with packaged analysis; "
             "raw external evidence still requires separate transfer and verification."
@@ -2449,9 +2429,7 @@ def _verify_interchange_artifacts(
                     raise ValueError("artifact is not recorded in the manifest")
                 if path.is_symlink() or not path.is_file():
                     raise ValueError("artifact is not a regular file")
-                actual = _read_bounded_json_object(
-                    path, limit=MAX_ARCHIVE_FILE_BYTES
-                )
+                actual = _read_bounded_json_object(path, limit=MAX_ARCHIVE_FILE_BYTES)
                 if check_name == "sarif_projection":
                     actual_sarif = actual
                 else:
@@ -2470,9 +2448,7 @@ def _verify_interchange_artifacts(
                     }
                 )
 
-        baseline_id = str(
-            analysis.get("project", {}).get("baseline", {}).get("id", "")
-        )
+        baseline_id = str(analysis.get("project", {}).get("baseline", {}).get("id", ""))
         sarif_baseline = ""
         if actual_sarif is not None:
             runs = actual_sarif.get("runs", [])
@@ -2484,9 +2460,7 @@ def _verify_interchange_artifacts(
         if actual_cyclonedx is not None:
             metadata = actual_cyclonedx.get("metadata", {})
             component = (
-                metadata.get("component", {})
-                if isinstance(metadata, dict)
-                else {}
+                metadata.get("component", {}) if isinstance(metadata, dict) else {}
             )
             if isinstance(component, dict):
                 cyclonedx_baseline = str(component.get("version", ""))
@@ -2558,7 +2532,9 @@ def _verify_review_views(
     include_repository_accounting = _package_version_at_least(
         producer_version, RECONCILED_INVENTORY_VIEWS_VERSION
     )
-    artifact_specs = (
+    artifact_specs: tuple[
+        tuple[str, str, Callable[..., Any], dict[str, Any]], ...
+    ] = (
         (
             "worksheet.csv",
             "worksheet_projection",
@@ -2770,12 +2746,11 @@ def _verify_package_provenance(
                 raise ValueError("artifact is not recorded in the manifest")
             if readme_path.is_symlink() or not readme_path.is_file():
                 raise ValueError("artifact is not a regular file")
-            checks["readme_projection"] = (
-                _read_bounded_utf8(readme_path, limit=MAX_ARCHIVE_FILE_BYTES)
-                .replace("\r\n", "\n")
-                .replace("\r", "\n")
-                == expected_readme.replace("\r\n", "\n").replace("\r", "\n")
-            )
+            checks["readme_projection"] = _read_bounded_utf8(
+                readme_path, limit=MAX_ARCHIVE_FILE_BYTES
+            ).replace("\r\n", "\n").replace("\r", "\n") == expected_readme.replace(
+                "\r\n", "\n"
+            ).replace("\r", "\n")
             if not checks["readme_projection"]:
                 raise ValueError(
                     "content is not the deterministic package handoff projection"
@@ -2839,9 +2814,7 @@ def _verify_package_provenance(
         "checks": checks,
         "errors": errors,
         "artifact_count": 2,
-        "review_decision_count": len(
-            expected_run_manifest.get("review_decisions", [])
-        ),
+        "review_decision_count": len(expected_run_manifest.get("review_decisions", [])),
         "execution_count": len(expected_run_manifest.get("test_executions", [])),
         "notice": (
             "Provenance reconciliation establishes deterministic audit and handoff "
@@ -2935,11 +2908,17 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
         )
 
     if not package.is_dir():
-        add("package.directory", "error", f"Package directory does not exist: {package}")
+        add(
+            "package.directory", "error", f"Package directory does not exist: {package}"
+        )
         return _package_verification_result(package, findings, 0, "")
     manifest_path = package / "manifest.json"
     if not manifest_path.is_file() or manifest_path.is_symlink():
-        add("package.manifest_missing", "error", "A regular manifest.json file is required.")
+        add(
+            "package.manifest_missing",
+            "error",
+            "A regular manifest.json file is required.",
+        )
         return _package_verification_result(package, findings, 0, "")
     try:
         manifest_raw = _read_bounded_bytes(manifest_path, limit=5_000_000)
@@ -3040,9 +3019,7 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
     state_digest_valid = (
         isinstance(state_digest, str)
         and len(state_digest) == 64
-        and all(
-            character in "0123456789abcdefABCDEF" for character in state_digest
-        )
+        and all(character in "0123456789abcdefABCDEF" for character in state_digest)
     )
     if not state_digest:
         add(
@@ -3071,7 +3048,11 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
             )
             continue
         relative_name = entry.get("path", "")
-        if not isinstance(relative_name, str) or not relative_name or "\\" in relative_name:
+        if (
+            not isinstance(relative_name, str)
+            or not relative_name
+            or "\\" in relative_name
+        ):
             add(
                 "package.path_invalid",
                 "error",
@@ -3138,7 +3119,9 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
             or expected_size < 0
             or not isinstance(expected_hash, str)
             or len(expected_hash) != 64
-            or any(character not in "0123456789abcdefABCDEF" for character in expected_hash)
+            or any(
+                character not in "0123456789abcdefABCDEF" for character in expected_hash
+            )
         ):
             add(
                 "package.file_metadata_invalid",
@@ -3294,8 +3277,8 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
             )
         else:
             try:
+                from .schema_registry import SCHEMA_CATALOG_FILENAME
                 from .schemas import (
-                    SCHEMA_CATALOG_FILENAME,
                     SCHEMA_CATALOG_FORMAT,
                     verify_schema_bundle_documents,
                 )
@@ -3305,13 +3288,9 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
                     schema_path = package / filename
                     if schema_path.stat().st_size > 2_000_000:
                         raise ValueError(f"schema file exceeds 2 MB: {filename}")
-                    document = _read_bounded_json_object(
-                        schema_path, limit=2_000_000
-                    )
+                    document = _read_bounded_json_object(schema_path, limit=2_000_000)
                     schema_documents[filename] = document
-                schema_verification = verify_schema_bundle_documents(
-                    schema_documents
-                )
+                schema_verification = verify_schema_bundle_documents(schema_documents)
                 for error in schema_verification["errors"]:
                     add(
                         f"package.{error['code']}",
@@ -3356,7 +3335,11 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
     packaged_analysis: dict[str, Any] | None = None
     analysis_structure_verification: dict[str, Any] = {}
     analysis_path = package / "analysis.json"
-    if "analysis.json" in listed and analysis_path.is_file() and not analysis_path.is_symlink():
+    if (
+        "analysis.json" in listed
+        and analysis_path.is_file()
+        and not analysis_path.is_symlink()
+    ):
         try:
             analysis = _read_bounded_json_object(
                 analysis_path, limit=MAX_ARCHIVE_FILE_BYTES
@@ -3365,7 +3348,9 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
             if not analysis_structure_verification["valid"]:
                 failed = ", ".join(
                     name
-                    for name, passed in analysis_structure_verification["checks"].items()
+                    for name, passed in analysis_structure_verification[
+                        "checks"
+                    ].items()
                     if not passed
                 )
                 contract_invalid = not analysis_structure_verification["checks"].get(
@@ -3419,7 +3404,10 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
                     "Analysis generator provenance does not match the manifest.",
                     "analysis.json",
                 )
-            if state_digest_valid and analysis_state_sha256(analysis) != state_digest.lower():
+            if (
+                state_digest_valid
+                and analysis_state_sha256(analysis) != state_digest.lower()
+            ):
                 add(
                     "package.analysis_state_digest_mismatch",
                     "error",
@@ -3669,7 +3657,9 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
             )
     result = _package_verification_result(package, findings, checked, package_format)
     result["capabilities"] = (
-        list(raw_capabilities) if capabilities_valid else []
+        list(raw_capabilities)
+        if capabilities_valid and isinstance(raw_capabilities, list)
+        else []
     )
     result["schema_catalog"] = schema_verification
     result["analysis_structure"] = analysis_structure_verification

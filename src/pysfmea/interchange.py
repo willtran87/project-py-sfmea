@@ -204,7 +204,12 @@ def _item_state(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def differential_analysis(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+def differential_analysis(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
     """Compare two canonical runs and enumerate risk/evidence-relevant changes."""
 
     old = {value.get("id"): value for value in previous.get("items", []) if value.get("source_status", "active") == "active"}
@@ -241,7 +246,7 @@ def differential_analysis(previous: dict[str, Any], current: dict[str, Any]) -> 
             )
     return {
         "schema_version": "pysfmea-diff-1",
-        "generated_at": utc_now(),
+        "generated_at": generated_at or utc_now(),
         "previous_baseline_id": previous.get("project", {}).get("baseline", {}).get("id", ""),
         "current_baseline_id": current.get("project", {}).get("baseline", {}).get("id", ""),
         "summary": {

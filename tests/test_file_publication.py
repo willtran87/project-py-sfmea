@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.file_publication import (
     atomic_publish_bytes,
+    atomic_publish_pair,
     atomic_publish_text,
     inspect_artifact_destination,
 )
@@ -228,6 +229,88 @@ class FilePublicationTests(unittest.TestCase):
             destination.read_text(encoding="utf-8"), "concurrent owner"
         )
         self.assertFalse(list(self.root.glob(".concurrent-report.html.*.tmp")))
+
+    def test_coordinated_pair_publishes_both_artifacts(self) -> None:
+        primary = self.root / "analysis.json"
+        secondary = self.root / "receipt.json"
+        primary.write_bytes(b"prior analysis")
+        secondary.write_bytes(b"prior receipt")
+
+        published = atomic_publish_pair(
+            primary,
+            b"new analysis",
+            secondary,
+            b"new receipt",
+            primary_label="analysis",
+            secondary_label="receipt",
+        )
+
+        self.assertEqual(published, (primary, secondary))
+        self.assertEqual(primary.read_bytes(), b"new analysis")
+        self.assertEqual(secondary.read_bytes(), b"new receipt")
+
+    def test_coordinated_pair_rolls_back_receipt_when_analysis_fails(self) -> None:
+        primary = self.root / "analysis.json"
+        secondary = self.root / "receipt.json"
+        primary.write_bytes(b"prior analysis")
+        secondary.write_bytes(b"prior receipt")
+        real_replace = __import__("os").replace
+        replacements = 0
+
+        def fail_primary(source: str | Path, destination: str | Path) -> None:
+            nonlocal replacements
+            replacements += 1
+            if replacements == 2:
+                raise OSError("blocked primary")
+            real_replace(source, destination)
+
+        with patch("pysfmea.file_publication.os.replace", side_effect=fail_primary):
+            with self.assertRaisesRegex(
+                ValueError, "analysis publication failed; receipt was rolled back"
+            ):
+                atomic_publish_pair(
+                    primary,
+                    b"new analysis",
+                    secondary,
+                    b"new receipt",
+                    primary_label="analysis",
+                    secondary_label="receipt",
+                )
+
+        self.assertEqual(primary.read_bytes(), b"prior analysis")
+        self.assertEqual(secondary.read_bytes(), b"prior receipt")
+        self.assertEqual(replacements, 3)
+
+    def test_coordinated_pair_removes_new_receipt_when_analysis_fails(self) -> None:
+        primary = self.root / "analysis.json"
+        secondary = self.root / "receipt.json"
+        primary.write_bytes(b"prior analysis")
+        real_replace = __import__("os").replace
+        replacements = 0
+
+        def fail_primary(source: str | Path, destination: str | Path) -> None:
+            nonlocal replacements
+            replacements += 1
+            if replacements == 2:
+                raise OSError("blocked primary")
+            real_replace(source, destination)
+
+        with patch("pysfmea.file_publication.os.replace", side_effect=fail_primary):
+            with self.assertRaisesRegex(
+                ValueError, "analysis publication failed; receipt was rolled back"
+            ):
+                atomic_publish_pair(
+                    primary,
+                    b"new analysis",
+                    secondary,
+                    b"new receipt",
+                    primary_label="analysis",
+                    secondary_label="receipt",
+                )
+
+        self.assertEqual(primary.read_bytes(), b"prior analysis")
+        self.assertFalse(secondary.exists())
+        self.assertEqual(replacements, 2)
 
 
 if __name__ == "__main__":

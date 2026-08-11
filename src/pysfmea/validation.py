@@ -36,6 +36,19 @@ def _digest(value: Any) -> str:
     ).hexdigest()
 
 
+def _hierarchy_ancestors(
+    node_id: str, node_by_id: dict[str, dict[str, Any]]
+) -> set[str]:
+    """Return bounded ancestors for validation without trusting the supplied graph."""
+
+    ancestors: set[str] = set()
+    cursor = str(node_by_id.get(node_id, {}).get("parent_id", ""))
+    while cursor and cursor not in ancestors:
+        ancestors.add(cursor)
+        cursor = str(node_by_id.get(cursor, {}).get("parent_id", ""))
+    return ancestors
+
+
 def validate_analysis(
     analysis: dict[str, Any], *, legacy_sfta_id_wildcard: bool = False
 ) -> dict[str, Any]:
@@ -45,8 +58,8 @@ def validate_analysis(
     quality.update(analysis.get("context", {}).get("quality", {}))
     risk = analysis.get("context", {}).get("risk", {})
     severity_categories = set(risk.get("severity_categories", []))
-    hazards = {
-        hazard.get("id")
+    hazards: set[str] = {
+        str(hazard.get("id"))
         for hazard in analysis.get("context", {}).get("hazards", [])
         if isinstance(hazard, dict) and hazard.get("id")
     }
@@ -700,12 +713,1679 @@ def validate_analysis(
         seen_component_ids.add(component_id)
     seen_ids: set[str] = set()
     component_ids = seen_component_ids
+    data_flow = analysis.get("interprocedural_data_flow")
+    if data_flow is not None:
+        data_flow_valid = isinstance(data_flow, dict)
+        edges = data_flow.get("edges", []) if data_flow_valid else []
+        summary = data_flow.get("summary", {}) if data_flow_valid else {}
+        data_flow_valid = (
+            data_flow_valid
+            and data_flow.get("format") == "pysfmea-interprocedural-data-flow-1"
+            and isinstance(edges, list)
+            and isinstance(summary, dict)
+        )
+        data_flow_edge_ids: list[str] = []
+        inbound_by_component: dict[str, set[str]] = {
+            str(identifier): set() for identifier in component_ids
+        }
+        outbound_by_component: dict[str, set[str]] = {
+            str(identifier): set() for identifier in component_ids
+        }
+        if data_flow_valid:
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    data_flow_valid = False
+                    continue
+                edge_id = str(edge.get("id", ""))
+                caller_id = str(edge.get("caller_component_id", ""))
+                callee_id = str(edge.get("callee_component_id", ""))
+                dimensions = edge.get("flow_dimensions", {})
+                arguments = edge.get("arguments", [])
+                result_flow = edge.get("result_flow", {})
+                if (
+                    not edge_id
+                    or caller_id not in component_ids
+                    or callee_id not in component_ids
+                    or edge.get("resolution")
+                    not in {"unique_static_target", "ambiguous_static_candidates"}
+                    or not isinstance(arguments, list)
+                    or not all(isinstance(value, dict) for value in arguments)
+                    or not isinstance(result_flow, dict)
+                    or not isinstance(dimensions, dict)
+                    or set(dimensions)
+                    != {"parameter", "return", "attribute", "container"}
+                    or not all(isinstance(value, bool) for value in dimensions.values())
+                ):
+                    data_flow_valid = False
+                data_flow_edge_ids.append(edge_id)
+                if caller_id in outbound_by_component:
+                    outbound_by_component[caller_id].add(edge_id)
+                if callee_id in inbound_by_component:
+                    inbound_by_component[callee_id].add(edge_id)
+            embedded = summary.get("embedded_edges")
+            omitted = summary.get("edges_omitted")
+            resolved = summary.get("resolved_call_edges")
+            if (
+                len(data_flow_edge_ids) != len(set(data_flow_edge_ids))
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in (embedded, omitted, resolved)
+                )
+                or embedded != len(edges)
+                or resolved != embedded + omitted
+                or summary.get("truncated") != bool(omitted)
+            ):
+                data_flow_valid = False
+            for component in analysis.get("components", []):
+                if not isinstance(component, dict):
+                    data_flow_valid = False
+                    continue
+                component_id = str(component.get("id", ""))
+                index = component.get("data_flow", {})
+                if not isinstance(index, dict):
+                    data_flow_valid = False
+                    continue
+                inbound = index.get("inbound_edge_ids", [])
+                outbound = index.get("outbound_edge_ids", [])
+                if (
+                    not isinstance(inbound, list)
+                    or not isinstance(outbound, list)
+                    or any(
+                        value not in inbound_by_component.get(component_id, set())
+                        for value in inbound
+                    )
+                    or any(
+                        value not in outbound_by_component.get(component_id, set())
+                        for value in outbound
+                    )
+                ):
+                    data_flow_valid = False
+        if not data_flow_valid:
+            add(
+                "analysis.invalid_interprocedural_data_flow",
+                "error",
+                "Interprocedural data-flow structure, counts, relationships, or component indexes are inconsistent.",
+                field="interprocedural_data_flow",
+            )
+    alias_flow = analysis.get("alias_object_flow")
+    if alias_flow is not None:
+        alias_flow_valid = isinstance(alias_flow, dict)
+        alias_records = alias_flow.get("records", []) if alias_flow_valid else []
+        alias_summary = alias_flow.get("summary", {}) if alias_flow_valid else {}
+        alias_flow_valid = (
+            alias_flow_valid
+            and alias_flow.get("format") == "pysfmea-alias-object-flow-1"
+            and isinstance(alias_records, list)
+            and isinstance(alias_summary, dict)
+        )
+        alias_ids: list[str] = []
+        if alias_flow_valid:
+            for record in alias_records:
+                if not isinstance(record, dict):
+                    alias_flow_valid = False
+                    continue
+                identifier = str(record.get("id", ""))
+                alias_ids.append(identifier)
+                if (
+                    not identifier
+                    or str(record.get("component_id", "")) not in component_ids
+                    or record.get("binding_kind")
+                    not in {
+                        "local_alias_or_value_binding",
+                        "attribute_write",
+                        "container_write",
+                        "destructuring_or_expression_binding",
+                    }
+                    or not str(record.get("target", ""))
+                    or not isinstance(record.get("source"), dict)
+                ):
+                    alias_flow_valid = False
+            embedded = alias_summary.get("embedded_bindings")
+            omitted = alias_summary.get("bindings_omitted")
+            discovered = alias_summary.get("bindings_discovered")
+            if (
+                len(alias_ids) != len(set(alias_ids))
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in (embedded, omitted, discovered)
+                )
+                or embedded != len(alias_records)
+                or discovered != embedded + omitted
+                or alias_summary.get("truncated") != bool(omitted)
+            ):
+                alias_flow_valid = False
+        if not alias_flow_valid:
+            add(
+                "analysis.invalid_alias_object_flow",
+                "error",
+                "Alias/object-flow structure, counts, or component relationships are inconsistent.",
+                field="alias_object_flow",
+            )
+    concurrency = analysis.get("concurrency_model")
+    if concurrency is not None:
+        concurrency_valid = isinstance(concurrency, dict)
+        operations = concurrency.get("operations", []) if concurrency_valid else []
+        relations = concurrency.get("relations", []) if concurrency_valid else []
+        summary = concurrency.get("summary", {}) if concurrency_valid else {}
+        concurrency_valid = (
+            concurrency_valid
+            and concurrency.get("format") == "pysfmea-concurrency-model-1"
+            and isinstance(operations, list)
+            and isinstance(relations, list)
+            and isinstance(summary, dict)
+        )
+        operation_ids: list[str] = []
+        relation_ids: list[str] = []
+        operations_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        relations_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        allowed_categories = {
+            "task_spawn",
+            "task_join_or_wait",
+            "cancellation_or_timeout",
+            "synchronization",
+            "await_completion",
+        }
+        allowed_relation_kinds = {
+            "lexical_program_order",
+            "await_completion_before_next_operation",
+            "spawn_to_later_join_candidate",
+        }
+        if concurrency_valid:
+            for operation in operations:
+                if not isinstance(operation, dict):
+                    concurrency_valid = False
+                    continue
+                identifier = str(operation.get("id", ""))
+                component_id = str(operation.get("component_id", ""))
+                categories = operation.get("categories", [])
+                operation_ids.append(identifier)
+                if component_id in operations_by_component:
+                    operations_by_component[component_id].append(identifier)
+                if (
+                    not identifier
+                    or component_id not in component_ids
+                    or not isinstance(categories, list)
+                    or not categories
+                    or len(categories) != len(set(categories))
+                    or any(value not in allowed_categories for value in categories)
+                    or not isinstance(operation.get("line"), int)
+                    or isinstance(operation.get("line"), bool)
+                    or int(operation.get("line", -1)) < 0
+                    or not isinstance(operation.get("order"), int)
+                    or isinstance(operation.get("order"), bool)
+                    or int(operation.get("order", -1)) < 0
+                ):
+                    concurrency_valid = False
+            known_operation_ids = set(operation_ids)
+            for relation in relations:
+                if not isinstance(relation, dict):
+                    concurrency_valid = False
+                    continue
+                identifier = str(relation.get("id", ""))
+                component_id = str(relation.get("component_id", ""))
+                source_id = str(relation.get("source_operation_id", ""))
+                target_id = str(relation.get("target_operation_id", ""))
+                relation_ids.append(identifier)
+                if component_id in relations_by_component:
+                    relations_by_component[component_id].append(identifier)
+                if (
+                    not identifier
+                    or component_id not in component_ids
+                    or source_id not in known_operation_ids
+                    or target_id not in known_operation_ids
+                    or source_id == target_id
+                    or relation.get("kind") not in allowed_relation_kinds
+                ):
+                    concurrency_valid = False
+            operation_values = (
+                summary.get("operations_discovered"),
+                summary.get("operations_embedded"),
+                summary.get("operations_omitted"),
+            )
+            relation_values = (
+                summary.get("relations_discovered"),
+                summary.get("relations_embedded"),
+                summary.get("relations_omitted"),
+            )
+            expected_operation_categories = dict(
+                sorted(
+                    Counter(
+                        category
+                        for operation in operations
+                        for category in operation.get("categories", [])
+                    ).items()
+                )
+            )
+            expected_relation_kinds = dict(
+                sorted(
+                    Counter(str(value.get("kind", "")) for value in relations).items()
+                )
+            )
+            if (
+                len(operation_ids) != len(set(operation_ids))
+                or len(relation_ids) != len(set(relation_ids))
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in (*operation_values, *relation_values)
+                )
+                or operation_values[1] != len(operations)
+                or operation_values[0] != operation_values[1] + operation_values[2]
+                or relation_values[1] != len(relations)
+                or relation_values[0] != relation_values[1] + relation_values[2]
+                or summary.get("truncated")
+                != bool(operation_values[2] or relation_values[2])
+                or summary.get("operation_categories") != expected_operation_categories
+                or summary.get("relation_kinds") != expected_relation_kinds
+            ):
+                concurrency_valid = False
+            for component in analysis.get("components", []):
+                if not isinstance(component, dict):
+                    concurrency_valid = False
+                    continue
+                component_id = str(component.get("id", ""))
+                index = component.get("concurrency", {})
+                expected_operations = operations_by_component.get(component_id, [])
+                expected_relations = relations_by_component.get(component_id, [])
+                if (
+                    not isinstance(index, dict)
+                    or index.get("operation_ids") != expected_operations[:1_000]
+                    or index.get("operations_omitted")
+                    != max(0, len(expected_operations) - 1_000)
+                    or index.get("relation_ids") != expected_relations[:2_000]
+                    or index.get("relations_omitted")
+                    != max(0, len(expected_relations) - 2_000)
+                ):
+                    concurrency_valid = False
+        if not concurrency_valid:
+            add(
+                "analysis.invalid_concurrency_model",
+                "error",
+                "Concurrency operations, relations, counts, or component indexes are inconsistent.",
+                field="concurrency_model",
+            )
+    exception_model = analysis.get("exception_propagation")
+    if exception_model is not None:
+        exception_valid = isinstance(exception_model, dict)
+        raises = exception_model.get("raises", []) if exception_valid else []
+        handlers = exception_model.get("handlers", []) if exception_valid else []
+        exception_edges = exception_model.get("edges", []) if exception_valid else []
+        summary = exception_model.get("summary", {}) if exception_valid else {}
+        exception_valid = (
+            exception_valid
+            and exception_model.get("format") == "pysfmea-exception-propagation-1"
+            and isinstance(raises, list)
+            and isinstance(handlers, list)
+            and isinstance(exception_edges, list)
+            and isinstance(summary, dict)
+        )
+        raise_ids: list[str] = []
+        handler_ids: list[str] = []
+        exception_edge_ids: list[str] = []
+        raises_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        handlers_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        exception_inbound_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        exception_outbound_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        allowed_actions = {
+            "reraises",
+            "translates",
+            "control_flow_exit",
+            "suppresses",
+            "records_or_logs",
+            "continues_after_handler",
+        }
+        if exception_valid:
+            for record in raises:
+                if not isinstance(record, dict):
+                    exception_valid = False
+                    continue
+                identifier = str(record.get("id", ""))
+                component_id = str(record.get("component_id", ""))
+                raise_ids.append(identifier)
+                if component_id in raises_by_component:
+                    raises_by_component[component_id].append(identifier)
+                if (
+                    not identifier
+                    or component_id not in component_ids
+                    or not str(record.get("exception_type", ""))
+                    or not isinstance(record.get("bare_reraise"), bool)
+                    or not isinstance(record.get("control_context"), list)
+                ):
+                    exception_valid = False
+            for record in handlers:
+                if not isinstance(record, dict):
+                    exception_valid = False
+                    continue
+                identifier = str(record.get("id", ""))
+                component_id = str(record.get("component_id", ""))
+                exception_types = record.get("exception_types", [])
+                actions = record.get("actions", [])
+                handler_ids.append(identifier)
+                if component_id in handlers_by_component:
+                    handlers_by_component[component_id].append(identifier)
+                if (
+                    not identifier
+                    or component_id not in component_ids
+                    or not isinstance(exception_types, list)
+                    or not exception_types
+                    or not all(
+                        isinstance(value, str) and value for value in exception_types
+                    )
+                    or not isinstance(actions, list)
+                    or not actions
+                    or any(value not in allowed_actions for value in actions)
+                ):
+                    exception_valid = False
+            known_handler_ids = set(handler_ids)
+            for edge in exception_edges:
+                if not isinstance(edge, dict):
+                    exception_valid = False
+                    continue
+                identifier = str(edge.get("id", ""))
+                caller_id = str(edge.get("caller_component_id", ""))
+                callee_id = str(edge.get("callee_component_id", ""))
+                edge_handler_ids = edge.get("handler_ids", [])
+                disposition = edge.get("disposition")
+                exception_edge_ids.append(identifier)
+                if caller_id in exception_inbound_by_component:
+                    exception_inbound_by_component[caller_id].append(identifier)
+                if callee_id in exception_outbound_by_component:
+                    exception_outbound_by_component[callee_id].append(identifier)
+                if (
+                    not identifier
+                    or caller_id not in component_ids
+                    or callee_id not in component_ids
+                    or not str(edge.get("exception_type", ""))
+                    or disposition not in {"caught_by_lexical_handler", "may_propagate"}
+                    or edge.get("resolution")
+                    not in {"unique_static_target", "ambiguous_static_candidates"}
+                    or not isinstance(edge_handler_ids, list)
+                    or any(value not in known_handler_ids for value in edge_handler_ids)
+                    or bool(edge_handler_ids)
+                    != (disposition == "caught_by_lexical_handler")
+                    or not isinstance(edge.get("call_site"), dict)
+                ):
+                    exception_valid = False
+            components = [
+                value
+                for value in analysis.get("components", [])
+                if isinstance(value, dict)
+            ]
+            source_raise_count = sum(
+                len(value.get("exception_raises", []))
+                for value in components
+                if isinstance(value.get("exception_raises", []), list)
+            )
+            source_handler_count = sum(
+                len(value.get("exception_handlers", []))
+                for value in components
+                if isinstance(value.get("exception_handlers", []), list)
+            )
+            per_component_omitted = sum(
+                int(value.get("exception_records_omitted", 0))
+                for value in components
+                if isinstance(value.get("exception_records_omitted", 0), int)
+                and not isinstance(value.get("exception_records_omitted", 0), bool)
+                and int(value.get("exception_records_omitted", 0)) >= 0
+            )
+            edge_values = (
+                summary.get("propagation_edges_discovered"),
+                summary.get("propagation_edges_embedded"),
+                summary.get("propagation_edges_omitted"),
+            )
+            integer_summary_values = (
+                summary.get("raise_records_discovered"),
+                summary.get("raise_records_embedded"),
+                summary.get("handler_records_discovered"),
+                summary.get("handler_records_embedded"),
+                summary.get("source_records_omitted"),
+                *edge_values,
+                summary.get("locally_caught_raise_candidates"),
+                summary.get("outgoing_exception_types"),
+                summary.get("fixed_point_iterations"),
+            )
+            expected_source_omitted = (
+                per_component_omitted
+                + source_raise_count
+                - len(raises)
+                + source_handler_count
+                - len(handlers)
+            )
+            if (
+                len(raise_ids) != len(set(raise_ids))
+                or len(handler_ids) != len(set(handler_ids))
+                or len(exception_edge_ids) != len(set(exception_edge_ids))
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in integer_summary_values
+                )
+                or summary.get("raise_records_discovered") != source_raise_count
+                or summary.get("raise_records_embedded") != len(raises)
+                or summary.get("handler_records_discovered") != source_handler_count
+                or summary.get("handler_records_embedded") != len(handlers)
+                or summary.get("source_records_omitted") != expected_source_omitted
+                or edge_values[1] != len(exception_edges)
+                or edge_values[0] != edge_values[1] + edge_values[2]
+                or summary.get("truncated")
+                != bool(expected_source_omitted or edge_values[2])
+            ):
+                exception_valid = False
+            for component in components:
+                component_id = str(component.get("id", ""))
+                index = component.get("exception_flow", {})
+                expected_raises = raises_by_component.get(component_id, [])
+                expected_handlers = handlers_by_component.get(component_id, [])
+                expected_inbound: list[str] = exception_inbound_by_component.get(
+                    component_id, []
+                )
+                expected_outbound: list[str] = exception_outbound_by_component.get(
+                    component_id, []
+                )
+                if (
+                    not isinstance(index, dict)
+                    or index.get("raise_ids") != expected_raises[:1_000]
+                    or index.get("raises_omitted")
+                    != max(0, len(expected_raises) - 1_000)
+                    or index.get("handler_ids") != expected_handlers[:1_000]
+                    or index.get("handlers_omitted")
+                    != max(0, len(expected_handlers) - 1_000)
+                    or index.get("incoming_edge_ids") != expected_inbound[:2_000]
+                    or index.get("incoming_edges_omitted")
+                    != max(0, len(expected_inbound) - 2_000)
+                    or index.get("outgoing_edge_ids") != expected_outbound[:2_000]
+                    or index.get("outgoing_edges_omitted")
+                    != max(0, len(expected_outbound) - 2_000)
+                ):
+                    exception_valid = False
+        if not exception_valid:
+            add(
+                "analysis.invalid_exception_propagation",
+                "error",
+                "Exception raise, handler, propagation, count, or component-index records are inconsistent.",
+                field="exception_propagation",
+            )
+    state_model = analysis.get("state_machine_model")
+    if state_model is not None:
+        state_valid = isinstance(state_model, dict)
+        states = state_model.get("states", []) if state_valid else []
+        guards = state_model.get("guards", []) if state_valid else []
+        transitions = state_model.get("transitions", []) if state_valid else []
+        state_summary = state_model.get("summary", {}) if state_valid else {}
+        state_valid = (
+            state_valid
+            and state_model.get("format") == "pysfmea-state-machine-model-1"
+            and isinstance(states, list)
+            and isinstance(guards, list)
+            and isinstance(transitions, list)
+            and isinstance(state_summary, dict)
+        )
+        state_ids: list[str] = []
+        guard_ids: list[str] = []
+        transition_ids: list[str] = []
+        guards_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        transitions_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        if state_valid:
+            for state in states:
+                if not isinstance(state, dict):
+                    state_valid = False
+                    continue
+                identifier = str(state.get("id", ""))
+                state_ids.append(identifier)
+                if (
+                    not identifier
+                    or str(state.get("component_id", "")) not in component_ids
+                    or not str(state.get("state_variable", ""))
+                    or not str(state.get("state_expression", ""))
+                ):
+                    state_valid = False
+            for guard in guards:
+                if not isinstance(guard, dict):
+                    state_valid = False
+                    continue
+                identifier = str(guard.get("id", ""))
+                component_id = str(guard.get("component_id", ""))
+                guard_ids.append(identifier)
+                if component_id in guards_by_component:
+                    guards_by_component[component_id].append(identifier)
+                if (
+                    not identifier
+                    or component_id not in component_ids
+                    or guard.get("kind") not in {"if", "while"}
+                    or not str(guard.get("expression", ""))
+                    or not isinstance(guard.get("state_variables"), list)
+                ):
+                    state_valid = False
+            known_state_ids = set(state_ids)
+            known_guard_ids = set(guard_ids)
+            for transition in transitions:
+                if not isinstance(transition, dict):
+                    state_valid = False
+                    continue
+                identifier = str(transition.get("id", ""))
+                component_id = str(transition.get("component_id", ""))
+                linked_guards = transition.get("guard_ids", [])
+                transition_ids.append(identifier)
+                if component_id in transitions_by_component:
+                    transitions_by_component[component_id].append(identifier)
+                if (
+                    not identifier
+                    or component_id not in component_ids
+                    or not str(transition.get("state_variable", ""))
+                    or not str(transition.get("target_state_expression", ""))
+                    or transition.get("target_state_id") not in known_state_ids
+                    or not isinstance(linked_guards, list)
+                    or any(value not in known_guard_ids for value in linked_guards)
+                ):
+                    state_valid = False
+            components = [
+                value
+                for value in analysis.get("components", [])
+                if isinstance(value, dict)
+            ]
+            source_guards = sum(
+                len(value.get("state_guards", []))
+                for value in components
+                if isinstance(value.get("state_guards", []), list)
+            )
+            source_transitions = sum(
+                len(value.get("state_transitions", []))
+                for value in components
+                if isinstance(value.get("state_transitions", []), list)
+            )
+            component_omissions = sum(
+                int(value.get("state_records_omitted", 0))
+                for value in components
+                if isinstance(value.get("state_records_omitted", 0), int)
+                and not isinstance(value.get("state_records_omitted", 0), bool)
+                and int(value.get("state_records_omitted", 0)) >= 0
+            )
+            expected_omitted = (
+                component_omissions
+                + source_guards
+                - len(guards)
+                + source_transitions
+                - len(transitions)
+            )
+            state_summary_values = (
+                state_summary.get("guards_discovered"),
+                state_summary.get("guards_embedded"),
+                state_summary.get("transitions_discovered"),
+                state_summary.get("transitions_embedded"),
+                state_summary.get("state_nodes"),
+                state_summary.get("source_records_omitted"),
+                state_summary.get("guarded_transitions"),
+            )
+            if (
+                len(state_ids) != len(set(state_ids))
+                or len(guard_ids) != len(set(guard_ids))
+                or len(transition_ids) != len(set(transition_ids))
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in state_summary_values
+                )
+                or state_summary.get("guards_discovered") != source_guards
+                or state_summary.get("guards_embedded") != len(guards)
+                or state_summary.get("transitions_discovered") != source_transitions
+                or state_summary.get("transitions_embedded") != len(transitions)
+                or state_summary.get("state_nodes") != len(states)
+                or state_summary.get("source_records_omitted") != expected_omitted
+                or state_summary.get("guarded_transitions")
+                != sum(bool(value.get("guard_ids")) for value in transitions)
+                or state_summary.get("truncated") != bool(expected_omitted)
+            ):
+                state_valid = False
+            for component in components:
+                component_id = str(component.get("id", ""))
+                index = component.get("state_machine", {})
+                expected_guards = guards_by_component.get(component_id, [])
+                expected_transitions = transitions_by_component.get(component_id, [])
+                if (
+                    not isinstance(index, dict)
+                    or index.get("guard_ids") != expected_guards[:1_000]
+                    or index.get("guards_omitted")
+                    != max(0, len(expected_guards) - 1_000)
+                    or index.get("transition_ids") != expected_transitions[:1_000]
+                    or index.get("transitions_omitted")
+                    != max(0, len(expected_transitions) - 1_000)
+                ):
+                    state_valid = False
+        if not state_valid:
+            add(
+                "analysis.invalid_state_machine_model",
+                "error",
+                "State, guard, transition, count, or component-index records are inconsistent.",
+                field="state_machine_model",
+            )
+    resilience = analysis.get("resilience_semantics")
+    if resilience is not None:
+        resilience_valid = isinstance(resilience, dict)
+        resilience_operations = (
+            resilience.get("operations", []) if resilience_valid else []
+        )
+        transactions = resilience.get("transactions", []) if resilience_valid else []
+        effects = resilience.get("effects", []) if resilience_valid else []
+        timing_relations = (
+            resilience.get("timing_relations", []) if resilience_valid else []
+        )
+        retry_paths = resilience.get("retry_paths", []) if resilience_valid else []
+        breakers = resilience.get("circuit_breakers", []) if resilience_valid else []
+        resources = resilience.get("resources", []) if resilience_valid else []
+        resilience_summary = resilience.get("summary", {}) if resilience_valid else {}
+        resilience_valid = (
+            resilience_valid
+            and resilience.get("format") == "pysfmea-resilience-semantics-1"
+            and all(
+                isinstance(value, list)
+                for value in (
+                    resilience_operations,
+                    transactions,
+                    effects,
+                    timing_relations,
+                    retry_paths,
+                    breakers,
+                    resources,
+                )
+            )
+            and isinstance(resilience_summary, dict)
+        )
+        component_references = {
+            f"{value.get('source', {}).get('path', '')}:{value.get('qualname', '')}": str(
+                value.get("id", "")
+            )
+            for value in analysis.get("components", [])
+            if isinstance(value, dict)
+            and value.get("kind") not in {"environment", "common_cause"}
+        }
+        resilience_operation_ids: list[str] = []
+        resilience_operations_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        allowed_categories = {
+            "transaction_begin",
+            "transaction_commit",
+            "transaction_rollback",
+            "transaction_savepoint",
+            "persistence_write",
+            "side_effect",
+            "message_or_external_side_effect",
+            "compensation",
+            "idempotency_control",
+            "idempotency_key",
+            "filesystem_side_effect",
+            "subprocess_side_effect",
+            "retry",
+            "retry_backoff",
+            "temporal_budget",
+            "resource_bound",
+            "resource_growth_candidate",
+        }
+        if resilience_valid:
+            for operation in resilience_operations:
+                if not isinstance(operation, dict):
+                    resilience_valid = False
+                    continue
+                identifier = str(operation.get("id", ""))
+                component_id = str(operation.get("component_id", ""))
+                categories = operation.get("categories", [])
+                resilience_operation_ids.append(identifier)
+                if component_id in resilience_operations_by_component:
+                    resilience_operations_by_component[component_id].append(identifier)
+                if (
+                    not identifier
+                    or component_id not in component_ids
+                    or not isinstance(categories, list)
+                    or not categories
+                    or any(value not in allowed_categories for value in categories)
+                    or len(categories) != len(set(categories))
+                ):
+                    resilience_valid = False
+            known_operation_ids = set(resilience_operation_ids)
+            for transaction in transactions:
+                if not isinstance(transaction, dict):
+                    resilience_valid = False
+                    continue
+                operation_links = transaction.get("operation_ids", [])
+                if (
+                    str(transaction.get("component_id", "")) not in component_ids
+                    or not isinstance(operation_links, list)
+                    or any(
+                        value not in known_operation_ids for value in operation_links
+                    )
+                    or not isinstance(transaction.get("consistency_risks"), list)
+                    or not isinstance(transaction.get("compensation_observed"), bool)
+                ):
+                    resilience_valid = False
+            for effect in effects:
+                if not isinstance(effect, dict):
+                    resilience_valid = False
+                    continue
+                if (
+                    str(effect.get("component_reference", ""))
+                    not in component_references
+                    or not isinstance(effect.get("direct_effects"), list)
+                    or not isinstance(effect.get("transitive_effects"), list)
+                    or not isinstance(effect.get("idempotency_controls"), list)
+                    or not isinstance(effect.get("unprotected_retry_side_effect"), bool)
+                    or not isinstance(effect.get("retry_factor"), int)
+                    or isinstance(effect.get("retry_factor"), bool)
+                    or int(effect.get("retry_factor", 0)) < 1
+                ):
+                    resilience_valid = False
+            for relation in timing_relations:
+                if not isinstance(relation, dict):
+                    resilience_valid = False
+                    continue
+                if (
+                    str(relation.get("caller_reference", ""))
+                    not in component_references
+                    or str(relation.get("callee_reference", ""))
+                    not in component_references
+                    or relation.get("status")
+                    not in {
+                        "callee_budget_exceeds_caller",
+                        "bounded_compatible_literals",
+                        "incomplete_budget_chain",
+                    }
+                ):
+                    resilience_valid = False
+            for retry_path in retry_paths:
+                if not isinstance(retry_path, dict):
+                    resilience_valid = False
+                    continue
+                path = retry_path.get("path", [])
+                factor = retry_path.get("amplification_factor_upper_candidate")
+                if (
+                    str(retry_path.get("origin_component_reference", ""))
+                    not in component_references
+                    or not isinstance(path, list)
+                    or not path
+                    or any(value not in component_references for value in path)
+                    or not isinstance(factor, int)
+                    or isinstance(factor, bool)
+                    or factor < 1
+                    or not isinstance(retry_path.get("cycle_detected"), bool)
+                    or not isinstance(retry_path.get("depth_limited"), bool)
+                    or not isinstance(retry_path.get("search_truncated"), bool)
+                    or not isinstance(retry_path.get("search_states"), int)
+                    or isinstance(retry_path.get("search_states"), bool)
+                    or int(retry_path.get("search_states", 0)) < 1
+                ):
+                    resilience_valid = False
+            breaker_ids: list[str] = []
+            for breaker in breakers:
+                if not isinstance(breaker, dict):
+                    resilience_valid = False
+                    continue
+                breaker_ids.append(str(breaker.get("id", "")))
+                if (
+                    not breaker_ids[-1]
+                    or not str(breaker.get("scope", ""))
+                    or not all(
+                        isinstance(breaker.get(field), list)
+                        for field in (
+                            "roles",
+                            "states",
+                            "threshold_expressions",
+                            "cooldown_expressions",
+                            "synchronization",
+                            "scope_keys",
+                            "fallback_indicators",
+                            "semantic_gaps",
+                        )
+                    )
+                ):
+                    resilience_valid = False
+            for resource in resources:
+                if not isinstance(resource, dict):
+                    resilience_valid = False
+                    continue
+                if (
+                    str(resource.get("component_id", "")) not in component_ids
+                    or not isinstance(resource.get("bounded_resources"), list)
+                    or not isinstance(resource.get("unbounded_growth_candidates"), list)
+                    or not isinstance(resource.get("recursive_call_candidate"), bool)
+                ):
+                    resilience_valid = False
+            resilience_summary_values = (
+                resilience_summary.get("operations_discovered"),
+                resilience_summary.get("operations_embedded"),
+                resilience_summary.get("operations_omitted"),
+                resilience_summary.get("transaction_components"),
+                resilience_summary.get("transaction_risks"),
+                resilience_summary.get("effect_components"),
+                resilience_summary.get("retry_paths"),
+                resilience_summary.get("timing_relations"),
+                resilience_summary.get("breaker_models"),
+                resilience_summary.get("resource_risks"),
+            )
+            if (
+                len(resilience_operation_ids) != len(set(resilience_operation_ids))
+                or len(breaker_ids) != len(set(breaker_ids))
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in resilience_summary_values
+                )
+                or resilience_summary.get("operations_embedded")
+                != len(resilience_operations)
+                or resilience_summary.get("operations_discovered")
+                != len(resilience_operations)
+                + resilience_summary.get("operations_omitted", 0)
+                or resilience_summary.get("transaction_components")
+                != sum(bool(value.get("operation_ids")) for value in transactions)
+                or resilience_summary.get("transaction_risks")
+                != sum(
+                    len(value.get("consistency_risks", [])) for value in transactions
+                )
+                or resilience_summary.get("effect_components")
+                != sum(bool(value.get("transitive_effects")) for value in effects)
+                or resilience_summary.get("retry_paths") != len(retry_paths)
+                or resilience_summary.get("timing_relations") != len(timing_relations)
+                or resilience_summary.get("breaker_models") != len(breakers)
+                or resilience_summary.get("resource_risks")
+                != sum(
+                    len(value.get("unbounded_growth_candidates", []))
+                    for value in resources
+                )
+                or resilience_summary.get("truncated")
+                != bool(resilience_summary.get("operations_omitted"))
+            ):
+                resilience_valid = False
+            for component in analysis.get("components", []):
+                if not isinstance(component, dict):
+                    resilience_valid = False
+                    continue
+                component_id = str(component.get("id", ""))
+                index = component.get("resilience_semantics", {})
+                expected = resilience_operations_by_component.get(component_id, [])
+                if (
+                    not isinstance(index, dict)
+                    or index.get("operation_ids") != expected[:2_000]
+                    or index.get("operations_omitted") != max(0, len(expected) - 2_000)
+                ):
+                    resilience_valid = False
+        if not resilience_valid:
+            add(
+                "analysis.invalid_resilience_semantics",
+                "error",
+                "Transaction, effect, timing, retry, breaker, resource, count, or component-index records are inconsistent.",
+                field="resilience_semantics",
+            )
+    authorization = analysis.get("authorization_scope_flow")
+    if authorization is not None:
+        authorization_valid = isinstance(authorization, dict)
+        auth_components = (
+            authorization.get("components", []) if authorization_valid else []
+        )
+        auth_edges = authorization.get("edges", []) if authorization_valid else []
+        auth_summary = authorization.get("summary", {}) if authorization_valid else {}
+        authorization_valid = (
+            authorization_valid
+            and authorization.get("format") == "pysfmea-authorization-scope-flow-1"
+            and isinstance(auth_components, list)
+            and isinstance(auth_edges, list)
+            and isinstance(auth_summary, dict)
+        )
+        allowed_dimensions = {
+            "identity",
+            "tenant",
+            "role_or_permission",
+            "scope_or_claim",
+            "credential",
+        }
+        auth_edge_ids: list[str] = []
+        auth_edges_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        if authorization_valid:
+            auth_component_ids: list[str] = []
+            for component in auth_components:
+                if not isinstance(component, dict):
+                    authorization_valid = False
+                    continue
+                component_id = str(component.get("component_id", ""))
+                dimensions = component.get("context_dimensions", [])
+                controls = component.get("controls", [])
+                risks = component.get("risks", [])
+                auth_component_ids.append(component_id)
+                if (
+                    component_id not in component_ids
+                    or not isinstance(dimensions, list)
+                    or any(value not in allowed_dimensions for value in dimensions)
+                    or len(dimensions) != len(set(dimensions))
+                    or not isinstance(controls, list)
+                    or not all(isinstance(value, dict) for value in controls)
+                    or not isinstance(risks, list)
+                    or not all(isinstance(value, str) and value for value in risks)
+                    or not isinstance(component.get("boundary"), bool)
+                    or not isinstance(component.get("sensitive_side_effect"), bool)
+                ):
+                    authorization_valid = False
+            known_data_flow_ids = {
+                str(value.get("id", ""))
+                for value in analysis.get("interprocedural_data_flow", {}).get(
+                    "edges", []
+                )
+                if isinstance(value, dict)
+            }
+            for edge in auth_edges:
+                if not isinstance(edge, dict):
+                    authorization_valid = False
+                    continue
+                identifier = str(edge.get("id", ""))
+                caller_id = str(edge.get("caller_component_id", ""))
+                callee_id = str(edge.get("callee_component_id", ""))
+                dimensions = edge.get("dimensions", [])
+                auth_edge_ids.append(identifier)
+                if caller_id in auth_edges_by_component:
+                    auth_edges_by_component[caller_id].append(identifier)
+                if callee_id in auth_edges_by_component:
+                    auth_edges_by_component[callee_id].append(identifier)
+                if (
+                    not identifier
+                    or caller_id not in component_ids
+                    or callee_id not in component_ids
+                    or edge.get("data_flow_edge_id") not in known_data_flow_ids
+                    or not isinstance(dimensions, list)
+                    or not dimensions
+                    or any(value not in allowed_dimensions for value in dimensions)
+                    or not isinstance(edge.get("bindings"), list)
+                ):
+                    authorization_valid = False
+            edge_values = (
+                auth_summary.get("flow_edges_discovered"),
+                auth_summary.get("flow_edges_embedded"),
+                auth_summary.get("flow_edges_omitted"),
+            )
+            authorization_summary_values = (
+                auth_summary.get("components"),
+                auth_summary.get("components_with_context"),
+                auth_summary.get("components_with_controls"),
+                auth_summary.get("risk_candidates"),
+                *edge_values,
+            )
+            if (
+                len(auth_component_ids) != len(set(auth_component_ids))
+                or len(auth_edge_ids) != len(set(auth_edge_ids))
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in authorization_summary_values
+                )
+                or auth_summary.get("components") != len(auth_components)
+                or auth_summary.get("components_with_context")
+                != sum(
+                    bool(value.get("context_dimensions")) for value in auth_components
+                )
+                or auth_summary.get("components_with_controls")
+                != sum(bool(value.get("controls")) for value in auth_components)
+                or auth_summary.get("risk_candidates")
+                != sum(len(value.get("risks", [])) for value in auth_components)
+                or edge_values[1] != len(auth_edges)
+                or edge_values[0] != edge_values[1] + edge_values[2]
+                or auth_summary.get("truncated") != bool(edge_values[2])
+            ):
+                authorization_valid = False
+            for component in analysis.get("components", []):
+                if not isinstance(component, dict):
+                    authorization_valid = False
+                    continue
+                component_id = str(component.get("id", ""))
+                index = component.get("authorization_scope_flow", {})
+                expected = auth_edges_by_component.get(component_id, [])
+                if (
+                    not isinstance(index, dict)
+                    or index.get("edge_ids") != expected[:2_000]
+                    or index.get("edges_omitted") != max(0, len(expected) - 2_000)
+                ):
+                    authorization_valid = False
+        if not authorization_valid:
+            add(
+                "analysis.invalid_authorization_scope_flow",
+                "error",
+                "Authorization context, controls, flow edges, counts, or component indexes are inconsistent.",
+                field="authorization_scope_flow",
+            )
+    contract_model = analysis.get("contract_semantics")
+    if contract_model is not None:
+        contract_valid = isinstance(contract_model, dict)
+        contract_operations = (
+            contract_model.get("operations", []) if contract_valid else []
+        )
+        contract_types = contract_model.get("types", []) if contract_valid else []
+        compatibility = (
+            contract_model.get("compatibility", []) if contract_valid else []
+        )
+        evolution = contract_model.get("evolution", []) if contract_valid else []
+        contract_summary = contract_model.get("summary", {}) if contract_valid else {}
+        contract_valid = (
+            contract_valid
+            and contract_model.get("format") == "pysfmea-contract-semantics-1"
+            and isinstance(contract_operations, list)
+            and isinstance(contract_types, list)
+            and isinstance(compatibility, list)
+            and isinstance(evolution, list)
+            and isinstance(contract_summary, dict)
+        )
+        contract_operation_ids: list[str] = []
+        type_ids: list[str] = []
+        compatibility_ids: list[str] = []
+        evolution_ids: list[str] = []
+        operation_ids_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        compatibility_ids_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        known_contract_ids = {
+            str(value.get("id", ""))
+            for value in analysis.get("context", {}).get("contracts", [])
+            if isinstance(value, dict)
+        }
+        component_ids_by_source_path: dict[str, list[str]] = {}
+        for component in analysis.get("components", []):
+            if isinstance(component, dict):
+                component_ids_by_source_path.setdefault(
+                    str(component.get("source", {}).get("path", "")), []
+                ).append(str(component.get("id", "")))
+        if contract_valid:
+            for operation in contract_operations:
+                if not isinstance(operation, dict):
+                    contract_valid = False
+                    continue
+                identifier = str(operation.get("id", ""))
+                contract_operation_ids.append(identifier)
+                for component_id in component_ids_by_source_path.get(
+                    str(operation.get("contract_path", "")), []
+                ):
+                    operation_ids_by_component[component_id].append(identifier)
+                if (
+                    not identifier
+                    or operation.get("contract_id") not in known_contract_ids
+                    or not str(operation.get("operation", ""))
+                    or not isinstance(operation.get("request"), dict)
+                    or not isinstance(operation.get("responses"), list)
+                    or not isinstance(operation.get("semantic_sha256"), str)
+                    or len(str(operation.get("semantic_sha256", ""))) != 64
+                ):
+                    contract_valid = False
+            for contract_type in contract_types:
+                if not isinstance(contract_type, dict):
+                    contract_valid = False
+                    continue
+                identifier = str(contract_type.get("id", ""))
+                type_ids.append(identifier)
+                if (
+                    not identifier
+                    or contract_type.get("contract_id") not in known_contract_ids
+                    or not str(contract_type.get("name", ""))
+                    or not isinstance(contract_type.get("required"), list)
+                    or not isinstance(contract_type.get("properties"), list)
+                    or not isinstance(contract_type.get("semantic_sha256"), str)
+                    or len(str(contract_type.get("semantic_sha256", ""))) != 64
+                ):
+                    contract_valid = False
+            known_operation_ids = set(contract_operation_ids)
+            for record in compatibility:
+                if not isinstance(record, dict):
+                    contract_valid = False
+                    continue
+                identifier = str(record.get("id", ""))
+                compatibility_ids.append(identifier)
+                python_ids = record.get("python_component_ids", [])
+                if isinstance(python_ids, list):
+                    for component_id in python_ids:
+                        if str(component_id) in compatibility_ids_by_component:
+                            compatibility_ids_by_component[str(component_id)].append(
+                                identifier
+                            )
+                if (
+                    not identifier
+                    or record.get("status")
+                    not in {"review_required", "compatible_static_shape"}
+                    or (
+                        "contract_operation_id" in record
+                        and record.get("contract_operation_id")
+                        not in known_operation_ids
+                    )
+                    or not isinstance(python_ids, list)
+                    or any(value not in component_ids for value in python_ids)
+                ):
+                    contract_valid = False
+            for record in evolution:
+                if not isinstance(record, dict):
+                    contract_valid = False
+                    continue
+                identifier = str(record.get("id", ""))
+                evolution_ids.append(identifier)
+                if (
+                    not identifier
+                    or record.get("kind")
+                    not in {"operation_evolution", "type_evolution"}
+                    or record.get("from_contract_id") not in known_contract_ids
+                    or record.get("to_contract_id") not in known_contract_ids
+                    or not str(record.get("subject", ""))
+                    or not isinstance(record.get("changes"), dict)
+                    or not isinstance(record.get("breaking_change_candidates"), list)
+                ):
+                    contract_valid = False
+            operation_values = (
+                contract_summary.get("operations_discovered"),
+                contract_summary.get("operations_embedded"),
+                contract_summary.get("operations_omitted"),
+            )
+            type_values = (
+                contract_summary.get("types_discovered"),
+                contract_summary.get("types_embedded"),
+                contract_summary.get("types_omitted"),
+            )
+            contract_summary_values = (
+                contract_summary.get("contracts"),
+                *operation_values,
+                *type_values,
+                contract_summary.get("compatibility_records"),
+                contract_summary.get("evolution_records_discovered"),
+                contract_summary.get("evolution_records_embedded"),
+                contract_summary.get("evolution_records_omitted"),
+                contract_summary.get("breaking_change_candidates"),
+                contract_summary.get("review_required"),
+            )
+            expected_kinds = dict(
+                sorted(
+                    Counter(
+                        str(value.get("kind", ""))
+                        for value in analysis.get("context", {}).get("contracts", [])
+                        if isinstance(value, dict)
+                    ).items()
+                )
+            )
+            if (
+                len(contract_operation_ids) != len(set(contract_operation_ids))
+                or len(type_ids) != len(set(type_ids))
+                or len(compatibility_ids) != len(set(compatibility_ids))
+                or len(evolution_ids) != len(set(evolution_ids))
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in contract_summary_values
+                )
+                or contract_summary.get("contracts") != len(known_contract_ids)
+                or contract_summary.get("contract_kinds") != expected_kinds
+                or operation_values[1] != len(contract_operations)
+                or operation_values[0] != operation_values[1] + operation_values[2]
+                or type_values[1] != len(contract_types)
+                or type_values[0] != type_values[1] + type_values[2]
+                or contract_summary.get("compatibility_records") != len(compatibility)
+                or contract_summary.get("evolution_records_embedded") != len(evolution)
+                or contract_summary.get("evolution_records_discovered")
+                != len(evolution) + contract_summary.get("evolution_records_omitted", 0)
+                or contract_summary.get("breaking_change_candidates")
+                != sum(
+                    bool(value.get("breaking_change_candidates")) for value in evolution
+                )
+                or contract_summary.get("review_required")
+                != sum(
+                    value.get("status") == "review_required" for value in compatibility
+                )
+                or contract_summary.get("truncated")
+                != bool(
+                    operation_values[2]
+                    or type_values[2]
+                    or contract_summary.get("evolution_records_omitted")
+                )
+            ):
+                contract_valid = False
+            for component in analysis.get("components", []):
+                if not isinstance(component, dict):
+                    contract_valid = False
+                    continue
+                component_id = str(component.get("id", ""))
+                index = component.get("contract_semantics", {})
+                if (
+                    not isinstance(index, dict)
+                    or index.get("operation_ids")
+                    != operation_ids_by_component.get(component_id, [])[:1_000]
+                    or index.get("compatibility_ids")
+                    != compatibility_ids_by_component.get(component_id, [])[:1_000]
+                ):
+                    contract_valid = False
+        if not contract_valid:
+            add(
+                "analysis.invalid_contract_semantics",
+                "error",
+                "Contract operations, types, compatibility records, counts, or component indexes are inconsistent.",
+                field="contract_semantics",
+            )
+    deployment = analysis.get("deployment_topology")
+    if deployment is not None:
+        deployment_valid = isinstance(deployment, dict)
+        nodes = deployment.get("nodes", []) if deployment_valid else []
+        edges = deployment.get("edges", []) if deployment_valid else []
+        placements = deployment.get("placements", []) if deployment_valid else []
+        summary = deployment.get("summary", {}) if deployment_valid else {}
+        deployment_valid = (
+            deployment_valid
+            and deployment.get("format") == "pysfmea-deployment-topology-1"
+            and all(isinstance(value, list) for value in (nodes, edges, placements))
+            and isinstance(summary, dict)
+        )
+        node_ids: list[str] = []
+        deployment_edge_ids: list[str] = []
+        placement_by_component: dict[str, dict[str, Any]] = {}
+        if deployment_valid:
+            inventory_entries = {
+                str(value.get("path", "")): str(value.get("sha256", ""))
+                for value in analysis.get("repository_inventory", {}).get("entries", [])
+                if isinstance(value, dict)
+            }
+            for node in nodes:
+                if not isinstance(node, dict):
+                    deployment_valid = False
+                    continue
+                node_id = str(node.get("id", ""))
+                path = str(node.get("artifact_path", ""))
+                node_ids.append(node_id)
+                if (
+                    not node_id
+                    or not node.get("kind")
+                    or not node.get("name")
+                    or not path
+                    or (
+                        path != "configuration.project.deployment_environments"
+                        and (
+                            path not in inventory_entries
+                            or node.get("artifact_sha256") != inventory_entries[path]
+                        )
+                    )
+                ):
+                    deployment_valid = False
+            known_node_ids = set(node_ids)
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    deployment_valid = False
+                    continue
+                edge_id = str(edge.get("id", ""))
+                deployment_edge_ids.append(edge_id)
+                if (
+                    not edge_id
+                    or edge.get("source_node_id") not in known_node_ids
+                    or edge.get("target_node_id") not in known_node_ids
+                    or not edge.get("kind")
+                    or edge.get("artifact_path") not in inventory_entries
+                ):
+                    deployment_valid = False
+            expected_code_components = {
+                str(value.get("id", ""))
+                for value in analysis.get("components", [])
+                if isinstance(value, dict)
+                and value.get("kind") not in {"environment", "common_cause"}
+            }
+            for placement in placements:
+                if not isinstance(placement, dict):
+                    deployment_valid = False
+                    continue
+                component_id = str(placement.get("component_id", ""))
+                placement_nodes = placement.get("node_ids", [])
+                if (
+                    component_id in placement_by_component
+                    or component_id not in expected_code_components
+                    or not isinstance(placement_nodes, list)
+                    or len(placement_nodes) != len(set(placement_nodes))
+                    or any(value not in known_node_ids for value in placement_nodes)
+                    or placement.get("status")
+                    != ("candidate_placement" if placement_nodes else "unplaced")
+                ):
+                    deployment_valid = False
+                placement_by_component[component_id] = placement
+            deployment_count_fields = (
+                "nodes_discovered",
+                "nodes_embedded",
+                "nodes_omitted",
+                "edges_discovered",
+                "edges_embedded",
+                "edges_omitted",
+                "components",
+                "placed_components",
+                "unplaced_components",
+            )
+            if (
+                len(node_ids) != len(set(node_ids))
+                or len(deployment_edge_ids) != len(set(deployment_edge_ids))
+                or set(placement_by_component) != expected_code_components
+                or not all(
+                    isinstance(summary.get(field), int)
+                    and not isinstance(summary.get(field), bool)
+                    and int(summary.get(field, -1)) >= 0
+                    for field in deployment_count_fields
+                )
+                or summary.get("nodes_embedded") != len(nodes)
+                or summary.get("nodes_discovered")
+                != len(nodes) + summary.get("nodes_omitted", 0)
+                or summary.get("edges_embedded") != len(edges)
+                or summary.get("edges_discovered")
+                != len(edges) + summary.get("edges_omitted", 0)
+                or summary.get("components") != len(placements)
+                or summary.get("placed_components")
+                != sum(bool(value.get("node_ids")) for value in placements)
+                or summary.get("unplaced_components")
+                != sum(not value.get("node_ids") for value in placements)
+                or summary.get("truncated")
+                != bool(summary.get("nodes_omitted") or summary.get("edges_omitted"))
+            ):
+                deployment_valid = False
+            for component in analysis.get("components", []):
+                if not isinstance(component, dict):
+                    deployment_valid = False
+                    continue
+                component_id = str(component.get("id", ""))
+                expected = placement_by_component.get(component_id, {}).get(
+                    "node_ids", []
+                )
+                index = component.get("deployment_topology", {})
+                if (
+                    not isinstance(index, dict)
+                    or index.get("node_ids") != expected[:1_000]
+                    or index.get("nodes_omitted") != max(0, len(expected) - 1_000)
+                    or index.get("status")
+                    != ("candidate_placement" if expected else "unplaced")
+                ):
+                    deployment_valid = False
+        if not deployment_valid:
+            add(
+                "analysis.invalid_deployment_topology",
+                "error",
+                "Deployment nodes, edges, provenance, counts, placements, or component indexes are inconsistent.",
+                field="deployment_topology",
+            )
+    shared_fate = analysis.get("shared_fate_analysis")
+    if shared_fate is not None:
+        shared_fate_valid = isinstance(shared_fate, dict)
+        regions = shared_fate.get("regions", []) if shared_fate_valid else []
+        summary = shared_fate.get("summary", {}) if shared_fate_valid else {}
+        shared_fate_valid = (
+            shared_fate_valid
+            and shared_fate.get("format") == "pysfmea-shared-fate-analysis-1"
+            and isinstance(regions, list)
+            and isinstance(summary, dict)
+        )
+        region_ids: list[str] = []
+        regions_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        if shared_fate_valid:
+            for region in regions:
+                if not isinstance(region, dict):
+                    shared_fate_valid = False
+                    continue
+                region_id = str(region.get("id", ""))
+                affected = region.get("affected_component_ids", [])
+                region_ids.append(region_id)
+                if (
+                    not region_id
+                    or region.get("kind")
+                    not in {"deployment_node", "subsystem", "external_dependency"}
+                    or not region.get("key")
+                    or not isinstance(affected, list)
+                    or affected != sorted(set(affected))
+                    or len(affected) < 2
+                    or any(value not in component_ids for value in affected)
+                ):
+                    shared_fate_valid = False
+                for component_id in affected:
+                    if str(component_id) in regions_by_component:
+                        regions_by_component[str(component_id)].append(region_id)
+            shared_fate_count_fields = (
+                "regions",
+                "regions_discovered",
+                "regions_omitted",
+                "affected_components",
+            )
+            if (
+                len(region_ids) != len(set(region_ids))
+                or not all(
+                    isinstance(summary.get(field), int)
+                    and not isinstance(summary.get(field), bool)
+                    and int(summary.get(field, -1)) >= 0
+                    for field in shared_fate_count_fields
+                )
+                or summary.get("regions") != len(regions)
+                or summary.get("regions_discovered")
+                != len(regions) + summary.get("regions_omitted", 0)
+                or summary.get("affected_components")
+                != len(
+                    {
+                        value
+                        for region in regions
+                        for value in region.get("affected_component_ids", [])
+                    }
+                )
+                or summary.get("by_kind")
+                != dict(sorted(Counter(value.get("kind") for value in regions).items()))
+                or summary.get("truncated") != bool(summary.get("regions_omitted"))
+            ):
+                shared_fate_valid = False
+            for component in analysis.get("components", []):
+                if not isinstance(component, dict):
+                    shared_fate_valid = False
+                    continue
+                component_id = str(component.get("id", ""))
+                expected = regions_by_component.get(component_id, [])
+                index = component.get("shared_fate", {})
+                if (
+                    not isinstance(index, dict)
+                    or index.get("region_ids") != expected[:1_000]
+                    or index.get("regions_omitted") != max(0, len(expected) - 1_000)
+                ):
+                    shared_fate_valid = False
+        if not shared_fate_valid:
+            add(
+                "analysis.invalid_shared_fate_analysis",
+                "error",
+                "Shared-fate regions, counts, affected components, or component indexes are inconsistent.",
+                field="shared_fate_analysis",
+            )
+    hierarchy = analysis.get("architecture_hierarchy")
+    if hierarchy is not None:
+        hierarchy_valid = isinstance(hierarchy, dict)
+        nodes = hierarchy.get("nodes", []) if hierarchy_valid else []
+        memberships = hierarchy.get("memberships", []) if hierarchy_valid else []
+        summary = hierarchy.get("summary", {}) if hierarchy_valid else {}
+        hierarchy_valid = (
+            hierarchy_valid
+            and hierarchy.get("format") == "pysfmea-architecture-hierarchy-1"
+            and isinstance(nodes, list)
+            and isinstance(memberships, list)
+            and isinstance(summary, dict)
+        )
+        node_by_id: dict[str, dict[str, Any]] = {}
+        membership_by_component: dict[str, dict[str, Any]] = {}
+        if hierarchy_valid:
+            for node in nodes:
+                if not isinstance(node, dict):
+                    hierarchy_valid = False
+                    continue
+                node_id = str(node.get("id", ""))
+                if not node_id or node_id in node_by_id:
+                    hierarchy_valid = False
+                node_by_id[node_id] = node
+                if (
+                    node.get("kind")
+                    not in {"repository", "subsystem", "source_package"}
+                    or not node.get("path")
+                    or not isinstance(node.get("component_ids"), list)
+                    or node.get("component_ids")
+                    != sorted(set(node.get("component_ids", [])))
+                    or any(
+                        value not in component_ids
+                        for value in node.get("component_ids", [])
+                    )
+                    or not all(
+                        isinstance(node.get(trace_kind), dict)
+                        and all(
+                            isinstance(node[trace_kind].get(field), list)
+                            and node[trace_kind].get(field)
+                            == sorted(set(node[trace_kind].get(field, [])))
+                            for field in ("requirements", "hazards", "interfaces")
+                        )
+                        for trace_kind in ("direct_trace", "effective_trace")
+                    )
+                ):
+                    hierarchy_valid = False
+            roots = [value for value in nodes if not value.get("parent_id")]
+            if len(roots) != 1 or roots[0].get("kind") != "repository":
+                hierarchy_valid = False
+            for node in nodes:
+                parent_id = str(node.get("parent_id", ""))
+                if parent_id and parent_id not in node_by_id:
+                    hierarchy_valid = False
+                visited: set[str] = set()
+                cursor = str(node.get("id", ""))
+                while cursor:
+                    if cursor in visited:
+                        hierarchy_valid = False
+                        break
+                    visited.add(cursor)
+                    cursor = str(node_by_id.get(cursor, {}).get("parent_id", ""))
+            expected_code_components = {
+                str(value.get("id", ""))
+                for value in analysis.get("components", [])
+                if isinstance(value, dict)
+                and value.get("kind") not in {"environment", "common_cause"}
+            }
+            for membership in memberships:
+                if not isinstance(membership, dict):
+                    hierarchy_valid = False
+                    continue
+                component_id = str(membership.get("component_id", ""))
+                member_nodes = membership.get("node_ids", [])
+                if (
+                    component_id in membership_by_component
+                    or component_id not in expected_code_components
+                    or not isinstance(member_nodes, list)
+                    or member_nodes != sorted(set(member_nodes))
+                    or not member_nodes
+                    or any(value not in node_by_id for value in member_nodes)
+                ):
+                    hierarchy_valid = False
+                membership_by_component[component_id] = membership
+            children: dict[str, list[str]] = {value: [] for value in node_by_id}
+            for node_id, node in node_by_id.items():
+                parent_id = str(node.get("parent_id", ""))
+                if parent_id in children:
+                    children[parent_id].append(node_id)
+            ancestors_by_node = {
+                node_id: _hierarchy_ancestors(node_id, node_by_id)
+                for node_id in node_by_id
+            }
+            expected_components_by_node: dict[str, set[str]] = {
+                node_id: set() for node_id in node_by_id
+            }
+            for component_id, membership in membership_by_component.items():
+                for member_node_id in membership.get("node_ids", []):
+                    for affected_node_id in {
+                        member_node_id,
+                        *ancestors_by_node.get(member_node_id, set()),
+                    }:
+                        expected_components_by_node[affected_node_id].add(component_id)
+            for node_id, node in node_by_id.items():
+                expected_components = expected_components_by_node[node_id]
+                if node.get("component_ids") != sorted(expected_components):
+                    hierarchy_valid = False
+                expected_effective = {
+                    field: sorted(
+                        set(node.get("direct_trace", {}).get(field, []))
+                        | {
+                            value
+                            for child_id in children.get(node_id, [])
+                            for value in node_by_id[child_id]
+                            .get("effective_trace", {})
+                            .get(field, [])
+                        }
+                    )
+                    for field in ("requirements", "hazards", "interfaces")
+                }
+                if node.get("effective_trace") != expected_effective:
+                    hierarchy_valid = False
+            if (
+                set(membership_by_component) != expected_code_components
+                or summary.get("nodes") != len(nodes)
+                or summary.get("memberships") != len(memberships)
+                or summary.get("subsystem_nodes")
+                != sum(value.get("kind") == "subsystem" for value in nodes)
+                or summary.get("source_package_nodes")
+                != sum(value.get("kind") == "source_package" for value in nodes)
+                or summary.get("unmapped_to_subsystem")
+                != sum(
+                    not any(
+                        node_by_id[value].get("kind") == "subsystem"
+                        for value in membership.get("node_ids", [])
+                    )
+                    for membership in memberships
+                )
+                or not isinstance(summary.get("nodes_omitted"), int)
+                or isinstance(summary.get("nodes_omitted"), bool)
+                or summary.get("nodes_omitted", -1) < 0
+                or summary.get("truncated") != bool(summary.get("nodes_omitted"))
+            ):
+                hierarchy_valid = False
+            for component in analysis.get("components", []):
+                if not isinstance(component, dict):
+                    hierarchy_valid = False
+                    continue
+                component_id = str(component.get("id", ""))
+                expected = membership_by_component.get(component_id, {}).get(
+                    "node_ids", []
+                )
+                index = component.get("architecture_hierarchy", {})
+                if (
+                    not isinstance(index, dict)
+                    or index.get("node_ids") != expected[:1_000]
+                    or index.get("nodes_omitted") != max(0, len(expected) - 1_000)
+                ):
+                    hierarchy_valid = False
+        if not hierarchy_valid:
+            add(
+                "analysis.invalid_architecture_hierarchy",
+                "error",
+                "Architecture nodes, inheritance, trace aggregation, counts, memberships, or component indexes are inconsistent.",
+                field="architecture_hierarchy",
+            )
     observed_hazards: set[str] = set()
     observed_requirements: set[str] = set()
-    mapped_interfaces = {
-        interface
+    mapped_interfaces: set[str] = {
+        str(interface)
         for component in analysis.get("components", [])
+        if isinstance(component, dict)
         for interface in component.get("interface_ids", [])
+        if isinstance(interface, str) and interface
     }
     code_component_refs = [
         f"{component.get('source', {}).get('path', '')}:{component.get('qualname', '')}"
@@ -1354,8 +3034,8 @@ def validate_analysis(
             f"Configured hazard {hazard_id} is not linked to any failure-mode record.",
             field="hazards",
         )
-    configured_requirements = {
-        requirement.get("id")
+    configured_requirements: set[str] = {
+        str(requirement.get("id"))
         for requirement in analysis.get("context", {}).get("requirements", [])
         if isinstance(requirement, dict) and requirement.get("id")
     }
@@ -1366,8 +3046,8 @@ def validate_analysis(
             f"Configured requirement {requirement_id} is not linked to any failure-mode record.",
             field="requirements",
         )
-    configured_interfaces = {
-        interface.get("id")
+    configured_interfaces: set[str] = {
+        str(interface.get("id"))
         for interface in analysis.get("context", {}).get("system_interfaces", [])
         if isinstance(interface, dict) and interface.get("id")
     }
@@ -1377,6 +3057,37 @@ def validate_analysis(
             "warning",
             f"Configured system interface {interface_id} is not mapped to a scanned component.",
             field="system_interfaces",
+        )
+    interface_reconciliation = analysis.get("interface_reconciliation", {})
+    disposition_reconciliation = (
+        interface_reconciliation.get("disposition_reconciliation", {})
+        if isinstance(interface_reconciliation, dict)
+        else {}
+    )
+    stale_dispositions = disposition_reconciliation.get("unmatched_endpoint_ids", [])
+    if isinstance(stale_dispositions, list) and stale_dispositions:
+        sample = ", ".join(str(value) for value in stale_dispositions[:5])
+        add(
+            "interface.stale_reviewed_disposition",
+            "warning",
+            f"{len(stale_dispositions)} reviewed interface dispositions no longer match a discovered endpoint; sample: {sample}.",
+            field="interface_dispositions",
+        )
+    confirmed_defects = [
+        value
+        for value in analysis.get("context", {}).get("interface_dispositions", [])
+        if isinstance(value, dict)
+        and value.get("decision") in {"confirmed_defect", "confirmed_mismatch"}
+    ]
+    if confirmed_defects:
+        sample = ", ".join(
+            str(value.get("endpoint_id", "")) for value in confirmed_defects[:5]
+        )
+        add(
+            "interface.confirmed_reviewed_defect",
+            "error",
+            f"{len(confirmed_defects)} reviewed interface dispositions confirm a defect or mismatch; sample: {sample}.",
+            field="interface_dispositions",
         )
 
     sfta = build_sfta(analysis, legacy_id_wildcard=legacy_sfta_id_wildcard)

@@ -17,10 +17,10 @@ from typing import Any
 from .file_publication import atomic_publish_text
 from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_document
-from .scanner import FunctionFacts
+from .scanner import PYTHON_FACT_CACHE_FORMAT, FunctionFacts
 from .version import __version__
 
-FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-1"
+FACT_CACHE_FORMAT = PYTHON_FACT_CACHE_FORMAT
 MAX_FACT_CACHE_BYTES = 256 * 1024 * 1024
 MAX_FACT_CACHE_DEPTH = 100
 MAX_FACT_CACHE_NODES = 4_000_000
@@ -50,6 +50,9 @@ _INTEGER_FIELDS = {
     "silent_handlers",
     "raises",
     "arithmetic_ops",
+    "alias_bindings_omitted",
+    "exception_records_omitted",
+    "state_records_omitted",
 }
 _BOOLEAN_FIELDS = {"is_async", "is_private", "mutates_state"}
 _STRING_LIST_FIELDS = {"decorators", "parameters", "ordered_calls"}
@@ -57,6 +60,13 @@ _STRING_SET_FIELDS = {"calls", "frameworks", "entrypoint_types", "signals"}
 _STRING_DICT_FIELDS = {"symbol_types", "symbol_type_sources"}
 _DICT_LIST_FIELDS = {
     "call_sites",
+    "parameter_contracts",
+    "return_values",
+    "alias_bindings",
+    "exception_raises",
+    "exception_handlers",
+    "state_guards",
+    "state_transitions",
     "external_call_candidates",
     "interface_endpoints",
     "detected_controls",
@@ -69,7 +79,9 @@ def _fact_record(fact: FunctionFacts) -> dict[str, Any]:
     for descriptor in fields(FunctionFacts):
         value = getattr(fact, descriptor.name)
         record[descriptor.name] = (
-            sorted(value) if descriptor.name in _STRING_SET_FIELDS else copy.deepcopy(value)
+            sorted(value)
+            if descriptor.name in _STRING_SET_FIELDS
+            else copy.deepcopy(value)
         )
     return record
 
@@ -113,7 +125,9 @@ def _fact_from_record(record: Any) -> FunctionFacts:
         values[name] = dict(value)
     for name in _DICT_LIST_FIELDS:
         value = record[name]
-        if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        if not isinstance(value, list) or not all(
+            isinstance(item, dict) for item in value
+        ):
             raise ValueError(f"cached fact {name} must be an object array")
         values[name] = copy.deepcopy(value)
     return FunctionFacts(**values)
@@ -186,8 +200,13 @@ def load_fact_cache(source: str | Path) -> tuple[dict[str, Any], dict[str, Any]]
         "version": __version__,
         "python_ast": f"{sys.version_info.major}.{sys.version_info.minor}",
     }:
-        raise ValueError("scanner fact cache is incompatible with this analyzer runtime")
-    if payload.get("authority") != "derived_performance_artifact_not_primary_assurance_evidence":
+        raise ValueError(
+            "scanner fact cache is incompatible with this analyzer runtime"
+        )
+    if (
+        payload.get("authority")
+        != "derived_performance_artifact_not_primary_assurance_evidence"
+    ):
         raise ValueError("scanner fact cache authority declaration is invalid")
     entries = payload.get("entries")
     if not isinstance(entries, dict) or len(entries) > MAX_FACT_CACHE_ENTRIES:
@@ -216,15 +235,18 @@ def load_fact_cache(source: str | Path) -> tuple[dict[str, Any], dict[str, Any]]
     return cache, receipt
 
 
-def save_fact_cache(destination: str | Path, cache: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+def save_fact_cache(
+    destination: str | Path, cache: dict[str, Any]
+) -> tuple[Path, dict[str, Any]]:
     """Atomically publish a compact, integrity-protected cache artifact."""
 
     import json
 
     payload = fact_cache_document(cache)
-    rendered = json.dumps(
-        payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-    ) + "\n"
+    rendered = (
+        json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        + "\n"
+    )
     path = atomic_publish_text(
         destination,
         rendered,

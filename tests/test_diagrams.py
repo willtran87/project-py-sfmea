@@ -94,6 +94,10 @@ class DiagramTests(unittest.TestCase):
             "def execute(value):\n    validate(value)\n    return value\n",
             encoding="utf-8",
         )
+        (self.root / "compose.yml").write_text(
+            "services:\n  service:\n    image: example/service:1\n",
+            encoding="utf-8",
+        )
         self.analysis = scan_repository(
             self.root,
             config={
@@ -158,6 +162,7 @@ class DiagramTests(unittest.TestCase):
             {
                 "architecture",
                 "interface_flow",
+                "data_flow",
                 "traceability",
                 "guidance_traceability",
                 "assurance_traceability",
@@ -166,7 +171,40 @@ class DiagramTests(unittest.TestCase):
                 "sequence",
             }.issubset(categories)
         )
-        self.assertTrue(all(diagram["schema_version"] == DIAGRAM_SCHEMA for diagram in diagrams))
+
+    def test_architecture_category_includes_topology_fate_and_hierarchy_views(
+        self,
+    ) -> None:
+        diagrams = build_diagram_models(self.analysis, kind="architecture")
+        by_id = {value["id"]: value for value in diagrams}
+
+        self.assertEqual(
+            set(by_id),
+            {
+                "architecture-components",
+                "declared-deployment-topology",
+                "shared-fate-regions",
+                "architecture-hierarchy",
+            },
+        )
+        topology = by_id["declared-deployment-topology"]
+        self.assertTrue(
+            any(value["kind"] == "candidate_placement" for value in topology["edges"])
+        )
+        self.assertEqual(topology["metadata"]["subtype"], "deployment_topology")
+        shared_fate = by_id["shared-fate-regions"]
+        self.assertTrue(shared_fate["edges"])
+        self.assertTrue(all(value["evidence"] for value in shared_fate["edges"]))
+        hierarchy = by_id["architecture-hierarchy"]
+        self.assertTrue(
+            any(
+                value["kind"] == "architecture_inheritance"
+                for value in hierarchy["edges"]
+            )
+        )
+        self.assertTrue(
+            all(diagram["schema_version"] == DIAGRAM_SCHEMA for diagram in diagrams)
+        )
         self.assertTrue(
             all(
                 edge["source"] in {node["id"] for node in diagram["nodes"]}
@@ -175,6 +213,29 @@ class DiagramTests(unittest.TestCase):
                 for edge in diagram["edges"]
             )
         )
+
+    def test_data_flow_diagram_exposes_parameter_and_return_context(self) -> None:
+        (self.root / "flow.py").write_text(
+            "def transform(value):\n    return value + 1\n\n"
+            "def orchestrate(payload):\n    return transform(payload.value)\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        diagram = build_diagram_models(analysis, kind="data_flow")[0]
+
+        self.assertEqual(diagram["id"], "interprocedural-data-flow")
+        self.assertEqual(diagram["metadata"]["category"], "data_flow")
+        self.assertEqual(
+            diagram["metadata"]["source_format"], "pysfmea-interprocedural-data-flow-1"
+        )
+        edge = next(
+            value
+            for value in diagram["edges"]
+            if value["kind"] == "interprocedural_value_flow"
+        )
+        self.assertIn("parameters value", edge["label"])
+        self.assertIn("return to", edge["label"])
+        self.assertEqual(edge["evidence"], "unique_static_target")
 
     def test_bundle_cli_and_category_export(self) -> None:
         output = export_diagram_bundle(
@@ -189,9 +250,7 @@ class DiagramTests(unittest.TestCase):
             analysis_state_sha256(self.analysis),
         )
         self.assertEqual(bundle["binding"]["format"], DIAGRAM_BUNDLE_SCHEMA)
-        verification = verify_diagram_bundle_integrity(
-            bundle, analysis=self.analysis
-        )
+        verification = verify_diagram_bundle_integrity(bundle, analysis=self.analysis)
         self.assertEqual(
             verification["content_sha256"],
             bundle["integrity"]["content_sha256"],
@@ -266,9 +325,7 @@ class DiagramTests(unittest.TestCase):
             )
         self.assertEqual(result, 0)
         cli_verification = json.loads(verification_output.getvalue())
-        self.assertEqual(
-            cli_verification["format"], DIAGRAM_BUNDLE_VERIFICATION_FORMAT
-        )
+        self.assertEqual(cli_verification["format"], DIAGRAM_BUNDLE_VERIFICATION_FORMAT)
         self.assertTrue(cli_verification["valid"])
         self.assertEqual(cli_verification["status"], "matched")
         self.assertTrue(cli_verification["binding_requested"])
@@ -363,9 +420,7 @@ class DiagramTests(unittest.TestCase):
                 "include_finding_ids": [included_id],
             },
         )
-        self.assertEqual(
-            generated_bundle["diagrams"][0]["metadata"]["record_limit"], 1
-        )
+        self.assertEqual(generated_bundle["diagrams"][0]["metadata"]["record_limit"], 1)
         self.assertIn(
             f"failure:{included_id}",
             {node["id"] for node in generated_bundle["diagrams"][0]["nodes"]},
@@ -452,7 +507,9 @@ class DiagramTests(unittest.TestCase):
         self.assertEqual(configured["metadata"]["conservative_node_estimate"], 18)
         self.assertEqual(configured["metadata"]["projection_node_budget"], 2_000)
         self.assertEqual(configured["metadata"]["node_budget_utilization_percent"], 0.9)
-        self.assertEqual(configured["metadata"]["projection_status"], "bounded_projection")
+        self.assertEqual(
+            configured["metadata"]["projection_status"], "bounded_projection"
+        )
         self.assertIn(
             "finding_record_limit",
             configured["metadata"]["projection_reason_codes"],
@@ -478,10 +535,10 @@ class DiagramTests(unittest.TestCase):
                 propagation_depth=12,
             )
 
-    def test_failure_propagation_includes_bounded_evidence_labeled_cascades(self) -> None:
-        components = {
-            value["qualname"]: value for value in self.analysis["components"]
-        }
+    def test_failure_propagation_includes_bounded_evidence_labeled_cascades(
+        self,
+    ) -> None:
+        components = {value["qualname"]: value for value in self.analysis["components"]}
         self.analysis["runtime_evidence"] = {
             "edges": [
                 {
@@ -492,9 +549,7 @@ class DiagramTests(unittest.TestCase):
             ]
         }
 
-        diagram = build_diagram_models(
-            self.analysis, kind="failure_propagation"
-        )[0]
+        diagram = build_diagram_models(self.analysis, kind="failure_propagation")[0]
         cascade_nodes = [
             value for value in diagram["nodes"] if value["kind"] == "cascade_component"
         ]
@@ -539,7 +594,9 @@ class DiagramTests(unittest.TestCase):
             for value in self.analysis["assurance"]["obligations"]
             if value["finding_id"] in validate_finding_ids
         )
-        self.assertIn("service.py:execute", obligation["cascade_context"]["direct_callers"])
+        self.assertIn(
+            "service.py:execute", obligation["cascade_context"]["direct_callers"]
+        )
         self.assertEqual(
             obligation["cascade_context"]["static_upstream_paths"][0],
             ["service.py:execute", "service.py:validate"],
@@ -558,9 +615,7 @@ class DiagramTests(unittest.TestCase):
         )
         analysis = scan_repository(self.root)
 
-        diagram = build_diagram_models(
-            analysis, kind="failure_propagation"
-        )[0]
+        diagram = build_diagram_models(analysis, kind="failure_propagation")[0]
 
         self.assertTrue(
             any(
@@ -587,9 +642,7 @@ class DiagramTests(unittest.TestCase):
         )
         analysis = scan_repository(self.root)
 
-        diagram = build_diagram_models(
-            analysis, kind="failure_propagation"
-        )[0]
+        diagram = build_diagram_models(analysis, kind="failure_propagation")[0]
         component_nodes = [
             value for value in diagram["nodes"] if value["kind"] == "component"
         ]
@@ -600,9 +653,7 @@ class DiagramTests(unittest.TestCase):
         self.assertGreater(diagram["metadata"]["total_active_components"], 40)
         self.assertTrue(diagram["metadata"]["records_truncated"])
         self.assertTrue(diagram["metadata"]["components_truncated"])
-        self.assertEqual(
-            diagram["metadata"]["projection_status"], "bounded_projection"
-        )
+        self.assertEqual(diagram["metadata"]["projection_status"], "bounded_projection")
         self.assertIn(
             "component_projection",
             diagram["metadata"]["projection_reason_codes"],
@@ -618,7 +669,9 @@ class DiagramTests(unittest.TestCase):
 
     def test_failure_projection_discloses_each_cascade_bound(self) -> None:
         component = next(
-            value for value in self.analysis["components"] if value["qualname"] == "validate"
+            value
+            for value in self.analysis["components"]
+            if value["qualname"] == "validate"
         )
         target = f"{component['source']['path']}:{component['qualname']}"
         component["upstream_paths"] = [
@@ -707,9 +760,7 @@ class DiagramTests(unittest.TestCase):
         self.assertEqual(diagram["type"], "state")
         self.assertEqual(diagram["metadata"]["category"], "circuit_breaker")
         by_label = {value["label"]: value for value in diagram["nodes"]}
-        self.assertTrue(
-            {"CLOSED", "OPEN", "RECOVERY PROBE"} <= set(by_label)
-        )
+        self.assertTrue({"CLOSED", "OPEN", "RECOVERY PROBE"} <= set(by_label))
         self.assertTrue(any(label.startswith("REVIEW GAPS") for label in by_label))
         self.assertEqual(by_label["OPEN"]["kind"], "breaker_state")
         self.assertEqual(by_label["CLOSED"]["kind"], "unconfirmed_state")
@@ -725,11 +776,11 @@ class DiagramTests(unittest.TestCase):
             {"failure threshold reached", "cooldown elapsed", "probe fails"}
             <= {value["label"] for value in diagram["edges"]}
         )
-        self.assertNotIn("probe succeeds", {value["label"] for value in diagram["edges"]})
+        self.assertNotIn(
+            "probe succeeds", {value["label"] for value in diagram["edges"]}
+        )
 
-        propagation = build_diagram_models(
-            analysis, kind="failure_propagation"
-        )[0]
+        propagation = build_diagram_models(analysis, kind="failure_propagation")[0]
         propagation_kinds = {value["kind"] for value in propagation["nodes"]}
         self.assertIn("timing_boundary", propagation_kinds)
         self.assertIn("containment_boundary", propagation_kinds)
@@ -788,9 +839,7 @@ class DiagramTests(unittest.TestCase):
 
         self.assertEqual(len(diagrams), 1)
         diagram = diagrams[0]
-        self.assertEqual(
-            diagram["metadata"]["scope_qualname"], "ServiceCircuitBreaker"
-        )
+        self.assertEqual(diagram["metadata"]["scope_qualname"], "ServiceCircuitBreaker")
         self.assertEqual(
             set(diagram["metadata"]["member_qualnames"]),
             {
@@ -802,13 +851,16 @@ class DiagramTests(unittest.TestCase):
         self.assertEqual(len(diagram["metadata"]["component_ids"]), 3)
         self.assertIn("across 3 callable(s)", diagram["description"])
         self.assertTrue(
-            {"failure threshold reached", "cooldown elapsed", "probe succeeds", "probe fails"}
+            {
+                "failure threshold reached",
+                "cooldown elapsed",
+                "probe succeeds",
+                "probe fails",
+            }
             <= {value["label"] for value in diagram["edges"]}
         )
 
-        propagation = build_diagram_models(
-            analysis, kind="failure_propagation"
-        )[0]
+        propagation = build_diagram_models(analysis, kind="failure_propagation")[0]
         containment_nodes = [
             value
             for value in propagation["nodes"]
@@ -893,7 +945,9 @@ class DiagramTests(unittest.TestCase):
             "pysfmea.json_ingestion._same_file_identity",
             side_effect=[True, False],
         ):
-            with self.assertRaisesRegex(ValueError, "changed during bounded consumption"):
+            with self.assertRaisesRegex(
+                ValueError, "changed during bounded consumption"
+            ):
                 load_diagram_files([custom_path])
 
         with patch("pysfmea.diagrams.MAX_DIAGRAM_IMPORT_FILES", 1):

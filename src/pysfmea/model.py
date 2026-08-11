@@ -108,7 +108,7 @@ def calculate_rpn(item: dict[str, Any], *, post_action: bool = False) -> int | N
         isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10
         for value in values
     ):
-        return values[0] * values[1] * values[2]
+        return int(values[0]) * int(values[1]) * int(values[2])
     return None
 
 

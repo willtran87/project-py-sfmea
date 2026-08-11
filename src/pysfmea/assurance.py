@@ -13,11 +13,18 @@ import re
 import shutil
 import tempfile
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .assurance_planning import stimulus_for as _stimulus
 from .assurance_planning import verification_method_for as _method_for
+from .assurance_synthesis import (
+    ASSURANCE_SCAFFOLD_GENERATED_FILE_ROLES,
+    render_assurance_scaffold_sources,
+    synthesize_assurance_test_designs,
+    test_designs_are_valid,
+)
 from .fault_injection import recommended_fault_plugins
 from .file_publication import atomic_publish_text
 from .integrity import canonical_json_sha256
@@ -60,8 +67,8 @@ ASSURANCE_WORK_NEXT_ACTIONS = (
 )
 _WORK_STATE_ACTION = dict(zip(ASSURANCE_WORK_STATES, ASSURANCE_WORK_NEXT_ACTIONS))
 PLANNER_VERSION = "deterministic-verification-planner-6"
-ASSURANCE_SCAFFOLD_FORMAT = "pysfmea-pytest-assurance-scaffold-6"
-ASSURANCE_SCAFFOLD_VERIFICATION_FORMAT = "pysfmea-assurance-scaffold-verification-5"
+ASSURANCE_SCAFFOLD_FORMAT = "pysfmea-pytest-assurance-scaffold-7"
+ASSURANCE_SCAFFOLD_VERIFICATION_FORMAT = "pysfmea-assurance-scaffold-verification-6"
 MAX_ASSURANCE_SCAFFOLD_MANIFEST_BYTES = 64 * 1024 * 1024
 MAX_ASSURANCE_SCAFFOLD_GENERATED_FILE_BYTES = 64 * 1024 * 1024
 ASSURANCE_NOTICE = (
@@ -201,7 +208,7 @@ def _text_list(value: Any) -> list[str]:
     return [str(entry) for entry in value if entry not in (None, "")]
 
 
-def _contract_sha256(obligation: dict[str, Any]) -> str:
+def _contract_sha256(obligation: Mapping[str, Any]) -> str:
     contract = {
         key: obligation.get(key)
         for key in (
@@ -450,7 +457,7 @@ def _obligation(item: FindingRecord, baseline_id: str) -> AssuranceObligation:
         for link in scanner.get("citations", [])
         if isinstance(link, dict) and link.get("citation_id")
     ]
-    obligation = {
+    obligation: AssuranceObligation = {
         "id": obligation_id,
         "finding_id": finding_id,
         "component_id": item.get("component_id", ""),
@@ -687,7 +694,7 @@ def _obligation(item: FindingRecord, baseline_id: str) -> AssuranceObligation:
 
 def refresh_assurance_register(
     analysis: dict[str, Any], previous: dict[str, Any] | None = None
-) -> AssuranceRegister:
+) -> dict[str, Any]:
     """Regenerate deterministic obligations while preserving governed review/evidence fields."""
 
     previous = previous if isinstance(previous, dict) else analysis.get("assurance", {})
@@ -705,13 +712,14 @@ def refresh_assurance_register(
         if isinstance(value, dict) and value.get("finding_id")
     }
     baseline_id = str(analysis.get("project", {}).get("baseline", {}).get("id", ""))
-    obligations = []
+    obligations: list[AssuranceObligation] = []
     for item in analysis.get("items", []):
         obligation = _obligation(item, baseline_id)
         old = old_by_id.get(obligation["id"]) or old_by_finding_method.get(
             (obligation["finding_id"], obligation["verification_method"])
         )
         if old:
+            obligation_dynamic = cast(dict[str, Any], obligation)
             for field in (
                 "assurance_status",
                 "evidence_status",
@@ -721,7 +729,7 @@ def refresh_assurance_register(
                 "history",
             ):
                 if field in old:
-                    obligation[field] = copy.deepcopy(old[field])
+                    obligation_dynamic[field] = copy.deepcopy(old[field])
             old_automation = old.get("automation", {})
             for field in (
                 "implementation_status",
@@ -730,8 +738,8 @@ def refresh_assurance_register(
                 "implementation_origin",
             ):
                 if field in old_automation:
-                    obligation["automation"][field] = copy.deepcopy(
-                        old_automation[field]
+                    cast(dict[str, Any], obligation["automation"])[field] = (
+                        copy.deepcopy(old_automation[field])
                     )
             old_fingerprint = old.get("source_fingerprint", "")
             if old.get("id") != obligation["id"]:
@@ -777,7 +785,7 @@ def refresh_assurance_register(
                     }
                 )
         obligations.append(obligation)
-    register = {
+    typed_register: AssuranceRegister = {
         "schema_version": ASSURANCE_SCHEMA_VERSION,
         "planner_version": PLANNER_VERSION,
         "baseline_id": baseline_id,
@@ -787,6 +795,7 @@ def refresh_assurance_register(
         "executions": copy.deepcopy(previous.get("executions", [])),
         "evidence_artifacts": copy.deepcopy(previous.get("evidence_artifacts", [])),
     }
+    register = cast(dict[str, Any], typed_register)
     register["summary"] = assurance_summary(register)
     preserve_unchanged_generated_at(previous, register)
     analysis["assurance"] = register
@@ -894,7 +903,7 @@ def assurance_work_queue(analysis: dict[str, Any]) -> dict[str, Any]:
                 str(execution.get("obligation_id", "")), []
             ).append(execution)
 
-    items = []
+    items: list[dict[str, Any]] = []
     for finding_id, finding in accepted_items.items():
         obligations = by_finding.get(finding_id, [])
         if len(obligations) != 1:
@@ -1033,8 +1042,10 @@ def assurance_work_queue(analysis: dict[str, Any]) -> dict[str, Any]:
         },
         "summary": {
             "total": len(items),
-            "actionable": sum(value["actionable"] for value in items),
-            "automation_eligible": sum(value["automation_eligible"] for value in items),
+            "actionable": sum(bool(value["actionable"]) for value in items),
+            "automation_eligible": sum(
+                bool(value["automation_eligible"]) for value in items
+            ),
             "implementation_ready": by_state.get("ready_for_implementation", 0),
             "execution_ready": by_state.get("ready_for_execution", 0),
             "by_state": by_state,
@@ -1477,11 +1488,11 @@ def review_obligation(
     if not reviewer.strip() or not rationale.strip():
         raise ValueError("assurance review requires a reviewer and rationale")
     register = ensure_assurance_register(analysis)
-    obligation = next(
+    obligation: dict[str, Any] | None = next(
         (
             value
             for value in register["obligations"]
-            if value.get("id") == obligation_id
+            if isinstance(value, dict) and value.get("id") == obligation_id
         ),
         None,
     )
@@ -1888,6 +1899,7 @@ def export_pytest_scaffold(
         )
     baseline_id = register.get("baseline_id", "")
     contract_snapshot = _scaffold_contract_records(analysis, selected)
+    test_designs = synthesize_assurance_test_designs(analysis, selected)
     manifest = {
         "format": ASSURANCE_SCAFFOLD_FORMAT,
         "generated_at": utc_now(),
@@ -1905,6 +1917,7 @@ def export_pytest_scaffold(
                 ).encode("utf-8")
             ).hexdigest(),
             "scaffold_contracts_sha256": _scaffold_contracts_sha256(contract_snapshot),
+            "test_designs_sha256": test_designs["content_sha256"],
         },
         "selection": {
             "disposition": disposition,
@@ -1915,176 +1928,20 @@ def export_pytest_scaffold(
         "notice": ASSURANCE_NOTICE,
         "contract_snapshot": contract_snapshot,
         "obligations": selected,
+        "test_designs": test_designs,
     }
-    test_source = '''"""Generated PySFMEA assurance placeholders.
-
-Every case fails intentionally until an engineer implements the recorded stimulus,
-oracles, and acceptance criteria. A passing replacement is not assurance evidence until
-its approved sandbox execution and independent evidence review are recorded.
-"""
-
-from __future__ import annotations
-
-import hashlib
-import json
-import math
-from pathlib import Path
-
-import pytest
-
-MAX_MANIFEST_BYTES = 64 * 1024 * 1024
-MAX_MANIFEST_DEPTH = 100
-MAX_MANIFEST_NODES = 500_000
-
-
-def _unique_object(pairs: list[tuple[str, object]]) -> dict:
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate object key")
-        result[key] = value
-    return result
-
-
-def _reject_constant(value: str) -> None:
-    raise ValueError(f"non-finite number: {value}")
-
-
-def _finite_float(value: str) -> float:
-    parsed = float(value)
-    if not math.isfinite(parsed):
-        raise ValueError("non-finite number")
-    return parsed
-
-
-def _validate_structure(payload: object) -> None:
-    nodes = 0
-    stack = [(payload, 0)]
-    while stack:
-        current, depth = stack.pop()
-        nodes += 1
-        if depth > MAX_MANIFEST_DEPTH or nodes > MAX_MANIFEST_NODES:
-            raise RuntimeError(
-                "assurance-manifest.json exceeds its bounded JSON structure limits; "
-                "regenerate the scaffold from the governed analysis"
-            )
-        if isinstance(current, dict):
-            stack.extend((child, depth + 1) for child in current.values())
-        elif isinstance(current, list):
-            stack.extend((child, depth + 1) for child in current)
-
-
-def _load_manifest() -> dict:
-    path = Path(__file__).with_name("assurance-manifest.json")
-    if path.is_symlink() or not path.is_file():
-        raise RuntimeError(
-            "assurance-manifest.json must be a regular non-symbolic-link file; "
-            "regenerate the scaffold from the governed analysis"
-        )
-    try:
-        with path.open("rb") as source_file:
-            raw = source_file.read(MAX_MANIFEST_BYTES + 1)
-    except OSError as exc:
-        raise RuntimeError(
-            "assurance-manifest.json could not be read safely; regenerate the scaffold "
-            "from the governed analysis"
-        ) from exc
-    if len(raw) > MAX_MANIFEST_BYTES:
-        raise RuntimeError(
-            f"assurance-manifest.json exceeds the {MAX_MANIFEST_BYTES}-byte collection "
-            "limit; inspect or regenerate the scaffold"
-        )
-    try:
-        payload = json.loads(
-            raw.decode("utf-8"),
-            object_pairs_hook=_unique_object,
-            parse_constant=_reject_constant,
-            parse_float=_finite_float,
-        )
-    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
-        raise RuntimeError(
-            "assurance-manifest.json must be valid bounded UTF-8 JSON with "
-            "unambiguous objects and finite numbers; regenerate the scaffold from the "
-            "governed analysis"
-        ) from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError(
-            "assurance-manifest.json root must be an object; regenerate the scaffold "
-            "from the governed analysis"
-        )
-    _validate_structure(payload)
-    if payload.get("format") != "pysfmea-pytest-assurance-scaffold-6":
-        raise RuntimeError(
-            "assurance-manifest.json has an unsupported scaffold format; regenerate it "
-            "from the governed analysis"
-        )
-    canonical = dict(payload)
-    expected = canonical.pop("manifest_sha256", "")
-    actual = hashlib.sha256(
-        json.dumps(
-            canonical,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
-    ).hexdigest()
-    if not expected or actual != expected:
-        raise RuntimeError(
-            "assurance-manifest.json failed its SHA-256 integrity check; regenerate "
-            "the scaffold from the governed analysis"
-        )
-    obligations = payload.get("obligations")
-    if not isinstance(obligations, list) or not obligations or not all(
-        isinstance(value, dict) and value.get("id") for value in obligations
-    ):
-        raise RuntimeError(
-            "assurance-manifest.json has no valid obligation list; regenerate the "
-            "scaffold from the governed analysis"
-        )
-    return payload
-
-
-MANIFEST = _load_manifest()
-
-
-@pytest.mark.parametrize(
-    "obligation",
-    MANIFEST["obligations"],
-    ids=lambda value: value["id"],
-)
-def test_sfmea_assurance_obligation(obligation: dict) -> None:
-    pytest.fail(
-        f"{obligation['id']} is not implemented: "
-        f"{obligation['verification_method']} for {obligation['failure_condition']} "
-        f"(planned test: {obligation['automation']['proposed_test_path']})"
-    )
-'''
-    readme_source = (
-        "# PySFMEA assurance test scaffold\n\n"
-        f"Queue: `{queue_id}`  \n"
-        f"Owner: {owner or 'not assigned'}  \n"
-        f"Purpose: {purpose or 'not recorded'}\n\n"
-        "These pytest cases fail intentionally. Implement the stimulus, oracles, and "
-        "acceptance criteria from `assurance-manifest.json`; do not convert them to "
-        "empty, skipped, or assertion-free tests. Run only in an approved sandbox. "
-        "Passing tests remain unreviewed execution results until evidence sufficiency "
-        "is adjudicated. Replacing placeholders is expected: register implemented test "
-        "source with `sfmea assurance-test-register` so it is content-hash bound to its "
-        "obligation. The manifest binds the exact governed analysis state, the selected "
-        "verification contracts, reproducible selection parameters, and the generated "
-        "starting-file hashes for audit. This lets verification distinguish unrelated "
-        "analysis edits from added, removed, or changed test contracts. Its digests are "
-        "not authenticated approval signatures.\n"
+    generated_sources = render_assurance_scaffold_sources(
+        scaffold_format=ASSURANCE_SCAFFOLD_FORMAT,
+        queue_id=queue_id,
+        owner=owner,
+        purpose=purpose,
     )
     manifest["generated_files"] = {
-        "README.md": {
-            "role": "operator_notice",
-            "sha256": hashlib.sha256(readme_source.encode("utf-8")).hexdigest(),
-        },
-        "test_sfmea_assurance.py": {
-            "role": "failing_pytest_placeholders",
-            "sha256": hashlib.sha256(test_source.encode("utf-8")).hexdigest(),
-        },
+        name: {
+            "role": role,
+            "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        }
+        for name, (role, source) in generated_sources.items()
     }
     manifest["manifest_sha256"] = hashlib.sha256(
         json.dumps(
@@ -2104,8 +1961,8 @@ def test_sfmea_assurance_obligation(obligation: dict) -> None:
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        (staging / "test_sfmea_assurance.py").write_bytes(test_source.encode("utf-8"))
-        (staging / "README.md").write_bytes(readme_source.encode("utf-8"))
+        for name, (_role, source) in generated_sources.items():
+            (staging / name).write_bytes(source.encode("utf-8"))
         if replace_existing:
             _replacement_verification, replacement_manifest = (
                 _require_untouched_scaffold(
@@ -2224,6 +2081,18 @@ def _verify_pytest_scaffold_snapshot(
     obligations_valid = bool(manifest_obligations)
     if readable and not obligations_valid:
         add("scaffold.obligations_missing", "Manifest has no assurance obligations.")
+    test_designs_valid = bool(
+        obligations_valid
+        and test_designs_are_valid(
+            manifest.get("test_designs"),
+            [value for value in manifest_obligations if isinstance(value, dict)],
+        )
+    )
+    if readable and not test_designs_valid:
+        add(
+            "scaffold.test_designs",
+            "Synthesized property/contract designs are missing or inconsistent.",
+        )
 
     binding = manifest.get("binding", {})
     if not isinstance(binding, dict):
@@ -2337,6 +2206,10 @@ def _verify_pytest_scaffold_snapshot(
         analysis,
         current_selected,
     )
+    current_test_designs = synthesize_assurance_test_designs(
+        analysis,
+        current_selected,
+    )
     previous_contracts_by_id = {
         str(value.get("id", "")): value
         for value in contract_snapshot
@@ -2399,6 +2272,7 @@ def _verify_pytest_scaffold_snapshot(
             ).encode("utf-8")
         ).hexdigest(),
         "scaffold_contracts_sha256": _scaffold_contracts_sha256(current_contracts),
+        "test_designs_sha256": str(current_test_designs["content_sha256"]),
     }
     binding_checks = {
         key: bool(binding.get(key)) and str(binding.get(key)).lower() == value.lower()
@@ -2408,6 +2282,7 @@ def _verify_pytest_scaffold_snapshot(
         "baseline_id",
         "analysis_schema_version",
         "scaffold_contracts_sha256",
+        "test_designs_sha256",
     )
     contract_binding_valid = all(
         binding_checks.get(key, False) for key in critical_binding_keys
@@ -2431,14 +2306,21 @@ def _verify_pytest_scaffold_snapshot(
 
     generated_files: list[dict[str, Any]] = []
     declared_files = manifest.get("generated_files", {})
-    generated_declarations_valid = isinstance(declared_files, dict) and all(
-        isinstance(declared_files.get(name), dict)
-        and len(str(declared_files[name].get("sha256", ""))) == 64
+    expected_generated_names = set(ASSURANCE_SCAFFOLD_GENERATED_FILE_ROLES)
+    generated_declarations_valid = bool(
+        isinstance(declared_files, dict)
+        and set(declared_files) == expected_generated_names
         and all(
-            value in "0123456789abcdefABCDEF"
-            for value in str(declared_files[name].get("sha256", ""))
+            isinstance(declared_files.get(name), dict)
+            and declared_files[name].get("role") == expected_role
+            and set(declared_files[name]) == {"role", "sha256"}
+            and len(str(declared_files[name].get("sha256", ""))) == 64
+            and all(
+                value in "0123456789abcdefABCDEF"
+                for value in str(declared_files[name].get("sha256", ""))
+            )
+            for name, expected_role in ASSURANCE_SCAFFOLD_GENERATED_FILE_ROLES.items()
         )
-        for name in ("README.md", "test_sfmea_assurance.py")
     )
     if readable and not generated_declarations_valid:
         add(
@@ -2446,7 +2328,7 @@ def _verify_pytest_scaffold_snapshot(
             "Generated starting-file hashes are missing or malformed.",
         )
     if isinstance(declared_files, dict):
-        for name in ("README.md", "test_sfmea_assurance.py"):
+        for name in sorted(expected_generated_names):
             record = declared_files.get(name, {})
             target = path / name
             expected = str(record.get("sha256", "")) if isinstance(record, dict) else ""
@@ -2522,6 +2404,7 @@ def _verify_pytest_scaffold_snapshot(
                         "analysis_schema_version",
                         "analysis_state_sha256",
                         "scaffold_contracts_sha256",
+                        "test_designs_sha256",
                     )
                 )
                 and isinstance(retirement_record.get("contract_change_summary"), dict)
@@ -2541,6 +2424,7 @@ def _verify_pytest_scaffold_snapshot(
             format_valid,
             manifest_integrity,
             obligations_valid,
+            test_designs_valid,
             contract_snapshot_valid,
             contract_snapshot_integrity,
             selection_valid,
@@ -2577,6 +2461,7 @@ def _verify_pytest_scaffold_snapshot(
             "format": format_valid,
             "manifest_integrity": manifest_integrity,
             "obligations": obligations_valid,
+            "test_designs": test_designs_valid,
             "contract_snapshot": contract_snapshot_valid,
             "contract_snapshot_integrity": contract_snapshot_integrity,
             "selection_contract": selection_valid,
@@ -2616,6 +2501,11 @@ def _verify_pytest_scaffold_snapshot(
         "contract_change_summary": contract_change_summary,
         "contract_changes": contract_changes,
         "generated_files": generated_files,
+        "test_design_summary": (
+            manifest.get("test_designs", {}).get("summary", {})
+            if test_designs_valid
+            else {}
+        ),
         "findings": findings,
         "notice": (
             "Verification detects accidental integrity and freshness failures. Generated "
@@ -2648,6 +2538,7 @@ def _require_untouched_scaffold(
         "format",
         "manifest_integrity",
         "obligations",
+        "test_designs",
         "contract_snapshot",
         "contract_snapshot_integrity",
         "selection_contract",

@@ -57,6 +57,16 @@ class AnalysisDiagnosticsTests(unittest.TestCase):
             self.assertIn("index_test_sources", action_ids)
             self.assertIn("aggregates", result["validation"])
             self.assertIn("queue_projection", result["workload"])
+            calibration = result["workload"]["review_calibration"]
+            self.assertEqual(calibration["reviewed"], 0)
+            self.assertGreater(calibration["unreviewed"], 0)
+            self.assertTrue(calibration["rules"])
+            self.assertEqual(
+                calibration["rules"][0]["calibration_status"], "unreviewed"
+            )
+            self.assertIsNone(calibration["rules"][0]["acceptance_percent"])
+            self.assertIsNone(calibration["rules"][0]["rejection_percent"])
+            self.assertIn("architecture_mapping_candidates", result["evidence"])
 
             language_run = next(
                 value
@@ -119,6 +129,37 @@ class AnalysisDiagnosticsTests(unittest.TestCase):
             payload = json.loads(output.getvalue())
             self.assertEqual(payload["format"], "pysfmea-analysis-diagnostics-1")
             self.assertIn("recommended_actions", payload)
+
+    def test_cross_stack_score_measures_client_reconciliation_not_unused_routes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "routes.py").write_text(
+                "from fastapi import APIRouter\n"
+                "router = APIRouter()\n\n"
+                "@router.get('/api/used')\n"
+                "def used(): return {}\n\n"
+                "@router.get('/api/backend-only')\n"
+                "def backend_only(): return {}\n",
+                encoding="utf-8",
+            )
+            (root / "client.ts").write_text(
+                "export const load = () => fetch('/api/used');\n",
+                encoding="utf-8",
+            )
+
+            result = analysis_diagnostics(scan_repository(root))
+            domain = next(
+                value
+                for value in result["qualification"]["domains"]
+                if value["id"] == "cross_stack_interfaces"
+            )
+
+            self.assertEqual(domain["score"], 100.0)
+            self.assertEqual(
+                domain["basis"], "Static client-endpoint reconciliation coverage"
+            )
 
 
 if __name__ == "__main__":

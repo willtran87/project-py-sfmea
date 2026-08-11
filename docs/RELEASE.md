@@ -82,7 +82,7 @@ release scripts.
   refreshes only recognized catalogs with `--force`, and preserves prior bytes on failure.
 - Confirm JSON export emits a schema-valid path-bound verification receipt and forced refresh
   rejects format-only spoofing or malformed failure-entry structures without altering the target.
-- Confirm current packages contain 19 public schemas and 47 checked artifacts while genuine
+- Confirm current packages contain 40 public schemas and 68 checked artifacts while genuine
   twelve- through fifteen-schema packages remain compatible under the current verifier.
 - Confirm assurance-program input and verdict schemas validate current success and structured
   rejection examples, are present in offline bundles/packages, and retain historical 14-schema
@@ -374,6 +374,18 @@ evidence. The maintained baseline currently contains 75 exact cases and must ret
 receiver, nested-call-order, and internal-cascade expectations unless an independently reviewed
 baseline change explains their removal.
 
+Confirm the same result contains ten matched semantic-output cases and 78 matched field claims;
+case and claim recall/precision must remain `1.0`, every per-field and per-rule population must
+reconcile, and no missing case or mismatch may be present. Review any baseline text, assurance
+method, citation, adapter, confidence, or priority change as a governed semantic change. These
+gates qualify exact deterministic output only—not reviewer-owned effects/ratings, runtime truth,
+approval, or certification.
+
+Confirm the same result contains four matched circuit-breaker records across seven explicitly
+scoped control components, including three negative near-misses; control recall and precision must
+both remain `1.0`, the positive/negative population must reconcile, and no missing or unexpected
+control may be present. These gates qualify static recognition only, not runtime effectiveness.
+
 ```powershell
 sfmea scan benchmarks\python_sfmea_corpus\repository `
   -o benchmark-analysis.json --fresh
@@ -388,8 +400,37 @@ python scripts/benchmark_scan.py benchmarks\python_sfmea_corpus\repository `
 ```
 
 Confirm the golden result includes clean exhaustive call-resolution metrics overall and by
-resolution provenance. Retain the performance record as environment-specific evidence; do not
+resolution provenance, plus clean control metrics overall and by kind. Retain the performance
+record as environment-specific evidence; do not
 apply its duration or traced-allocation values as universal thresholds.
+
+When a release claims representative scanner performance, retain the preselected repository
+snapshots, independently labeled corpora, analyses, and full evaluation outputs. Build and
+completely verify the governed campaign; integrity-only verification is insufficient for a release
+claim.
+
+```powershell
+sfmea qualification-build qualification-campaign.json `
+  -o qualification-result.json --require-eligible
+sfmea qualification-verify qualification-result.json `
+  --manifest qualification-campaign.json --require-eligible `
+  -o qualification-verification.json
+sfmea qualification-report qualification-result.json `
+  --manifest qualification-campaign.json -o qualification-report.html
+sfmea qualification-report-verify qualification-report.html `
+  --result qualification-result.json -o qualification-report-verification.json
+sfmea program-init --analysis service-a=service-a/analysis.json `
+  --qualification-result qualification-result.json `
+  --qualification-manifest qualification-campaign.json `
+  -o assurance-program.json
+sfmea program-verify assurance-program.json --format json `
+  -o assurance-program-verification.json
+```
+
+Review every failed/null gate and every repository/rule/framework/domain segment. Archive the
+manifest, result, verification, and all referenced artifacts together. An eligible campaign still
+requires the named independent authority to establish representativeness and approve any formal
+tool-qualification or release claim.
 
 ## 3. Smoke-test the built wheel
 

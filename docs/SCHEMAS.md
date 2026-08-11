@@ -51,9 +51,27 @@ Available names:
 
 | Name | Contract |
 |---|---|
+| `accessibility-evidence` | Sealed, exact-report-bound manual accessibility qualification evidence |
+| `accessibility-evidence-draft` | Editable required-scenario accessibility qualification checklist |
+| `accessibility-evidence-verification` | Integrity, completeness, outcome, and optional exact-report binding verdict |
+| `activation-apply-receipt` | Exact source/workspace/result bindings and applied-decision accounting |
+| `activation-records` | Exact-workspace-bound bulk assignment and decision interchange |
+| `activation-records-import-receipt` | Transactional import counts plus source-record and resulting-workspace digests |
+| `activation-workspace` | Editable evidence onboarding, test attribution, review/calibration, guidance, SFTA, architecture, and interface work package |
+| `activation-workspace-verification` | Bounded integrity, decision semantics, uniqueness, and optional exact-analysis binding verdict |
+| `configuration-authoring` | Sealed exact-analysis-and-configuration-bound reviewed configuration additions |
+| `configuration-authoring-apply-receipt` | Validated TOML publication and addition-count receipt |
+| `configuration-authoring-draft` | Editable guidance, architecture, and interface proposal workspace |
+| `configuration-authoring-verification` | Integrity, semantics, and optional exact-binding verdict |
+| `sfta-authoring` | Sealed exact-analysis-bound fault-tree definitions with named engineering approvals |
+| `sfta-authoring-apply-receipt` | Applied hazard replacements and source/result analysis bindings |
+| `sfta-authoring-draft` | Editable one-entry-per-hazard fault-tree engineering workspace |
+| `sfta-authoring-verification` | Integrity, structure, logic, review, and optional exact-analysis binding verdict |
 | `assurance-program` | Multi-repository analysis bindings, external requirements/evidence, temporal and circuit-breaker relationships, independent validation/model metrics, and governance policy |
 | `assurance-program-report-verification` | Standalone program-HTML integrity and optional exact-program regeneration verdicts |
 | `assurance-program-verification` | Program integrity, binding, trusted-evidence, timing/resilience, quality-gate, relationship, and governance verdicts |
+| `assurance-scaffold` | Exact-analysis-bound pytest starting points, property strategies, contract cases, and generated-file identities |
+| `assurance-scaffold-verification` | Manifest, synthesized-design, generated-file, lifecycle, and exact analysis-binding verdict |
 | `assurance-work-queue` | Accepted-finding work states, blockers, automation eligibility, and next actions |
 | `assurance-work-queue-verification` | Queue integrity, analysis binding, and deterministic-projection verdicts |
 | `detached-signature` | Ed25519 signature envelope, signed statement, and package subject |
@@ -62,13 +80,37 @@ Available names:
 | `fault-injection-plan` | Obligation-bound, integrity-declaring plan for a governed built-in fault-injection plugin |
 | `fault-injection-plan-verification` | Plan integrity, readiness, closed policy, plugin, case, and mandatory exact obligation-binding verdicts |
 | `diagram-bundle-verification` | Success, rejection, and incomplete diagram-verifier verdicts |
+| `enhancement-workbench` | Bounded capability register, evidence recipes, review clusters, assurance portfolio, static surface models, and governed disposition queues |
+| `enhancement-workbench-verification` | Workbench integrity, register completeness, optional analysis binding, and exact-regeneration verdicts |
+| `enhancement-scope-preview` | Read-only bounded file-metadata preview for proposed evidence-only scope changes |
+| `evidence-preflight` | Read-only analysis-bound evidence readiness and remediation receipt |
+| `evidence-onboarding-receipt` | Selected-artifact identities, source/result bindings, import accounting, and verified assurance queue |
+| `evidence-onboarding-receipt-verification` | Receipt integrity and optional exact resulting-analysis binding verdict |
 | `html-report-verification` | Success, rejection, and incomplete HTML-verifier verdicts |
+| `plugin-manifest` | Closed SDK identity, compatibility, capability, entry point, trust, and execution-limit declaration |
+| `plugin-request` | Versioned, exact-analysis-bound isolated-process request envelope |
+| `plugin-response` | Strict observation-only plugin response envelope |
+| `plugin-run` | Content-addressed plugin execution receipt and process-boundary disclosure |
+| `plugin-run-verification` | Run integrity plus optional exact analysis and manifest binding verdict |
 | `publication-failure-catalog` | Package-publication failure codes, phases, stable findings, remediation actions, and retry policy |
 | `publication-failure-catalog-verification` | Bounded catalog integrity and exact-taxonomy success/rejection verdicts |
+| `pull-request-analysis` | Exact-commit base/head bundle receipt with artifact and security declarations |
+| `pull-request-analysis-verification` | File-set, digest, regeneration, report, commit, configuration, and security verdict |
+| `qualification-campaign-manifest` | Closed governance, thresholds, repository segments, and relative retained-artifact references |
+| `qualification-campaign-result` | Exact-regenerated finding, call-resolution, and false-positive-aware control metrics plus positive/negative control populations by repository, rule, framework, and domain |
+| `qualification-campaign-verification` | Internal integrity plus optional exact manifest/artifact regeneration verdict |
+| `qualification-report-verification` | Self-contained HTML document, embedded campaign result, and optional exact-result binding verdict |
+| `report-browser-quality` | Content-addressed Chromium navigation, progressive per-section rendering, performance, responsive-layout, accessibility, and UI-contract receipt |
+| `report-browser-quality-verification` | Receipt integrity, semantic consistency, and optional exact-report binding verdict |
 | `review-package-manifest` | Package file inventory, checksums, provenance, and state binding |
 | `review-package-verification` | Success and rejection verdicts from `verify-package --json`, plus success, pre-publication failure, and post-publication rejection receipts from `package --json` |
 | `schema-bundle-verification` | Success and rejection verdicts for the offline schema set |
 | `schema-catalog` | Content-addressed discovery metadata for the complete public contract set |
+| `synthesis-apply-receipt` | Source/result analysis and sealed-workspace bindings for applied decisions |
+| `synthesis-apply-receipt-verification` | Receipt integrity plus complete source/workspace/result and decision-accounting reconciliation verdict |
+| `synthesis-workspace` | Sealed, exact-analysis-bound suggestion and contradiction-review workspace |
+| `synthesis-workspace-draft` | Editable, human-controlled suggestion synthesis workspace |
+| `synthesis-workspace-verification` | Integrity, decision, contradiction, and optional exact-analysis binding verdict |
 | `workflow-status` | Lifecycle stage, handoff gates, evidence, summaries, and remediation actions |
 
 The schemas use stable `urn:pysfmea:schema:…:1` identifiers and have no external `$ref`
@@ -101,6 +143,22 @@ Coverage JSON and `sfmea summary --json` expose the same additive safe projectio
 repository accounting is programmatic output rather than a cataloged public schema: consumers
 must branch on `reconciliation_status`/`status`, accept `null` totals when unavailable, and avoid
 interpreting semantic accounting coverage as behavioral or test adequacy.
+
+### Architecture analysis programmatic outputs
+
+The governed analysis carries three additive, versioned top-level architecture objects:
+
+| Field | Format | Meaning |
+|---|---|---|
+| `deployment_topology` | `pysfmea-deployment-topology-1` | Provenance-bearing declared deployment nodes/edges and bounded candidate component placements |
+| `shared_fate_analysis` | `pysfmea-shared-fate-analysis-1` | Multi-component deployment, subsystem, and external-dependency common-cause review leads |
+| `architecture_hierarchy` | `pysfmea-architecture-hierarchy-1` | Repository/subsystem/source-package nesting, memberships, and upward trace aggregation |
+
+These are programmatic analysis outputs rather than separately cataloged `sfmea schema` names.
+Consumers should require the exact `format`, validate the full analysis, reconcile each summary to
+its records, follow component backlinks to the top-level objects, and preserve limitations and
+authority fields. Unknown additive fields should be tolerated. The HTML payload embeds a bounded
+100-record navigation projection; the analysis JSON remains the complete bounded source.
 
 ### System assurance program contracts
 
@@ -238,8 +296,8 @@ ceilings; the assurance-program input remains limited to 500,000 nodes.
 
 ## Offline review-package use
 
-Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all nineteen
-documents under their stable catalog filenames. The package manifest checksums every file and
+Current `sfmea package` directory and ZIP outputs embed `schema-catalog.json` and all 40 public
+schema documents under their stable catalog filenames. The package manifest checksums every file and
 binds the catalog format, path, canonical digest, and schema count. `sfmea verify-package`
 additionally cross-checks catalog completeness, schema identities, and each canonical digest.
 This lets a recipient validate public structures while disconnected and retain the exact

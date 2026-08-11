@@ -199,7 +199,7 @@ semantic adapter or came from the inventory's own bounded read:
 | `analysis_source_snapshot` | Reuses the exact Python source bytes accepted for decoding, AST analysis, test indexing, and baseline construction. |
 | `test_evidence_snapshot` | Reuses accepted textual test-reference evidence captured before baseline construction. |
 | `dependency_manifest_snapshot` | Reuses an accepted pyproject, requirements/constraints, or supported lockfile snapshot. |
-| `interface_contract_snapshot` | Reuses an accepted OpenAPI, Swagger, JSON Schema, YAML, or protobuf contract snapshot. |
+| `interface_contract_snapshot` | Reuses an accepted OpenAPI, AsyncAPI, Swagger, GraphQL, JSON Schema, Avro, YAML, or protobuf contract snapshot. |
 | `coverage_evidence_snapshot` | Reuses accepted coverage.py JSON bytes only when that evidence file is inside the analyzed repository. |
 | `identity_stable_inventory_snapshot` | The inventory performed its own bounded regular-file read with inspected/opened/final identity reconciliation. |
 | `none` | No accepted content snapshot contributed to the entry, normally because only metadata was safe or available for an opaque, unresolved, excluded, or budget-limited artifact. |
@@ -298,11 +298,28 @@ strictly decodes UTF-8 JSON without duplicate keys or non-finite values. Depth, 
 field-length, and active-candidate limits are enforced before matching. Matching indexes exact
 source/component/rule identities and refuses ambiguous source-less cases.
 
+Optional semantic cases bind an exact source/component/rule identity to a closed subset of
+deterministic generated output: failure mode, trigger, causes, local effect, recommended actions,
+assurance verification method, all/direct citation IDs, adapter IDs, confidence, and screening
+priority. Ordered narrative arrays compare exactly; citation and adapter arrays compare as
+normalized sets and may be empty to express a negative expectation. Results retain missing cases,
+field mismatches, exact-case recall/precision, claim recall/precision, and per-field/per-rule
+populations. The maintained corpus contains ten cases and 78 claims across representative rule
+families.
+
+Control qualification uses an independently bounded `control_scope` of path/component globs.
+Exact `control_cases` are positive kind/role labels; scoped components without a positive record
+form the negative population. The evaluator reports both populations, counts any detected control
+outside the positive labels as unexpected, and makes those false positives reduce precision. The
+maintained corpus exercises four circuit-breaker records and three semantic near-misses. These are
+static-detector metrics, not evidence that a control works under failure at runtime.
+
 The deterministic `pysfmea-evaluation-result-1` includes verifier provenance and a canonical
 corpus digest. Recall, precision, duplicate, localization, citation, traceability, provenance,
-and source-accounting metrics establish repeatable behavior only within the declared corpus
-scope. They do not establish semantic correctness, performance on unseen systems, certification
-credit, or engineering approval of an updated golden baseline.
+source-accounting, and exact semantic-output metrics establish repeatable behavior only within the
+declared corpus scope and curated fields. They do not establish the correctness of reviewer-owned
+system effects or ratings, performance on unseen systems, runtime behavior, certification credit,
+or engineering approval of an updated golden baseline.
 The checked-in corpus is synthetic and self-maintained; independent multi-repository validation
 is still required before making claims about representative real-world recall or precision.
 
@@ -334,7 +351,19 @@ was exercised.
 
 Verification planning is deliberately separate from implementation and evidence review.
 Generated pytest scaffolds fail until meaningful tests are implemented and are labeled as
-planning artifacts, not evidence. Planning review cannot directly set `verified`,
+planning artifacts, not evidence. Property-test obligations receive bounded Hypothesis strategy
+specifications derived from retained signature annotations and conservative parameter-name
+heuristics. Contract-test obligations receive conforming, missing-input, malformed-input,
+incompatible-response, and declared-error cases tied to exact candidate contract digests. If no
+association is defensible, synthesis emits an explicit failing contract-binding case.
+
+Generated project adapters do not import or execute a subject automatically. They fail until an
+engineer connects the exact analyzed component inside an approved sandbox and returns a structured
+observation that proves stimulus activation, supplies evidence references, and records a true
+result for every oracle and acceptance criterion. Manifest verification independently regenerates
+the complete strategy/case projection, so a self-consistently rehashed change still fails exact
+analysis binding. These controls establish deterministic design provenance, not oracle validity,
+safe invocation, test adequacy, or evidence sufficiency. Planning review cannot directly set `verified`,
 `accepted_risk`, or `closed`. Those states require current as-run evidence, proof that the
 intended stimulus occurred, acceptance-criterion evaluation, independent sufficiency review,
 and applicable approval. Rescans preserve planning decisions but reopen nontrivial obligations
@@ -376,6 +405,14 @@ undeveloped event. Reconciliation independently lists top-down events without co
 findings, hazard-linked findings without an event, and hazard-link inconsistencies. These
 are coverage prompts for qualified review, not proof that either analysis direction is
 complete or that a linked event is a necessary or sufficient cause.
+
+Qualitative minimal cut sets are calculated only when the latest governed SFTA authoring review is
+approved and its stored definition SHA-256 exactly matches the current tree. The calculator expands
+explicit AND, OR, VOTE, and INHIBIT logic, absorbs duplicate and strict-superset terms, retains
+undeveloped, external, and conditioning event flags, and enforces per-tree count, width, and
+operation ceilings. Unapproved, subsequently edited, ambiguous, cyclic, or excessive models return
+a closed non-computed state with no partial cut-set list. Results do not calculate probability,
+assume independence, establish causal sufficiency, or accept risk.
 
 ## Effects and scoring
 
@@ -610,7 +647,8 @@ analyzed project, and passing plugin output remains evidence awaiting independen
 
 Large orchestration modules depend on extracted typed seams in `interfaces.py`, deterministic
 method/stimulus policy in `assurance_planning.py`, and pure container argv policy in
-`sandbox_policy.py`. CI treats those modules as a strict typing ratchet, enforces module-specific
+`sandbox_policy.py`. CI applies strict typing to the complete package and selected release-gate
+scripts, so new package modules enter the gate automatically. It also enforces module-specific
 branch-coverage floors, mutation-tests critical plan/outcome/sandbox verdicts, scans source and
 dependencies, and publishes a CycloneDX dependency SBOM alongside coverage evidence.
 
@@ -721,6 +759,25 @@ tool qualification.
 Mapping-review expiry uses the persisted scan time only when the manifest content and timestamp
 binding verify. If either check fails, traceability retains the audit result for diagnosis but
 grants zero effective independent-approval credit until the analysis provenance is restored.
+
+## Advanced review authority boundaries
+
+Report saved views are local presentation state keyed to a baseline; URL fragments contain only
+bounded filters. Accessibility automation covers a named WCAG subset, while exact-report manual
+evidence separately records keyboard, zoom/reflow, display-preference, and screen-reader results.
+Neither presentation state nor an automated browser check changes the governed analysis.
+
+LLM suggestions remain evidence-constrained proposals. Deterministic lexical relationships expose
+possible duplicates, contradictions, and divergent claims without deciding which is correct. A
+sealed synthesis workspace binds the original suggestion and analysis, records human edits, and
+requires a named reviewer and rationale for accept/reject. Accepted proposals remain unreviewed
+worksheet findings.
+
+Pull-request orchestration compares exact committed archives without checking out the working tree
+or executing repository code. Process plugins are explicit, semantic-versioned, bounded
+observation producers. Their separate process and reduced environment are not an operating-system
+sandbox, and their output receives no reviewer authority automatically. See
+[advanced review workflows](ADVANCED_REVIEW.md) for commands and operational controls.
 
 ## Public references
 

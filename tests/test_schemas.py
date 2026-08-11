@@ -17,7 +17,9 @@ from pysfmea.assurance import (
     ASSURANCE_WORK_QUEUE_FORMAT,
     ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
     assurance_work_queue,
+    export_pytest_scaffold,
     verify_assurance_work_queue,
+    verify_pytest_scaffold,
 )
 from pysfmea.cli import main
 from pysfmea.diagrams import (
@@ -77,24 +79,69 @@ class SchemaCatalogTests(unittest.TestCase):
         self.assertEqual(
             [entry["name"] for entry in first["schemas"]],
             [
+                "accessibility-evidence",
+                "accessibility-evidence-draft",
+                "accessibility-evidence-verification",
+                "activation-apply-receipt",
+                "activation-records",
+                "activation-records-import-receipt",
+                "activation-workspace",
+                "activation-workspace-verification",
                 "assurance-program",
                 "assurance-program-report-verification",
                 "assurance-program-verification",
+                "assurance-scaffold",
+                "assurance-scaffold-verification",
                 "assurance-work-queue",
                 "assurance-work-queue-verification",
+                "calibration-comparison",
+                "configuration-authoring",
+                "configuration-authoring-apply-receipt",
+                "configuration-authoring-draft",
+                "configuration-authoring-verification",
                 "detached-signature",
                 "diagram",
                 "diagram-bundle",
                 "diagram-bundle-verification",
+                "enhancement-scope-preview",
+                "enhancement-workbench",
+                "enhancement-workbench-verification",
+                "evaluation-result",
+                "evidence-onboarding-receipt",
+                "evidence-onboarding-receipt-verification",
+                "evidence-preflight",
                 "fault-injection-plan",
                 "fault-injection-plan-verification",
+                "golden-corpus",
                 "html-report-verification",
+                "plugin-manifest",
+                "plugin-request",
+                "plugin-response",
+                "plugin-run",
+                "plugin-run-verification",
                 "publication-failure-catalog",
                 "publication-failure-catalog-verification",
+                "pull-request-analysis",
+                "pull-request-analysis-verification",
+                "qualification-campaign-manifest",
+                "qualification-campaign-result",
+                "qualification-campaign-verification",
+                "qualification-report-verification",
+                "report-browser-quality",
+                "report-browser-quality-verification",
                 "review-package-manifest",
                 "review-package-verification",
                 "schema-bundle-verification",
                 "schema-catalog",
+                "sfta-authoring",
+                "sfta-authoring-apply-receipt",
+                "sfta-authoring-draft",
+                "sfta-authoring-verification",
+                "synthesis-apply-receipt",
+                "synthesis-apply-receipt-verification",
+                "synthesis-workspace",
+                "synthesis-workspace-draft",
+                "synthesis-workspace-verification",
                 "workflow-status",
             ],
         )
@@ -107,19 +154,38 @@ class SchemaCatalogTests(unittest.TestCase):
             self.assertEqual(canonical_json_sha256(document), entry["sha256"])
         Draft202012Validator(schema_document("schema-catalog")).validate(first)
 
-    def test_publication_failure_catalog_is_discoverable_and_schema_backed(self) -> None:
+    def test_assurance_scaffold_and_verdict_are_publicly_schema_backed(self) -> None:
+        (self.root / "subject.py").write_text(
+            "def calculate(value: int) -> float:\n    return 10 / value\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        scaffold = export_pytest_scaffold(
+            analysis,
+            self.root / "assurance-tests",
+            disposition="all",
+            limit=2,
+        )
+        manifest = json.loads(
+            (scaffold / "assurance-manifest.json").read_text(encoding="utf-8")
+        )
+        verdict = verify_pytest_scaffold(analysis, scaffold)
+        Draft202012Validator(schema_document("assurance-scaffold")).validate(manifest)
+        Draft202012Validator(
+            schema_document("assurance-scaffold-verification")
+        ).validate(verdict)
+
+    def test_publication_failure_catalog_is_discoverable_and_schema_backed(
+        self,
+    ) -> None:
         catalog = publication_failure_catalog()
         self.assertEqual(catalog["format"], PUBLICATION_FAILURE_CATALOG_FORMAT)
-        self.assertEqual(
-            catalog["algorithm"], PUBLICATION_FAILURE_CATALOG_ALGORITHM
-        )
+        self.assertEqual(catalog["algorithm"], PUBLICATION_FAILURE_CATALOG_ALGORITHM)
         self.assertEqual(
             catalog["canonicalization"],
             PUBLICATION_FAILURE_CATALOG_CANONICALIZATION,
         )
-        self.assertEqual(
-            catalog["content_sha256"], PUBLICATION_FAILURE_CATALOG_SHA256
-        )
+        self.assertEqual(catalog["content_sha256"], PUBLICATION_FAILURE_CATALOG_SHA256)
         catalog_content = dict(catalog)
         catalog_content.pop("content_sha256")
         self.assertEqual(
@@ -127,9 +193,9 @@ class SchemaCatalogTests(unittest.TestCase):
             catalog["content_sha256"],
         )
         self.assertEqual(len(catalog["failures"]), len(PUBLICATION_FAILURES))
-        Draft202012Validator(
-            schema_document("publication-failure-catalog")
-        ).validate(catalog)
+        Draft202012Validator(schema_document("publication-failure-catalog")).validate(
+            catalog
+        )
         catalog_validator = Draft202012Validator(
             schema_document("publication-failure-catalog")
         )
@@ -144,9 +210,7 @@ class SchemaCatalogTests(unittest.TestCase):
         self.assertTrue(list(catalog_validator.iter_errors(changed_algorithm)))
         changed_canonicalization = dict(catalog)
         changed_canonicalization["canonicalization"] = "unspecified"
-        self.assertTrue(
-            list(catalog_validator.iter_errors(changed_canonicalization))
-        )
+        self.assertTrue(list(catalog_validator.iter_errors(changed_canonicalization)))
         self.assertEqual(
             schema_document("review-package-verification")[
                 "x-pysfmea-publication-failure-catalog"
@@ -165,9 +229,9 @@ class SchemaCatalogTests(unittest.TestCase):
             self.assertEqual(main(["publication-catalog", "--json"]), 0)
         machine = json.loads(json_output.getvalue())
         self.assertEqual(machine, catalog)
-        Draft202012Validator(
-            schema_document("publication-failure-catalog")
-        ).validate(machine)
+        Draft202012Validator(schema_document("publication-failure-catalog")).validate(
+            machine
+        )
 
         exported_path = self.root / "catalogs" / "publication-catalog.json"
         with contextlib.redirect_stdout(io.StringIO()) as export_output:
@@ -182,9 +246,7 @@ class SchemaCatalogTests(unittest.TestCase):
                 0,
             )
         self.assertIn(str(exported_path), export_output.getvalue())
-        self.assertEqual(
-            json.loads(exported_path.read_text(encoding="utf-8")), catalog
-        )
+        self.assertEqual(json.loads(exported_path.read_text(encoding="utf-8")), catalog)
         receipt_path = self.root / "catalogs" / "receipt-catalog.json"
         with contextlib.redirect_stdout(io.StringIO()) as receipt_output:
             self.assertEqual(
@@ -234,9 +296,7 @@ class SchemaCatalogTests(unittest.TestCase):
                 ),
                 0,
             )
-        self.assertEqual(
-            json.loads(exported_path.read_text(encoding="utf-8")), catalog
-        )
+        self.assertEqual(json.loads(exported_path.read_text(encoding="utf-8")), catalog)
 
         original = exported_path.read_bytes()
         with patch(
@@ -409,9 +469,7 @@ class SchemaCatalogTests(unittest.TestCase):
         Draft202012Validator(verification_schema).validate(missing)
 
         oversized_path = self.root / "oversized-catalog.json"
-        oversized_path.write_bytes(
-            b" " * (MAX_PUBLICATION_FAILURE_CATALOG_BYTES + 1)
-        )
+        oversized_path.write_bytes(b" " * (MAX_PUBLICATION_FAILURE_CATALOG_BYTES + 1))
         with contextlib.redirect_stdout(io.StringIO()) as oversized_output:
             self.assertEqual(
                 main(
@@ -461,9 +519,9 @@ class SchemaCatalogTests(unittest.TestCase):
         self.assertTrue(verification["valid"])
         self.assertTrue(all(verification["checks"].values()))
         self.assertEqual(verification["schema_count"], len(SCHEMA_FILENAMES))
-        Draft202012Validator(
-            schema_document("schema-bundle-verification")
-        ).validate(verification)
+        Draft202012Validator(schema_document("schema-bundle-verification")).validate(
+            verification
+        )
 
         changed = json.loads(json.dumps(documents))
         changed[SCHEMA_FILENAMES["diagram"]]["title"] = "Changed contract"
@@ -471,9 +529,9 @@ class SchemaCatalogTests(unittest.TestCase):
         self.assertFalse(rejected["valid"])
         self.assertFalse(rejected["checks"]["content_integrity"])
         self.assertEqual(rejected["errors"][0]["code"], "schema.digest")
-        Draft202012Validator(
-            schema_document("schema-bundle-verification")
-        ).validate(rejected)
+        Draft202012Validator(schema_document("schema-bundle-verification")).validate(
+            rejected
+        )
 
         incomplete = json.loads(json.dumps(documents))
         incomplete.pop(SCHEMA_CATALOG_FILENAME)
@@ -481,6 +539,39 @@ class SchemaCatalogTests(unittest.TestCase):
         self.assertFalse(rejected["checks"]["file_set"])
         self.assertIn(
             "schema.file_missing", {value["code"] for value in rejected["errors"]}
+        )
+
+        pre_synthesis = json.loads(json.dumps(documents))
+        synthesis_names = {"assurance-scaffold", "assurance-scaffold-verification"}
+        pre_synthesis[SCHEMA_CATALOG_FILENAME]["schemas"] = [
+            value
+            for value in pre_synthesis[SCHEMA_CATALOG_FILENAME]["schemas"]
+            if value["name"] not in synthesis_names
+        ]
+        for name in synthesis_names:
+            pre_synthesis.pop(SCHEMA_FILENAMES[name])
+        legacy_verification = verify_schema_bundle_documents(pre_synthesis)
+        self.assertTrue(legacy_verification["valid"])
+        self.assertEqual(
+            legacy_verification["schema_count"], len(SCHEMA_FILENAMES) - 2
+        )
+
+        pre_onboarding = json.loads(json.dumps(documents))
+        onboarding_names = {
+            "evidence-onboarding-receipt",
+            "evidence-onboarding-receipt-verification",
+        }
+        pre_onboarding[SCHEMA_CATALOG_FILENAME]["schemas"] = [
+            value
+            for value in pre_onboarding[SCHEMA_CATALOG_FILENAME]["schemas"]
+            if value["name"] not in onboarding_names
+        ]
+        for name in onboarding_names:
+            pre_onboarding.pop(SCHEMA_FILENAMES[name])
+        previous_verification = verify_schema_bundle_documents(pre_onboarding)
+        self.assertTrue(previous_verification["valid"])
+        self.assertEqual(
+            previous_verification["schema_count"], len(SCHEMA_FILENAMES) - 2
         )
 
         mixed = json.loads(json.dumps(documents))
@@ -522,7 +613,9 @@ class SchemaCatalogTests(unittest.TestCase):
             STATEMENT_FORMAT,
         )
         diagram = schema_document("diagram")
-        self.assertEqual(diagram["properties"]["schema_version"]["const"], DIAGRAM_SCHEMA)
+        self.assertEqual(
+            diagram["properties"]["schema_version"]["const"], DIAGRAM_SCHEMA
+        )
         bundle = schema_document("diagram-bundle")
         self.assertEqual(
             bundle["properties"]["schema_version"]["const"], DIAGRAM_BUNDLE_SCHEMA
@@ -670,15 +763,13 @@ class SchemaCatalogTests(unittest.TestCase):
 
         verification_output = io.StringIO()
         with contextlib.redirect_stdout(verification_output):
-            result = main(
-                ["schema", "--verify-bundle", str(bundle), "--json"]
-            )
+            result = main(["schema", "--verify-bundle", str(bundle), "--json"])
         self.assertEqual(result, 0)
         verification = json.loads(verification_output.getvalue())
         self.assertTrue(verification["valid"])
-        Draft202012Validator(
-            schema_document("schema-bundle-verification")
-        ).validate(verification)
+        Draft202012Validator(schema_document("schema-bundle-verification")).validate(
+            verification
+        )
 
         changed_path = bundle / SCHEMA_FILENAMES["diagram"]
         changed = json.loads(changed_path.read_text(encoding="utf-8"))
@@ -689,9 +780,7 @@ class SchemaCatalogTests(unittest.TestCase):
         )
         rejected_output = io.StringIO()
         with contextlib.redirect_stdout(rejected_output):
-            result = main(
-                ["schema", "--verify-bundle", str(bundle), "--json"]
-            )
+            result = main(["schema", "--verify-bundle", str(bundle), "--json"])
         self.assertEqual(result, 1)
         rejected = json.loads(rejected_output.getvalue())
         self.assertIn("schema.digest", {error["code"] for error in rejected["errors"]})
@@ -699,15 +788,11 @@ class SchemaCatalogTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(main(["schema", "--bundle", str(bundle)]), 2)
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(
-                main(["schema", "--bundle", str(bundle), "--force"]), 0
-            )
+            self.assertEqual(main(["schema", "--bundle", str(bundle), "--force"]), 0)
         notes = bundle / "reviewer-notes.txt"
         notes.write_text("preserve me\n", encoding="utf-8")
         with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(
-                main(["schema", "--bundle", str(bundle), "--force"]), 2
-            )
+            self.assertEqual(main(["schema", "--bundle", str(bundle), "--force"]), 2)
         self.assertEqual(notes.read_text(encoding="utf-8"), "preserve me\n")
         notes.unlink()
         invalid_type = bundle / SCHEMA_FILENAMES["diagram"]
@@ -723,11 +808,12 @@ class SchemaCatalogTests(unittest.TestCase):
             {error["code"] for error in json.loads(type_output.getvalue())["errors"]},
         )
         with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(
-                main(["schema", "--bundle", str(bundle), "--force"]), 2
-            )
+            self.assertEqual(main(["schema", "--bundle", str(bundle), "--force"]), 2)
         self.assertFalse(
-            any(path.name.startswith(".offline-contracts.") for path in self.root.iterdir())
+            any(
+                path.name.startswith(".offline-contracts.")
+                for path in self.root.iterdir()
+            )
         )
 
         missing_output = io.StringIO()
@@ -780,7 +866,10 @@ class SchemaCatalogTests(unittest.TestCase):
         duplicate = verify_schema_bundle_path(bundle)
         self.assertFalse(duplicate["valid"])
         self.assertTrue(
-            any("duplicate object key" in error["message"] for error in duplicate["errors"])
+            any(
+                "duplicate object key" in error["message"]
+                for error in duplicate["errors"]
+            )
         )
         verdict_schema.validate(duplicate)
         target.write_bytes(original)
@@ -792,7 +881,10 @@ class SchemaCatalogTests(unittest.TestCase):
             changed_during_read = verify_schema_bundle_path(bundle)
         self.assertFalse(changed_during_read["valid"])
         self.assertTrue(
-            any("changed during safe open" in error["message"] for error in changed_during_read["errors"])
+            any(
+                "changed during safe open" in error["message"]
+                for error in changed_during_read["errors"]
+            )
         )
         verdict_schema.validate(changed_during_read)
 
@@ -811,9 +903,7 @@ class SchemaCatalogTests(unittest.TestCase):
         ):
             linked = verify_schema_bundle_path(bundle)
         self.assertFalse(linked["valid"])
-        self.assertIn(
-            "schema.file_type", {error["code"] for error in linked["errors"]}
-        )
+        self.assertIn("schema.file_type", {error["code"] for error in linked["errors"]})
         verdict_schema.validate(linked)
 
         linked_target = bundle / SCHEMA_FILENAMES["workflow-status"]

@@ -1,0 +1,81 @@
+"""Dependency-free registry for every public JSON Schema artifact.
+
+This module deliberately imports no PySFMEA feature modules.  Schema generation and review-
+package publication can therefore share one authoritative filename inventory without creating
+an import cycle or maintaining parallel allowlists.
+"""
+
+from __future__ import annotations
+
+SCHEMA_CATALOG_FILENAME = "schema-catalog.json"
+
+SCHEMA_FILENAMES = {
+    "accessibility-evidence": "pysfmea-accessibility-evidence.schema.json",
+    "accessibility-evidence-draft": "pysfmea-accessibility-evidence-draft.schema.json",
+    "accessibility-evidence-verification": "pysfmea-accessibility-evidence-verification.schema.json",
+    "activation-apply-receipt": "pysfmea-activation-apply-receipt.schema.json",
+    "activation-records": "pysfmea-activation-records.schema.json",
+    "calibration-comparison": "pysfmea-calibration-comparison.schema.json",
+    "activation-records-import-receipt": "pysfmea-activation-records-import-receipt.schema.json",
+    "activation-workspace": "pysfmea-activation-workspace.schema.json",
+    "activation-workspace-verification": "pysfmea-activation-workspace-verification.schema.json",
+    "assurance-program": "pysfmea-assurance-program.schema.json",
+    "assurance-program-report-verification": "pysfmea-assurance-program-report-verification.schema.json",
+    "assurance-program-verification": "pysfmea-assurance-program-verification.schema.json",
+    "assurance-scaffold": "pysfmea-assurance-scaffold.schema.json",
+    "assurance-scaffold-verification": "pysfmea-assurance-scaffold-verification.schema.json",
+    "assurance-work-queue": "pysfmea-assurance-work-queue.schema.json",
+    "assurance-work-queue-verification": "pysfmea-assurance-work-queue-verification.schema.json",
+    "configuration-authoring": "pysfmea-configuration-authoring.schema.json",
+    "configuration-authoring-apply-receipt": "pysfmea-configuration-authoring-apply-receipt.schema.json",
+    "configuration-authoring-draft": "pysfmea-configuration-authoring-draft.schema.json",
+    "configuration-authoring-verification": "pysfmea-configuration-authoring-verification.schema.json",
+    "evaluation-result": "pysfmea-evaluation-result.schema.json",
+    "detached-signature": "pysfmea-detached-signature.schema.json",
+    "diagram": "pysfmea-diagram.schema.json",
+    "diagram-bundle": "pysfmea-diagram-bundle.schema.json",
+    "diagram-bundle-verification": "pysfmea-diagram-bundle-verification.schema.json",
+    "enhancement-scope-preview": "pysfmea-enhancement-scope-preview.schema.json",
+    "enhancement-workbench": "pysfmea-enhancement-workbench.schema.json",
+    "golden-corpus": "pysfmea-golden-corpus.schema.json",
+    "enhancement-workbench-verification": "pysfmea-enhancement-workbench-verification.schema.json",
+    "evidence-onboarding-receipt": "pysfmea-evidence-onboarding-receipt.schema.json",
+    "evidence-onboarding-receipt-verification": "pysfmea-evidence-onboarding-receipt-verification.schema.json",
+    "evidence-preflight": "pysfmea-evidence-preflight.schema.json",
+    "fault-injection-plan": "pysfmea-fault-injection-plan.schema.json",
+    "fault-injection-plan-verification": "pysfmea-fault-injection-plan-verification.schema.json",
+    "html-report-verification": "pysfmea-html-report-verification.schema.json",
+    "plugin-manifest": "pysfmea-plugin-manifest.schema.json",
+    "plugin-request": "pysfmea-plugin-request.schema.json",
+    "plugin-response": "pysfmea-plugin-response.schema.json",
+    "plugin-run": "pysfmea-plugin-run.schema.json",
+    "plugin-run-verification": "pysfmea-plugin-run-verification.schema.json",
+    "publication-failure-catalog": "pysfmea-publication-failure-catalog.schema.json",
+    "publication-failure-catalog-verification": "pysfmea-publication-failure-catalog-verification.schema.json",
+    "pull-request-analysis": "pysfmea-pull-request-analysis.schema.json",
+    "pull-request-analysis-verification": "pysfmea-pull-request-analysis-verification.schema.json",
+    "qualification-campaign-manifest": "pysfmea-qualification-campaign-manifest.schema.json",
+    "qualification-campaign-result": "pysfmea-qualification-campaign-result.schema.json",
+    "qualification-campaign-verification": "pysfmea-qualification-campaign-verification.schema.json",
+    "qualification-report-verification": "pysfmea-qualification-report-verification.schema.json",
+    "report-browser-quality": "pysfmea-report-browser-quality.schema.json",
+    "report-browser-quality-verification": "pysfmea-report-browser-quality-verification.schema.json",
+    "review-package-manifest": "pysfmea-review-package-manifest.schema.json",
+    "review-package-verification": "pysfmea-review-package-verification.schema.json",
+    "schema-bundle-verification": "pysfmea-schema-bundle-verification.schema.json",
+    "schema-catalog": "pysfmea-schema-catalog.schema.json",
+    "sfta-authoring": "pysfmea-sfta-authoring.schema.json",
+    "sfta-authoring-apply-receipt": "pysfmea-sfta-authoring-apply-receipt.schema.json",
+    "sfta-authoring-draft": "pysfmea-sfta-authoring-draft.schema.json",
+    "sfta-authoring-verification": "pysfmea-sfta-authoring-verification.schema.json",
+    "synthesis-apply-receipt": "pysfmea-synthesis-apply-receipt.schema.json",
+    "synthesis-apply-receipt-verification": "pysfmea-synthesis-apply-receipt-verification.schema.json",
+    "synthesis-workspace": "pysfmea-synthesis-workspace.schema.json",
+    "synthesis-workspace-draft": "pysfmea-synthesis-workspace-draft.schema.json",
+    "synthesis-workspace-verification": "pysfmea-synthesis-workspace-verification.schema.json",
+    "workflow-status": "pysfmea-workflow-status.schema.json",
+}
+
+PUBLIC_SCHEMA_BUNDLE_FILES = frozenset(
+    {SCHEMA_CATALOG_FILENAME, *SCHEMA_FILENAMES.values()}
+)

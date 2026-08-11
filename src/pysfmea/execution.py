@@ -13,13 +13,12 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
 from .assurance import assurance_summary, ensure_assurance_register
-from .interfaces import AnalysisDocument, AssuranceObligation
 from .json_ingestion import load_bounded_json_file
 from .model import stable_id, utc_now
 from .sandbox_policy import resolve_sandbox_engine as _resolve_engine
@@ -137,14 +136,14 @@ def _inside(root: Path, value: Path) -> bool:
 
 
 def _obligation(
-    analysis: AnalysisDocument | dict[str, Any], obligation_id: str
-) -> AssuranceObligation:
+    analysis: dict[str, Any], obligation_id: str
+) -> dict[str, Any]:
     register = ensure_assurance_register(analysis)
     value = next(
         (
             candidate
             for candidate in register.get("obligations", [])
-            if candidate.get("id") == obligation_id
+            if isinstance(candidate, dict) and candidate.get("id") == obligation_id
         ),
         None,
     )
@@ -399,14 +398,23 @@ def _junit_summary(path: Path) -> dict[str, Any]:
         root = ET.parse(path).getroot()
     except (DefusedXmlException, ET.ParseError, OSError):
         return {"parse_error": True}
+    if root is None:
+        return {"parse_error": True}
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
-    return {
-        "tests": sum(int(value.get("tests", 0)) for value in suites),
-        "failures": sum(int(value.get("failures", 0)) for value in suites),
-        "errors": sum(int(value.get("errors", 0)) for value in suites),
-        "skipped": sum(int(value.get("skipped", 0)) for value in suites),
-        "time_seconds": sum(float(value.get("time", 0) or 0) for value in suites),
+    summary: dict[str, int | float] = {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": 0.0,
     }
+    for suite in suites:
+        summary["tests"] += int(suite.get("tests", 0))
+        summary["failures"] += int(suite.get("failures", 0))
+        summary["errors"] += int(suite.get("errors", 0))
+        summary["skipped"] += int(suite.get("skipped", 0))
+        summary["time_seconds"] += float(suite.get("time", 0) or 0)
+    return summary
 
 
 def _artifact(execution_id: str, kind: str, path: Path, run_directory: Path) -> dict[str, Any]:
@@ -530,9 +538,13 @@ def run_sandbox_execution(
     except OSError:
         shutil.rmtree(preview, ignore_errors=True)
         raise
-    assert process.stdout is not None and process.stderr is not None
-    stdout = _BoundedCapture(process.stdout)
-    stderr = _BoundedCapture(process.stderr)
+    if process.stdout is None or process.stderr is None:
+        process.kill()
+        process.wait()
+        shutil.rmtree(preview, ignore_errors=True)
+        raise RuntimeError("sandbox process output pipes were not created")
+    stdout = _BoundedCapture(cast(BinaryIO, process.stdout))
+    stderr = _BoundedCapture(cast(BinaryIO, process.stderr))
     threads = [
         threading.Thread(target=stdout.drain, daemon=True),
         threading.Thread(target=stderr.drain, daemon=True),
@@ -713,7 +725,11 @@ def import_execution_evidence(
     execution_id = stable_id("EXEC", obligation_id, baseline.get("id", ""), supplied_digest)
     register = ensure_assurance_register(analysis)
     existing = next(
-        (value for value in register.get("executions", []) if value.get("id") == execution_id),
+        (
+            value
+            for value in register.get("executions", [])
+            if isinstance(value, dict) and value.get("id") == execution_id
+        ),
         None,
     )
     if existing is not None:

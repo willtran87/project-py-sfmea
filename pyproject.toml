@@ -42,6 +42,7 @@ quality = [
   "mypy>=1.18",
   "mutmut>=3.3",
   "pip-audit>=2.9",
+  "types-defusedxml>=0.7.0.20260504",
 ]
 browser = ["playwright>=1"]
 
@@ -89,22 +90,10 @@ exclude_also = [
 python_version = "3.11"
 strict = true
 files = [
-  "src/pysfmea/assurance_planning.py",
-  "src/pysfmea/interfaces.py",
-  "src/pysfmea/fault_injection.py",
-  "src/pysfmea/file_publication.py",
-  "src/pysfmea/runtime.py",
-  "src/pysfmea/sandbox_policy.py",
-  "src/pysfmea/architecture.py",
-  "src/pysfmea/integrity.py",
-  "src/pysfmea/llm_quality.py",
+  "src/pysfmea",
   "scripts/check_coverage_ratchets.py",
   "scripts/benchmark_scan.py",
   "scripts/report_browser_gate.py",
-  "src/pysfmea/readiness.py",
-  "src/pysfmea/scan_cache.py",
-  "src/pysfmea/diagnostics.py",
-  "src/pysfmea/interface_reconciliation.py",
 ]
 warn_unused_configs = true
 

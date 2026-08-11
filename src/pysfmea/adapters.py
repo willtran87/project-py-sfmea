@@ -21,7 +21,9 @@ AdapterCategory = Literal[
     "exporter",
     "llm_provider",
 ]
-TrustLevel = Literal["deterministic", "heuristic", "observed", "human_supplied", "model_generated"]
+TrustLevel = Literal[
+    "deterministic", "heuristic", "observed", "human_supplied", "model_generated"
+]
 
 
 @dataclass(frozen=True)
@@ -39,38 +41,555 @@ class AdapterDescriptor:
 
 
 BUILTIN_ADAPTERS = (
-    AdapterDescriptor("python.repository_discoverer", "discoverer", "7", ("python_source", "test_inventory", "bounded_walk", "symlink_rejection", "non_regular_refusal", "identity_stable_artifact_snapshots", "analysis_source_snapshot_reuse", "test_evidence_snapshot_reuse", "dependency_snapshot_reuse", "interface_contract_snapshot_reuse", "coverage_snapshot_reuse", "test_evidence_manifest_binding", "configured_test_evidence_scope", "evidence_only_scope_overrides", "exclusion_pruned_test_walk", "ast_grounded_test_symbol_index", "test_quality_signal_summary", "snapshot_provenance", "consumption_bounded_hashing", "aggregate_hash_limit"), "repository-path-1", "repository-inventory-1", "deterministic"),
-    AdapterDescriptor("web.language_boundary_indexer", "analyzer", "2", ("typescript_imports", "javascript_imports", "exports", "external_packages", "literal_http_and_event_endpoints", "literal_fetch_methods", "client_base_path_composition", "method_path_compatibility_leads", "static_cross_stack_sequences", "evidence_only_scope_override", "bounded_lexical_extraction", "explicit_semantic_limitations"), "repository-artifact-snapshot-1", "pysfmea-language-boundary-facts-1", "heuristic"),
-    AdapterDescriptor("python.ast_parser", "parser", "3", ("functions", "methods", "classes", "lambdas", "module_initialization", "literal_router_prefixes", "exact_byte_source_snapshots", "pep_263_decoding", "identity_reconciliation", "single_snapshot_baseline_binding"), "python-source-1", "python-ast-facts-1", "deterministic"),
-    AdapterDescriptor("python.failure_rule_analyzer", "analyzer", "2", ("guideword_screening", "failure_taxonomy", "source_localization"), "python-ast-facts-1", "sfmea-candidates-1", "heuristic"),
-    AdapterDescriptor("human.manual_finding", "analyzer", "1", ("reviewer_authored_failure_mode", "human_provenance"), "reviewer-input-1", "sfmea-candidates-1", "human_supplied"),
-    AdapterDescriptor("python.control_flow_analyzer", "analyzer", "1", ("branching", "ordering", "state_transition_signals"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
-    AdapterDescriptor("python.data_flow_signals", "analyzer", "1", ("input_boundaries", "serialization", "persistence", "calculation_signals"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
-    AdapterDescriptor("python.interface_analyzer", "analyzer", "1", ("external_calls", "internal_contracts", "storage_interfaces", "hardware_interfaces"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
-    AdapterDescriptor("python.concurrency_analyzer", "analyzer", "1", ("async_operations", "task_creation", "timing_and_ordering"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
-    AdapterDescriptor("python.resilience_control_analyzer", "analyzer", "3", ("circuit_breaker_roles", "class_scope_correlation", "observed_vs_conceptual_states", "model_review_gaps", "state_machine", "trip_threshold", "cooldown_clock", "isolation_key", "fallback_contract"), "python-ast-facts-1", "detected-resilience-control-3", "heuristic"),
-    AdapterDescriptor("repository.configuration_analyzer", "analyzer", "1", ("environment_access", "configuration_failure", "runtime_compatibility"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
-    AdapterDescriptor("python.security_boundary_analyzer", "analyzer", "1", ("subprocess_boundaries", "masked_failures", "untrusted_input_signals"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
-    AdapterDescriptor("python.complexity_analyzer", "analyzer", "1", ("complexity", "loops", "resource_exhaustion_signals"), "python-ast-facts-1", "normalized-finding-contributions-1", "heuristic"),
-    AdapterDescriptor("python.call_graph", "graph_provider", "3", ("static_calls", "transitive_upstream_impact", "bounded_failure_cascade_projection", "path_inventory_completeness", "path_and_depth_truncation", "runtime_relation_corroboration", "ordered_calls"), "python-ast-facts-1", "static-call-graph-3", "heuristic"),
-    AdapterDescriptor("python.dependency_inventory", "analyzer", "4", ("declared_dependencies", "exact_byte_manifest_snapshots", "manifest_hashes", "manifest_byte_counts", "included_requirements", "single_snapshot_parsing", "repository_inventory_snapshot_reuse", "bounded_recursive_ingestion", "identity_reconciliation", "link_and_containment_checks"), "repository-inventory-1", "dependency-inventory-1", "deterministic"),
-    AdapterDescriptor("contracts.local_schema", "analyzer", "3", ("openapi", "swagger", "json_schema", "protobuf", "exact_byte_contract_snapshots", "repository_inventory_snapshot_reuse", "bounded_contract_ingestion", "typed_fail_soft_extraction", "bounded_semantic_projection"), "repository-inventory-1", "interface-contract-inventory-1", "deterministic"),
-    AdapterDescriptor("coverage.py_json", "evidence_provider", "2", ("line_coverage", "branch_coverage", "function_mapping", "exact_byte_coverage_snapshot", "repository_inventory_snapshot_reuse", "run_manifest_binding"), "coveragepy-json", "coverage-evidence-1", "observed"),
-    AdapterDescriptor("runtime.json_trace", "evidence_provider", "1", ("simple_spans", "opentelemetry_spans", "observed_edges"), "runtime-trace-json-1", "runtime-evidence-1", "observed"),
-    AdapterDescriptor("guidance.curated_registry", "guideline_pack", "1", ("versioned_sources", "exact_locators", "typed_rule_mappings"), "guidance-pack-1", "guidance-traceability-1", "human_supplied"),
-    AdapterDescriptor("assurance.deterministic_planner", "planner", "2", ("verification_obligations", "stimuli", "oracles", "acceptance_criteria", "bounded_path_compensation"), "sfmea-analysis-0.6", "assurance-register-1", "deterministic"),
-    AdapterDescriptor("assurance.container_runner", "execution_provider", "1", ("docker", "podman", "bounded_capture", "artifact_hashing"), "assurance-obligation-1", "execution-evidence-1", "observed", isolation="approved_disposable_container", deterministic=False),
-    AdapterDescriptor("assurance.fault_injection_plugins", "execution_provider", "1", ("exception_injection", "malformed_result_injection", "failure_recovery_sequence", "false_pass_detection", "explicit_subject_binding", "obligation_binding"), "pysfmea-fault-injection-plan-1", "fault-injection-observation-1", "observed", isolation="approved_disposable_container", deterministic=False),
-    AdapterDescriptor("hazard.sfta", "analyzer", "1", ("fault_tree_validation", "sfmea_correlation", "coverage_gaps"), "fault-tree-config-1", "sfta-1", "deterministic"),
-    AdapterDescriptor("diagram.inline_svg", "diagram_renderer", "10", ("directed_graph", "flow", "sequence", "traceability", "cause_effect", "state", "evidence_labeled_cascade", "deduplicated_component_cascades", "component_diverse_projection", "pinned_finding_projection", "configurable_bounded_projection", "combined_node_budget", "path_omission_accounting", "bidirectional_trace_navigation", "stable_node_links", "projection_status", "projection_reason_codes", "projection_scope_inspector", "copyable_projection_recipe", "state_bound_diagram_bundle", "digest_verified_import", "atomic_publication"), "pysfmea-diagram-1", "self-contained-svg", "deterministic"),
-    AdapterDescriptor("diagram.bundle_verifier", "verifier", "2", ("bounded_file_verification", "content_integrity", "canonical_diagram_validation", "analysis_state_binding", "integrity_downgrade_protection", "machine_readable_result", "structured_failure_result", "explicit_unchecked_state"), "pysfmea-diagram-bundle-1", "pysfmea-diagram-bundle-verification-1", "deterministic"),
-    AdapterDescriptor("report.html_verifier", "verifier", "2", ("bounded_file_verification", "payload_integrity", "document_integrity", "internal_binding_consistency", "analysis_state_binding", "legacy_scope_labeling", "machine_readable_result", "structured_failure_result", "explicit_unchecked_state"), "pysfmea-html-report-1", "pysfmea-html-report-verification-1", "deterministic"),
-    AdapterDescriptor("evaluation.golden_corpus", "verifier", "1", ("bounded_file_ingestion", "strict_json", "closed_corpus_contract", "content_addressed_input", "source_aware_exact_matching", "bounded_indexed_evaluation"), "pysfmea-golden-corpus-1", "pysfmea-evaluation-result-1", "deterministic"),
-    AdapterDescriptor("program.assurance_federation", "verifier", "1", ("multi_repository_analysis_binding", "cross_repository_component_relationships", "temporal_evidence_gates", "external_requirement_provenance", "external_evidence_artifact_binding", "independent_validation_cohorts", "llm_quality_metrics", "role_and_independence_governance", "content_addressed_program", "self_contained_html"), "pysfmea-assurance-program-1", "pysfmea-assurance-program-verification-1", "deterministic"),
-    AdapterDescriptor("export.json_schema_catalog", "exporter", "1", ("json_schema_2020_12", "content_addressed_catalog", "offline_contract_discovery", "atomic_publication"), "schema-name-1", "json-schema-draft-2020-12", "deterministic"),
-    AdapterDescriptor("export.sarif", "exporter", "1", ("sarif_2_1_0",), "sfmea-analysis-0.6", "sarif-2.1.0", "deterministic"),
-    AdapterDescriptor("export.cyclonedx", "exporter", "1", ("cyclonedx_1_6", "declared_inventory"), "dependency-inventory-1", "cyclonedx-1.6", "deterministic"),
-    AdapterDescriptor("llm.openai_compatible", "llm_provider", "2", ("grounded_discovery", "grounded_summary", "strict_bounded_json", "closed_schema_output", "evidence_and_citation_allowlists", "transactional_materialization"), "evidence-packet-3", "model-suggestion-3", "model_generated", lifecycle="optional", isolation="remote_explicit_opt_in", deterministic=False),
+    AdapterDescriptor(
+        "python.repository_discoverer",
+        "discoverer",
+        "7",
+        (
+            "python_source",
+            "test_inventory",
+            "bounded_walk",
+            "symlink_rejection",
+            "non_regular_refusal",
+            "identity_stable_artifact_snapshots",
+            "analysis_source_snapshot_reuse",
+            "test_evidence_snapshot_reuse",
+            "dependency_snapshot_reuse",
+            "interface_contract_snapshot_reuse",
+            "coverage_snapshot_reuse",
+            "test_evidence_manifest_binding",
+            "configured_test_evidence_scope",
+            "evidence_only_scope_overrides",
+            "exclusion_pruned_test_walk",
+            "ast_grounded_test_symbol_index",
+            "test_quality_signal_summary",
+            "snapshot_provenance",
+            "consumption_bounded_hashing",
+            "aggregate_hash_limit",
+        ),
+        "repository-path-1",
+        "repository-inventory-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "web.language_boundary_indexer",
+        "analyzer",
+        "4",
+        (
+            "typescript_imports",
+            "javascript_imports",
+            "exports",
+            "external_packages",
+            "literal_http_and_event_endpoints",
+            "literal_fetch_methods",
+            "named_base_constants",
+            "bounded_request_wrappers",
+            "axios_instance_bases",
+            "axios_interceptors",
+            "cross_file_client_base_composition",
+            "source_line_provenance",
+            "web_test_evidence_separation",
+            "path_level_method_compatibility_leads",
+            "static_cross_stack_sequences",
+            "evidence_only_scope_override",
+            "bounded_lexical_extraction",
+            "explicit_semantic_limitations",
+        ),
+        "repository-artifact-snapshot-1",
+        "pysfmea-language-boundary-facts-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "deployment.lexical_topology",
+        "analyzer",
+        "1",
+        (
+            "dockerfile_entities",
+            "compose_services_dependencies_resources_and_healthchecks",
+            "terraform_entities_and_references",
+            "kubernetes_resources_images_and_configuration_references",
+            "ci_deployment_environments_and_images",
+            "artifact_sha256_provenance",
+            "bounded_component_placement_candidates",
+            "automatic_shared_fate_candidates",
+            "nested_architecture_trace_inheritance",
+            "explicit_runtime_and_authority_limitations",
+        ),
+        "repository-artifact-snapshot-1",
+        "pysfmea-deployment-topology-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "python.ast_parser",
+        "parser",
+        "4",
+        (
+            "functions",
+            "methods",
+            "classes",
+            "lambdas",
+            "module_initialization",
+            "literal_router_prefixes",
+            "bounded_imported_router_registration_tables",
+            "inter_module_route_prefix_composition",
+            "exact_byte_source_snapshots",
+            "pep_263_decoding",
+            "identity_reconciliation",
+            "single_snapshot_baseline_binding",
+        ),
+        "python-source-1",
+        "python-ast-facts-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "python.failure_rule_analyzer",
+        "analyzer",
+        "2",
+        ("guideword_screening", "failure_taxonomy", "source_localization"),
+        "python-ast-facts-1",
+        "sfmea-candidates-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "human.manual_finding",
+        "analyzer",
+        "1",
+        ("reviewer_authored_failure_mode", "human_provenance"),
+        "reviewer-input-1",
+        "sfmea-candidates-1",
+        "human_supplied",
+    ),
+    AdapterDescriptor(
+        "python.control_flow_analyzer",
+        "analyzer",
+        "1",
+        ("branching", "ordering", "state_transition_signals"),
+        "python-ast-facts-1",
+        "normalized-finding-contributions-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "python.data_flow_signals",
+        "analyzer",
+        "1",
+        ("input_boundaries", "serialization", "persistence", "calculation_signals"),
+        "python-ast-facts-1",
+        "normalized-finding-contributions-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "python.interface_analyzer",
+        "analyzer",
+        "1",
+        (
+            "external_calls",
+            "internal_contracts",
+            "storage_interfaces",
+            "hardware_interfaces",
+        ),
+        "python-ast-facts-1",
+        "normalized-finding-contributions-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "python.concurrency_analyzer",
+        "analyzer",
+        "1",
+        ("async_operations", "task_creation", "timing_and_ordering"),
+        "python-ast-facts-1",
+        "normalized-finding-contributions-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "python.resilience_control_analyzer",
+        "analyzer",
+        "3",
+        (
+            "circuit_breaker_roles",
+            "class_scope_correlation",
+            "observed_vs_conceptual_states",
+            "model_review_gaps",
+            "state_machine",
+            "trip_threshold",
+            "cooldown_clock",
+            "isolation_key",
+            "fallback_contract",
+        ),
+        "python-ast-facts-1",
+        "detected-resilience-control-3",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "repository.configuration_analyzer",
+        "analyzer",
+        "1",
+        ("environment_access", "configuration_failure", "runtime_compatibility"),
+        "python-ast-facts-1",
+        "normalized-finding-contributions-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "python.security_boundary_analyzer",
+        "analyzer",
+        "1",
+        ("subprocess_boundaries", "masked_failures", "untrusted_input_signals"),
+        "python-ast-facts-1",
+        "normalized-finding-contributions-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "python.complexity_analyzer",
+        "analyzer",
+        "1",
+        ("complexity", "loops", "resource_exhaustion_signals"),
+        "python-ast-facts-1",
+        "normalized-finding-contributions-1",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "python.call_graph",
+        "graph_provider",
+        "3",
+        (
+            "static_calls",
+            "transitive_upstream_impact",
+            "bounded_failure_cascade_projection",
+            "path_inventory_completeness",
+            "path_and_depth_truncation",
+            "runtime_relation_corroboration",
+            "ordered_calls",
+        ),
+        "python-ast-facts-1",
+        "static-call-graph-3",
+        "heuristic",
+    ),
+    AdapterDescriptor(
+        "python.dependency_inventory",
+        "analyzer",
+        "4",
+        (
+            "declared_dependencies",
+            "exact_byte_manifest_snapshots",
+            "manifest_hashes",
+            "manifest_byte_counts",
+            "included_requirements",
+            "single_snapshot_parsing",
+            "repository_inventory_snapshot_reuse",
+            "bounded_recursive_ingestion",
+            "identity_reconciliation",
+            "link_and_containment_checks",
+        ),
+        "repository-inventory-1",
+        "dependency-inventory-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "contracts.local_schema",
+        "analyzer",
+        "3",
+        (
+            "openapi",
+            "swagger",
+            "json_schema",
+            "protobuf",
+            "exact_byte_contract_snapshots",
+            "repository_inventory_snapshot_reuse",
+            "bounded_contract_ingestion",
+            "typed_fail_soft_extraction",
+            "bounded_semantic_projection",
+        ),
+        "repository-inventory-1",
+        "interface-contract-inventory-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "coverage.py_json",
+        "evidence_provider",
+        "2",
+        (
+            "line_coverage",
+            "branch_coverage",
+            "function_mapping",
+            "exact_byte_coverage_snapshot",
+            "repository_inventory_snapshot_reuse",
+            "run_manifest_binding",
+        ),
+        "coveragepy-json",
+        "coverage-evidence-1",
+        "observed",
+    ),
+    AdapterDescriptor(
+        "runtime.json_trace",
+        "evidence_provider",
+        "1",
+        ("simple_spans", "opentelemetry_spans", "observed_edges"),
+        "runtime-trace-json-1",
+        "runtime-evidence-1",
+        "observed",
+    ),
+    AdapterDescriptor(
+        "guidance.curated_registry",
+        "guideline_pack",
+        "1",
+        ("versioned_sources", "exact_locators", "typed_rule_mappings"),
+        "guidance-pack-1",
+        "guidance-traceability-1",
+        "human_supplied",
+    ),
+    AdapterDescriptor(
+        "assurance.deterministic_planner",
+        "planner",
+        "2",
+        (
+            "verification_obligations",
+            "stimuli",
+            "oracles",
+            "acceptance_criteria",
+            "bounded_path_compensation",
+        ),
+        "sfmea-analysis-0.6",
+        "assurance-register-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "assurance.enhancement_workbench",
+        "planner",
+        "4",
+        (
+            "complete_enhancement_register",
+            "complete_hardening_register",
+            "complete_post_hardening_register",
+            "complete_real_run_resolution_register",
+            "capability_attestations",
+            "resolution_attestations",
+            "evidence_acquisition_recipes",
+            "artifact_freshness",
+            "artifact_completeness_and_sufficiency",
+            "reviewable_scope_patch",
+            "calibration_campaign",
+            "assignable_review_campaign",
+            "evidence_onboarding_state_machine",
+            "precision_specialization_program",
+            "architecture_activation_program",
+            "interface_activation_program",
+            "temporal_resilience_program",
+            "guidance_specificity_program",
+            "phase_performance_ratchet",
+            "report_delivery_program",
+            "llm_governance_program",
+            "metric_provenance",
+            "report_scale_budgets",
+            "precision_risks",
+            "acceptance_targets",
+            "root_cause_review_clusters",
+            "representative_review_aids",
+            "prioritized_evidence_portfolio",
+            "architecture_mapping_queue",
+            "interface_disposition_queue",
+            "event_data_security_concurrency_resilience_persistence_deployment_surfaces",
+            "qualification_plan",
+            "bounded_html_projection",
+        ),
+        "sfmea-analysis-0.6",
+        "pysfmea-enhancement-workbench-7",
+        "deterministic",
+        lifecycle="optional",
+    ),
+    AdapterDescriptor(
+        "assurance.container_runner",
+        "execution_provider",
+        "1",
+        ("docker", "podman", "bounded_capture", "artifact_hashing"),
+        "assurance-obligation-1",
+        "execution-evidence-1",
+        "observed",
+        isolation="approved_disposable_container",
+        deterministic=False,
+    ),
+    AdapterDescriptor(
+        "assurance.fault_injection_plugins",
+        "execution_provider",
+        "1",
+        (
+            "exception_injection",
+            "malformed_result_injection",
+            "failure_recovery_sequence",
+            "false_pass_detection",
+            "explicit_subject_binding",
+            "obligation_binding",
+        ),
+        "pysfmea-fault-injection-plan-1",
+        "fault-injection-observation-1",
+        "observed",
+        isolation="approved_disposable_container",
+        deterministic=False,
+    ),
+    AdapterDescriptor(
+        "hazard.sfta",
+        "analyzer",
+        "1",
+        ("fault_tree_validation", "sfmea_correlation", "coverage_gaps"),
+        "fault-tree-config-1",
+        "sfta-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "diagram.inline_svg",
+        "diagram_renderer",
+        "10",
+        (
+            "directed_graph",
+            "flow",
+            "sequence",
+            "traceability",
+            "cause_effect",
+            "state",
+            "evidence_labeled_cascade",
+            "deduplicated_component_cascades",
+            "component_diverse_projection",
+            "pinned_finding_projection",
+            "configurable_bounded_projection",
+            "combined_node_budget",
+            "path_omission_accounting",
+            "bidirectional_trace_navigation",
+            "stable_node_links",
+            "projection_status",
+            "projection_reason_codes",
+            "projection_scope_inspector",
+            "copyable_projection_recipe",
+            "state_bound_diagram_bundle",
+            "digest_verified_import",
+            "atomic_publication",
+        ),
+        "pysfmea-diagram-1",
+        "self-contained-svg",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "diagram.bundle_verifier",
+        "verifier",
+        "2",
+        (
+            "bounded_file_verification",
+            "content_integrity",
+            "canonical_diagram_validation",
+            "analysis_state_binding",
+            "integrity_downgrade_protection",
+            "machine_readable_result",
+            "structured_failure_result",
+            "explicit_unchecked_state",
+        ),
+        "pysfmea-diagram-bundle-1",
+        "pysfmea-diagram-bundle-verification-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "report.html_verifier",
+        "verifier",
+        "2",
+        (
+            "bounded_file_verification",
+            "payload_integrity",
+            "document_integrity",
+            "internal_binding_consistency",
+            "analysis_state_binding",
+            "legacy_scope_labeling",
+            "machine_readable_result",
+            "structured_failure_result",
+            "explicit_unchecked_state",
+        ),
+        "pysfmea-html-report-1",
+        "pysfmea-html-report-verification-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "evaluation.golden_corpus",
+        "verifier",
+        "1",
+        (
+            "bounded_file_ingestion",
+            "strict_json",
+            "closed_corpus_contract",
+            "content_addressed_input",
+            "source_aware_exact_matching",
+            "exhaustive_negative_control_scope",
+            "bounded_indexed_evaluation",
+        ),
+        "pysfmea-golden-corpus-1",
+        "pysfmea-evaluation-result-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "program.assurance_federation",
+        "verifier",
+        "1",
+        (
+            "multi_repository_analysis_binding",
+            "cross_repository_component_relationships",
+            "temporal_evidence_gates",
+            "external_requirement_provenance",
+            "external_evidence_artifact_binding",
+            "independent_validation_cohorts",
+            "llm_quality_metrics",
+            "role_and_independence_governance",
+            "content_addressed_program",
+            "self_contained_html",
+        ),
+        "pysfmea-assurance-program-1",
+        "pysfmea-assurance-program-verification-1",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "export.json_schema_catalog",
+        "exporter",
+        "1",
+        (
+            "json_schema_2020_12",
+            "content_addressed_catalog",
+            "offline_contract_discovery",
+            "atomic_publication",
+        ),
+        "schema-name-1",
+        "json-schema-draft-2020-12",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "export.sarif",
+        "exporter",
+        "1",
+        ("sarif_2_1_0",),
+        "sfmea-analysis-0.6",
+        "sarif-2.1.0",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "export.cyclonedx",
+        "exporter",
+        "1",
+        ("cyclonedx_1_6", "declared_inventory"),
+        "dependency-inventory-1",
+        "cyclonedx-1.6",
+        "deterministic",
+    ),
+    AdapterDescriptor(
+        "llm.openai_compatible",
+        "llm_provider",
+        "2",
+        (
+            "grounded_discovery",
+            "grounded_summary",
+            "strict_bounded_json",
+            "closed_schema_output",
+            "evidence_and_citation_allowlists",
+            "transactional_materialization",
+        ),
+        "evidence-packet-3",
+        "model-suggestion-3",
+        "model_generated",
+        lifecycle="optional",
+        isolation="remote_explicit_opt_in",
+        deterministic=False,
+    ),
 )
 
 
@@ -87,7 +606,9 @@ def _contribution_adapters(item: dict[str, Any]) -> list[str]:
     if rule_id == "manual":
         return ["human.manual_finding"]
     adapters = {"python.failure_rule_analyzer"}
-    if failure_class in {"data", "calculation"} or rule_id.startswith(("data.", "storage.")):
+    if failure_class in {"data", "calculation"} or rule_id.startswith(
+        ("data.", "storage.")
+    ):
         adapters.add("python.data_flow_signals")
     if failure_class in {"interface", "hardware"} or rule_id.startswith(
         ("interface.", "hardware.")
@@ -103,9 +624,7 @@ def _contribution_adapters(item: dict[str, Any]) -> list[str]:
         ("configuration.", "environment.")
     ):
         adapters.add("repository.configuration_analyzer")
-    if failure_class == "detection" or rule_id.startswith(
-        ("detection.", "process.")
-    ):
+    if failure_class == "detection" or rule_id.startswith(("detection.", "process.")):
         adapters.add("python.security_boundary_analyzer")
     if failure_class == "resource" or rule_id.startswith("resource."):
         adapters.add("python.complexity_analyzer")
@@ -155,13 +674,20 @@ def build_adapter_run_ledger(analysis: dict[str, Any]) -> dict[str, Any]:
             if "web.language_boundary_indexer" in value.get("adapter_ids", [])
             and isinstance(value.get("boundary_facts"), dict)
         ],
+        "deployment.lexical_topology": [
+            value.get("path", "")
+            for value in inventory.get("entries", [])
+            if "deployment.lexical_topology" in value.get("adapter_ids", [])
+            and isinstance(value.get("deployment_facts"), dict)
+        ],
         "python.call_graph": [
             value.get("id", "")
             for value in analysis.get("components", [])
             if value.get("calls") or value.get("called_by")
         ],
         "guidance.curated_registry": [
-            value.get("id", "") for value in analysis.get("guidance", {}).get("citations", [])
+            value.get("id", "")
+            for value in analysis.get("guidance", {}).get("citations", [])
         ],
         "assurance.deterministic_planner": [
             value.get("id", "")
@@ -195,7 +721,9 @@ def build_adapter_run_ledger(analysis: dict[str, Any]) -> dict[str, Any]:
         ],
     }
     for adapter_id, entity_ids in static_runs.items():
-        contributions.setdefault(adapter_id, []).extend(str(value) for value in entity_ids if value)
+        contributions.setdefault(adapter_id, []).extend(
+            str(value) for value in entity_ids if value
+        )
     coverage_configured = bool(
         analysis.get("project", {}).get("settings", {}).get("coverage_json")
     )
@@ -215,10 +743,21 @@ def build_adapter_run_ledger(analysis: dict[str, Any]) -> dict[str, Any]:
             status, reason = "not_configured", "No coverage.py JSON input was supplied."
         elif descriptor.id == "runtime.json_trace" and not runtime_imported:
             status, reason = "not_configured", "No runtime trace was imported."
-        elif descriptor.category in {"execution_provider", "diagram_renderer", "exporter", "llm_provider"}:
-            status, reason = "not_invoked", "Capability is available but is not part of the deterministic scan stage."
+        elif descriptor.category in {
+            "execution_provider",
+            "diagram_renderer",
+            "exporter",
+            "llm_provider",
+        } or (descriptor.lifecycle == "optional" and not entity_ids):
+            status, reason = (
+                "not_invoked",
+                "Capability is available but is not part of the deterministic scan stage.",
+            )
         elif descriptor.id == "python.ast_parser" and not parsed_count:
-            status, reason = "completed_no_results", "No selected Python source was successfully parsed."
+            status, reason = (
+                "completed_no_results",
+                "No selected Python source was successfully parsed.",
+            )
         elif not entity_ids and descriptor.id not in {
             "python.failure_rule_analyzer",
             "python.repository_discoverer",
@@ -227,7 +766,10 @@ def build_adapter_run_ledger(analysis: dict[str, Any]) -> dict[str, Any]:
             "assurance.deterministic_planner",
             "hazard.sfta",
         }:
-            status, reason = "completed_no_results", "Adapter ran but produced no normalized contribution for this repository."
+            status, reason = (
+                "completed_no_results",
+                "Adapter ran but produced no normalized contribution for this repository.",
+            )
         output_material = {
             "adapter_id": descriptor.id,
             "entity_ids": entity_ids,
@@ -261,7 +803,9 @@ def build_adapter_run_ledger(analysis: dict[str, Any]) -> dict[str, Any]:
             "completed_no_results": sum(
                 value["status"] == "completed_no_results" for value in runs
             ),
-            "not_configured": sum(value["status"] == "not_configured" for value in runs),
+            "not_configured": sum(
+                value["status"] == "not_configured" for value in runs
+            ),
             "not_invoked": sum(value["status"] == "not_invoked" for value in runs),
             "finding_contributors": len(
                 {
@@ -278,7 +822,9 @@ def adapter_registry_snapshot(analysis: dict[str, Any] | None = None) -> dict[st
     """Return a versioned health/capability snapshot for the resolved run."""
 
     analysis = analysis or {}
-    coverage_available = bool(analysis.get("project", {}).get("settings", {}).get("coverage_json"))
+    coverage_available = bool(
+        analysis.get("project", {}).get("settings", {}).get("coverage_json")
+    )
     runtime_available = bool(analysis.get("runtime_evidence", {}).get("imports"))
     run_by_id = {
         value.get("adapter_id"): value
@@ -295,7 +841,10 @@ def adapter_registry_snapshot(analysis: dict[str, Any] | None = None) -> dict[st
         elif descriptor.id == "runtime.json_trace" and not runtime_available:
             health, reason = "not_configured", "No runtime trace was imported."
         elif descriptor.id == "llm.openai_compatible":
-            health, reason = "not_invoked", "Model use requires an explicit provider call."
+            health, reason = (
+                "not_invoked",
+                "Model use requires an explicit provider call.",
+            )
         run = run_by_id.get(descriptor.id)
         if run:
             run_status = str(run.get("status", "unknown"))
@@ -309,16 +858,24 @@ def adapter_registry_snapshot(analysis: dict[str, Any] | None = None) -> dict[st
             }
         record["health"] = {"status": health, "reason": reason}
         records.append(record)
-    material = json.dumps(records, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    material = json.dumps(records, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return {
         "schema_version": "pysfmea-adapter-registry-1",
         "adapters": records,
         "registry_sha256": hashlib.sha256(material).hexdigest(),
         "summary": {
             "total": len(records),
-            "available": sum(value["health"]["status"] == "available" for value in records),
-            "not_configured": sum(value["health"]["status"] == "not_configured" for value in records),
-            "not_invoked": sum(value["health"]["status"] == "not_invoked" for value in records),
+            "available": sum(
+                value["health"]["status"] == "available" for value in records
+            ),
+            "not_configured": sum(
+                value["health"]["status"] == "not_configured" for value in records
+            ),
+            "not_invoked": sum(
+                value["health"]["status"] == "not_invoked" for value in records
+            ),
             "deterministic": sum(value["deterministic"] for value in records),
         },
     }
