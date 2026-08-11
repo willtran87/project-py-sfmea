@@ -14,6 +14,14 @@ MAX_GOVERNED_JSON_DEPTH = 100
 # exceed the original two-million-node ceiling while retaining a deterministic cap.
 MAX_GOVERNED_JSON_NODES = 3_000_000
 
+# A governed repository analysis contains several reconciled per-finding projections
+# (review records, assurance obligations, diagrams, and flow models).  It therefore
+# needs a larger—but still finite—contract than ordinary governed JSON documents.
+# Keep these values in the shared integrity module so persistence, qualification, and
+# package verification cannot drift into accepting different analysis sizes.
+MAX_ANALYSIS_BYTES = 200_000_000
+MAX_ANALYSIS_JSON_NODES = 5_000_000
+
 
 def canonical_json_sha256(value: Any) -> str:
     """Hash JSON-compatible data using the project's canonical UTF-8 encoding."""

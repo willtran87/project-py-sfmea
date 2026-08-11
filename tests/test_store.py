@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import sys
@@ -10,9 +11,21 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from pysfmea.report import analysis_state_sha256
+from pysfmea import report
+from pysfmea.assurance import export_assurance_register
+from pysfmea.manifest import current_audit_manifest
+from pysfmea.report import (
+    MAX_ARCHIVE_FILE_BYTES,
+    _portable_analysis_snapshot,
+    _projection_snapshot,
+    analysis_state_sha256,
+    export_review_package,
+)
 from pysfmea.scanner import scan_repository
+from pysfmea.sfta import build_sfta
 from pysfmea.store import (
+    MAX_ANALYSIS_BYTES,
+    MAX_ANALYSIS_JSON_NODES,
     AnalysisRevisionConflictError,
     analysis_file_sha256,
     load_analysis,
@@ -22,6 +35,115 @@ from pysfmea.store import (
 
 
 class StoreTests(unittest.TestCase):
+    def test_package_read_only_projections_do_not_mutate_analysis(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "code.py").write_text(
+                "def act(value):\n    return value\n", encoding="utf-8"
+            )
+            analysis = scan_repository(root)
+            original = copy.deepcopy(analysis)
+
+            build_sfta(analysis)
+            current_audit_manifest(analysis)
+
+            self.assertEqual(analysis, original)
+
+    def test_review_projection_snapshot_isolates_assurance_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "code.py").write_text(
+                "def act(value):\n    return value\n", encoding="utf-8"
+            )
+            analysis = scan_repository(root)
+            analysis["assurance"] = {"malformed": True}
+            original = copy.deepcopy(analysis)
+
+            snapshot = _projection_snapshot(analysis)
+            export_assurance_register(snapshot, root / "assurance.csv", format="csv")
+
+            self.assertEqual(analysis, original)
+
+    def test_portable_snapshot_redacts_copy_on_write_branches(self) -> None:
+        analysis = {
+            "project": {
+                "root": "C:/work/repository",
+                "settings": {
+                    "config_file": "C:/work/repository/sfmea.toml",
+                    "coverage_json": "C:/work/repository/coverage.json",
+                },
+            },
+            "run_manifest": {
+                "repository": {"root": "C:/work/repository"},
+                "manifest_sha256": "source-digest",
+            },
+            "context": {"analysis": {"guidance_packs": ["C:/packs/team.json"]}},
+            "runtime_evidence": {
+                "imports": [{"source": "C:/work/repository/trace.json"}]
+            },
+            "history": [
+                {
+                    "event": "runtime_trace_import",
+                    "source": "C:/work/repository/history.json",
+                }
+            ],
+            "summary": {"assurance": {"active_obligations": 1}},
+            "assurance": {
+                "executions": [
+                    {
+                        "id": "EX-1",
+                        "repository": {"root": "C:/work/repository"},
+                        "evidence_directory": "C:/evidence",
+                        "sandbox": {"engine_path": "C:/tools/docker.exe"},
+                        "command_argv": [
+                            "C:/work/repository/run.py",
+                            "C:/evidence/result.json",
+                        ],
+                    }
+                ]
+            },
+        }
+        original = copy.deepcopy(analysis)
+
+        portable = _portable_analysis_snapshot(analysis)
+
+        self.assertEqual(analysis, original)
+        self.assertEqual(portable["project"]["root"], ".")
+        self.assertEqual(portable["project"]["settings"]["config_file"], "sfmea.toml")
+        self.assertEqual(portable["run_manifest"]["repository"]["root"], ".")
+        self.assertEqual(
+            portable["context"]["analysis"]["guidance_packs"], ["team.json"]
+        )
+        self.assertEqual(portable["runtime_evidence"]["imports"][0]["source"], "trace.json")
+        self.assertEqual(portable["history"][0]["source"], "history.json")
+        execution = portable["assurance"]["executions"][0]
+        self.assertEqual(execution["repository"]["root"], ".")
+        self.assertEqual(execution["evidence_directory"], "external-evidence/EX-1")
+        self.assertEqual(execution["sandbox"]["engine_path"], "docker.exe")
+        self.assertEqual(
+            execution["command_argv"],
+            ["./run.py", "external-evidence/EX-1/result.json"],
+        )
+
+    def test_analysis_size_contract_matches_package_verification(self) -> None:
+        self.assertEqual(MAX_ANALYSIS_BYTES, MAX_ARCHIVE_FILE_BYTES)
+        self.assertEqual(MAX_ANALYSIS_JSON_NODES, report.MAX_ANALYSIS_JSON_NODES)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "code.py").write_text(
+                "def act(value):\n    return value\n", encoding="utf-8"
+            )
+            analysis = scan_repository(root)
+            analysis["sfta"] = {"stale": "must not be packaged"}
+            package = export_review_package(analysis, root / "package")
+            raw = (package / "analysis.json").read_text(encoding="utf-8")
+            snapshot = json.loads(raw)
+            self.assertNotIn("stale", snapshot["sfta"])
+            self.assertEqual(
+                raw,
+                json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")) + "\n",
+            )
+
     def test_compressed_analysis_is_deterministic_bounded_and_transparent(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

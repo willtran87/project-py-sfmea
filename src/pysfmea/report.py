@@ -29,6 +29,8 @@ from .config import DEFAULT_CONFIG, normalize_config
 from .file_publication import atomic_publish_text
 from .guidance import guidance_traceability
 from .integrity import (
+    MAX_ANALYSIS_BYTES,
+    MAX_ANALYSIS_JSON_NODES,
     MAX_GOVERNED_JSON_DEPTH,
     bounded_json_structure_metrics,
     canonical_json_sha256,
@@ -159,10 +161,9 @@ REVIEW_PACKAGE_SCHEMA_FILES = PUBLIC_SCHEMA_BUNDLE_FILES
 REVIEW_PACKAGE_ALLOWED_FILES = REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES
 REVIEW_PACKAGE_ALL_FILES = REVIEW_PACKAGE_ALLOWED_FILES | {"manifest.json"}
 MAX_ARCHIVE_ENTRIES = 100
-MAX_ARCHIVE_FILE_BYTES = 200_000_000
+MAX_ARCHIVE_FILE_BYTES = MAX_ANALYSIS_BYTES
 MAX_ARCHIVE_TOTAL_BYTES = 500_000_000
 MAX_ANALYSIS_JSON_DEPTH = MAX_GOVERNED_JSON_DEPTH
-MAX_ANALYSIS_JSON_NODES = 5_000_000
 REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
 REVIEW_PACKAGE_VERIFICATION_FORMAT = "pysfmea-review-package-verification-1"
 ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = "pysfmea-analysis-structure-verification-1"
@@ -1030,6 +1031,11 @@ def export_review_package(
         _portable_analysis_snapshot(analysis) if portable else copy.deepcopy(analysis)
     )
     ensure_assurance_register(package_analysis)
+    # A scan can already carry a large derived SFTA projection. It is regenerated
+    # below from the authoritative findings/context, so dropping that stale private
+    # copy before construction avoids holding two complete fault-tree models during
+    # near-limit package builds.
+    package_analysis.pop("sfta", None)
     package_analysis["sfta"] = build_sfta(package_analysis)
     schema_documents = schema_bundle_documents()
     if set(schema_documents) != REVIEW_PACKAGE_SCHEMA_FILES:
@@ -1060,7 +1066,16 @@ def export_review_package(
     try:
         outputs: dict[str, Callable[[Path], Any]] = {
             "analysis.json": lambda path: path.write_text(
-                json.dumps(package_analysis, indent=2, ensure_ascii=False) + "\n",
+                # The complete source-of-truth snapshot can be near the governed
+                # analysis byte ceiling. Keep it compact so a valid analysis remains
+                # packageable; the adjacent review projections are the human-readable
+                # package views.
+                json.dumps(
+                    package_analysis,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                + "\n",
                 encoding="utf-8",
             ),
             "worksheet.csv": lambda path: export_csv(package_analysis, path),
@@ -1351,18 +1366,32 @@ def export_review_archive(
 
 
 def _portable_analysis_snapshot(analysis: dict[str, Any]) -> dict[str, Any]:
-    """Copy an analysis while removing host-specific absolute path prefixes."""
+    """Create a copy-on-write snapshot while removing host-specific paths.
 
-    snapshot = copy.deepcopy(analysis)
+    A portable package changes only a small, explicit set of path-bearing fields.
+    Copying an entire near-limit analysis first can temporarily retain two very large
+    object graphs, so this function clones only containers it changes. Callers must
+    still receive an isolated top-level snapshot and every redacted branch must be
+    private before mutation.
+    """
+
+    snapshot = dict(analysis)
 
     def basename(value: Any) -> str:
         return str(value or "").replace("\\", "/").rsplit("/", 1)[-1]
 
-    project = snapshot.setdefault("project", {})
+    project_value = snapshot.get("project")
+    project = dict(project_value) if isinstance(project_value, dict) else {}
+    snapshot["project"] = project
     project["root"] = "."
-    run_repository = snapshot.get("run_manifest", {}).get("repository")
-    if isinstance(run_repository, dict):
-        scan_manifest = snapshot["run_manifest"]
+    run_manifest = snapshot.get("run_manifest")
+    scan_manifest = dict(run_manifest) if isinstance(run_manifest, dict) else None
+    if scan_manifest is not None:
+        snapshot["run_manifest"] = scan_manifest
+    run_repository = scan_manifest.get("repository") if scan_manifest else None
+    if scan_manifest is not None and isinstance(run_repository, dict):
+        run_repository = dict(run_repository)
+        scan_manifest["repository"] = run_repository
         source_manifest_sha256 = scan_manifest.pop("manifest_sha256", "")
         run_repository["root"] = "."
         scan_manifest["portable_redaction"] = {
@@ -1375,34 +1404,86 @@ def _portable_analysis_snapshot(analysis: dict[str, Any]) -> dict[str, Any]:
                 "utf-8"
             )
         ).hexdigest()
-    settings = project.setdefault("settings", {})
+    settings_value = project.get("settings")
+    settings = dict(settings_value) if isinstance(settings_value, dict) else {}
+    project["settings"] = settings
     for field in ("config_file", "coverage_json"):
         if settings.get(field):
             settings[field] = basename(settings[field])
-    analysis_context = snapshot.get("context", {}).get("analysis", {})
+    context_value = snapshot.get("context")
+    context = dict(context_value) if isinstance(context_value, dict) else {}
+    snapshot["context"] = context
+    analysis_value = context.get("analysis")
+    analysis_context = dict(analysis_value) if isinstance(analysis_value, dict) else {}
+    context["analysis"] = analysis_context
     if isinstance(analysis_context.get("guidance_packs"), list):
         analysis_context["guidance_packs"] = [
             basename(value) for value in analysis_context["guidance_packs"]
         ]
-    for record in snapshot.get("runtime_evidence", {}).get("imports", []):
-        if record.get("source"):
+    runtime_value = snapshot.get("runtime_evidence")
+    runtime = dict(runtime_value) if isinstance(runtime_value, dict) else {}
+    snapshot["runtime_evidence"] = runtime
+    imports_value = runtime.get("imports")
+    if isinstance(imports_value, list):
+        imports = list(imports_value)
+        runtime["imports"] = imports
+        for index, record_value in enumerate(imports):
+            if not isinstance(record_value, dict) or not record_value.get("source"):
+                continue
+            record = dict(record_value)
             record["source"] = basename(record["source"])
-    for event in snapshot.get("history", []):
-        if event.get("event") == "runtime_trace_import" and event.get("source"):
+            imports[index] = record
+    history_value = snapshot.get("history")
+    if isinstance(history_value, list):
+        history = list(history_value)
+        snapshot["history"] = history
+        for index, event_value in enumerate(history):
+            if not (
+                isinstance(event_value, dict)
+                and event_value.get("event") == "runtime_trace_import"
+                and event_value.get("source")
+            ):
+                continue
+            event = dict(event_value)
             event["source"] = basename(event["source"])
-    for execution in snapshot.get("assurance", {}).get("executions", []):
+            history[index] = event
+    # ``ensure_assurance_register`` can refresh the derived register and summary
+    # after this helper returns. Keep the mutable summary branch private even when
+    # there are no execution records to redact.
+    summary_value = snapshot.get("summary")
+    snapshot["summary"] = dict(summary_value) if isinstance(summary_value, dict) else {}
+    assurance_value = snapshot.get("assurance")
+    assurance = dict(assurance_value) if isinstance(assurance_value, dict) else {}
+    snapshot["assurance"] = assurance
+    executions_value = assurance.get("executions")
+    if not isinstance(executions_value, list):
+        return snapshot
+    executions = list(executions_value)
+    assurance["executions"] = executions
+    for index, execution_value in enumerate(executions):
+        if not isinstance(execution_value, dict):
+            continue
+        execution = dict(execution_value)
+        executions[index] = execution
         execution_id = str(execution.get("id", "execution"))
-        repository = execution.setdefault("repository", {})
+        repository_value = execution.get("repository")
+        repository = (
+            dict(repository_value) if isinstance(repository_value, dict) else {}
+        )
+        execution["repository"] = repository
         original_root = str(repository.get("root", ""))
         original_evidence = str(execution.get("evidence_directory", ""))
         repository["root"] = "."
         portable_evidence = f"external-evidence/{execution_id}"
         execution["evidence_directory"] = portable_evidence
-        sandbox = execution.setdefault("sandbox", {})
+        sandbox_value = execution.get("sandbox")
+        sandbox = dict(sandbox_value) if isinstance(sandbox_value, dict) else {}
+        execution["sandbox"] = sandbox
         if sandbox.get("engine_path"):
             sandbox["engine_path"] = basename(sandbox["engine_path"])
         portable_argv = []
-        for value in execution.get("command_argv", []):
+        command_argv = execution.get("command_argv", [])
+        for value in command_argv if isinstance(command_argv, list) else []:
             argument = str(value)
             if original_root:
                 argument = argument.replace(original_root, ".")
@@ -1410,6 +1491,23 @@ def _portable_analysis_snapshot(analysis: dict[str, Any]) -> dict[str, Any]:
                 argument = argument.replace(original_evidence, portable_evidence)
             portable_argv.append(argument)
         execution["command_argv"] = portable_argv
+    return snapshot
+
+
+def _projection_snapshot(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Isolate only derived branches exporters are allowed to repair.
+
+    Review-view exporters are read-only for a well-formed analysis. The assurance
+    exporter may repair a missing or malformed assurance register and its summary,
+    so those containers must be private without duplicating a complete package
+    analysis during verification.
+    """
+
+    snapshot = dict(analysis)
+    summary = analysis.get("summary")
+    assurance = analysis.get("assurance")
+    snapshot["summary"] = dict(summary) if isinstance(summary, dict) else {}
+    snapshot["assurance"] = dict(assurance) if isinstance(assurance, dict) else {}
     return snapshot
 
 
@@ -2005,7 +2103,9 @@ def _verify_analysis_diagnostics(
                 if path.is_symlink() or not path.is_file():
                     raise ValueError("artifact is not a regular file")
                 if path.stat().st_size > MAX_ARCHIVE_FILE_BYTES:
-                    raise ValueError("artifact exceeds the 100 MB verification limit")
+                    raise ValueError(
+                        f"artifact exceeds the {MAX_ARCHIVE_FILE_BYTES}-byte verification limit"
+                    )
                 actual = _read_bounded_json_object(path, limit=MAX_ARCHIVE_FILE_BYTES)
                 if name == "validation":
                     actual_generated_at = actual.pop("generated_at", None)
@@ -2179,8 +2279,10 @@ def _verify_sfta_projection(
             }
         )
     else:
+        # SFTA synthesis reads the packaged findings/context without mutating the
+        # analysis. Avoid a second full graph while verifying a near-limit package.
         expected_model = build_sfta(
-            copy.deepcopy(analysis),
+            analysis,
             legacy_id_wildcard=not _package_version_at_least(
                 producer_version, SFTA_EXACT_SELECTOR_VERSION
             ),
@@ -2606,7 +2708,7 @@ def _verify_review_views(
         )
     else:
         checks = {name: True for name in checks}
-        review_snapshot = copy.deepcopy(analysis)
+        review_snapshot = _projection_snapshot(analysis)
         with tempfile.TemporaryDirectory(prefix="pysfmea-review-views-") as root:
             expected_root = Path(root)
             for filename, check_name, exporter, options in artifact_specs:
@@ -2703,8 +2805,11 @@ def _verify_package_provenance(
             }
         )
     else:
+        # This projection constructs a new manifest and leaves the scan manifest
+        # and review data untouched, so it can safely read the parsed package
+        # analysis directly.
         expected_run_manifest = current_audit_manifest(
-            copy.deepcopy(analysis),
+            analysis,
             generated_at=generated_at,
             tool_version=producer_version,
         )

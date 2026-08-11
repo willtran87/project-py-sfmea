@@ -42,6 +42,7 @@ from pysfmea.publication import (
 )
 from pysfmea.readiness import repository_readiness
 from pysfmea.report import (
+    MAX_ARCHIVE_FILE_BYTES,
     REVIEW_PACKAGE_FILES,
     REVIEW_PACKAGE_SCHEMA_FILES,
     _verify_analysis_structure,
@@ -2765,7 +2766,7 @@ class ExtensionTests(unittest.TestCase):
         unexpected_directory.rmdir()
 
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["files"][0]["bytes"] = 100_000_001
+        manifest["files"][0]["bytes"] = MAX_ARCHIVE_FILE_BYTES + 1
         manifest_path.write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",

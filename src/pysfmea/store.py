@@ -28,6 +28,12 @@ from .config import DEFAULT_CONFIG, normalize_config
 from .execution import EXECUTION_STATUSES
 from .guidance import ensure_guidance_traceability
 from .integrity import (
+    MAX_ANALYSIS_BYTES as _MAX_ANALYSIS_BYTES,
+)
+from .integrity import (
+    MAX_ANALYSIS_JSON_NODES as _MAX_ANALYSIS_JSON_NODES,
+)
+from .integrity import (
     MAX_GOVERNED_JSON_DEPTH,
     bounded_json_structure_metrics,
 )
@@ -38,13 +44,11 @@ from .sfta import build_sfta
 from .system_context import build_system_context
 from .version import __version__
 
-MAX_ANALYSIS_BYTES = 200_000_000
 MAX_ANALYSIS_JSON_DEPTH = MAX_GOVERNED_JSON_DEPTH
-# Analyses contain several independently reconciled per-finding projections
-# (review records, assurance obligations, diagrams, and flow models). Keep an
-# analysis-specific ceiling above the generic governed-document limit so a
-# substantial Python monorepo can remain one complete, reviewable artifact.
-MAX_ANALYSIS_JSON_NODES = 5_000_000
+# Public compatibility aliases keep existing CLI, qualification, and test imports
+# stable while the shared integrity module remains the single default-policy source.
+MAX_ANALYSIS_BYTES = _MAX_ANALYSIS_BYTES
+MAX_ANALYSIS_JSON_NODES = _MAX_ANALYSIS_JSON_NODES
 ANALYSIS_GZIP_COMPRESSION_LEVEL = 6
 
 EDITABLE_REVIEW_FIELDS = {

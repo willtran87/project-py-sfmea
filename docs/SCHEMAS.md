@@ -373,7 +373,7 @@ version/capability/artifact consistency. Diagnostic verification regenerates sum
 validation, context, repository-inventory, and adapter-ledger views from packaged analysis.
 Every readable packaged analysis also receives an `analysis_structure` verdict before hashing or
 projection work. The verdict reports the observed iterative node/depth traversal against the
-2,000,000-node and 100-level availability limits plus a `core_contract` check for the object,
+5,000,000-node and 100-level availability limits plus a `core_contract` check for the object,
 array, and object-collection types consumed by semantic projectors. Failed content is withheld
 from projection and produces bounded path-specific errors. This is verifier policy rather than a
 package capability, so historical packages receive the same protection without changing their

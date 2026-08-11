@@ -17,12 +17,12 @@ release scripts.
 - Confirm current diagnostic/guidance/SFTA/evidence/interchange/provenance/review-view/register/work-queue review-package
   capabilities are explicitly declared and verifier-enforced.
 - Confirm governed analysis load rejects links/non-files and opened/final identity changes,
-  enforces 100 MB while consuming bytes, and rejects invalid UTF-8/JSON, duplicate keys,
-  non-finite numbers, depth beyond 100 levels, and structures beyond 2,000,000 nodes.
+  enforces 200 MB while consuming bytes, and rejects invalid UTF-8/JSON, duplicate keys,
+  non-finite numbers, depth beyond 100 levels, and structures beyond 5,000,000 nodes.
 - Confirm migrations and derived-state materialization occur only after those ingestion bounds,
   and review-package verification uses the same shared depth/node measurement primitive.
 - Confirm analysis save rejects linked/non-file destinations, bounds serialized UTF-8 output to
-  100 MB, retains final-path identity, and refuses destination identity/metadata changes before
+  200 MB, retains final-path identity, and refuses destination identity/metadata changes before
   atomic replacement while preserving prior bytes and removing staging residue.
 - Confirm no-op timestamp reconciliation and browser ETag hashing use bounded identity-stable
   ingestion; forced read/hash limits produce controlled failures without stale reviewer state.

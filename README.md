@@ -600,9 +600,9 @@ sfmea scan C:\path\to\python-repo -o C:\path\to\python-repo\sfmea-analysis.json
 When `-o` is omitted, the analysis is written to
 `REPOSITORY/sfmea-analysis.json`, independent of the caller's working directory.
 
-Governed analysis JSON is consumed from a regular non-symbolic-link file through a 100 MB
+Governed analysis JSON is consumed from a regular non-symbolic-link file through a 200 MB
 byte limit with inspected/opened/final identity checks. Parsing requires duplicate-free,
-finite UTF-8 JSON and applies the same iterative 100-level/2,000,000-node contract used by
+finite UTF-8 JSON and applies the same iterative 100-level/5,000,000-node contract used by
 package verification before migrations or derived-state work. Saves serialize through the
 same byte limit, retain final-path identity, revalidate the destination immediately before
 atomic replacement, preserve prior content on rejection, and remove private staging residue.
@@ -856,7 +856,10 @@ guessing from filenames or tool versions.
 The exporter first deep-copies the requested analysis and materializes deterministic assurance
 and SFTA derived state on that private copy. `analysis.json`, its state digest, and every report
 projection therefore share one frozen snapshot even when the input omitted or malformed a
-derived assurance container; the caller's governed analysis remains unchanged.
+derived assurance container; the caller's governed analysis remains unchanged. The complete
+`analysis.json` snapshot uses compact UTF-8 JSON so an analysis that fits the governed size
+contract remains packageable; the adjacent Markdown, CSV, and HTML projections are the
+human-readable package views.
 Packages are generated in a staging directory and published only after every report and
 checksum succeeds and the independent semantic package verifier accepts the complete staged
 artifact set. A rejected generation reports bounded verifier rule IDs, removes its staging
@@ -924,7 +927,7 @@ the packaged snapshot. The governed working analysis is not modified.
 set, path safety, regular-file boundaries, byte sizes, SHA-256 checksums, baseline,
 analysis schema, generator provenance, schema-catalog completeness, schema identities,
 canonical schema digests, and the manifest/verdict contract boundary. Before hashing or
-regenerating projections, it iteratively bounds `analysis.json` to 100 levels and 2,000,000
+regenerating projections, it iteratively bounds `analysis.json` to 100 levels and 5,000,000
 JSON nodes, validates projection-critical container types, and reports all three checks in the
 `analysis_structure` verdict. Malformed core objects and collections are withheld from every
 semantic projector; parser recursion, complexity, and core-contract failures become stable

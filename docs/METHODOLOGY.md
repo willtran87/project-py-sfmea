@@ -6,11 +6,13 @@ PySFMEA automates repository decomposition, evidence gathering, candidate genera
 
 ## Governed analysis persistence
 
-The analysis JSON is the editable source of truth. Loading consumes at most 100 MB from a
+The analysis JSON is the editable source of truth. Loading consumes at most 200 MB from a
 regular non-symbolic-link file and reconciles its inspected, opened, and final identity plus
 size/change metadata. Strict UTF-8 JSON rejects duplicate object keys and non-finite numbers;
-an iterative 100-level/2,000,000-node check runs before schema migration or derived-state
-materialization. Package verification uses the same shared structure metric.
+an iterative 100-level/5,000,000-node check runs before schema migration or derived-state
+materialization. The analysis-specific node ceiling accommodates the bounded per-finding
+projections produced for substantial repositories; all other governed JSON inputs retain their
+own smaller, contract-specific limits. Package verification applies the same analysis metric.
 
 Saving applies the structure limit before bounded UTF-8 serialization, preserves the final
 destination path instead of resolving through it, and compares the original destination
@@ -600,7 +602,7 @@ baseline IDs, audit decisions, and analysis content remain unchanged.
 
 An assurance program is intentionally separate from every repository analysis. Its repository
 records bind a stable program ID to the exact canonical analysis-state digest and repository
-baseline. Verification reloads each analysis through the governed 100 MB analysis boundary and
+baseline. Verification reloads each analysis through the governed 200 MB analysis boundary and
 rejects stale bindings; it does not copy findings between repositories or let one service approve
 another service's review state.
 

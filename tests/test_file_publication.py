@@ -9,6 +9,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.file_publication import (
+    _destination_is_unchanged,
+    _read_destination_snapshot_bytes,
     atomic_publish_bytes,
     atomic_publish_pair,
     atomic_publish_text,
@@ -82,6 +84,77 @@ class FilePublicationTests(unittest.TestCase):
 
         self.assertTrue(linked.is_symlink())
         self.assertEqual(trusted.read_text(encoding="utf-8"), "trusted")
+
+    def test_unsafe_destination_is_treated_as_changed(self) -> None:
+        directory = self.root / "not-a-file"
+        directory.mkdir()
+
+        self.assertFalse(_destination_is_unchanged(directory, None))
+        with self.assertRaisesRegex(ValueError, "regular file path"):
+            inspect_artifact_destination(directory)
+
+    def test_rollback_snapshot_rejects_read_failures_and_oversized_prior_content(
+        self,
+    ) -> None:
+        secondary = self.root / "receipt.json"
+        secondary.write_bytes(b"prior receipt")
+        state = inspect_artifact_destination(secondary, label="receipt")
+        with patch("pysfmea.file_publication.os.open", side_effect=OSError("blocked")):
+            with self.assertRaisesRegex(ValueError, "could not be retained for rollback"):
+                _read_destination_snapshot_bytes(state, max_bytes=100, label="receipt")
+
+        primary = self.root / "analysis.json"
+        with self.assertRaisesRegex(
+            ValueError, "prior secondary artifact exceeds the rollback byte limit"
+        ):
+            atomic_publish_pair(
+                primary,
+                b"analysis",
+                secondary,
+                b"receipt",
+                secondary_max_bytes=3,
+            )
+        self.assertFalse(primary.exists())
+        self.assertEqual(secondary.read_bytes(), b"prior receipt")
+
+    def test_coordinated_pair_refuses_mismatched_or_conflicted_destinations(self) -> None:
+        primary = self.root / "analysis.json"
+        secondary = self.root / "receipt.json"
+        expected = inspect_artifact_destination(primary, label="analysis")
+        primary.write_bytes(b"concurrent owner")
+        with self.assertRaisesRegex(ValueError, "primary artifact destination changed"):
+            atomic_publish_pair(
+                primary,
+                b"analysis",
+                secondary,
+                b"receipt",
+                expected_primary=expected,
+            )
+        with self.assertRaisesRegex(ValueError, "must be different files"):
+            atomic_publish_pair(primary, b"analysis", primary, b"receipt")
+
+        primary.unlink()
+        real_replace = __import__("os").replace
+        replacements = 0
+
+        def fail_primary_after_secondary(source: str | Path, destination: str | Path) -> None:
+            nonlocal replacements
+            replacements += 1
+            if replacements == 2:
+                secondary.write_bytes(b"external owner")
+                raise OSError("blocked primary")
+            real_replace(source, destination)
+
+        with patch(
+            "pysfmea.file_publication.os.replace",
+            side_effect=fail_primary_after_secondary,
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "primary artifact publication failed and secondary artifact rollback failed"
+            ):
+                atomic_publish_pair(primary, b"analysis", secondary, b"receipt")
+        self.assertFalse(primary.exists())
+        self.assertEqual(secondary.read_bytes(), b"external owner")
 
     def test_failed_atomic_replace_preserves_prior_file_and_cleans_staging(self) -> None:
         destination = self.root / "preserved.json"
