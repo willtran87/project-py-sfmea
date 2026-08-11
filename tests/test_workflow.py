@@ -492,7 +492,7 @@ class WorkflowStatusTests(unittest.TestCase):
             current["artifacts"]["review_package"]["integrity"]["analysis_structure"][
                 "limits"
             ],
-            {"max_nodes": 3_000_000, "max_depth": 100},
+            {"max_nodes": 5_000_000, "max_depth": 100},
         )
         self.assertTrue(
             current["artifacts"]["review_package"]["integrity"]["review_views"]["valid"]

@@ -116,6 +116,13 @@ class _ValidationRecord(TypedDict):
     call_matched_count: int
     call_actual_matched_count: int
     call_actual_count: int
+    semantic_case_count: int
+    semantic_recall: float
+    semantic_precision: float
+    semantic_count_backed: bool
+    semantic_matched_count: int
+    semantic_actual_matched_count: int
+    semantic_actual_count: int
     evaluation_artifact_declared: bool
     evaluation_artifact_verified: bool
     duplicate_evidence: bool
@@ -302,6 +309,10 @@ def build_program_template(
             "min_call_resolution_precision": 0.8,
             "min_micro_call_resolution_recall": 0.8,
             "min_micro_call_resolution_precision": 0.8,
+            "min_semantic_output_recall": 0.0,
+            "min_semantic_output_precision": 0.0,
+            "min_micro_semantic_output_recall": 0.0,
+            "min_micro_semantic_output_precision": 0.0,
             "require_temporal_evidence": True,
             "require_resilience_evidence": True,
             "min_llm_samples": 0,
@@ -737,6 +748,46 @@ def _evaluation_result_matches_cohort(
         and call_matched == call_expected - len(call_missing)
         and call_result.get("recall") == cohort.get("call_resolution_recall")
         and call_result.get("precision") == cohort.get("call_resolution_precision")
+    )
+
+
+def _semantic_output_matches_cohort(result: Any, cohort: dict[str, Any]) -> bool:
+    """Reconcile optional semantic-case evidence with one retained evaluation."""
+
+    if not isinstance(result, dict):
+        return False
+    semantic_case_count = cohort.get("semantic_case_count", 0)
+    if not semantic_case_count:
+        # Legacy manually-authored cohorts may predate semantic qualification.
+        # A declared semantic projection is always bound exactly below.
+        return True
+    semantic = result.get("semantic_output")
+    corpus = result.get("corpus")
+    if not isinstance(semantic, dict) or not isinstance(corpus, dict):
+        return False
+    counts = [semantic.get(field) for field in ("expected", "actual", "matched")]
+    missing = semantic.get("missing")
+    if (
+        semantic.get("enabled") is not True
+        or corpus.get("semantic_case_count") != semantic_case_count
+        or not isinstance(missing, list)
+        or not all(
+            isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            for value in counts
+        )
+    ):
+        return False
+    expected, actual, matched = cast(int, counts[0]), cast(int, counts[1]), cast(
+        int, counts[2]
+    )
+    return bool(
+        expected == semantic_case_count
+        and actual == cohort.get("semantic_actual_count")
+        and matched == cohort.get("semantic_matched_count")
+        and matched == cohort.get("semantic_actual_matched_count")
+        and matched == expected - len(missing)
+        and semantic.get("recall") == cohort.get("semantic_output_recall")
+        and semantic.get("precision") == cohort.get("semantic_output_precision")
     )
 
 
@@ -1798,6 +1849,10 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "min_call_resolution_precision",
             "min_micro_call_resolution_recall",
             "min_micro_call_resolution_precision",
+            "min_semantic_output_recall",
+            "min_semantic_output_precision",
+            "min_micro_semantic_output_recall",
+            "min_micro_semantic_output_precision",
             "require_temporal_evidence",
             "require_resilience_evidence",
             "min_llm_samples",
@@ -1937,6 +1992,12 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "call_matched_count",
                 "call_actual_matched_count",
                 "call_actual_count",
+                "semantic_case_count",
+                "semantic_output_recall",
+                "semantic_output_precision",
+                "semantic_matched_count",
+                "semantic_actual_matched_count",
+                "semantic_actual_count",
                 "independent_reviewed",
                 "producer",
                 "reviewer",
@@ -2229,6 +2290,108 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         if call_case_count and count_backed and not supplied_call_count_fields:
             call_count_backed = False
 
+        semantic_case_count = cohort.get("semantic_case_count", 0)
+        if (
+            not isinstance(semantic_case_count, int)
+            or isinstance(semantic_case_count, bool)
+            or semantic_case_count < 0
+        ):
+            _finding(
+                findings,
+                "validation.semantic_case_count",
+                "error",
+                "Semantic case count must be a non-negative integer.",
+                location,
+            )
+            continue
+        try:
+            semantic_recall_value = _ratio(
+                cohort.get("semantic_output_recall"), label="cohort semantic recall"
+            )
+            semantic_precision_value = _ratio(
+                cohort.get("semantic_output_precision"), label="cohort semantic precision"
+            )
+        except ValueError as exc:
+            _finding(findings, "validation.semantic_metric", "error", str(exc), location)
+            continue
+        if semantic_case_count and (
+            semantic_recall_value is None or semantic_precision_value is None
+        ):
+            _finding(
+                findings,
+                "validation.semantic_metric_missing",
+                "error",
+                "Semantic cohorts require semantic recall and precision.",
+                location,
+            )
+            continue
+        if not semantic_case_count and (
+            semantic_recall_value is not None or semantic_precision_value is not None
+        ):
+            _finding(
+                findings,
+                "validation.semantic_metric_without_cases",
+                "error",
+                "Semantic metrics require a positive semantic_case_count.",
+                location,
+            )
+            continue
+        semantic_count_fields = {
+            "semantic_matched_count",
+            "semantic_actual_matched_count",
+            "semantic_actual_count",
+        }
+        supplied_semantic_count_fields = semantic_count_fields & set(cohort)
+        semantic_count_backed = bool(supplied_semantic_count_fields)
+        semantic_matched_count: int | None = None
+        semantic_actual_matched_count: int | None = None
+        semantic_actual_count: int | None = None
+        if semantic_count_backed and supplied_semantic_count_fields != semantic_count_fields:
+            _finding(
+                findings,
+                "validation.semantic_count_provenance_incomplete",
+                "error",
+                "Count-backed semantic validation requires all semantic count fields.",
+                location,
+            )
+            semantic_count_backed = False
+        elif semantic_count_backed:
+            counts = [cohort.get(field) for field in sorted(semantic_count_fields)]
+            if not semantic_case_count or not all(
+                isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                for value in counts
+            ):
+                _finding(
+                    findings,
+                    "validation.semantic_count_value",
+                    "error",
+                    "Semantic counts require a count-backed cohort with positive cases.",
+                    location,
+                )
+                semantic_count_backed = False
+            else:
+                semantic_matched_count = cast(int, cohort.get("semantic_matched_count"))
+                semantic_actual_matched_count = cast(int, cohort.get("semantic_actual_matched_count"))
+                semantic_actual_count = cast(int, cohort.get("semantic_actual_count"))
+                if (
+                    semantic_actual_count < 1
+                    or semantic_matched_count > semantic_case_count
+                    or semantic_actual_matched_count > semantic_actual_count
+                    or semantic_recall_value != round(
+                        semantic_matched_count / semantic_case_count, 4
+                    )
+                    or semantic_precision_value != round(
+                        semantic_actual_matched_count / semantic_actual_count, 4
+                    )
+                ):
+                    _finding(
+                        findings,
+                        "validation.semantic_metric_reconciliation",
+                        "error",
+                        "Semantic metrics do not reconcile with their exact case counts.",
+                        location,
+                    )
+                    semantic_count_backed = False
         evaluation_artifact = cohort.get("evaluation_result_artifact")
         artifact_declared = evaluation_artifact is not None
         evaluation_artifact_verified = False
@@ -2328,14 +2491,15 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                                 "Evaluation result artifact content does not match the cohort's canonical digest.",
                                 location,
                             )
-                        elif not _evaluation_result_matches_cohort(
-                            evaluation_result, cohort
+                        elif not (
+                            _evaluation_result_matches_cohort(evaluation_result, cohort)
+                            and _semantic_output_matches_cohort(evaluation_result, cohort)
                         ):
                             _finding(
                                 findings,
                                 "validation.evaluation_artifact_claims",
                                 "error",
-                                "Evaluation result artifact metrics, counts, corpus, or verifier do not match the cohort projection.",
+                                "Evaluation result artifact metrics, semantic evidence, counts, corpus, or verifier do not match the cohort projection.",
                                 location,
                             )
                         else:
@@ -2425,6 +2589,20 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 if call_actual_count is not None
                 else 0,
                 "evaluation_artifact_declared": artifact_declared,
+                "semantic_case_count": semantic_case_count,
+                "semantic_recall": semantic_recall_value
+                if semantic_recall_value is not None
+                else 0.0,
+                "semantic_precision": semantic_precision_value
+                if semantic_precision_value is not None
+                else 0.0,
+                "semantic_count_backed": semantic_count_backed,
+                "semantic_matched_count": semantic_matched_count
+                if semantic_matched_count is not None else 0,
+                "semantic_actual_matched_count": semantic_actual_matched_count
+                if semantic_actual_matched_count is not None else 0,
+                "semantic_actual_count": semantic_actual_count
+                if semantic_actual_count is not None else 0,
                 "evaluation_artifact_verified": evaluation_artifact_verified,
                 "duplicate_evidence": duplicate_evidence,
             }
@@ -2434,6 +2612,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     ]
     declared_call_validation_records = [
         value for value in validation_records if value["call_case_count"] > 0
+    ]
+    declared_semantic_validation_records = [
+        value for value in validation_records if value["semantic_case_count"] > 0
     ]
     call_validation_records = [
         value
@@ -2445,6 +2626,14 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     ]
     call_count_backed_records = [
         value for value in call_validation_records if value["call_count_backed"]
+    ]
+    semantic_validation_records = [
+        value
+        for value in credited_validation_records
+        if value["semantic_case_count"] > 0
+    ]
+    semantic_count_backed_records = [
+        value for value in semantic_validation_records if value["semantic_count_backed"]
     ]
     total_count_backed_cases = sum(
         value["case_count"] for value in count_backed_records
@@ -2469,6 +2658,19 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
     )
     total_call_count_backed_actual_matched = sum(
         value["call_actual_matched_count"] for value in call_count_backed_records
+    )
+    total_semantic_cases = sum(
+        value["semantic_case_count"] for value in semantic_count_backed_records
+    )
+    total_semantic_actual = sum(
+        value["semantic_actual_count"] for value in semantic_count_backed_records
+    )
+    total_semantic_matched = sum(
+        value["semantic_matched_count"] for value in semantic_count_backed_records
+    )
+    total_semantic_actual_matched = sum(
+        value["semantic_actual_matched_count"]
+        for value in semantic_count_backed_records
     )
     validation_summary: dict[str, Any] = {
         "cohorts": len(validation_records),
@@ -2553,6 +2755,36 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         )
         if total_call_count_backed_actual
         else None,
+        "semantic_cases": sum(
+            value["semantic_case_count"] for value in credited_validation_records
+        ),
+        "semantic_output_cohorts": len(semantic_validation_records),
+        "semantic_count_backed_cohorts": len(semantic_count_backed_records),
+        "semantic_count_backed_cases": total_semantic_cases,
+        "macro_semantic_output_recall": round(
+            sum(value["semantic_recall"] for value in semantic_validation_records)
+            / len(semantic_validation_records),
+            4,
+        )
+        if semantic_validation_records
+        else None,
+        "macro_semantic_output_precision": round(
+            sum(value["semantic_precision"] for value in semantic_validation_records)
+            / len(semantic_validation_records),
+            4,
+        )
+        if semantic_validation_records
+        else None,
+        "micro_semantic_output_recall": round(
+            total_semantic_matched / total_semantic_cases, 4
+        )
+        if total_semantic_cases
+        else None,
+        "micro_semantic_output_precision": round(
+            total_semantic_actual_matched / total_semantic_actual, 4
+        )
+        if total_semantic_actual
+        else None,
     }
     min_repositories = _quality_integer(
         quality, "min_validation_repositories", findings
@@ -2603,6 +2835,17 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "validation.call_count_backing",
             "error",
             "Every cohort with call cases must carry reconciled call-resolution counts.",
+            "validation_cohorts",
+        )
+    if require_count_backed_validation and sum(
+        value["semantic_count_backed"]
+        for value in declared_semantic_validation_records
+    ) < len(declared_semantic_validation_records):
+        _finding(
+            findings,
+            "validation.semantic_output_count_backing",
+            "error",
+            "Every cohort with semantic-output cases must carry reconciled semantic counts.",
             "validation_cohorts",
         )
     for metric in ("recall", "precision"):
@@ -2673,6 +2916,47 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 f"validation.micro_call_resolution_{metric}",
                 "error",
                 f"Micro call-resolution {metric} {value:.4f} is below the configured {threshold:.4f} threshold.",
+                "validation_cohorts",
+            )
+
+    for metric in ("recall", "precision"):
+        value = validation_summary[f"macro_semantic_output_{metric}"]
+        threshold = _quality_ratio(
+            quality,
+            f"min_semantic_output_{metric}",
+            0.0,
+            findings,
+        )
+        if value is not None and value < threshold:
+            _finding(
+                findings,
+                f"validation.semantic_output_{metric}",
+                "error",
+                f"Macro semantic-output {metric} {value:.4f} is below the configured {threshold:.4f} threshold.",
+                "validation_cohorts",
+            )
+    for metric in ("recall", "precision"):
+        value = validation_summary[f"micro_semantic_output_{metric}"]
+        threshold = _quality_ratio(
+            quality,
+            f"min_micro_semantic_output_{metric}",
+            0.0,
+            findings,
+        )
+        if value is None and threshold > 0 and semantic_validation_records:
+            _finding(
+                findings,
+                f"validation.micro_semantic_output_{metric}_unavailable",
+                "error",
+                f"Micro semantic-output {metric} cannot be computed without count-backed semantic cohorts.",
+                "validation_cohorts",
+            )
+        elif value is not None and value < threshold:
+            _finding(
+                findings,
+                f"validation.micro_semantic_output_{metric}",
+                "error",
+                f"Micro semantic-output {metric} {value:.4f} is below the configured {threshold:.4f} threshold.",
                 "validation_cohorts",
             )
 
@@ -3681,6 +3965,9 @@ def program_verification_markdown(result: dict[str, Any]) -> str:
         f"- Count-backed cohorts: {validation.get('count_backed_cohorts', 0)} of {validation.get('credited_cohorts', validation.get('cohorts', 0))} credited",
         f"- Verified evaluation artifacts: {validation.get('verified_evaluation_artifacts', 0)} of {validation.get('credited_cohorts', validation.get('cohorts', 0))} credited",
         f"- Micro call-resolution recall / precision: {validation.get('micro_call_resolution_recall')} / {validation.get('micro_call_resolution_precision')}",
+        f"- Semantic-output cohorts: {validation.get('semantic_output_cohorts', 0)} (count-backed: {validation.get('semantic_count_backed_cohorts', 0)}; exact cases: {validation.get('semantic_cases', 0)})",
+        f"- Macro semantic-output recall / precision: {validation.get('macro_semantic_output_recall')} / {validation.get('macro_semantic_output_precision')}",
+        f"- Micro semantic-output recall / precision: {validation.get('micro_semantic_output_recall')} / {validation.get('micro_semantic_output_precision')}",
         f"- LLM samples: {llm.get('samples', 0)}",
         f"- Credited LLM evaluations: {llm.get('credited_evaluations', llm.get('evaluations', 0))} of {llm.get('evaluations', 0)} (duplicate evidence: {llm.get('duplicate_evidence', 0)})",
         f"- LLM aggregation: {llm.get('aggregation_method', 'unavailable')}",
@@ -3813,7 +4100,7 @@ table{{width:100%;border-collapse:collapse}} th,td{{padding:10px;text-align:left
 </div></section>
 <section id="topology"><h2>System topology</h2>{_program_topology_svg(result)}</section>
 <section id="checks"><h2>Verification checks</h2><table><thead><tr><th>Check</th><th>State</th></tr></thead><tbody>{check_rows}</tbody></table></section>
-<section id="quality"><h2>Validation and model quality</h2><div class="metrics">{metric(validation.get("macro_recall"), "macro recall")}{metric(validation.get("macro_precision"), "macro precision")}{metric(validation.get("micro_recall"), "micro recall")}{metric(validation.get("micro_precision"), "micro precision")}{metric(validation.get("credited_cohorts", validation.get("cohorts", 0)), "credited validation cohorts")}{metric(validation.get("duplicate_evidence", 0), "duplicate validation evidence")}{metric(validation.get("macro_call_resolution_recall"), "macro call-resolution recall")}{metric(validation.get("macro_call_resolution_precision"), "macro call-resolution precision")}{metric(validation.get("micro_call_resolution_recall"), "micro call-resolution recall")}{metric(validation.get("micro_call_resolution_precision"), "micro call-resolution precision")}{metric(validation.get("count_backed_cohorts", 0), "count-backed cohorts")}{metric(validation.get("verified_evaluation_artifacts", 0), "verified evaluation artifacts")}{metric(validation.get("evaluation_artifact_bytes", 0), "evaluation artifact bytes")}{metric(validation.get("call_count_backed_cohorts", 0), "count-backed call cohorts")}{metric(validation.get("cases", 0), "labelled failure-mode cases")}{metric(validation.get("call_cases", 0), "labelled call-site cases")}{metric(validation.get("independently_reviewed", 0), "independent cohorts")}{metric(llm.get("grounding"), "LLM grounding")}{metric(llm.get("citation_accuracy"), "LLM citation accuracy")}{metric(llm.get("unsupported_claim_rate"), "unsupported claim rate")}{metric(llm.get("claim_count"), "LLM claims")}{metric(llm.get("unsupported_claim_count"), "unsupported LLM claims")}{metric(llm.get("credited_evaluations", llm.get("evaluations", 0)), "credited LLM evaluations")}{metric(llm.get("duplicate_evidence", 0), "duplicate LLM evidence")}{metric(llm.get("count_backed_evaluations", 0), "count-backed LLM evaluations")}{metric(llm.get("verified_corpus_artifacts", 0), "verified LLM corpus artifacts")}{metric(llm.get("subject_bound_evaluations", 0), "subject-bound LLM evaluations")}{metric(llm.get("semantic_fingerprinted_evaluations", 0), "semantic LLM fingerprints")}{metric(llm.get("corpus_artifact_bytes", 0), "LLM corpus bytes")}{metric(llm.get("aggregation_method", "unavailable"), "LLM aggregation")}{metric(llm.get("independently_reviewed", 0), "independent LLM evaluations")}</div></section>
+<section id="quality"><h2>Validation and model quality</h2><div class="metrics">{metric(validation.get("macro_recall"), "macro recall")}{metric(validation.get("macro_precision"), "macro precision")}{metric(validation.get("micro_recall"), "micro recall")}{metric(validation.get("micro_precision"), "micro precision")}{metric(validation.get("credited_cohorts", validation.get("cohorts", 0)), "credited validation cohorts")}{metric(validation.get("duplicate_evidence", 0), "duplicate validation evidence")}{metric(validation.get("macro_call_resolution_recall"), "macro call-resolution recall")}{metric(validation.get("macro_call_resolution_precision"), "macro call-resolution precision")}{metric(validation.get("micro_call_resolution_recall"), "micro call-resolution recall")}{metric(validation.get("micro_call_resolution_precision"), "micro call-resolution precision")}{metric(validation.get("macro_semantic_output_recall"), "macro semantic-output recall")}{metric(validation.get("macro_semantic_output_precision"), "macro semantic-output precision")}{metric(validation.get("micro_semantic_output_recall"), "micro semantic-output recall")}{metric(validation.get("micro_semantic_output_precision"), "micro semantic-output precision")}{metric(validation.get("semantic_output_cohorts", 0), "semantic validation cohorts")}{metric(validation.get("semantic_count_backed_cohorts", 0), "count-backed semantic cohorts")}{metric(validation.get("semantic_cases", 0), "exact semantic cases")}{metric(validation.get("count_backed_cohorts", 0), "count-backed cohorts")}{metric(validation.get("verified_evaluation_artifacts", 0), "verified evaluation artifacts")}{metric(validation.get("evaluation_artifact_bytes", 0), "evaluation artifact bytes")}{metric(validation.get("call_count_backed_cohorts", 0), "count-backed call cohorts")}{metric(validation.get("cases", 0), "labelled failure-mode cases")}{metric(validation.get("call_cases", 0), "labelled call-site cases")}{metric(validation.get("independently_reviewed", 0), "independent cohorts")}{metric(llm.get("grounding"), "LLM grounding")}{metric(llm.get("citation_accuracy"), "LLM citation accuracy")}{metric(llm.get("unsupported_claim_rate"), "unsupported claim rate")}{metric(llm.get("claim_count"), "LLM claims")}{metric(llm.get("unsupported_claim_count"), "unsupported LLM claims")}{metric(llm.get("credited_evaluations", llm.get("evaluations", 0)), "credited LLM evaluations")}{metric(llm.get("duplicate_evidence", 0), "duplicate LLM evidence")}{metric(llm.get("count_backed_evaluations", 0), "count-backed LLM evaluations")}{metric(llm.get("verified_corpus_artifacts", 0), "verified LLM corpus artifacts")}{metric(llm.get("subject_bound_evaluations", 0), "subject-bound LLM evaluations")}{metric(llm.get("semantic_fingerprinted_evaluations", 0), "semantic LLM fingerprints")}{metric(llm.get("corpus_artifact_bytes", 0), "LLM corpus bytes")}{metric(llm.get("aggregation_method", "unavailable"), "LLM aggregation")}{metric(llm.get("independently_reviewed", 0), "independent LLM evaluations")}</div></section>
 <section id="relationships"><h2>Cross-repository relationships, timing, and resilience</h2><table><thead><tr><th>ID</th><th>Source</th><th>Target</th><th>Kind</th><th>Timing</th><th>Resilience</th><th>Deadline ms</th><th>Observed max ms</th><th>Recovery ms</th><th>Evidence</th></tr></thead><tbody>{relationship_rows}</tbody></table></section>
 <section id="findings"><h2>Actionable findings</h2><div class="filters"><label for="finding-search">Search findings<br><input id="finding-search" type="search" placeholder="Code, message, or location"></label><label for="finding-level">Severity<br><select id="finding-level"><option value="">All levels</option><option value="error">Errors</option><option value="warning">Warnings</option><option value="information">Information</option></select></label></div><table><thead><tr><th>Level</th><th>Code</th><th>Message</th><th>Location</th></tr></thead><tbody>{finding_rows}</tbody></table></section>
 <section class="notice"><strong>Interpretation boundary.</strong> {value(result.get("notice"))}</section></main>
@@ -4624,6 +4911,14 @@ def _program_verification_payload_contract(value: Any) -> bool:
         "macro_call_resolution_precision",
         "micro_call_resolution_recall",
         "micro_call_resolution_precision",
+        "semantic_cases",
+        "semantic_output_cohorts",
+        "semantic_count_backed_cohorts",
+        "semantic_count_backed_cases",
+        "macro_semantic_output_recall",
+        "macro_semantic_output_precision",
+        "micro_semantic_output_recall",
+        "micro_semantic_output_precision",
     }
     validation_ratios = {
         "macro_recall",
@@ -4634,6 +4929,10 @@ def _program_verification_payload_contract(value: Any) -> bool:
         "macro_call_resolution_precision",
         "micro_call_resolution_recall",
         "micro_call_resolution_precision",
+        "macro_semantic_output_recall",
+        "macro_semantic_output_precision",
+        "micro_semantic_output_recall",
+        "micro_semantic_output_precision",
     }
     if (
         set(validation) != validation_fields
@@ -4663,12 +4962,23 @@ def _program_verification_payload_contract(value: Any) -> bool:
         or validation["call_count_backed_cases"]
         < validation["call_count_backed_cohorts"]
         or validation["call_count_backed_cases"] > validation["call_cases"]
+        or validation["semantic_output_cohorts"] > validation["credited_cohorts"]
+        or validation["semantic_count_backed_cohorts"]
+        > validation["semantic_output_cohorts"]
+        or validation["semantic_count_backed_cohorts"]
+        > validation["count_backed_cohorts"]
+        or validation["semantic_cases"] < validation["semantic_output_cohorts"]
+        or validation["semantic_count_backed_cases"]
+        < validation["semantic_count_backed_cohorts"]
+        or validation["semantic_count_backed_cases"] > validation["semantic_cases"]
     ):
         return False
     macro_validation_available = validation["credited_cohorts"] > 0
     micro_validation_available = validation["count_backed_cohorts"] > 0
     macro_call_available = validation["call_resolution_cohorts"] > 0
     micro_call_available = validation["call_count_backed_cohorts"] > 0
+    macro_semantic_available = validation["semantic_output_cohorts"] > 0
+    micro_semantic_available = validation["semantic_count_backed_cohorts"] > 0
     if (
         any(
             (validation[name] is not None) is not macro_validation_available
@@ -4690,6 +5000,20 @@ def _program_verification_payload_contract(value: Any) -> bool:
             for name in (
                 "micro_call_resolution_recall",
                 "micro_call_resolution_precision",
+            )
+        )
+        or any(
+            (validation[name] is not None) is not macro_semantic_available
+            for name in (
+                "macro_semantic_output_recall",
+                "macro_semantic_output_precision",
+            )
+        )
+        or any(
+            (validation[name] is not None) is not micro_semantic_available
+            for name in (
+                "micro_semantic_output_recall",
+                "micro_semantic_output_precision",
             )
         )
     ):

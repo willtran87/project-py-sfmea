@@ -563,14 +563,17 @@ additionally carries `call_case_count`, `call_matched_count`, `call_actual_match
 `call_actual_count`. Imperfect evaluations are retained when their counts and missing/unexpected
 records reconcile. Configure
 `require_count_backed_validation`, `require_evaluation_result_artifacts`, `min_micro_recall`,
-`min_micro_precision`, and the corresponding
-`min_micro_call_resolution_*` gates to require recomputable population-weighted metrics. Legacy
+`min_micro_precision`, the corresponding `min_micro_call_resolution_*` gates, and the
+`min_semantic_output_*` / `min_micro_semantic_output_*` gates to require cohort-macro and
+recomputable population-weighted metrics for failure-mode, call-resolution, and exact
+semantic-output behavior. Legacy
 records without counts remain readable only when those new gates are disabled.
 
 `--artifact-path` is interpreted relative to the assurance-program file after inserting the
 record. Preserve that exact evaluation JSON at the declared location. The verifier uses strict,
 bounded, identity-stable non-link ingestion; checks the raw artifact and canonical result digests;
-and reconciles the evaluator, corpus, rates, counts, and missing/unexpected records. A digest string
+and reconciles the evaluator, corpus, failure-mode/call/semantic rates and counts, and
+missing/unexpected/semantic-diagnostic records. A digest string
 without an available matching artifact receives no credit under the default policy.
 
 LLM records carry grounded/citation-correct sample counts and total/unsupported claim counts plus

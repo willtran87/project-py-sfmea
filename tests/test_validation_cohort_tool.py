@@ -73,6 +73,38 @@ class ValidationCohortToolTests(unittest.TestCase):
             {"path": "evaluation.json", "sha256": "b" * 64},
         )
 
+    def test_semantic_case_metrics_are_preserved_when_reconciled(self) -> None:
+        self.result["corpus"]["semantic_case_count"] = 3
+        self.result["semantic_output"] = {
+            "enabled": True,
+            "expected": 3,
+            "actual": 4,
+            "matched": 3,
+            "recall": 1.0,
+            "precision": 0.75,
+            "missing": [],
+            "mismatches": [
+                {
+                    "source": "service.py",
+                    "component": "service.run",
+                    "rule_id": "interface.unavailable",
+                    "field": "failure_mode",
+                    "expected": "expected",
+                    "actual": "actual",
+                }
+            ],
+        }
+        record = cohort_from_result(
+            self.result,
+            cohort_id="VAL-SEMANTIC-1",
+            repository="repo",
+            framework="plain",
+            producer="one",
+            reviewer="two",
+        )
+        self.assertEqual(record["semantic_case_count"], 3)
+        self.assertEqual(record["semantic_output_recall"], 1.0)
+        self.assertEqual(record["semantic_output_precision"], 0.75)
     def test_nonindependent_or_disqualified_result_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "distinct producer"):
             cohort_from_result(

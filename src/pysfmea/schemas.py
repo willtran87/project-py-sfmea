@@ -3124,6 +3124,12 @@ def _assurance_program_schema() -> dict[str, Any]:
                             "minimum": 0,
                         },
                         "call_actual_count": {"type": "integer", "minimum": 1},
+                        "semantic_case_count": {"type": "integer", "minimum": 0},
+                        "semantic_output_recall": {"type": "number", "minimum": 0, "maximum": 1},
+                        "semantic_output_precision": {"type": "number", "minimum": 0, "maximum": 1},
+                        "semantic_matched_count": {"type": "integer", "minimum": 0},
+                        "semantic_actual_matched_count": {"type": "integer", "minimum": 0},
+                        "semantic_actual_count": {"type": "integer", "minimum": 1},
                         "independent_reviewed": {"type": "boolean"},
                         "producer": nonempty,
                         "reviewer": nonempty,
@@ -3407,6 +3413,26 @@ def _assurance_program_schema() -> dict[str, Any]:
                         "minimum": 0,
                         "maximum": 1,
                     },
+                    "min_semantic_output_recall": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "min_semantic_output_precision": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "min_micro_semantic_output_recall": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "min_micro_semantic_output_precision": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
                     "require_temporal_evidence": {"type": "boolean"},
                     "require_resilience_evidence": {"type": "boolean"},
                     "min_llm_samples": {"type": "integer", "minimum": 0},
@@ -3662,6 +3688,10 @@ def _assurance_program_verification_schema() -> dict[str, Any]:
         "call_resolution_cohorts",
         "call_count_backed_cohorts",
         "call_count_backed_cases",
+        "semantic_cases",
+        "semantic_output_cohorts",
+        "semantic_count_backed_cohorts",
+        "semantic_count_backed_cases",
     )
     validation_ratio_names = (
         "macro_recall",
@@ -3672,6 +3702,10 @@ def _assurance_program_verification_schema() -> dict[str, Any]:
         "macro_call_resolution_precision",
         "micro_call_resolution_recall",
         "micro_call_resolution_precision",
+        "macro_semantic_output_recall",
+        "macro_semantic_output_precision",
+        "micro_semantic_output_recall",
+        "micro_semantic_output_precision",
     )
     validation = {
         "type": "object",
@@ -3739,6 +3773,36 @@ def _assurance_program_verification_schema() -> dict[str, Any]:
                     "properties": {
                         "micro_call_resolution_recall": {"type": "number"},
                         "micro_call_resolution_precision": {"type": "number"},
+                    }
+                },
+            },
+            {
+                "if": {"properties": {"semantic_output_cohorts": {"const": 0}}},
+                "then": {
+                    "properties": {
+                        "macro_semantic_output_recall": {"type": "null"},
+                        "macro_semantic_output_precision": {"type": "null"},
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "macro_semantic_output_recall": {"type": "number"},
+                        "macro_semantic_output_precision": {"type": "number"},
+                    }
+                },
+            },
+            {
+                "if": {"properties": {"semantic_count_backed_cohorts": {"const": 0}}},
+                "then": {
+                    "properties": {
+                        "micro_semantic_output_recall": {"type": "null"},
+                        "micro_semantic_output_precision": {"type": "null"},
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "micro_semantic_output_recall": {"type": "number"},
+                        "micro_semantic_output_precision": {"type": "number"},
                     }
                 },
             },
@@ -7394,6 +7458,82 @@ def _qualification_result_schema() -> dict[str, Any]:
         },
         "additionalProperties": False,
     }
+    semantic_value = {
+        "oneOf": [
+            {"type": "string", "maxLength": 20_000},
+            {
+                "type": "array",
+                "maxItems": 100,
+                "items": {"type": "string", "maxLength": 20_000},
+            },
+        ]
+    }
+    semantic_diagnostic_example = {
+        "type": "object",
+        "required": [
+            "kind",
+            "source",
+            "component",
+            "rule_id",
+            "field",
+            "expected",
+            "actual",
+        ],
+        "properties": {
+            "kind": {"enum": ["missing", "mismatch"]},
+            "source": {"type": "string", "maxLength": 20_000},
+            "component": text,
+            "rule_id": text,
+            "field": {"type": ["string", "null"], "maxLength": 20_000},
+            "expected": {"oneOf": [semantic_value, {"type": "null"}]},
+            "actual": {"oneOf": [semantic_value, {"type": "null"}]},
+        },
+        "allOf": [
+            {
+                "if": {"properties": {"kind": {"const": "missing"}}},
+                "then": {
+                    "properties": {
+                        "field": {"type": "null"},
+                        "expected": {"type": "null"},
+                        "actual": {"type": "null"},
+                    }
+                },
+            },
+            {
+                "if": {"properties": {"kind": {"const": "mismatch"}}},
+                "then": {
+                    "properties": {
+                        "field": {"type": "string", "minLength": 1, "maxLength": 20_000},
+                        "expected": semantic_value,
+                        "actual": semantic_value,
+                    }
+                },
+            },
+        ],
+        "additionalProperties": False,
+    }
+    semantic_diagnostics = {
+        "type": "object",
+        "required": [
+            "missing_count",
+            "mismatch_count",
+            "examples",
+            "examples_omitted",
+            "authority",
+        ],
+        "properties": {
+            "missing_count": {"type": "integer", "minimum": 0},
+            "mismatch_count": {"type": "integer", "minimum": 0},
+            "examples": {
+                "type": "array",
+                "maxItems": 100,
+                "items": semantic_diagnostic_example,
+            },
+            "examples_omitted": {"type": "integer", "minimum": 0},
+            "authority": text,
+        },
+        "additionalProperties": False,
+    }
     repository_properties = {
         "id": text,
         "frameworks": labels,
@@ -7478,6 +7618,7 @@ def _qualification_result_schema() -> dict[str, Any]:
         "by_semantic_rule": _qualification_named_metrics_schema(
             repository_count=False
         ),
+        "semantic_diagnostics": semantic_diagnostics,
     }
     segment = {
         "type": "object",
@@ -7554,6 +7695,10 @@ def _qualification_result_schema() -> dict[str, Any]:
                 "frameworks",
                 "domains",
                 "independently_governed_corpora",
+                "semantic_missing_cases",
+                "semantic_mismatched_claims",
+                "semantic_diagnostic_examples",
+                "semantic_diagnostic_examples_omitted",
             ],
             "properties": {
                 "repository_count": {"type": "integer", "minimum": 1},
@@ -7562,6 +7707,19 @@ def _qualification_result_schema() -> dict[str, Any]:
                 "frameworks": labels,
                 "domains": labels,
                 "independently_governed_corpora": {
+                    "type": "integer",
+                    "minimum": 0,
+                },
+                "semantic_missing_cases": {"type": "integer", "minimum": 0},
+                "semantic_mismatched_claims": {
+                    "type": "integer",
+                    "minimum": 0,
+                },
+                "semantic_diagnostic_examples": {
+                    "type": "integer",
+                    "minimum": 0,
+                },
+                "semantic_diagnostic_examples_omitted": {
                     "type": "integer",
                     "minimum": 0,
                 },

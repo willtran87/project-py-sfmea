@@ -4711,7 +4711,9 @@ def _qualification_build(args: argparse.Namespace) -> int:
     print(
         "Semantic qualification: "
         f"matched={semantics['matched']}/{semantics['expected']}; "
-        f"recall={semantics['recall']}; precision={semantics['precision']}"
+        f"recall={semantics['recall']}; precision={semantics['precision']}; "
+        f"missing_cases={result['summary']['semantic_missing_cases']}; "
+        f"mismatched_claims={result['summary']['semantic_mismatched_claims']}"
     )
     print(result["notice"])
     return int(args.require_eligible and not result["eligible_for_independent_review"])
@@ -4892,7 +4894,9 @@ def _program_verify(args: argparse.Namespace) -> int:
             f"repositories={summary.get('bound_repositories', 0)}/{summary.get('repositories', 0)}, "
             f"relationships={summary.get('relationships', 0)}, "
             f"evidence={summary.get('external_evidence', 0)}, "
-            f"validation_repositories={validation.get('repositories', 0)}"
+            f"validation_repositories={validation.get('repositories', 0)}, "
+            f"semantic_cases={validation.get('semantic_cases', 0)}, "
+            f"semantic_micro_recall={validation.get('micro_semantic_output_recall')}"
         )
         for finding in result.get("findings", [])[: args.max_findings]:
             print(

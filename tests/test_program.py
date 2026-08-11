@@ -151,6 +151,7 @@ class AssuranceProgramTests(unittest.TestCase):
                 "content_sha256": "a" * 64,
                 "case_count": 100,
                 "call_case_count": 40,
+                "semantic_case_count": 10,
             },
             "expected": 100,
             "actual": 100,
@@ -172,6 +173,16 @@ class AssuranceProgramTests(unittest.TestCase):
                 "precision": 0.9,
                 "missing": [{"case": index} for index in range(4)],
                 "unexpected": [{"case": index} for index in range(4)],
+            },
+            "semantic_output": {
+                "enabled": True,
+                "expected": 10,
+                "actual": 10,
+                "matched": 9,
+                "recall": 0.9,
+                "precision": 0.9,
+                "missing": [{"case": 1}],
+                "mismatches": [],
             },
         }
         evaluation_artifact = self.root / "evaluation-result.json"
@@ -205,6 +216,12 @@ class AssuranceProgramTests(unittest.TestCase):
                 "call_matched_count": 36,
                 "call_actual_matched_count": 36,
                 "call_actual_count": 40,
+                "semantic_case_count": 10,
+                "semantic_output_recall": 0.9,
+                "semantic_output_precision": 0.9,
+                "semantic_matched_count": 9,
+                "semantic_actual_matched_count": 9,
+                "semantic_actual_count": 10,
                 "independent_reviewed": True,
                 "producer": "Benchmark team",
                 "reviewer": "Independent validation authority",
@@ -279,6 +296,10 @@ class AssuranceProgramTests(unittest.TestCase):
             "min_call_resolution_precision": 0.8,
             "min_micro_call_resolution_recall": 0.8,
             "min_micro_call_resolution_precision": 0.8,
+            "min_semantic_output_recall": 0.8,
+            "min_semantic_output_precision": 0.8,
+            "min_micro_semantic_output_recall": 0.8,
+            "min_micro_semantic_output_precision": 0.8,
             "require_temporal_evidence": True,
             "require_resilience_evidence": True,
             "min_llm_samples": 25,
@@ -358,6 +379,9 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertEqual(result["validation"]["macro_call_resolution_recall"], 0.9)
         self.assertEqual(result["validation"]["micro_call_resolution_recall"], 0.9)
         self.assertEqual(result["validation"]["call_cases"], 40)
+        self.assertEqual(result["validation"]["semantic_cases"], 10)
+        self.assertEqual(result["validation"]["macro_semantic_output_recall"], 0.9)
+        self.assertEqual(result["validation"]["micro_semantic_output_precision"], 0.9)
         self.assertEqual(result["llm_quality"]["samples"], 50)
         self.assertEqual(result["llm_quality"]["credited_evaluations"], 1)
         self.assertEqual(result["llm_quality"]["duplicate_evidence"], 0)
@@ -372,6 +396,8 @@ class AssuranceProgramTests(unittest.TestCase):
         markdown = program_verification_markdown(result)
         self.assertIn("**VALID**", markdown)
         self.assertIn("Micro recall / precision: 0.91 / 0.91", markdown)
+        self.assertIn("Semantic-output cohorts: 1 (count-backed: 1; exact cases: 10)", markdown)
+        self.assertIn("Micro semantic-output recall / precision: 0.9 / 0.9", markdown)
         self.assertIn("Credited validation cohorts: 1 of 1", markdown)
         self.assertIn("Count-backed cohorts: 1 of 1", markdown)
         self.assertIn("Verified evaluation artifacts: 1 of 1", markdown)
@@ -394,6 +420,7 @@ class AssuranceProgramTests(unittest.TestCase):
         self.assertIn("Severity", html)
         self.assertIn("micro recall", html)
         self.assertIn("count-backed cohorts", html)
+        self.assertIn("micro semantic-output recall", html)
         self.assertIn("credited validation cohorts", html)
         self.assertIn("duplicate validation evidence", html)
         self.assertIn("verified evaluation artifacts", html)
@@ -2178,6 +2205,15 @@ class AssuranceProgramTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, 1)
         self.assertEqual(payload["format"], "pysfmea-assurance-program-verification-1")
+
+    def test_human_cli_surfaces_semantic_validation_metrics(self) -> None:
+        self._write_program(self._valid_program())
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = main(["program-verify", str(self.program_path)])
+        self.assertEqual(exit_code, 0)
+        self.assertIn("semantic_cases=10", stdout.getvalue())
+        self.assertIn("semantic_micro_recall=0.9", stdout.getvalue())
 
     def test_duplicate_key_and_unsafe_input_return_structured_rejection(self) -> None:
         self.program_path.write_text(

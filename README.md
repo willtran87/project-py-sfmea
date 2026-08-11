@@ -260,15 +260,15 @@ sfmea scan $repo --read-only -o $out
 
 For large analyses, choose an output ending in `.json.gz`. Loading is transparent, publication is
 deterministic and atomic, uses a balanced level-6 compression profile to avoid making publication
-the dominant scan phase, and decompression is bounded by the same 100 MB governed-analysis limit:
+the dominant scan phase, and decompression is bounded by the same 200 MB governed-analysis limit:
 
 ```powershell
 sfmea scan C:\path\to\python-repo -o .artifacts\sfmea-analysis.json.gz
 sfmea validate .artifacts\sfmea-analysis.json.gz
 ```
 
-Governed analysis ingestion is additionally bounded to 100 levels and 3,000,000 JSON nodes. The
-node ceiling is sized for medium monorepos with per-finding assurance contracts; exceeding either
+Governed analysis ingestion is additionally bounded to 100 levels and 5,000,000 JSON nodes. The
+analysis-specific ceiling is sized for substantial monorepos with per-finding assurance contracts; exceeding either
 the byte or structural limit fails before publication rather than producing a partial analysis.
 
 Project configuration is consumed as an identity-revalidated regular non-symbolic-link UTF-8 TOML
@@ -2052,7 +2052,10 @@ earn accuracy credit. Finding thresholds apply globally and to every repository,
 domain population; call/control thresholds also apply to each repository population with labeled
 cases, preventing a dominant cohort from hiding a weak segment. Semantic thresholds apply globally
 and per repository, while the result separately aggregates exact semantic cases by rule and field
-claims by output field.
+claims by output field. Each repository also retains at most 100 regenerated missing/mismatch
+examples as a reviewer aid, with exact omitted counts; the complete content-addressed evaluation
+artifact remains authoritative. The campaign summary and terminal output surface total missing
+semantic cases and mismatched claims before reviewers open the bounded drill-down.
 `minimum_control_negative_components_per_repository` additionally prevents a positive-only
 control corpus from satisfying campaign precision gates; set it to the independently approved
 minimum negative population for each control-bearing repository. Canonically duplicated analyses
@@ -2068,14 +2071,16 @@ system, or approve a release.
 `program-init` can import every independently governed repository cohort directly from a completely
 reconciled campaign. It creates program-relative references to the retained evaluation files and
 preserves corpus/result digests, evaluator version, expected/actual/matched counts, call-resolution
-counts, and labeler/approver identities. Stale campaigns, incomplete corpus governance,
+and semantic-output case counts and rates, and labeler/approver identities. Stale campaigns,
+incomplete corpus governance,
 disqualifying evaluator findings, and missing metrics are refused. The assurance program then
 reverifies each referenced evaluation and applies its own macro/micro quality gates; import itself
 does not grant evidence credit or approval.
 
 The self-contained qualification report provides keyboard-accessible navigation across gates,
 repository evidence, framework/domain segments, searchable paginated rule metrics, semantic
-case accuracy by rule, semantic claim accuracy by output field, retained
+case accuracy by rule, semantic claim accuracy by output field, searchable paginated bounded
+observed-drift examples, retained
 artifact identities, governance, and authority limits. It renders summary evidence without
 JavaScript, bounds interactive rule rows, expands a bounded rule set for print, respects reduced
 motion, supports narrow screens and dark/high-contrast preferences, and embeds the complete result.

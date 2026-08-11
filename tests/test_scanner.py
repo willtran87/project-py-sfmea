@@ -3673,6 +3673,34 @@ class ScannerTests(unittest.TestCase):
             {component["qualname"] for component in excluded["components"]},
         )
 
+    def test_same_named_nested_branch_callables_receive_distinct_identities(self) -> None:
+        (self.root / "lexical_collision.py").write_text(
+            "def choose(flag, value):\n"
+            "    if flag:\n"
+            "        def transform(item):\n"
+            "            return item + 1\n"
+            "    else:\n"
+            "        def transform(item):\n"
+            "            return item - 1\n"
+            "    return transform(value)\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        components = [
+            component
+            for component in analysis["components"]
+            if component["source"]["path"] == "lexical_collision.py"
+            and component["name"] == "transform"
+        ]
+        self.assertEqual(len(components), 2)
+        self.assertEqual(len({component["id"] for component in components}), 2)
+        self.assertTrue(
+            all(component["qualname"].startswith("choose.transform@L") for component in components)
+        )
+        self.assertEqual(len(analysis["items"]), len({item["id"] for item in analysis["items"]}))
+        obligations = analysis["assurance"]["obligations"]
+        self.assertEqual(len(obligations), len({item["id"] for item in obligations}))
+
     def test_named_lambdas_are_analyzed(self) -> None:
         (self.root / "lambda_code.py").write_text(
             "normalize = lambda value: value / 100\n",

@@ -60,6 +60,49 @@ def _verified_counts(
     return matched, actual_matched, actual
 
 
+def _verified_semantic_counts(
+    record: dict[str, Any],
+    *,
+    expected_count: int,
+) -> tuple[float, float, int, int, int]:
+    """Reconcile exact semantic-case metrics without conflating field mismatches."""
+
+    recall = record.get("recall")
+    precision = record.get("precision")
+    if not all(
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and 0 <= value <= 1
+        for value in (recall, precision)
+    ):
+        raise ValueError("semantic-output evaluation requires bounded recall and precision")
+    counts = {name: record.get(name) for name in ("expected", "actual", "matched")}
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
+        for value in counts.values()
+    ):
+        raise ValueError("semantic-output evaluation requires non-negative integer counts")
+    expected = counts["expected"]
+    actual = counts["actual"]
+    matched = counts["matched"]
+    missing = record.get("missing")
+    mismatches = record.get("mismatches")
+    if expected != expected_count or not isinstance(missing, list) or not isinstance(
+        mismatches, list
+    ):
+        raise ValueError("semantic-output corpus counts or diagnostics are malformed")
+    if actual < 1 or matched > expected or matched > actual:
+        raise ValueError("semantic-output counts do not reconcile")
+    if matched != expected - len(missing):
+        raise ValueError("semantic-output expected-side counts do not reconcile")
+    if float(recall) != round(matched / expected, 4) or float(precision) != round(
+        matched / actual, 4
+    ):
+        raise ValueError("semantic-output recall or precision does not reconcile")
+    return float(recall), float(precision), matched, matched, actual
+
+
+
 def cohort_from_result(
     result: dict[str, Any],
     *,
@@ -218,6 +261,26 @@ def cohort_from_result(
                 "call_matched_count": call_matched_count,
                 "call_actual_matched_count": call_actual_matched_count,
                 "call_actual_count": call_actual_count,
+            }
+        )
+    semantic_output = result.get("semantic_output", {})
+    if semantic_output.get("enabled"):
+        semantic_case_count = corpus.get("semantic_case_count")
+        if not isinstance(semantic_case_count, int) or isinstance(
+            semantic_case_count, bool
+        ) or semantic_case_count < 1:
+            raise ValueError("enabled semantic output requires semantic cases")
+        semantic_recall, semantic_precision, semantic_matched, semantic_actual_matched, semantic_actual = _verified_semantic_counts(
+            semantic_output, expected_count=semantic_case_count
+        )
+        record.update(
+            {
+                "semantic_case_count": semantic_case_count,
+                "semantic_output_recall": semantic_recall,
+                "semantic_output_precision": semantic_precision,
+                "semantic_matched_count": semantic_matched,
+                "semantic_actual_matched_count": semantic_actual_matched,
+                "semantic_actual_count": semantic_actual,
             }
         )
     return record

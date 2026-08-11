@@ -43,6 +43,7 @@ MAX_QUALIFICATION_REPOSITORIES = 100
 MAX_QUALIFICATION_LABELS = 100
 MAX_QUALIFICATION_TEXT = 20_000
 MAX_EVALUATION_RESULT_BYTES = 25_000_000
+MAX_SEMANTIC_DIAGNOSTIC_EXAMPLES = 100
 
 FEATURE_KEYS = (
     "finding_detection",
@@ -390,6 +391,57 @@ def _repository_metrics(evaluation: dict[str, Any]) -> dict[str, Any]:
             for key, value in sorted(source.items())
         }
 
+    def semantic_value(value: Any, *, label: str) -> str | list[str]:
+        if isinstance(value, str):
+            return _text(value, label=label, required=False)
+        if (
+            isinstance(value, list)
+            and len(value) <= MAX_QUALIFICATION_LABELS
+            and all(isinstance(item, str) for item in value)
+        ):
+            return [
+                _text(item, label=f"{label} item", required=False)
+                for item in value
+            ]
+        raise ValueError(f"evaluation {label} must be text or a bounded text array")
+
+    missing = semantics.get("missing", [])
+    mismatches = semantics.get("mismatches", [])
+    if not isinstance(missing, list) or not isinstance(mismatches, list):
+        raise ValueError("evaluation semantic diagnostics are malformed")
+    diagnostic_examples: list[dict[str, Any]] = []
+    for item in missing:
+        if not isinstance(item, dict) or set(item) != {"source", "component", "rule_id"}:
+            raise ValueError("evaluation semantic missing record is malformed")
+        diagnostic_examples.append(
+            {
+                "kind": "missing",
+                "source": _text(item["source"], label="semantic missing source", required=False),
+                "component": _text(item["component"], label="semantic missing component"),
+                "rule_id": _text(item["rule_id"], label="semantic missing rule ID"),
+                "field": None,
+                "expected": None,
+                "actual": None,
+            }
+        )
+    for item in mismatches:
+        if not isinstance(item, dict) or set(item) != {
+            "source", "component", "rule_id", "field", "expected", "actual"
+        }:
+            raise ValueError("evaluation semantic mismatch record is malformed")
+        diagnostic_examples.append(
+            {
+                "kind": "mismatch",
+                "source": _text(item["source"], label="semantic mismatch source", required=False),
+                "component": _text(item["component"], label="semantic mismatch component"),
+                "rule_id": _text(item["rule_id"], label="semantic mismatch rule ID"),
+                "field": _text(item["field"], label="semantic mismatch field"),
+                "expected": semantic_value(item["expected"], label="semantic mismatch expected"),
+                "actual": semantic_value(item["actual"], label="semantic mismatch actual"),
+            }
+        )
+    retained_examples = diagnostic_examples[:MAX_SEMANTIC_DIAGNOSTIC_EXAMPLES]
+
     control_feature = _feature(
         controls.get("expected"),
         controls.get("actual"),
@@ -435,6 +487,13 @@ def _repository_metrics(evaluation: dict[str, Any]) -> dict[str, Any]:
             by_semantic_field, label="semantic-field"
         ),
         "by_semantic_rule": collection(by_semantic_rule, label="semantic-rule"),
+        "semantic_diagnostics": {
+            "missing_count": len(missing),
+            "mismatch_count": len(mismatches),
+            "examples": retained_examples,
+            "examples_omitted": len(diagnostic_examples) - len(retained_examples),
+            "authority": "bounded reviewer aid; the exact retained evaluation artifact remains authoritative",
+        },
     }
 
 
@@ -611,6 +670,9 @@ def _projection(
     calls = features["call_resolution"]
     controls = features["control_detection"]
     semantics = features["semantic_output"]
+    semantic_diagnostics = [
+        repo["semantic_diagnostics"] for repo in repositories
+    ]
 
     def complete_quality(field: str, *, optional: bool = False) -> bool:
         values = [repo["quality"][field] for repo in repositories]
@@ -815,6 +877,19 @@ def _projection(
                 repo["corpus_governance_qualification_ready"]
                 for repo in repositories
             ),
+            "semantic_missing_cases": sum(
+                diagnostic["missing_count"] for diagnostic in semantic_diagnostics
+            ),
+            "semantic_mismatched_claims": sum(
+                diagnostic["mismatch_count"] for diagnostic in semantic_diagnostics
+            ),
+            "semantic_diagnostic_examples": sum(
+                len(diagnostic["examples"]) for diagnostic in semantic_diagnostics
+            ),
+            "semantic_diagnostic_examples_omitted": sum(
+                diagnostic["examples_omitted"]
+                for diagnostic in semantic_diagnostics
+            ),
         },
         "features": features,
         "by_rule": _aggregate_named(repositories, "by_rule"),
@@ -977,6 +1052,75 @@ def _validate_features(value: Any, *, label: str, aggregate: bool) -> None:
         )
 
 
+def _validate_semantic_diagnostics(value: Any, *, label: str) -> None:
+    fields = {
+        "missing_count",
+        "mismatch_count",
+        "examples",
+        "examples_omitted",
+        "authority",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError(f"{label} fields do not match format 1")
+    missing_count = _count(value["missing_count"], label=f"{label} missing count")
+    mismatch_count = _count(value["mismatch_count"], label=f"{label} mismatch count")
+    examples_omitted = _count(
+        value["examples_omitted"], label=f"{label} omitted examples"
+    )
+    examples = value["examples"]
+    if not isinstance(examples, list) or len(examples) > MAX_SEMANTIC_DIAGNOSTIC_EXAMPLES:
+        raise ValueError(f"{label} examples must be a bounded array")
+    if len(examples) + examples_omitted != missing_count + mismatch_count:
+        raise ValueError(f"{label} example counts do not reconcile")
+    total_examples = missing_count + mismatch_count
+    if total_examples <= MAX_SEMANTIC_DIAGNOSTIC_EXAMPLES:
+        if examples_omitted or len(examples) != total_examples:
+            raise ValueError(f"{label} must retain every in-limit example")
+    elif (
+        len(examples) != MAX_SEMANTIC_DIAGNOSTIC_EXAMPLES
+        or examples_omitted != total_examples - MAX_SEMANTIC_DIAGNOSTIC_EXAMPLES
+    ):
+        raise ValueError(f"{label} bounded example counts do not reconcile")
+    _text(value["authority"], label=f"{label} authority")
+    example_fields = {
+        "kind", "source", "component", "rule_id", "field", "expected", "actual"
+    }
+    seen_missing = 0
+    seen_mismatches = 0
+    for index, example in enumerate(examples, start=1):
+        example_label = f"{label} example {index}"
+        if not isinstance(example, dict) or set(example) != example_fields:
+            raise ValueError(f"{example_label} fields do not match format 1")
+        kind = example["kind"]
+        if kind not in {"missing", "mismatch"}:
+            raise ValueError(f"{example_label} kind is unsupported")
+        _text(example["source"], label=f"{example_label} source", required=False)
+        _text(example["component"], label=f"{example_label} component")
+        _text(example["rule_id"], label=f"{example_label} rule ID")
+        if kind == "missing":
+            if any(example[field] is not None for field in ("field", "expected", "actual")):
+                raise ValueError(f"{example_label} missing record has mismatch data")
+            seen_missing += 1
+            continue
+        _text(example["field"], label=f"{example_label} field")
+        for field in ("expected", "actual"):
+            candidate = example[field]
+            if isinstance(candidate, str):
+                _text(candidate, label=f"{example_label} {field}", required=False)
+            elif (
+                isinstance(candidate, list)
+                and len(candidate) <= MAX_QUALIFICATION_LABELS
+                and all(isinstance(item, str) for item in candidate)
+            ):
+                for item in candidate:
+                    _text(item, label=f"{example_label} {field} item", required=False)
+            else:
+                raise ValueError(f"{example_label} {field} must be text or a bounded text array")
+        seen_mismatches += 1
+    if seen_missing > missing_count or seen_mismatches > mismatch_count:
+        raise ValueError(f"{label} retained example categories do not reconcile")
+
+
 def _validate_result_repository(value: dict[str, Any], *, index: int) -> None:
     label = f"result repository {index}"
     fields = {
@@ -996,6 +1140,7 @@ def _validate_result_repository(value: dict[str, Any], *, index: int) -> None:
         "by_control_kind",
         "by_semantic_field",
         "by_semantic_rule",
+        "semantic_diagnostics",
     }
     if set(value) != fields:
         raise ValueError(f"{label} fields do not match format 1")
@@ -1085,6 +1230,9 @@ def _validate_result_repository(value: dict[str, Any], *, index: int) -> None:
         "by_semantic_rule",
     ):
         _validate_metric_map(value[field], label=f"{label} {field}", aggregate=False)
+    _validate_semantic_diagnostics(
+        value["semantic_diagnostics"], label=f"{label} semantic diagnostics"
+    )
 
 
 def _validate_result_contract(

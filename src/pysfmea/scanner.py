@@ -127,7 +127,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-2"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-3"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -327,6 +327,28 @@ class FunctionFacts:
     arithmetic_ops: int = 0
     signals: set[str] = field(default_factory=set)
     detected_controls: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _disambiguate_lexical_fact_collisions(
+    facts_list: list[FunctionFacts],
+) -> None:
+    """Make same-named sibling callables individually addressable.
+
+    Python permits several nested definitions with the same lexical name in
+    mutually exclusive branches. Their source path, qualified name, and kind are
+    otherwise identical, which would collapse component, finding, and assurance
+    obligation IDs. The line suffix is applied only to a collision group, so the
+    normal public qualified-name surface remains stable.
+    """
+
+    groups: dict[tuple[str, str, str], list[FunctionFacts]] = {}
+    for facts in facts_list:
+        groups.setdefault((facts.path, facts.qualname, facts.kind), []).append(facts)
+    for values in groups.values():
+        if len(values) < 2:
+            continue
+        for facts in values:
+            facts.qualname = f"{facts.qualname}@L{facts.line}"
 
 
 def _circuit_breaker_control(
@@ -8202,6 +8224,7 @@ def scan_repository(
         )
         if module_facts:
             file_facts.append(module_facts)
+        _disambiguate_lexical_fact_collisions(file_facts)
         facts_list.extend(file_facts)
         if cache_entries is not None:
             cache_entries[cache_key] = copy.deepcopy(file_facts)

@@ -169,13 +169,19 @@ relationships and temporal/circuit-breaker policies, requirements-source snapsho
 evidence artifacts, validation cohorts, LLM quality evaluations, governance approvals, and
 configurable quality gates. Completed evidence requires an artifact path and digest. Cohort and LLM
 records include corpus digests plus distinct producer/reviewer identities. Converted validation
-cohorts also retain expected-side and actual-side match counts, evaluation-result format and digest,
+cohorts also retain expected-side and actual-side match counts for failure-mode, call-resolution,
+and optional exact semantic-output cases, evaluation-result format and digest,
 evaluator version, and an exact-byte artifact reference. The verifier safely consumes the retained
 JSON, reconciles its complete projection, recomputes claimed rates, reports cohort-macro and population-weighted
-micro metrics, and can require every failure-mode and call-resolution cohort to be count-backed.
+micro metrics, and can require every failure-mode, call-resolution, and semantic-output cohort to be count-backed.
 Legacy cohorts without count provenance remain schema-compatible so older programs can be read,
 but new program templates enable count-backed, retained-artifact, and micro gates. Finding and hazard references are semantically
 resolved as `REPOSITORY_ID:RECORD_ID`.
+
+Qualification campaign results retain a bounded `semantic_diagnostics` record for each repository.
+Its `missing` examples carry identity only; its `mismatch` examples must carry a field plus exact
+expected and actual values. The public schema enforces those mutually exclusive shapes, while the
+full retained evaluation artifact remains the source of record.
 Converted LLM evaluations preserve grounded and citation-correct sample counts plus total and
 unsupported claim counts. `corpus_artifact` binds the exact labeled JSON bytes. Default policy
 requires both count backing and artifact replay; verdicts state whether aggregation is

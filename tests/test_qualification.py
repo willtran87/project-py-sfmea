@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -219,6 +220,8 @@ class QualificationCampaignTests(unittest.TestCase):
             )
         self.assertEqual(build_exit, 0)
         self.assertTrue(result_path.exists())
+        self.assertIn("missing_cases=0", stdout.getvalue())
+        self.assertIn("mismatched_claims=0", stdout.getvalue())
 
         verification_path = self.root / "qualification-verification.json"
         with contextlib.redirect_stdout(io.StringIO()):
@@ -334,13 +337,19 @@ class QualificationCampaignTests(unittest.TestCase):
         self.assertIn('class="skip skip-link"', document)
         self.assertIn('aria-label="Report sections"', document)
         self.assertIn('scope="col"', document)
-        self.assertEqual(document.count('<caption class="sr-only">'), 9)
+        self.assertEqual(document.count('<caption class="sr-only">'), 10)
         self.assertIn("prefers-reduced-motion", document)
         self.assertIn("@media print", document)
         self.assertIn("Control components positive / negative", document)
         self.assertIn("positive and negative evaluated components", document)
         self.assertIn("Semantic-output qualification", document)
         self.assertIn("Accuracy by output field", document)
+        self.assertIn("Observed semantic drift", document)
+        self.assertIn("mismatched semantic claims", document)
+        self.assertIn('id="semanticDiagnosticSearch"', document)
+        self.assertIn('id="semanticDiagnosticNext"', document)
+        self.assertIn("Search drift", document)
+        self.assertIn("No retained semantic drift examples", document)
         self.assertIn("Qualification &lt;review&gt; &quot;campaign&quot;", document)
         self.assertNotIn('Qualification <review> "campaign"', document)
 
@@ -491,6 +500,25 @@ class QualificationCampaignTests(unittest.TestCase):
             ],
             0,
         )
+        diagnostics = result["repositories"][0]["semantic_diagnostics"]
+        self.assertEqual(diagnostics["missing_count"], 0)
+        self.assertEqual(diagnostics["mismatch_count"], 1)
+        self.assertEqual(diagnostics["examples_omitted"], 0)
+        self.assertEqual(diagnostics["examples"][0]["kind"], "mismatch")
+        self.assertEqual(diagnostics["examples"][0]["field"], "confidence")
+        self.assertEqual(result["summary"]["semantic_missing_cases"], 0)
+        self.assertEqual(result["summary"]["semantic_mismatched_claims"], 1)
+        Draft202012Validator(
+            schema_document("qualification-campaign-result")
+        ).validate(result)
+        malformed = copy.deepcopy(result)
+        malformed["repositories"][0]["semantic_diagnostics"]["examples"][0][
+            "actual"
+        ] = None
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(
+                schema_document("qualification-campaign-result")
+            ).validate(malformed)
 
     def test_required_negative_control_population_cannot_receive_precision_credit(
         self,
