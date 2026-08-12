@@ -25,6 +25,7 @@ from typing import Any
 from .adapters import build_adapter_run_ledger
 from .assurance import refresh_assurance_register
 from .config import normalize_config
+from .graphify import load_graphify_reconciliation
 from .guidance import (
     DEFAULT_EXCLUDES,
     METHODOLOGY_NOTICE,
@@ -8020,6 +8021,7 @@ def scan_repository(
     include_nested: bool | None = None,
     config: dict[str, Any] | None = None,
     coverage_json: str | Path | None = None,
+    graphify_json: str | Path | None = None,
     telemetry: dict[str, Any] | None = None,
     fact_cache: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -8743,6 +8745,29 @@ def scan_repository(
         "generated_summaries": [],
         "runtime_evidence": {"imports": [], "spans": [], "edges": []},
     }
+    configured_graphify = graphify_json or scan_config.get("graphify_json", "")
+    if configured_graphify:
+        graphify_path = Path(configured_graphify).expanduser()
+        if not graphify_path.is_absolute():
+            graphify_path = root_path / graphify_path
+        analysis["graphify_reconciliation"] = load_graphify_reconciliation(
+            analysis, graphify_path
+        )
+        analysis["summary"]["graphify_correlated_call_edges"] = analysis[
+            "graphify_reconciliation"
+        ]["summary"]["corroborated_call_edges"]
+        analysis["summary"]["graphify_call_review_leads"] = analysis[
+            "graphify_reconciliation"
+        ]["summary"]["graphify_only_call_review_leads"]
+        analysis["project"]["settings"]["graphify"] = {
+            "mode": "imported_static_graph",
+            "path": analysis["graphify_reconciliation"]["source"]["path"],
+            "sha256": analysis["graphify_reconciliation"]["source"]["sha256"],
+            "notice": (
+                "Supplementary static architecture evidence only; Graphify-only calls "
+                "remain review leads and do not create assurance credit."
+            ),
+        }
     if coverage_provenance:
         coverage_provenance["selection"] = coverage_selection
         analysis["project"]["settings"]["coverage_evidence"] = coverage_provenance

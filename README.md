@@ -63,6 +63,9 @@ flowchart LR
 - Generator name, PySFMEA version, and analysis-schema provenance
 - Project hazards, critical-function mappings, and domain-specific failure rules
 - Optional coverage.py line evidence and more precise internal-caller evidence
+- Optional Graphify code-only AST graph reconciliation: typed static call edges map by
+  source/line to PySFMEA components, compare with native call evidence, bind to the run
+  manifest, and appear in architecture exports. Graphify-only calls are review leads.
 - Actual actions, residual/post-action ratings, approvals, and audit timestamps
 - Configurable completeness gates with CLI, browser, CSV, and Markdown findings
 - Functional propagation and system/component inventory worksheets
@@ -266,6 +269,32 @@ the dominant scan phase, and decompression is bounded by the same 200 MB governe
 sfmea scan C:\path\to\python-repo -o .artifacts\sfmea-analysis.json.gz
 sfmea validate .artifacts\sfmea-analysis.json.gz
 ```
+
+### Optional Graphify architecture reconciliation
+
+Graphify complements PySFMEA rather than replacing it. `--graphify` invokes Graphify with
+`--code-only --force --no-cluster`, so it uses local code extraction only; it does not enable
+Graphify's document/LLM pass. The resulting `graphify-out/graph.json` is strict, bounded,
+link-safe input. PySFMEA maps Graphify nodes to its components by source file and line, then
+labels each mapped `calls` edge as either `corroborated` by native AST evidence or a
+`graphify_only_review_lead`. It never turns that lead into a failure mode, runtime observation,
+or assurance credit automatically.
+
+```powershell
+sfmea scan C:\path\to\python-repo `
+  --graphify `
+  -o .artifacts\sfmea-analysis.json.gz
+
+# Or import a pre-generated Graphify artifact without launching its executable.
+sfmea scan C:\path\to\python-repo `
+  --graphify-json C:\evidence\graphify-out\graph.json `
+  -o .artifacts\sfmea-analysis.json.gz
+```
+
+Use `--graphify-output DIR` to separate Graphify artifacts from the analysis output and
+`--graphify-timeout-seconds N` to set a 1–3600 second bound. In `--read-only` mode Graphify
+output must also be outside the scanned repository. A pre-generated path may be set as
+`scan.graphify_json` in `sfmea.toml`; its SHA-256 is bound into the immutable run manifest.
 
 Governed analysis ingestion is additionally bounded to 100 levels and 5,000,000 JSON nodes. The
 analysis-specific ceiling is sized for substantial monorepos with per-finding assurance contracts; exceeding either
@@ -1085,6 +1114,8 @@ Useful scan options:
 --exclude-nested    Exclude nested functions and closures (included by default)
 --include-tests     Treat test functions as analyzed components
 --coverage-json     Add line evidence from coverage.py JSON output
+--graphify          Run Graphify's local code-only AST scan and reconcile its graph
+--graphify-json     Import a pre-generated Graphify graph.json without executing Graphify
 --exclude GLOB      Exclude matching relative paths (repeatable)
 --focus GLOB        Analyze matching path:qualified-name components (repeatable)
 --config PATH       Use a specific project configuration

@@ -112,6 +112,7 @@ from .file_publication import (
     atomic_publish_pair,
     inspect_artifact_destination,
 )
+from .graphify import run_graphify_code_only
 from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
 from .html_report import (
     HTML_REPORT_VERIFICATION_FORMAT,
@@ -905,6 +906,32 @@ def _parser() -> argparse.ArgumentParser:
         help="sfmea.toml path; defaults to REPOSITORY/sfmea.toml when present",
     )
     scan.add_argument("--coverage-json", help="coverage.py JSON file")
+    graphify = scan.add_mutually_exclusive_group()
+    graphify.add_argument(
+        "--graphify",
+        action="store_true",
+        help=(
+            "run Graphify's forced code-only AST extraction, then reconcile its "
+            "typed static edges with native PySFMEA component evidence"
+        ),
+    )
+    graphify.add_argument(
+        "--graphify-json",
+        help="pre-generated Graphify graph.json to import without executing Graphify",
+    )
+    scan.add_argument(
+        "--graphify-output",
+        help=(
+            "directory for --graphify output; defaults to the analysis output directory "
+            "and Graphify writes graphify-out/ beneath it"
+        ),
+    )
+    scan.add_argument(
+        "--graphify-timeout-seconds",
+        type=int,
+        default=600,
+        help="maximum code-only Graphify extraction time (1-3600; default: 600)",
+    )
     scan.add_argument(
         "--allow-ungoverned",
         action="store_true",
@@ -2048,6 +2075,29 @@ def _scan(args: argparse.Namespace) -> int:
     config["scan"]["focus"].extend(args.focus)
     if args.review_depth:
         config["scan"]["review_depth"] = args.review_depth
+    graphify_json: str | Path | None = args.graphify_json or config["scan"].get(
+        "graphify_json", ""
+    )
+    if args.graphify:
+        graphify_directory = (
+            Path(args.graphify_output).expanduser().absolute()
+            if args.graphify_output
+            else output.parent.absolute()
+        )
+        if args.read_only:
+            try:
+                graphify_directory.resolve().relative_to(repository)
+            except ValueError:
+                pass
+            else:
+                raise ValueError(
+                    "--read-only requires Graphify output outside the scanned repository"
+                )
+        graphify_json = run_graphify_code_only(
+            repository,
+            graphify_directory,
+            timeout_seconds=args.graphify_timeout_seconds,
+        )
     cache_enabled = (
         bool(config["scan"].get("cache_enabled", True)) and not args.no_cache
     )
@@ -2115,10 +2165,15 @@ def _scan(args: argparse.Namespace) -> int:
         include_nested=args.include_nested,
         config=config,
         coverage_json=args.coverage_json,
+        graphify_json=graphify_json,
         telemetry=telemetry,
         fact_cache=fact_cache,
     )
     scanned["project"]["settings"]["config_file"] = str(resolved_config or "")
+    if args.graphify and graphify_json:
+        scanned["project"]["settings"]["graphify"]["mode"] = (
+            "executed_code_only_static_graph"
+        )
     governed = resolved_config is not None
     scanned["project"]["settings"]["governance_mode"] = (
         "governed" if governed else "discovery_only"

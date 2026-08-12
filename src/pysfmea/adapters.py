@@ -264,6 +264,25 @@ BUILTIN_ADAPTERS = (
         "heuristic",
     ),
     AdapterDescriptor(
+        "graphify.code_graph",
+        "graph_provider",
+        "1",
+        (
+            "external_code_only_ast_graph",
+            "typed_static_edges",
+            "component_line_reconciliation",
+            "native_call_corroboration",
+            "graphify_only_review_leads",
+            "strict_bounded_artifact_ingestion",
+        ),
+        "graphify-graph-json",
+        "pysfmea-graphify-reconciliation-1",
+        "heuristic",
+        lifecycle="optional",
+        isolation="external_process_code_only_no_repository_execution",
+        deterministic=False,
+    ),
+    AdapterDescriptor(
         "python.dependency_inventory",
         "analyzer",
         "4",
@@ -719,6 +738,19 @@ def build_adapter_run_ledger(analysis: dict[str, Any]) -> dict[str, Any]:
             for value in analysis.get("runtime_evidence", {}).get("imports", [])
             if isinstance(value, dict)
         ],
+        "graphify.code_graph": (
+            [
+                "artifact:"
+                + str(
+                    analysis.get("graphify_reconciliation", {})
+                    .get("source", {})
+                    .get("sha256", "")
+                )
+            ]
+            if analysis.get("graphify_reconciliation", {}).get("format")
+            == "pysfmea-graphify-reconciliation-1"
+            else []
+        ),
     }
     for adapter_id, entity_ids in static_runs.items():
         contributions.setdefault(adapter_id, []).extend(

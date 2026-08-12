@@ -2378,6 +2378,109 @@ def validate_analysis(
                 "Architecture nodes, inheritance, trace aggregation, counts, memberships, or component indexes are inconsistent.",
                 field="architecture_hierarchy",
             )
+    graphify = analysis.get("graphify_reconciliation")
+    if graphify is not None:
+        graphify_valid = isinstance(graphify, dict)
+        source = graphify.get("source", {}) if graphify_valid else {}
+        summary = graphify.get("summary", {}) if graphify_valid else {}
+        edges = graphify.get("edges", []) if graphify_valid else []
+        graphify_valid = (
+            graphify_valid
+            and graphify.get("format") == "pysfmea-graphify-reconciliation-1"
+            and isinstance(source, dict)
+            and isinstance(summary, dict)
+            and isinstance(edges, list)
+            and isinstance(source.get("sha256"), str)
+            and len(source.get("sha256", "")) == 64
+            and isinstance(source.get("bytes"), int)
+            and not isinstance(source.get("bytes"), bool)
+            and source.get("bytes", -1) >= 0
+            and isinstance(graphify.get("authority"), str)
+        )
+        expected_correlated = 0
+        expected_leads = 0
+        if graphify_valid:
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    graphify_valid = False
+                    continue
+                source_component_id = str(edge.get("source_component_id", ""))
+                target_component_id = str(edge.get("target_component_id", ""))
+                relation = str(edge.get("relation", ""))
+                reconciliation = str(edge.get("reconciliation", ""))
+                if (
+                    not str(edge.get("id", ""))
+                    or source_component_id not in component_ids
+                    or target_component_id not in component_ids
+                    or not relation
+                    or reconciliation
+                    not in {
+                        "corroborated",
+                        "graphify_only_review_lead",
+                        "outside_native_call_comparison",
+                    }
+                ):
+                    graphify_valid = False
+                if relation == "calls" and reconciliation == "corroborated":
+                    expected_correlated += 1
+                if relation == "calls" and reconciliation == "graphify_only_review_lead":
+                    expected_leads += 1
+            count_fields = (
+                "nodes_discovered",
+                "edges_discovered",
+                "mapped_nodes",
+                "mapped_edges",
+                "edges_embedded",
+                "edges_omitted",
+                "call_edges_between_mapped_components",
+                "corroborated_call_edges",
+                "graphify_only_call_review_leads",
+                "native_call_edges",
+            )
+            if (
+                not all(
+                    isinstance(summary.get(field), int)
+                    and not isinstance(summary.get(field), bool)
+                    and summary.get(field, -1) >= 0
+                    for field in count_fields
+                )
+                or summary.get("edges_embedded") != len(edges)
+                or summary.get("mapped_edges")
+                != len(edges) + summary.get("edges_omitted", 0)
+                or summary.get("corroborated_call_edges") != expected_correlated
+                or summary.get("graphify_only_call_review_leads") != expected_leads
+                or summary.get("truncated")
+                != bool(summary.get("edges_omitted"))
+                or not isinstance(graphify.get("reconciliation_sha256"), str)
+                or len(graphify.get("reconciliation_sha256", "")) != 64
+            ):
+                graphify_valid = False
+            expected_digest = _digest(
+                {
+                    "source_sha256": source.get("sha256", ""),
+                    "summary": {
+                        "nodes_discovered": summary.get("nodes_discovered"),
+                        "edges_discovered": summary.get("edges_discovered"),
+                        "mapped_edges": summary.get("mapped_edges"),
+                        "corroborated_call_edges": summary.get(
+                            "corroborated_call_edges"
+                        ),
+                        "graphify_only_call_review_leads": summary.get(
+                            "graphify_only_call_review_leads"
+                        ),
+                    },
+                    "edges": edges,
+                }
+            )
+            if graphify.get("reconciliation_sha256") != expected_digest:
+                graphify_valid = False
+        if not graphify_valid:
+            add(
+                "analysis.invalid_graphify_reconciliation",
+                "error",
+                "Graphify provenance, mapped edges, reconciliation labels, or summary counts are inconsistent.",
+                field="graphify_reconciliation",
+            )
     observed_hazards: set[str] = set()
     observed_requirements: set[str] = set()
     mapped_interfaces: set[str] = {

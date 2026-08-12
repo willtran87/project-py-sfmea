@@ -87,6 +87,7 @@ coverage json -o (Join-Path $artifacts "coverage.json")
 
 sfmea scan . `
   --coverage-json (Join-Path $artifacts "coverage.json") `
+  --graphify `
   --review-depth focused `
   -o (Join-Path $artifacts "sfmea-analysis.json")
 ```
@@ -121,6 +122,16 @@ sfmea scan $repository --read-only -o (Join-Path $artifacts 'sfmea-analysis.json
 
 Read-only mode rejects an output under `$repository`, disables a configured/default in-repository
 fact cache, permits an explicitly external cache, and records the mutation policy in the analysis.
+
+### Optional Graphify cross-check
+
+`--graphify` adds an external, code-only Graphify AST pass before PySFMEA publishes the analysis.
+The output is stored under the analysis artifact directory by default and is imported through a
+strict bounded JSON boundary. PySFMEA reconciles only nodes that map to an existing component by
+source path/line. Mapped `calls` edges that agree with the native AST graph are labeled
+`corroborated`; mapped Graphify-only calls are retained as review leads. Neither is runtime
+evidence, an automatically approved architecture relationship, nor a new failure mode. Use
+`--graphify-json PATH` to consume a separately produced graph without invoking Graphify.
 
 The default focused queue admits at most three ordinary families per component and 1,000 total
 records per projection. Revalidation, manual, and hazard-linked records remain eligible despite

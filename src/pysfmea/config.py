@@ -84,6 +84,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "focus": [],
         "coverage_json": "",
         "coverage_discovery": True,
+        "graphify_json": "",
     },
     "risk": {
         "method": "severity_only",
@@ -264,6 +265,9 @@ focus = []
 coverage_json = ""
 # When no path is configured, inspect only coverage.json and .artifacts/coverage.json.
 coverage_discovery = true
+# Optional pre-generated Graphify graph.json. It is imported as supplementary static
+# architecture evidence; use `sfmea scan --graphify` to run Graphify code-only.
+graphify_json = ""
 
 [risk]
 method = "severity_only" # severity_only or sod_rpn
@@ -436,6 +440,9 @@ def load_config_source(
     coverage_path = config["scan"].get("coverage_json", "")
     if coverage_path:
         config["scan"]["coverage_json"] = configured_input_path(coverage_path)
+    graphify_path = config["scan"].get("graphify_json", "")
+    if graphify_path:
+        config["scan"]["graphify_json"] = configured_input_path(graphify_path)
     # Cache paths are scanner outputs and are resolved against the repository by the
     # CLI.  Resolving them against the configuration directory made a configuration
     # stored under ``.artifacts`` turn the default into ``.artifacts/.artifacts``.
@@ -550,6 +557,7 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "focus",
             "coverage_json",
             "coverage_discovery",
+            "graphify_json",
         },
         "risk": {
             "method",
@@ -999,6 +1007,8 @@ def _validate_config(config: dict[str, Any]) -> None:
             )
     if not isinstance(scan.get("coverage_json"), str):
         raise ValueError("scan.coverage_json must be a string path")
+    if not isinstance(scan.get("graphify_json"), str):
+        raise ValueError("scan.graphify_json must be a string path")
     for field in (
         "exclude",
         "test_evidence_include",

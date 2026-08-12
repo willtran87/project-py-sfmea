@@ -510,6 +510,16 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         or not adapter_runs.get("ledger_sha256")
     ):
         raise ValueError("analysis adapter_runs is missing required provenance fields")
+    graphify = analysis.get("graphify_reconciliation")
+    if graphify is not None and (
+        not isinstance(graphify, dict)
+        or graphify.get("format") != "pysfmea-graphify-reconciliation-1"
+        or not isinstance(graphify.get("source"), dict)
+        or not isinstance(graphify.get("summary"), dict)
+        or not isinstance(graphify.get("edges"), list)
+        or not isinstance(graphify.get("reconciliation_sha256"), str)
+    ):
+        raise ValueError("analysis graphify_reconciliation has an invalid structure")
     for index, suggestion in enumerate(analysis.get("suggestions", []), start=1):
         if not isinstance(suggestion, dict):
             raise ValueError(f"analysis suggestion {index} must be an object")

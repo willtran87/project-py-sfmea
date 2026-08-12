@@ -73,6 +73,15 @@ def create_run_manifest(
     )
     if isinstance(coverage_evidence, dict) and coverage_evidence.get("sha256"):
         inputs["coverage_json_sha256"] = str(coverage_evidence["sha256"])
+    graphify_evidence = analysis.get("graphify_reconciliation", {})
+    if (
+        isinstance(graphify_evidence, dict)
+        and isinstance(graphify_evidence.get("source"), dict)
+        and graphify_evidence["source"].get("sha256")
+    ):
+        inputs["graphify_graph_json_sha256"] = str(
+            graphify_evidence["source"]["sha256"]
+        )
     created_at = str(analysis.get("project", {}).get("scanned_at") or utc_now())
     cache_settings = settings.get("fact_cache", {})
     cache_run = (

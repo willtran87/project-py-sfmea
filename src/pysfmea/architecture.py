@@ -113,6 +113,27 @@ def architecture_graph(analysis: dict[str, Any]) -> dict[str, Any]:
                     "trace_id": runtime_edge.get("trace_id", ""),
                 }
             )
+    for graphify_edge in analysis.get("graphify_reconciliation", {}).get("edges", []):
+        if (
+            graphify_edge.get("relation") == "calls"
+            and graphify_edge.get("source_component_id") in component_ids
+            and graphify_edge.get("target_component_id") in component_ids
+        ):
+            edges.append(
+                {
+                    "source": graphify_edge["source_component_id"],
+                    "target": graphify_edge["target_component_id"],
+                    "kind": "graphify_static_call",
+                    "label": (
+                        "calls (corroborated)"
+                        if graphify_edge.get("reconciliation") == "corroborated"
+                        else "calls (Graphify review lead)"
+                    ),
+                    "evidence": "graphify_code_only_static",
+                    "confidence": graphify_edge.get("confidence", "unknown"),
+                    "reconciliation": graphify_edge.get("reconciliation", ""),
+                }
+            )
     return {
         "nodes": nodes,
         "edges": edges,
