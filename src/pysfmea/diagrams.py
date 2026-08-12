@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .architecture import architecture_graph
+from .cross_reference import build_cross_reference_index
 from .file_publication import atomic_publish_text
 from .guidance import guidance_traceability
 from .integrity import canonical_json_sha256
@@ -38,6 +39,7 @@ GENERATED_DIAGRAM_KINDS = (
     "traceability",
     "guidance_traceability",
     "assurance_traceability",
+    "cross_reference",
     "sfta",
     "failure_propagation",
     "control_coverage",
@@ -368,6 +370,7 @@ def architecture_diagram(
             str(component.get("qualname", "")),
         )
     )
+
     by_id = {str(component.get("id", "")): component for component in components}
     seed_limit = min(component_limit, 40)
     selected = {
@@ -451,6 +454,144 @@ def architecture_diagram(
                 "category": "architecture",
                 "component_limit": component_limit,
                 "total_components": len(components),
+            },
+        }
+    )
+
+
+def cross_reference_diagram(
+    analysis: dict[str, Any],
+    *,
+    finding_limit: int = 40,
+    node_limit: int = 500,
+    index: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project the highest-leverage guidance-to-evidence relationship chains."""
+
+    index = index or build_cross_reference_index(analysis)
+    entity_by_id = {value["id"]: value for value in index["entities"]}
+    priority = {
+        value["id"]: value.get("metadata", {}).get("priority", "")
+        for value in index["entities"]
+        if value.get("kind") == "finding"
+    }
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    fusion_by_id = {
+        value["id"]: value for value in index["component_relationship_fusions"]
+    }
+    chains = sorted(
+        index["finding_chains"],
+        key=lambda value: (
+            value.get("source_status", "active") != "active",
+            priority_order.get(priority.get(f"finding:{value['finding_id']}", ""), 3),
+            value.get("linkage_completeness_percent", 0),
+            value["finding_id"],
+        ),
+    )[:finding_limit]
+    selected: set[str] = set()
+    for chain in chains:
+        selected.update(
+            entity_id
+            for entity_id in (
+                f"finding:{chain['finding_id']}",
+                f"component:{chain['component_id']}",
+                *(f"requirement:{value}" for value in chain["requirement_ids"]),
+                *(f"hazard:{value}" for value in chain["hazard_ids"]),
+                *(f"citation:{value}" for value in chain["citation_ids"]),
+                *(f"obligation:{value}" for value in chain["obligation_ids"]),
+                *(f"evidence:{value}" for value in chain["evidence_artifact_ids"]),
+                *(f"execution:{value}" for value in chain["execution_ids"]),
+                *(f"sfta_event:{value}" for value in chain["sfta_event_ids"]),
+                *chain.get("interface_entity_ids", []),
+                *(
+                    f"component:{value}"
+                    for value in chain.get("cascade_component_ids", [])
+                ),
+                *chain.get("resilience_entity_ids", []),
+            )
+            if entity_id in entity_by_id
+        )
+        for fusion_id in (
+            *chain.get("inbound_fusion_ids", []),
+            *chain.get("outbound_fusion_ids", []),
+        ):
+            fusion = fusion_by_id.get(fusion_id)
+            if fusion:
+                selected.update(
+                    {
+                        f"component:{fusion['source_component_id']}",
+                        f"component:{fusion['target_component_id']}",
+                    }
+                )
+        if len(selected) >= node_limit:
+            break
+    selected = set(sorted(selected)[:node_limit])
+    layer_by_kind = {
+        "citation": 0,
+        "requirement": 0,
+        "hazard": 0,
+        "sfta_event": 0,
+        "component": 1,
+        "resilience_operation": 1,
+        "resilience_effect_summary": 1,
+        "transaction_summary": 1,
+        "resource_summary": 1,
+        "retry_path": 1,
+        "circuit_breaker_model": 1,
+        "finding": 2,
+        "obligation": 3,
+        "execution": 4,
+        "evidence": 4,
+    }
+    nodes = [
+        _node(
+            entity_id,
+            str(entity_by_id[entity_id].get("label", entity_id)),
+            str(entity_by_id[entity_id].get("kind", "entity")),
+            group=str(entity_by_id[entity_id].get("kind", "entity")),
+            description=str(entity_by_id[entity_id].get("authority", "")),
+            tags=[str(entity_by_id[entity_id].get("raw_id", ""))],
+            layer=layer_by_kind.get(str(entity_by_id[entity_id].get("kind", ""))),
+        )
+        for entity_id in sorted(selected)
+    ]
+    edges = [
+        _edge(
+            value["id"],
+            value["source"],
+            value["target"],
+            value["kind"].replace("_", " "),
+            value["kind"],
+            evidence=value["channel"],
+            description=value["authority"],
+        )
+        for value in index["relationships"]
+        if value["source"] in selected and value["target"] in selected
+    ]
+    summary = index["summary"]
+    return normalize_diagram_model(
+        {
+            "id": "cross-reference-evidence-fabric",
+            "title": "Cross-reference evidence fabric",
+            "type": "traceability",
+            "description": (
+                "Bounded guidance, requirement, hazard, SFTA, component, cascade, resilience, "
+                "finding, verification, execution, and evidence relationships."
+            ),
+            "notice": (
+                f"Showing {len(chains)} of {summary['finding_chains']} finding chains and "
+                f"{len(nodes)} entities. Relationship presence is not compliance, "
+                "verification success, or risk acceptance."
+            ),
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {
+                "category": "cross_reference",
+                "analysis_state_sha256": index["analysis_state_sha256"],
+                "content_sha256": index["content_sha256"],
+                "finding_limit": finding_limit,
+                "total_finding_chains": summary["finding_chains"],
+                "review_leads": summary["review_leads"],
             },
         }
     )
@@ -2576,6 +2717,7 @@ def build_diagram_models(
     propagation_path_limit: int = DEFAULT_PROPAGATION_PATH_LIMIT,
     propagation_depth: int = DEFAULT_PROPAGATION_DEPTH,
     propagation_include_finding_ids: Iterable[str] | None = None,
+    cross_reference_index: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one category or the complete default set of canonical diagrams."""
 
@@ -2608,6 +2750,9 @@ def build_diagram_models(
         "traceability": lambda: [traceability_diagram(analysis)],
         "guidance_traceability": lambda: [guidance_traceability_diagram(analysis)],
         "assurance_traceability": lambda: [assurance_traceability_diagram(analysis)],
+        "cross_reference": lambda: [
+            cross_reference_diagram(analysis, index=cross_reference_index)
+        ],
         "sfta": lambda: sfta_diagrams(analysis),
         "failure_propagation": lambda: [
             failure_propagation_diagram(

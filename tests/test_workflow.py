@@ -248,9 +248,7 @@ class WorkflowStatusTests(unittest.TestCase):
             repository = workspace / "repository"
             repository.mkdir()
             source = repository / "app.py"
-            source.write_text(
-                "def run(value):\n    return value\n", encoding="utf-8"
-            )
+            source.write_text("def run(value):\n    return value\n", encoding="utf-8")
             before = {
                 path.relative_to(repository).as_posix(): path.read_bytes()
                 for path in repository.rglob("*")
@@ -410,6 +408,7 @@ class WorkflowStatusTests(unittest.TestCase):
                 "assurance_work_queue_projection",
                 "evidence_catalog_projection_v1",
                 "guidance_traceability_projection_v1",
+                "cross_reference_projection_v1",
                 "interchange_artifacts_projection_v1",
                 "package_provenance_projection_v1",
                 "review_views_projection_v1",
@@ -698,7 +697,10 @@ class WorkflowStatusTests(unittest.TestCase):
                 0,
             )
         payload = json.loads(output.getvalue())
-        self.assertEqual(payload["paths"]["artifact_selection"], explicit["paths"]["artifact_selection"])
+        self.assertEqual(
+            payload["paths"]["artifact_selection"],
+            explicit["paths"]["artifact_selection"],
+        )
         self.assertEqual(payload["artifacts"]["html_report"]["path"], str(report))
         self.assertEqual(payload["artifacts"]["review_package"]["path"], str(package))
 
@@ -715,7 +717,10 @@ class WorkflowStatusTests(unittest.TestCase):
         automatic = workflow_status(self.root)
         report = automatic["artifacts"]["html_report"]
         self.assertEqual(report["status"], "missing")
-        self.assertEqual(report["path"], str(self.analysis_path.with_name("sfmea-analysis-report.html")))
+        self.assertEqual(
+            report["path"],
+            str(self.analysis_path.with_name("sfmea-analysis-report.html")),
+        )
         self.assertEqual(report["unsafe_candidates"], [str(report_link)])
 
         explicit = workflow_status(self.root, html_report_path=report_link)
@@ -727,7 +732,9 @@ class WorkflowStatusTests(unittest.TestCase):
         self.assertEqual(explicit_report["unsafe_candidates"], [str(report_link)])
         self.assertNotIn("binding", explicit_report)
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(main(["status", str(self.root), "--report", str(report_link)]), 0)
+            self.assertEqual(
+                main(["status", str(self.root), "--report", str(report_link)]), 0
+            )
         self.assertIn("ignored symbolic links=1", output.getvalue())
 
     def test_status_preserves_an_invalid_analysis_and_offers_recovery(self) -> None:
@@ -741,11 +748,15 @@ class WorkflowStatusTests(unittest.TestCase):
         self.assertEqual(result["analysis"]["load_status"], "invalid")
         self.assertIn("not changed", result["analysis"]["load_notice"])
         analysis_gate = next(
-            gate for gate in result["handoff_gates"] if gate["id"] == "analysis_available"
+            gate
+            for gate in result["handoff_gates"]
+            if gate["id"] == "analysis_available"
         )
         self.assertEqual(analysis_gate["remediation_action_id"], "recover_analysis")
         recovery = next(
-            action for action in result["next_actions"] if action["id"] == "recover_analysis"
+            action
+            for action in result["next_actions"]
+            if action["id"] == "recover_analysis"
         )
         self.assertIn("sfmea-analysis-recovery.json", recovery["command"])
         self.assertNotIn(f'-o "{self.analysis_path}"', recovery["command"])
@@ -776,7 +787,9 @@ class WorkflowStatusTests(unittest.TestCase):
             "unsafe_standard_location",
         )
         recovery = next(
-            action for action in result["next_actions"] if action["id"] == "recover_analysis"
+            action
+            for action in result["next_actions"]
+            if action["id"] == "recover_analysis"
         )
         self.assertIn("sfmea-analysis-recovery.json", recovery["command"])
         self.assertNotIn(f'-o "{self.analysis_path}"', recovery["command"])
@@ -1323,14 +1336,16 @@ class WorkflowStatusTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             validator.validate(invalid_selection)
         invalid_artifact_selection = copy.deepcopy(result)
-        invalid_artifact_selection["paths"]["artifact_selection"][
-            "html_report"
-        ] = "implicit"
+        invalid_artifact_selection["paths"]["artifact_selection"]["html_report"] = (
+            "implicit"
+        )
         with self.assertRaises(ValidationError):
             validator.validate(invalid_artifact_selection)
         with contextlib.redirect_stdout(io.StringIO()) as text_output:
             self.assertEqual(main(["status", str(self.root)]), 0)
-        self.assertIn("Analysis selection: latest timestamped artifact", text_output.getvalue())
+        self.assertIn(
+            "Analysis selection: latest timestamped artifact", text_output.getvalue()
+        )
         self.assertIn("--analysis", text_output.getvalue())
 
     def test_standard_analysis_precedes_timestamped_artifact_runs(self) -> None:
@@ -1349,7 +1364,9 @@ class WorkflowStatusTests(unittest.TestCase):
             result["paths"]["analysis_selection"]["method"], "standard_location"
         )
 
-    def test_timestamped_candidate_limit_is_disclosed_as_bounded_selection(self) -> None:
+    def test_timestamped_candidate_limit_is_disclosed_as_bounded_selection(
+        self,
+    ) -> None:
         candidates = [
             self.root / f"retained-{index:04d}.json"
             for index in range(MAX_TIMESTAMPED_ANALYSIS_CANDIDATES)

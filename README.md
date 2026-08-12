@@ -66,6 +66,12 @@ flowchart LR
 - Optional Graphify code-only AST graph reconciliation: typed static call edges map by
   source/line to PySFMEA components, compare with native call evidence, bind to the run
   manifest, and appear in architecture exports. Graphify-only calls are review leads.
+- A deterministic cross-reference evidence fabric that fuses native AST, Graphify, and
+  imported runtime relationships by directed component pair, then connects components to
+  findings, guidance citations, requirements, hazards, SFTA events, verification obligations,
+  executions, evidence artifacts, bounded caller cascades, timing budgets, retry amplification,
+  transaction/resource semantics, and circuit-breaker models. Disagreement becomes a prioritized review lead; each
+  channel retains its original authority and the output never claims completeness or compliance.
 - Actual actions, residual/post-action ratings, approvals, and audit timestamps
 - Configurable completeness gates with CLI, browser, CSV, and Markdown findings
 - Functional propagation and system/component inventory worksheets
@@ -675,6 +681,10 @@ sfmea pdf C:\path\to\python-repo\sfmea-analysis.json -o C:\path\to\python-repo\s
 sfmea diagram C:\path\to\python-repo\sfmea-analysis.json -o diagrams.json
 sfmea inventory C:\path\to\python-repo\sfmea-analysis.json
 sfmea architecture C:\path\to\python-repo\sfmea-analysis.json
+sfmea cross-reference C:\path\to\python-repo\sfmea-analysis.json -o evidence-fabric.json
+sfmea cross-reference C:\path\to\python-repo\sfmea-analysis.json --format markdown -o evidence-fabric.md
+sfmea cross-reference-verify evidence-fabric.json --analysis C:\path\to\python-repo\sfmea-analysis.json
+sfmea cross-reference-verify evidence-fabric.json --analysis C:\path\to\python-repo\sfmea-analysis.json --json
 sfmea audit C:\path\to\python-repo\sfmea-analysis.json
 sfmea queue C:\path\to\python-repo\sfmea-analysis.json --limit 25
 sfmea sequence C:\path\to\python-repo\sfmea-analysis.json --entrypoint "src/api.py:create_payment"
@@ -831,7 +841,7 @@ The HTML is a review aid and is not included in the checksum-manifested review p
 The report includes a guidance-citation workspace with source status, exact section/page
 locators, mapping applicability, usage counts, and one-click filtering to affected findings.
 It also contains a general inline-SVG diagram explorer. PySFMEA generates
-canonical architecture, interface-flow, requirement/hazard traceability,
+canonical architecture, cross-reference evidence-fabric, interface-flow, requirement/hazard traceability,
 failure-propagation, control/action coverage, and bounded sequence models. The
 explorer provides deterministic layout, node/edge counts, element-type filtering,
 text search, zoom/fit, keyboard-accessible node inspection, evidence details,
@@ -897,12 +907,13 @@ explicit.
 snapshot, resolved context, repository coverage, adapter-run provenance, CSV and
 Markdown worksheets, inventory, architecture, traceability,
 coverage, validation, summary, audit history, the exact offline public-schema catalog,
-eighteen self-contained assurance, fault-injection, diagram, workflow, package, catalog, signature, program, and verifier
+the self-contained assurance, fault-injection, diagram, workflow, package, catalog, signature, program, and verifier
 schema documents, a standalone `assurance-work.json` hardening queue,
 and a SHA-256 manifest. A non-empty destination is protected unless `--force` is supplied.
 The manifest explicitly declares `analysis_diagnostics_projection_v1`,
 `assurance_register_projection`, `assurance_work_queue_projection`,
 `evidence_catalog_projection_v1`, `guidance_traceability_projection_v1`,
+`cross_reference_projection_v1`,
 `interchange_artifacts_projection_v1`, `package_provenance_projection_v1`,
 `review_views_projection_v1`, and
 `sfta_projection_v1` capabilities so offline
@@ -994,6 +1005,11 @@ work queue's own digest and recomputes its exact projection from packaged `analy
 rewriting the queue and updating the manifest checksum is still rejected. The verifier also
 regenerates the full `assurance-register.json`, verifies its embedded queue,
 and requires that embedded and standalone queues agree exactly. It also regenerates the
+typed `cross-reference.json` evidence fabric and requires exact agreement with the packaged
+analysis, so a structurally valid relationship edit with refreshed file and manifest digests is
+still rejected. The standalone `cross-reference-verify` command performs the same integrity,
+referential, accounting, binding, and exact-regeneration checks outside a package.
+It also regenerates the
 summary, validation findings, resolved system context, repository inventory, and adapter-run
 ledger from packaged analysis. A changed diagnostic artifact remains invalid even if its
 manifest checksum is recomputed; the validation generation timestamp is treated as provenance

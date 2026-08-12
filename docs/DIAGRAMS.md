@@ -19,6 +19,7 @@ flowchart LR
     A --> CB["Circuit breaker"]
     A --> CC["Control coverage"]
     A --> TR["Traceability"]
+    A --> XR["Evidence fabric"]
     RT["Imported runtime evidence"] --> SQ
     RT --> FP
     CT["Custom diagram JSON"] --> RP["Self-contained HTML report"]
@@ -29,6 +30,7 @@ flowchart LR
     CB --> RP
     CC --> RP
     TR --> RP
+    XR --> RP
 ```
 
 - Generated diagrams share the exact governed analysis binding.
@@ -42,6 +44,7 @@ flowchart LR
 sfmea diagram sfmea-analysis.json -o diagrams.json
 sfmea diagram sfmea-analysis.json --type failure_propagation -o propagation.json
 sfmea diagram sfmea-analysis.json --type circuit_breaker -o circuit-breakers.json
+sfmea diagram sfmea-analysis.json --type cross_reference -o evidence-fabric-diagram.json
 ```
 
 The output is a `pysfmea-diagram-bundle-1` object containing project provenance
@@ -50,10 +53,24 @@ and one or more `pysfmea-diagram-1` diagrams. Supported generated categories are
 - `architecture`
 - `interface_flow`
 - `traceability`
+- `guidance_traceability`
+- `assurance_traceability`
+- `cross_reference`
+- `data_flow`
+- `sfta`
 - `failure_propagation`
 - `control_coverage`
 - `circuit_breaker`
 - `sequence`
+
+The `cross_reference` projection joins the highest-priority finding chains across guidance,
+requirements, hazards, SFTA events, components, findings, verification obligations, executions,
+and evidence artifacts. Its metadata binds the exact analysis and complete cross-reference
+projection digests. The view is bounded to 40 finding chains and 500 entities; use
+`sfmea cross-reference ANALYSIS --format json` for the complete machine-readable relationship
+and discrepancy registers. Static agreement is corroboration, runtime presence is a bounded
+observation, and configured links retain project-supplied authority. None is promoted to proof
+of completeness, compliance, verification success, or risk acceptance.
 
 Generated bundles contain a `binding` record for the baseline, analysis schema, and exact
 governed analysis-state SHA-256. Their `integrity` record hashes the complete canonical

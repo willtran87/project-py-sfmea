@@ -26,6 +26,10 @@ from .assurance import (
     verify_assurance_work_queue_file,
 )
 from .config import DEFAULT_CONFIG, normalize_config
+from .cross_reference import (
+    export_cross_reference_index,
+    verify_cross_reference_file,
+)
 from .file_publication import atomic_publish_text
 from .guidance import guidance_traceability
 from .integrity import (
@@ -141,6 +145,7 @@ REVIEW_PACKAGE_FILES = {
     "citations.json",
     "guidance-traceability.json",
     "guidance-traceability.csv",
+    "cross-reference.json",
     "assurance-register.json",
     "assurance-work.json",
     "assurance-register.csv",
@@ -156,7 +161,10 @@ REVIEW_PACKAGE_FILES = {
     "adapter-runs.json",
     "README.md",
 }
-LEGACY_REVIEW_PACKAGE_FILES = REVIEW_PACKAGE_FILES - {"assurance-work.json"}
+LEGACY_REVIEW_PACKAGE_FILES = REVIEW_PACKAGE_FILES - {
+    "assurance-work.json",
+    "cross-reference.json",
+}
 REVIEW_PACKAGE_SCHEMA_FILES = PUBLIC_SCHEMA_BUNDLE_FILES
 REVIEW_PACKAGE_ALLOWED_FILES = REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES
 REVIEW_PACKAGE_ALL_FILES = REVIEW_PACKAGE_ALLOWED_FILES | {"manifest.json"}
@@ -190,12 +198,14 @@ REVIEW_VIEWS_PACKAGE_VERSION = (0, 56, 0)
 PACKAGE_PROVENANCE_VERSION = (0, 57, 0)
 SFTA_EXACT_SELECTOR_VERSION = (0, 57, 2)
 RECONCILED_INVENTORY_VIEWS_VERSION = (0, 57, 65)
+CROSS_REFERENCE_PACKAGE_VERSION = (0, 59, 0)
 REVIEW_PACKAGE_CAPABILITIES = (
     "analysis_diagnostics_projection_v1",
     "assurance_register_projection",
     "assurance_work_queue_projection",
     "evidence_catalog_projection_v1",
     "guidance_traceability_projection_v1",
+    "cross_reference_projection_v1",
     "interchange_artifacts_projection_v1",
     "package_provenance_projection_v1",
     "review_views_projection_v1",
@@ -303,6 +313,23 @@ def _package_requires_sfta_projection(manifest: dict[str, Any]) -> bool:
     )
 
 
+def _package_requires_cross_reference_projection(manifest: dict[str, Any]) -> bool:
+    capabilities = manifest.get("capabilities", [])
+    if (
+        isinstance(capabilities, list)
+        and "cross_reference_projection_v1" in capabilities
+    ):
+        return True
+    versions = (
+        manifest.get("exporter", {}).get("version", ""),
+        manifest.get("analysis_generator", {}).get("version", ""),
+    )
+    return any(
+        _package_version_at_least(value, CROSS_REFERENCE_PACKAGE_VERSION)
+        for value in versions
+    )
+
+
 def _package_requires_evidence_catalog_projection(manifest: dict[str, Any]) -> bool:
     capabilities = manifest.get("capabilities", [])
     if (
@@ -403,6 +430,11 @@ def _required_package_capabilities(manifest: dict[str, Any]) -> set[str]:
         for value in versions
     ):
         required.add("sfta_projection_v1")
+    if any(
+        _package_version_at_least(value, CROSS_REFERENCE_PACKAGE_VERSION)
+        for value in versions
+    ):
+        required.add("cross_reference_projection_v1")
     if any(
         _package_version_at_least(value, EVIDENCE_CATALOG_PACKAGE_VERSION)
         for value in versions
@@ -1000,13 +1032,14 @@ def _review_package_readme(
         "This package contains the governed JSON analysis, resolved system context, "
         "repository coverage and adapter-run provenance, worksheets, inventory, "
         "architecture and traceability views, executable assurance contracts, a "
-        "standalone integrity-bound hardening queue, guidance citations, coverage metrics, "
+        "standalone integrity-bound hardening queue, a cross-reference evidence fabric, "
+        "guidance citations, coverage metrics, "
         "validation findings, audit history, and the exact offline JSON Schema contracts "
         "for diagrams, package manifests, and verifier verdicts. Checksums are recorded "
         "in `manifest.json`.\n\n"
         "After transfer or storage, run `sfmea verify-package .` from this directory "
         "to check the complete file set, checksums, analysis provenance, and exact "
-        "diagnostic, guidance, SFTA, evidence, interchange, package-provenance, "
+        "diagnostic, guidance, cross-reference, SFTA, evidence, interchange, package-provenance, "
         "review-view, assurance-register, and assurance-work projections.\n\n"
         "> Scanner output, diagrams, coverage, and machine suggestions are review aids. "
         "They do not establish correctness, risk acceptance, or hazard-analysis "
@@ -1118,6 +1151,9 @@ def export_review_package(
             ),
             "guidance-traceability.csv": lambda path: export_guidance_traceability(
                 package_analysis, path, format="csv"
+            ),
+            "cross-reference.json": lambda path: export_cross_reference_index(
+                package_analysis, path, format="json"
             ),
             "assurance-register.json": lambda path: export_assurance_register(
                 package_analysis, path, format="json"
@@ -2254,6 +2290,18 @@ def _verify_guidance_traceability(
     }
 
 
+def _verify_cross_reference_projection(
+    package: Path,
+    listed: set[str],
+    analysis: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Exactly regenerate the packaged relationship fabric from packaged analysis."""
+
+    del listed
+    path = package / "cross-reference.json"
+    return verify_cross_reference_file(path, analysis=analysis)
+
+
 def _verify_sfta_projection(
     package: Path,
     listed: set[str],
@@ -2638,9 +2686,7 @@ def _verify_review_views(
     include_repository_accounting = _package_version_at_least(
         producer_version, RECONCILED_INVENTORY_VIEWS_VERSION
     )
-    artifact_specs: tuple[
-        tuple[str, str, Callable[..., Any], dict[str, Any]], ...
-    ] = (
+    artifact_specs: tuple[tuple[str, str, Callable[..., Any], dict[str, Any]], ...] = (
         (
             "worksheet.csv",
             "worksheet_projection",
@@ -3079,11 +3125,11 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
 
     schema_catalog_declaration = manifest.get("schema_catalog")
     schema_bundle_declared = schema_catalog_declaration is not None
-    required_files = (
-        REVIEW_PACKAGE_FILES
-        if _package_requires_assurance_work_queue(manifest)
-        else LEGACY_REVIEW_PACKAGE_FILES
-    )
+    required_files = set(REVIEW_PACKAGE_FILES)
+    if not _package_requires_assurance_work_queue(manifest):
+        required_files.discard("assurance-work.json")
+    if not _package_requires_cross_reference_projection(manifest):
+        required_files.discard("cross-reference.json")
 
     exporter = manifest.get("exporter")
     metadata_valid = (
@@ -3678,6 +3724,26 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
                 f"{failed or 'unknown'}.",
                 "guidance-traceability.json",
             )
+    cross_reference_verification: dict[str, Any] = {}
+    if _package_requires_cross_reference_projection(manifest):
+        cross_reference_verification = _verify_cross_reference_projection(
+            package, listed, packaged_analysis
+        )
+        if not cross_reference_verification["valid"]:
+            failed = ", ".join(
+                name
+                for name, passed in cross_reference_verification.get(
+                    "checks", {}
+                ).items()
+                if passed is False
+            )
+            add(
+                "package.cross_reference_projection_invalid",
+                "error",
+                "Packaged cross-reference evidence fabric failed exact reconciliation: "
+                f"{failed or 'unknown'}.",
+                "cross-reference.json",
+            )
     sfta_verification: dict[str, Any] = {}
     if _package_requires_sfta_projection(manifest):
         sfta_verification = _verify_sfta_projection(
@@ -3790,6 +3856,7 @@ def _verify_review_package(source: str | Path) -> dict[str, Any]:
     result["assurance_register"] = register_verification
     result["analysis_diagnostics"] = diagnostics_verification
     result["guidance_traceability"] = guidance_verification
+    result["cross_reference"] = cross_reference_verification
     result["sfta_projection"] = sfta_verification
     result["evidence_catalog"] = evidence_verification
     result["interchange_artifacts"] = interchange_verification

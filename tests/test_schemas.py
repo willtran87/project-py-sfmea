@@ -99,6 +99,8 @@ class SchemaCatalogTests(unittest.TestCase):
                 "configuration-authoring-apply-receipt",
                 "configuration-authoring-draft",
                 "configuration-authoring-verification",
+                "cross-reference",
+                "cross-reference-verification",
                 "detached-signature",
                 "diagram",
                 "diagram-bundle",

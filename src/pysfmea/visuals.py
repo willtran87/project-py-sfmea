@@ -15,7 +15,9 @@ from .repository_inventory import repository_inventory_summary_projection
 
 
 def _md(value: Any) -> str:
-    return html.escape(str(value or ""), quote=False).replace("\r", " ").replace("\n", " ")
+    return (
+        html.escape(str(value or ""), quote=False).replace("\r", " ").replace("\n", " ")
+    )
 
 
 def _mermaid(value: Any) -> str:
@@ -36,7 +38,9 @@ def _alias(index: int) -> str:
 
 
 def _component_reference(component: dict[str, Any]) -> str:
-    return f"{component.get('source', {}).get('path', '')}:{component.get('qualname', '')}"
+    return (
+        f"{component.get('source', {}).get('path', '')}:{component.get('qualname', '')}"
+    )
 
 
 def _select_component(analysis: dict[str, Any], selector: str) -> dict[str, Any]:
@@ -54,7 +58,9 @@ def _select_component(analysis: dict[str, Any], selector: str) -> dict[str, Any]
         raise ValueError(f"sequence entrypoint does not match a component: {selector}")
     if len(matches) > 1:
         references = ", ".join(_component_reference(value) for value in matches[:5])
-        raise ValueError(f"sequence entrypoint is ambiguous; use path:qualname ({references})")
+        raise ValueError(
+            f"sequence entrypoint is ambiguous; use path:qualname ({references})"
+        )
     return matches[0]
 
 
@@ -71,7 +77,10 @@ def sequence_model(
     if max_depth < 1 or max_interactions < 1:
         raise ValueError("sequence limits must be positive")
     root = _select_component(analysis, entrypoint)
-    components = {component.get("id", ""): component for component in analysis.get("components", [])}
+    components = {
+        component.get("id", ""): component
+        for component in analysis.get("components", [])
+    }
     graph = architecture_graph(analysis)
     adjacency: dict[str, list[str]] = defaultdict(list)
     for edge in graph["edges"]:
@@ -195,9 +204,10 @@ def sequence_model(
                     truncation_reasons.add("max_interactions")
                     external_limit_reached = True
                     break
-                external_id = "EXTCALL-" + hashlib.sha256(
-                    str(call).encode("utf-8")
-                ).hexdigest()[:12].upper()
+                external_id = (
+                    "EXTCALL-"
+                    + hashlib.sha256(str(call).encode("utf-8")).hexdigest()[:12].upper()
+                )
                 edge_key = (
                     component_id,
                     external_id,
@@ -242,8 +252,12 @@ def sequence_model(
                     {
                         "source": source_id or "RUNTIME-EXTERNAL-SOURCE",
                         "target": target_id or "RUNTIME-EXTERNAL-TARGET",
-                        "source_label": edge.get("source_name", "External/runtime source"),
-                        "target_label": edge.get("target_name", "External/runtime target"),
+                        "source_label": edge.get(
+                            "source_name", "External/runtime source"
+                        ),
+                        "target_label": edge.get(
+                            "target_name", "External/runtime target"
+                        ),
                         "label": edge.get("operation", "observed call"),
                         "evidence": "observed_runtime",
                         "cycle": False,
@@ -305,7 +319,10 @@ def sequence_model(
         ),
     }
     participant_ids: list[str] = []
-    for value in [root["id"], *(entry[key] for entry in interactions for key in ("source", "target"))]:
+    for value in [
+        root["id"],
+        *(entry[key] for entry in interactions for key in ("source", "target")),
+    ]:
         if value not in participant_ids:
             participant_ids.append(value)
     participants = []
@@ -313,9 +330,12 @@ def sequence_model(
         component = components.get(component_id, {})
         fallback = next(
             (
-                entry.get("source_label") if entry.get("source") == component_id else entry.get("target_label")
+                entry.get("source_label")
+                if entry.get("source") == component_id
+                else entry.get("target_label")
                 for entry in interactions
-                if entry.get("source") == component_id or entry.get("target") == component_id
+                if entry.get("source") == component_id
+                or entry.get("target") == component_id
             ),
             component_id,
         )
@@ -367,7 +387,10 @@ def export_sequence(
         )
     if format != "markdown":
         raise ValueError("sequence format must be markdown or json")
-    aliases = {participant["id"]: _alias(index) for index, participant in enumerate(model["participants"])}
+    aliases = {
+        participant["id"]: _alias(index)
+        for index, participant in enumerate(model["participants"])
+    }
     lines = [
         "# Sequence view - " + _md(analysis.get("project", {}).get("name", "")),
         "",
@@ -378,7 +401,9 @@ def export_sequence(
         "  autonumber",
     ]
     if model["truncated"]:
-        lines[2] += " View truncated by: " + ", ".join(model["truncation_reasons"]) + "."
+        lines[2] += (
+            " View truncated by: " + ", ".join(model["truncation_reasons"]) + "."
+        )
     for participant in model["participants"]:
         lines.append(
             f'  participant {aliases[participant["id"]]} as "{_mermaid(participant["label"])}"'
@@ -404,8 +429,8 @@ def export_sequence(
         if interaction.get("static_alignment") == "runtime_only":
             suffix += " [runtime only]"
         lines.append(
-            f'  {aliases[interaction["source"]]}{arrow}{aliases[interaction["target"]]}: '
-            f'{_mermaid(interaction["label"] + suffix)}'
+            f"  {aliases[interaction['source']]}{arrow}{aliases[interaction['target']]}: "
+            f"{_mermaid(interaction['label'] + suffix)}"
         )
     lines.extend(
         [
@@ -430,7 +455,8 @@ def export_sequence(
             "- Static observation coverage: "
             + (
                 f"{model['reconciliation']['static_observation_coverage_percent']}%"
-                if model["reconciliation"]["static_observation_coverage_percent"] is not None
+                if model["reconciliation"]["static_observation_coverage_percent"]
+                is not None
                 else "not applicable (no static internal relations)"
             ),
             "- " + model["reconciliation"]["notice"],
@@ -484,9 +510,7 @@ def traceability_model(analysis: dict[str, Any]) -> dict[str, Any]:
         for hazard_id in requirement.get("hazards", []):
             target = hazard_nodes.get(hazard_id)
             if source and target:
-                edges.append(
-                    {"source": source, "target": target, "kind": "mitigates"}
-                )
+                edges.append({"source": source, "target": target, "kind": "mitigates"})
     for component in analysis.get("components", []):
         reference_id = component.get("id", "")
         if not reference_id:
@@ -511,7 +535,9 @@ def traceability_model(analysis: dict[str, Any]) -> dict[str, Any]:
         if item.get("source_status", "active") != "active":
             continue
         review = item.get("review", {})
-        label = review.get("failure_mode") or item.get("scanner", {}).get("failure_mode", "")
+        label = review.get("failure_mode") or item.get("scanner", {}).get(
+            "failure_mode", ""
+        )
         reference_id = item.get("id", "")
         if not reference_id:
             continue
@@ -535,7 +561,7 @@ def traceability_model(analysis: dict[str, Any]) -> dict[str, Any]:
             for value in line.split(",")
             if value.strip()
         }
-        for requirement_id in requirement_ids:
+        for requirement_id in sorted(requirement_ids):
             requirement_node = requirement_nodes.get(requirement_id)
             if requirement_node:
                 edges.append(
@@ -570,23 +596,36 @@ def export_traceability(
         )
     if format != "markdown":
         raise ValueError("traceability format must be markdown or json")
-    aliases = {node["id"]: f"N{index}" for index, node in enumerate(model["nodes"]) if node["id"]}
-    lines = ["# SFMEA traceability - " + _md(analysis.get("project", {}).get("name", "")), "", "```mermaid", "flowchart LR"]
-    shapes = {"requirement": ("[", "]"), "hazard": ("{{", "}}"), "failure_mode": ("([", "])")}
+    aliases = {
+        node["id"]: f"N{index}"
+        for index, node in enumerate(model["nodes"])
+        if node["id"]
+    }
+    lines = [
+        "# SFMEA traceability - " + _md(analysis.get("project", {}).get("name", "")),
+        "",
+        "```mermaid",
+        "flowchart LR",
+    ]
+    shapes = {
+        "requirement": ("[", "]"),
+        "hazard": ("{{", "}}"),
+        "failure_mode": ("([", "])"),
+    }
     for node in model["nodes"]:
         if node["id"] not in aliases:
             continue
         left, right = shapes.get(node["kind"], ('["', '"]'))
-        label = _mermaid(
-            f"{node.get('reference_id', node['id'])}\\n{node['label']}"
-        )
+        label = _mermaid(f"{node.get('reference_id', node['id'])}\\n{node['label']}")
         if left == '["':
             lines.append(f"  {aliases[node['id']]}{left}{label}{right}")
         else:
             lines.append(f'  {aliases[node["id"]]}{left}"{label}"{right}')
     for edge in model["edges"]:
         if edge["source"] in aliases and edge["target"] in aliases:
-            lines.append(f'  {aliases[edge["source"]]} -->|"{_mermaid(edge["kind"])}"| {aliases[edge["target"]]}')
+            lines.append(
+                f'  {aliases[edge["source"]]} -->|"{_mermaid(edge["kind"])}"| {aliases[edge["target"]]}'
+            )
     lines.append("```")
     return atomic_publish_text(
         destination,
@@ -598,13 +637,41 @@ def export_traceability(
 def coverage_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
     """Measure analysis coverage without claiming semantic adequacy."""
 
-    active_items = [item for item in analysis.get("items", []) if item.get("source_status", "active") == "active"]
-    components = [component for component in analysis.get("components", []) if component.get("kind") not in {"environment", "common_cause"}]
-    reviewed = [item for item in active_items if item.get("review", {}).get("disposition") != "unreviewed"]
-    accepted = [item for item in active_items if item.get("review", {}).get("disposition") == "accepted"]
-    requirements = {value.get("id") for value in analysis.get("context", {}).get("requirements", []) if value.get("id")}
-    hazards = {value.get("id") for value in analysis.get("context", {}).get("hazards", []) if value.get("id")}
-    interfaces = {value.get("id") for value in analysis.get("context", {}).get("system_interfaces", []) if value.get("id")}
+    active_items = [
+        item
+        for item in analysis.get("items", [])
+        if item.get("source_status", "active") == "active"
+    ]
+    components = [
+        component
+        for component in analysis.get("components", [])
+        if component.get("kind") not in {"environment", "common_cause"}
+    ]
+    reviewed = [
+        item
+        for item in active_items
+        if item.get("review", {}).get("disposition") != "unreviewed"
+    ]
+    accepted = [
+        item
+        for item in active_items
+        if item.get("review", {}).get("disposition") == "accepted"
+    ]
+    requirements = {
+        value.get("id")
+        for value in analysis.get("context", {}).get("requirements", [])
+        if value.get("id")
+    }
+    hazards = {
+        value.get("id")
+        for value in analysis.get("context", {}).get("hazards", [])
+        if value.get("id")
+    }
+    interfaces = {
+        value.get("id")
+        for value in analysis.get("context", {}).get("system_interfaces", [])
+        if value.get("id")
+    }
     linked_requirements = {
         value.strip()
         for item in active_items
@@ -612,8 +679,16 @@ def coverage_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
         for value in line.split(",")
         if value.strip()
     }
-    linked_hazards = {value for item in active_items for value in item.get("review", {}).get("linked_hazards", [])}
-    mapped_interfaces = {value for component in components for value in component.get("interface_ids", [])}
+    linked_hazards = {
+        value
+        for item in active_items
+        for value in item.get("review", {}).get("linked_hazards", [])
+    }
+    mapped_interfaces = {
+        value
+        for component in components
+        for value in component.get("interface_ids", [])
+    }
     repository_projection = repository_inventory_summary_projection(
         analysis.get("repository_inventory", {})
     )
@@ -624,11 +699,40 @@ def coverage_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
         return round(100 * numerator / denominator, 1) if denominator else None
 
     return {
-        "components": {"total": len(components), "with_requirements": sum(bool(value.get("requirement_ids")) for value in components), "with_interfaces": sum(bool(value.get("interface_ids")) for value in components)},
-        "failure_modes": {"active": len(active_items), "reviewed": len(reviewed), "accepted": len(accepted), "review_percent": ratio(len(reviewed), len(active_items))},
-        "requirements": {"configured": len(requirements), "linked": len(requirements & linked_requirements), "coverage_percent": ratio(len(requirements & linked_requirements), len(requirements))},
-        "hazards": {"configured": len(hazards), "linked": len(hazards & linked_hazards), "coverage_percent": ratio(len(hazards & linked_hazards), len(hazards))},
-        "interfaces": {"configured": len(interfaces), "mapped": len(interfaces & mapped_interfaces), "coverage_percent": ratio(len(interfaces & mapped_interfaces), len(interfaces))},
+        "components": {
+            "total": len(components),
+            "with_requirements": sum(
+                bool(value.get("requirement_ids")) for value in components
+            ),
+            "with_interfaces": sum(
+                bool(value.get("interface_ids")) for value in components
+            ),
+        },
+        "failure_modes": {
+            "active": len(active_items),
+            "reviewed": len(reviewed),
+            "accepted": len(accepted),
+            "review_percent": ratio(len(reviewed), len(active_items)),
+        },
+        "requirements": {
+            "configured": len(requirements),
+            "linked": len(requirements & linked_requirements),
+            "coverage_percent": ratio(
+                len(requirements & linked_requirements), len(requirements)
+            ),
+        },
+        "hazards": {
+            "configured": len(hazards),
+            "linked": len(hazards & linked_hazards),
+            "coverage_percent": ratio(len(hazards & linked_hazards), len(hazards)),
+        },
+        "interfaces": {
+            "configured": len(interfaces),
+            "mapped": len(interfaces & mapped_interfaces),
+            "coverage_percent": ratio(
+                len(interfaces & mapped_interfaces), len(interfaces)
+            ),
+        },
         "repository_artifacts": {
             "reconciliation_status": repository_projection["status"],
             "display_source": repository_projection["display_source"],
@@ -637,15 +741,11 @@ def coverage_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
             "analyzed": repository_status.get("analyzed"),
             "indexed": repository_status.get("indexed"),
             "excluded": repository_status.get("excluded_region"),
-            "opaque_or_unresolved": repository_summary.get(
-                "opaque_or_unresolved"
-            ),
+            "opaque_or_unresolved": repository_summary.get("opaque_or_unresolved"),
             "semantic_coverage_percent": repository_summary.get(
                 "semantic_coverage_percent"
             ),
-            "by_snapshot_source": repository_summary.get(
-                "by_snapshot_source", {}
-            ),
+            "by_snapshot_source": repository_summary.get("by_snapshot_source", {}),
             "notice": repository_projection["notice"],
         },
         "limitations": [
@@ -671,16 +771,31 @@ def export_coverage(
         )
     if format != "markdown":
         raise ValueError("coverage format must be markdown or json")
-    lines = ["# SFMEA analysis coverage", "", "> " + metrics["limitations"][0], "", "| Area | Covered | Total | Percent |", "|---|---:|---:|---:|"]
+    lines = [
+        "# SFMEA analysis coverage",
+        "",
+        "> " + metrics["limitations"][0],
+        "",
+        "| Area | Covered | Total | Percent |",
+        "|---|---:|---:|---:|",
+    ]
     for area, metric_key, covered_key, total_key, percent_key in (
-        ("Failure-mode review", "failure_modes", "reviewed", "active", "review_percent"),
+        (
+            "Failure-mode review",
+            "failure_modes",
+            "reviewed",
+            "active",
+            "review_percent",
+        ),
         ("Requirements", "requirements", "linked", "configured", "coverage_percent"),
         ("Hazards", "hazards", "linked", "configured", "coverage_percent"),
         ("Interfaces", "interfaces", "mapped", "configured", "coverage_percent"),
     ):
         values = metrics[metric_key]
         percent = values[percent_key]
-        lines.append(f"| {area} | {values[covered_key]} | {values[total_key]} | {percent if percent is not None else 'n/a'} |")
+        lines.append(
+            f"| {area} | {values[covered_key]} | {values[total_key]} | {percent if percent is not None else 'n/a'} |"
+        )
     if include_repository_accounting:
         repository = metrics["repository_artifacts"]
         semantic_coverage = repository["semantic_coverage_percent"]
@@ -696,11 +811,7 @@ def export_coverage(
                 f"- Indexed: {repository['indexed'] if repository['indexed'] is not None else 'unavailable'}",
                 f"- Opaque or unresolved: {repository['opaque_or_unresolved'] if repository['opaque_or_unresolved'] is not None else 'unavailable'}",
                 "- Semantic accounting coverage: "
-                + (
-                    f"{semantic_coverage}%"
-                    if semantic_coverage is not None
-                    else "n/a"
-                ),
+                + (f"{semantic_coverage}%" if semantic_coverage is not None else "n/a"),
                 "",
                 "> " + repository["notice"],
             ]

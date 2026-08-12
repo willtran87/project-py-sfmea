@@ -51,6 +51,12 @@ from .configuration_authoring import (
     seal_configuration_authoring_draft,
     verify_configuration_authoring_file,
 )
+from .cross_reference import (
+    CROSS_REFERENCE_VERIFICATION_CHECKS,
+    CROSS_REFERENCE_VERIFICATION_FORMAT,
+    export_cross_reference_index,
+    verify_cross_reference_file,
+)
 from .diagnostics import analysis_diagnostics
 from .diagrams import (
     DEFAULT_PROPAGATION_DEPTH,
@@ -1233,7 +1239,9 @@ def _parser() -> argparse.ArgumentParser:
     pr_analysis.add_argument("repository", help="local Git repository")
     pr_analysis.add_argument("--base", required=True, help="base revision")
     pr_analysis.add_argument("--head", required=True, help="head revision")
-    pr_analysis.add_argument("-o", "--output", required=True, help="new output directory")
+    pr_analysis.add_argument(
+        "-o", "--output", required=True, help="new output directory"
+    )
     pr_analysis.set_defaults(handler=_pr_analyze)
 
     pr_verify = subparsers.add_parser(
@@ -1372,6 +1380,31 @@ def _parser() -> argparse.ArgumentParser:
     )
     architecture.add_argument("-o", "--output", help="destination path")
     architecture.set_defaults(handler=_architecture)
+
+    cross_reference = subparsers.add_parser(
+        "cross-reference",
+        help="export the fused component, finding, guidance, SFTA, and evidence fabric",
+    )
+    cross_reference.add_argument("analysis", help="analysis JSON path")
+    cross_reference.add_argument(
+        "--format", choices=("json", "markdown"), default="json"
+    )
+    cross_reference.add_argument("-o", "--output", help="destination path")
+    cross_reference.set_defaults(handler=_cross_reference)
+
+    cross_reference_verify = subparsers.add_parser(
+        "cross-reference-verify",
+        help="verify an evidence fabric and optional exact analysis regeneration",
+    )
+    cross_reference_verify.add_argument("fabric", help="cross-reference JSON path")
+    cross_reference_verify.add_argument(
+        "--analysis",
+        help="current analysis JSON; when supplied, require exact regeneration",
+    )
+    cross_reference_verify.add_argument(
+        "--json", action="store_true", help="emit machine-readable verification JSON"
+    )
+    cross_reference_verify.set_defaults(handler=_cross_reference_verify)
 
     audit = subparsers.add_parser("audit", help="export scan and review change history")
     audit.add_argument("analysis", help="analysis JSON path")
@@ -3519,9 +3552,7 @@ def _html_report_verify(args: argparse.Namespace) -> int:
 
 
 def _report_browser_verify(args: argparse.Namespace) -> int:
-    verification = verify_browser_quality_receipt_file(
-        args.receipt, report=args.report
-    )
+    verification = verify_browser_quality_receipt_file(args.receipt, report=args.report)
     if args.output:
         output = export_json_document(verification, args.output)
         print(f"Exported browser-quality verification: {output}")
@@ -3854,6 +3885,15 @@ def _verify_package(args: argparse.Namespace) -> int:
                 f"citations={guidance['citation_count']}, "
                 f"finding-links={guidance['finding_link_count']}"
             )
+        if result.get("cross_reference"):
+            fabric = result["cross_reference"]
+            print(
+                "Cross-reference fabric: "
+                f"valid={fabric['valid']}, entities={fabric.get('entity_count', 0)}, "
+                f"relationships={fabric.get('relationship_count', 0)}, "
+                f"finding-chains={fabric.get('finding_chain_count', 0)}, "
+                f"review-leads={fabric.get('review_lead_count', 0)}"
+            )
         if result.get("sfta_projection"):
             sfta = result["sfta_projection"]
             print(
@@ -4049,6 +4089,53 @@ def _architecture(args: argparse.Namespace) -> int:
     result = export_architecture(analysis, output, format=args.format)
     print(f"Exported architecture {args.format}: {result}")
     return 0
+
+
+def _cross_reference(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    source = Path(args.analysis).expanduser().resolve()
+    if args.output:
+        output = Path(args.output)
+    else:
+        suffix = (
+            ".cross-reference.json" if args.format == "json" else ".cross-reference.md"
+        )
+        output = source.with_name(source.stem + suffix)
+    result = export_cross_reference_index(analysis, output, format=args.format)
+    print(f"Exported cross-reference evidence fabric {args.format}: {result}")
+    return 0
+
+
+def _cross_reference_verify(args: argparse.Namespace) -> int:
+    try:
+        analysis = load_analysis(args.analysis) if args.analysis else None
+    except VERIFICATION_EXCEPTIONS as exc:
+        if not args.json:
+            raise
+        verification = _verification_error_result(
+            format_name=CROSS_REFERENCE_VERIFICATION_FORMAT,
+            source=args.fabric,
+            check_names=CROSS_REFERENCE_VERIFICATION_CHECKS,
+            binding_requested=True,
+            code="analysis.load_failed",
+            error=exc,
+        )
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+        return 2
+    verification = verify_cross_reference_file(args.fabric, analysis=analysis)
+    if args.json:
+        print(json.dumps(verification, indent=2, ensure_ascii=False))
+    else:
+        print(
+            "Cross-reference evidence fabric: "
+            f"valid={verification['valid']}, status={verification['status']}"
+        )
+        if verification.get("content_sha256"):
+            print(f"Content SHA-256: {verification['content_sha256']}")
+        for error in verification.get("errors", []):
+            print(f"[{error['code']}] {error['message']}")
+        print(verification["notice"])
+    return int(not verification["valid"])
 
 
 def _audit(args: argparse.Namespace) -> int:
@@ -4411,7 +4498,9 @@ def _synthesis_apply(args: argparse.Namespace) -> int:
         else path.with_name(path.stem + "-synthesis-apply-receipt.json")
     )
     if receipt_path in {path, workspace_path}:
-        raise ValueError("synthesis receipt must differ from analysis and workspace paths")
+        raise ValueError(
+            "synthesis receipt must differ from analysis and workspace paths"
+        )
     source_snapshot_path = (
         Path(args.source_snapshot).expanduser().absolute()
         if args.source_snapshot
@@ -4463,9 +4552,7 @@ def _synthesis_apply(args: argparse.Namespace) -> int:
     workspace = load_synthesis_workspace(workspace_path)
     receipt = apply_synthesis_workspace(analysis, workspace)
     compact = (
-        analysis.get("project", {})
-        .get("settings", {})
-        .get("analysis_serialization")
+        analysis.get("project", {}).get("settings", {}).get("analysis_serialization")
         == "compact"
     )
     with tempfile.TemporaryDirectory(
@@ -4474,9 +4561,7 @@ def _synthesis_apply(args: argparse.Namespace) -> int:
         staged_analysis_path = Path(temporary) / path.name
         save_analysis(staged_analysis_path, analysis, compact=compact)
         staged_analysis = load_analysis(staged_analysis_path)
-        receipt["result_analysis_state_sha256"] = canonical_json_sha256(
-            staged_analysis
-        )
+        receipt["result_analysis_state_sha256"] = canonical_json_sha256(staged_analysis)
         receipt.pop("content_sha256", None)
         receipt["content_sha256"] = canonical_json_sha256(receipt)
         analysis_content = staged_analysis_path.read_bytes()
@@ -4484,10 +4569,7 @@ def _synthesis_apply(args: argparse.Namespace) -> int:
             json.dumps(receipt, indent=2, ensure_ascii=False) + "\n"
         ).encode("utf-8")
         published_source_snapshot: Path | None = None
-        if (
-            source_snapshot_destination is not None
-            and source_file_snapshot is not None
-        ):
+        if source_snapshot_destination is not None and source_file_snapshot is not None:
             source_digest = receipt["source_analysis_state_sha256"]
 
             def verify_source_snapshot(candidate: Path) -> bool:

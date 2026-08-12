@@ -382,6 +382,9 @@ sfmea coverage $analysis --format markdown -o (Join-Path $artifacts "sfmea-cover
 sfmea coverage $analysis --format json -o (Join-Path $artifacts "sfmea-coverage.json")
 sfmea citations $analysis --format json -o (Join-Path $artifacts "guidance-citations.json")
 sfmea diagram $analysis -o (Join-Path $artifacts "diagrams.json")
+sfmea cross-reference $analysis -o (Join-Path $artifacts "cross-reference.json")
+sfmea cross-reference-verify (Join-Path $artifacts "cross-reference.json") `
+  --analysis $analysis --json
 sfmea report $analysis -o (Join-Path $artifacts "sfmea-report.html") `
   --max-output-bytes 52428800 --json
 sfmea report-verify (Join-Path $artifacts "sfmea-report.html") --analysis $analysis
@@ -392,6 +395,14 @@ searchable findings, evidence, repository accounting, assurance obligations, arc
 interfaces, propagation, sequences, traceability, circuit-breaker models, and stable record links.
 The canonical diagram bundle is renderer-neutral JSON for other tools; the report renders the same
 general model without a hosted service.
+The cross-reference fabric joins native AST, optional Graphify, runtime observations, findings,
+guidance, SFTA, assurance obligations, executions, and evidence into typed relations. Its verifier
+checks internal consistency and exact regeneration; agreement between channels remains review
+leverage rather than proof of completeness or compliance.
+Finding chains also reference bounded upstream caller paths and the scanner's timing-budget,
+retry-amplification, transaction/effect/resource, and circuit-breaker models. These links make the
+existing cascade and resilience analyses navigable together without upgrading static candidates
+to observed causality, latency, or control effectiveness.
 Use `sfmea diagram $analysis --kind data_flow` for the bounded interprocedural view. Its edges map
 caller expressions to callee parameters and callee returns to caller sinks; ambiguity, omissions,
 and the path-insensitive/static authority boundary remain embedded in the model.
@@ -544,10 +555,12 @@ sfmea verify-package $package --json
 sfmea status . --analysis $analysis --require-handoff-ready
 ```
 
-Current packages include the governed analysis, human review views, diagram and traceability
-projections, assurance registers and work queues, provenance, verification results, and the public
+Current packages include the governed analysis, human review views, diagram, traceability, and
+cross-reference projections, assurance registers and work queues, provenance, verification results, and the public
 schemas needed for offline validation. Package integrity proves that checked bytes have not
 changed; it does not prove authorship, approval, risk acceptance, or engineering correctness.
+The verifier exactly regenerates the packaged evidence fabric from `analysis.json`; updating both
+the fabric digest and manifest checksum after a semantic edit does not make that edit valid.
 Verification accepts only a regular ZIP or directory root and rejects final or contained symbolic
 links rather than following them into an unrelated artifact tree.
 Use optional detached signing when the handoff also requires authenticity.

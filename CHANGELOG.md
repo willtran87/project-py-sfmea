@@ -5,6 +5,21 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Add a deterministic `pysfmea-cross-reference-index-1` evidence fabric and
+  `sfmea cross-reference` JSON/Markdown exporter. It fuses native AST, Graphify static, and
+  imported runtime component relations; projects finding-to-guidance/requirement/hazard/SFTA/
+  verification/evidence chains; and turns cross-source discrepancies into bounded, prioritized
+  review leads. Finding chains also cross-reference bounded caller cascades, timing budgets, retry
+  amplification, transaction/effect/resource semantics, and circuit-breaker models. A canonical
+  evidence-fabric diagram and dedicated self-contained HTML view expose
+  the same digest-bound relationships without treating corroboration as completeness or compliance.
+  Add public artifact/verdict schemas, `sfmea cross-reference-verify`, exact-analysis regeneration,
+  checksum-manifested review-package inclusion, semantic package verification, and direct report
+  navigation between incomplete chains and their governed findings. Aggregate repetitive SFTA
+  reconciliation gaps into counted, sampled review leads while retaining the complete source
+  register, and make traceability link ordering cross-process deterministic so fresh-process
+  package verification cannot disagree with same-process publication.
+
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,
   citations, direct citations, adapter provenance, confidence, and screening priority to an exact

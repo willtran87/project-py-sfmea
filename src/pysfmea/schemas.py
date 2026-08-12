@@ -34,6 +34,16 @@ from .browser_quality import (
     BROWSER_QUALITY_FORMAT,
     BROWSER_QUALITY_VERIFICATION_FORMAT,
 )
+from .cross_reference import (
+    CROSS_REFERENCE_FORMAT,
+    CROSS_REFERENCE_VERIFICATION_CHECKS,
+    CROSS_REFERENCE_VERIFICATION_FORMAT,
+    MAX_CHAINS,
+    MAX_ENTITIES,
+    MAX_FUSIONS,
+    MAX_RELATIONSHIPS,
+    MAX_REVIEW_LEADS,
+)
 from .diagrams import (
     DIAGRAM_BUNDLE_SCHEMA,
     DIAGRAM_BUNDLE_VERIFICATION_FORMAT,
@@ -1120,6 +1130,250 @@ def _diagram_bundle_verification_schema() -> dict[str, Any]:
     )
 
 
+def _cross_reference_schema() -> dict[str, Any]:
+    digest = {"type": "string", "pattern": r"^[0-9a-f]{64}$"}
+    identifier = _identifier_schema()
+    text = {"type": "string", "maxLength": 20_000}
+    string_list = {
+        "type": "array",
+        "maxItems": 100_000,
+        "uniqueItems": True,
+        "items": identifier,
+    }
+    metadata = {
+        "type": "object",
+        "maxProperties": 100,
+        "additionalProperties": {
+            "oneOf": [
+                _scalar_schema(),
+                {
+                    "type": "array",
+                    "maxItems": 1_000,
+                    "items": _scalar_schema(),
+                },
+            ]
+        },
+    }
+    entity_properties = {
+        "id": identifier,
+        "raw_id": text,
+        "kind": identifier,
+        "label": text,
+        "authority": text,
+        "metadata": metadata,
+    }
+    relationship_properties = {
+        "id": identifier,
+        "source": identifier,
+        "target": identifier,
+        "kind": identifier,
+        "channel": identifier,
+        "authority": text,
+        "evidence_ids": string_list,
+        "metadata": metadata,
+    }
+    fusion_properties = {
+        "id": identifier,
+        "source_component_id": identifier,
+        "target_component_id": identifier,
+        "channels": string_list,
+        "classification": {
+            "enum": [
+                "observed_multi_source",
+                "observed_native",
+                "observed_graphify_gap",
+                "multi_static",
+                "runtime_only_review_lead",
+                "graphify_only_review_lead",
+                "native_static_only",
+            ]
+        },
+        "corroboration_count": {"type": "integer", "minimum": 1, "maximum": 3},
+        "runtime_observed": {"type": "boolean"},
+        "relationship_ids": string_list,
+        "notice": text,
+    }
+    dimensions = {
+        "type": "object",
+        "required": [
+            "component",
+            "requirements",
+            "hazards",
+            "guidance",
+            "verification",
+            "evidence",
+            "sfta",
+            "interfaces",
+            "component_relationships",
+            "cascade_analysis",
+            "timing_and_resilience",
+        ],
+        "properties": {
+            name: {"type": "boolean"}
+            for name in (
+                "component",
+                "requirements",
+                "hazards",
+                "guidance",
+                "verification",
+                "evidence",
+                "sfta",
+                "interfaces",
+                "component_relationships",
+                "cascade_analysis",
+                "timing_and_resilience",
+            )
+        },
+        "additionalProperties": False,
+    }
+    chain_properties = {
+        "finding_id": identifier,
+        "component_id": identifier,
+        "source_status": text,
+        "requirement_ids": string_list,
+        "hazard_ids": string_list,
+        "citation_ids": string_list,
+        "obligation_ids": string_list,
+        "evidence_artifact_ids": string_list,
+        "execution_ids": string_list,
+        "sfta_event_ids": string_list,
+        "cascade_component_ids": string_list,
+        "cascade_paths": {
+            "type": "array",
+            "maxItems": 25,
+            "items": string_list,
+        },
+        "cascade_path_analysis": metadata,
+        "resilience_entity_ids": string_list,
+        "timing_relationship_ids": string_list,
+        "dimensions": dimensions,
+        "linkage_completeness_percent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+        },
+        "notice": text,
+        "interface_entity_ids": string_list,
+        "inbound_fusion_ids": string_list,
+        "outbound_fusion_ids": string_list,
+    }
+    lead_properties = {
+        "id": identifier,
+        "kind": identifier,
+        "priority": {"enum": ["high", "medium", "low"]},
+        "subject_ids": string_list,
+        "description": text,
+        "affected_count": {"type": "integer", "minimum": 0},
+        "subject_ids_omitted": {"type": "integer", "minimum": 0},
+    }
+    integer_map = {
+        "type": "object",
+        "maxProperties": 1_000,
+        "additionalProperties": {"type": "integer", "minimum": 0},
+    }
+    summary_properties = {
+        "entities": {"type": "integer", "minimum": 0},
+        "relationships": {"type": "integer", "minimum": 0},
+        "component_relationship_fusions": {"type": "integer", "minimum": 0},
+        "finding_chains": {"type": "integer", "minimum": 0},
+        "active_finding_chains": {"type": "integer", "minimum": 0},
+        "historical_finding_chains": {"type": "integer", "minimum": 0},
+        "review_leads": {"type": "integer", "minimum": 0},
+        "runtime_observed_fusions": {"type": "integer", "minimum": 0},
+        "multi_source_fusions": {"type": "integer", "minimum": 0},
+        "classifications": integer_map,
+        "review_leads_by_kind": integer_map,
+        "omitted_by_bound": integer_map,
+    }
+    properties = {
+        "format": {"const": CROSS_REFERENCE_FORMAT},
+        "analysis_state_sha256": digest,
+        "baseline_id": {"type": "string", "maxLength": 512},
+        "authority": {"type": "string", "minLength": 1, "maxLength": 20_000},
+        "summary": {
+            "type": "object",
+            "required": list(summary_properties),
+            "properties": summary_properties,
+            "additionalProperties": False,
+        },
+        "entities": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(entity_properties),
+                "properties": entity_properties,
+                "additionalProperties": False,
+            },
+        },
+        "relationships": {
+            "type": "array",
+            "maxItems": MAX_RELATIONSHIPS,
+            "items": {
+                "type": "object",
+                "required": list(relationship_properties),
+                "properties": relationship_properties,
+                "additionalProperties": False,
+            },
+        },
+        "component_relationship_fusions": {
+            "type": "array",
+            "maxItems": MAX_FUSIONS,
+            "items": {
+                "type": "object",
+                "required": list(fusion_properties),
+                "properties": fusion_properties,
+                "additionalProperties": False,
+            },
+        },
+        "finding_chains": {
+            "type": "array",
+            "maxItems": MAX_CHAINS,
+            "items": {
+                "type": "object",
+                "required": list(chain_properties),
+                "properties": chain_properties,
+                "additionalProperties": False,
+            },
+        },
+        "review_leads": {
+            "type": "array",
+            "maxItems": MAX_REVIEW_LEADS,
+            "items": {
+                "type": "object",
+                "required": ["id", "kind", "priority", "subject_ids", "description"],
+                "properties": lead_properties,
+                "additionalProperties": False,
+            },
+        },
+        "limitations": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {"type": "string", "minLength": 1, "maxLength": 20_000},
+        },
+        "content_sha256": digest,
+    }
+    return {
+        "$schema": JSON_SCHEMA_DRAFT,
+        "$id": _schema_id("cross-reference"),
+        "title": "PySFMEA cross-reference evidence fabric",
+        "type": "object",
+        "required": list(properties),
+        "properties": properties,
+        "additionalProperties": False,
+    }
+
+
+def _cross_reference_verification_schema() -> dict[str, Any]:
+    return _verification_schema(
+        name="cross-reference-verification",
+        format_name=CROSS_REFERENCE_VERIFICATION_FORMAT,
+        title="PySFMEA cross-reference evidence-fabric verification verdict",
+        check_names=CROSS_REFERENCE_VERIFICATION_CHECKS,
+    )
+
+
 def _assurance_work_queue_verification_schema() -> dict[str, Any]:
     return _verification_schema(
         name="assurance-work-queue-verification",
@@ -1410,9 +1664,7 @@ def _assurance_scaffold_schema() -> dict[str, Any]:
                         "id": _identifier_schema(),
                         "finding_id": _identifier_schema(),
                         "contract_sha256": digest,
-                        "disposition": {
-                            "enum": ["accepted", "rejected", "unreviewed"]
-                        },
+                        "disposition": {"enum": ["accepted", "rejected", "unreviewed"]},
                         "source_status": required_text,
                         "implementation_status": required_text,
                     },
@@ -1723,6 +1975,7 @@ def _review_package_manifest_schema() -> dict[str, Any]:
                         "assurance_work_queue_projection",
                         "evidence_catalog_projection_v1",
                         "guidance_traceability_projection_v1",
+                        "cross_reference_projection_v1",
                         "interchange_artifacts_projection_v1",
                         "package_provenance_projection_v1",
                         "review_views_projection_v1",
@@ -2122,6 +2375,9 @@ def _review_package_verification_schema() -> dict[str, Any]:
         },
         "additionalProperties": False,
     }
+    cross_reference_verdict = copy.deepcopy(_cross_reference_verification_schema())
+    for metadata_key in ("$schema", "$id", "title", "description"):
+        cross_reference_verdict.pop(metadata_key, None)
     sfta_check_names = (
         "model_projection",
         "gap_register_projection",
@@ -2399,6 +2655,7 @@ def _review_package_verification_schema() -> dict[str, Any]:
                         "assurance_work_queue_projection",
                         "evidence_catalog_projection_v1",
                         "guidance_traceability_projection_v1",
+                        "cross_reference_projection_v1",
                         "interchange_artifacts_projection_v1",
                         "package_provenance_projection_v1",
                         "review_views_projection_v1",
@@ -2428,6 +2685,12 @@ def _review_package_verification_schema() -> dict[str, Any]:
                 "oneOf": [
                     {"type": "object", "maxProperties": 0},
                     guidance_verdict,
+                ]
+            },
+            "cross_reference": {
+                "oneOf": [
+                    {"type": "object", "maxProperties": 0},
+                    cross_reference_verdict,
                 ]
             },
             "sfta_projection": {
@@ -2767,9 +3030,7 @@ def _workflow_status_schema() -> dict[str, Any]:
                 "properties": {
                     "html_report": {"enum": ["auto_discovered", "explicit"]},
                     "pdf_report": {"enum": ["auto_discovered", "explicit"]},
-                    "review_package": {
-                        "enum": ["auto_discovered", "explicit"]
-                    },
+                    "review_package": {"enum": ["auto_discovered", "explicit"]},
                 },
                 "additionalProperties": False,
             },
@@ -3190,10 +3451,21 @@ def _assurance_program_schema() -> dict[str, Any]:
                         },
                         "call_actual_count": {"type": "integer", "minimum": 1},
                         "semantic_case_count": {"type": "integer", "minimum": 0},
-                        "semantic_output_recall": {"type": "number", "minimum": 0, "maximum": 1},
-                        "semantic_output_precision": {"type": "number", "minimum": 0, "maximum": 1},
+                        "semantic_output_recall": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
+                        "semantic_output_precision": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
                         "semantic_matched_count": {"type": "integer", "minimum": 0},
-                        "semantic_actual_matched_count": {"type": "integer", "minimum": 0},
+                        "semantic_actual_matched_count": {
+                            "type": "integer",
+                            "minimum": 0,
+                        },
                         "semantic_actual_count": {"type": "integer", "minimum": 1},
                         "independent_reviewed": {"type": "boolean"},
                         "producer": nonempty,
@@ -4987,14 +5259,10 @@ def _evidence_onboarding_receipt_verification_schema() -> dict[str, Any]:
             "notice",
         ],
         "properties": {
-            "format": {
-                "const": "pysfmea-evidence-onboarding-receipt-verification-1"
-            },
+            "format": {"const": "pysfmea-evidence-onboarding-receipt-verification-1"},
             "path": {"type": "string", "minLength": 1},
             "valid": {"type": "boolean"},
-            "status": {
-                "enum": ["matched", "valid_binding_not_checked", "invalid"]
-            },
+            "status": {"enum": ["matched", "valid_binding_not_checked", "invalid"]},
             "checks": {"type": "object", "additionalProperties": True},
             "failed_checks": {
                 "type": "array",
@@ -5974,7 +6242,11 @@ def _accessibility_evidence_schema(*, draft: bool) -> dict[str, Any]:
                     ],
                     "properties": {
                         "id": {"enum": scenario_ids},
-                        "procedure": {"type": "string", "minLength": 1, "maxLength": 5_000},
+                        "procedure": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 5_000,
+                        },
                         "status": {
                             "enum": ["pass", "fail", "not_applicable", "not_run"]
                         },
@@ -5983,7 +6255,11 @@ def _accessibility_evidence_schema(*, draft: bool) -> dict[str, Any]:
                             "type": "array",
                             "maxItems": 100,
                             "uniqueItems": True,
-                            "items": {"type": "string", "minLength": 1, "maxLength": 2_000},
+                            "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2_000,
+                            },
                         },
                         "notes": {"type": "string", "maxLength": 20_000},
                     },
@@ -6712,12 +6988,25 @@ def _report_browser_quality_schema() -> dict[str, Any]:
             },
             "browser_memory": {
                 "type": "object",
-                "required": ["maximum_used_js_heap_bytes", "samples", "measurement", "limitations"],
+                "required": [
+                    "maximum_used_js_heap_bytes",
+                    "samples",
+                    "measurement",
+                    "limitations",
+                ],
                 "properties": {
                     "maximum_used_js_heap_bytes": nullable_integer,
-                    "samples": {"type": "array", "maxItems": 100, "items": {"type": "object"}},
+                    "samples": {
+                        "type": "array",
+                        "maxItems": 100,
+                        "items": {"type": "object"},
+                    },
                     "measurement": {"type": "string", "minLength": 1, "maxLength": 500},
-                    "limitations": {"type": "string", "minLength": 1, "maxLength": 1_000},
+                    "limitations": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1_000,
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -6806,11 +7095,23 @@ def _report_browser_quality_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                 },
             },
-            "responsive": {"type": "array", "maxItems": 20, "items": {"type": "object"}},
+            "responsive": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {"type": "object"},
+            },
             "saved_views": {"type": "object", "maxProperties": 20},
             "accessibility": {"type": "object", "maxProperties": 20},
-            "console_errors": {"type": "array", "maxItems": 1_000, "items": {"type": "string", "maxLength": 4_000}},
-            "page_errors": {"type": "array", "maxItems": 1_000, "items": {"type": "string", "maxLength": 4_000}},
+            "console_errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": {"type": "string", "maxLength": 4_000},
+            },
+            "page_errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": {"type": "string", "maxLength": 4_000},
+            },
             "browser_execution_error": {"type": "string", "maxLength": 500},
             "passed": {"type": "boolean"},
             "notice": {"type": "string", "minLength": 1, "maxLength": 2_000},
@@ -6850,7 +7151,12 @@ def _report_browser_quality_verification_schema() -> dict[str, Any]:
             "quality_passed": {"type": "boolean"},
             "checks": {
                 "type": "object",
-                "required": ["content_integrity", "structure", "semantic_consistency", "report_binding"],
+                "required": [
+                    "content_integrity",
+                    "structure",
+                    "semantic_consistency",
+                    "report_binding",
+                ],
                 "properties": {
                     "content_integrity": {"type": "boolean"},
                     "structure": {"type": "boolean"},
@@ -6865,7 +7171,11 @@ def _report_browser_quality_verification_schema() -> dict[str, Any]:
             "actual_report_sha256": {"type": "string", "maxLength": 64},
             "declared_report_bytes": nullable_bytes,
             "actual_report_bytes": nullable_bytes,
-            "errors": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 4_000}},
+            "errors": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {"type": "string", "maxLength": 4_000},
+            },
             "notice": {"type": "string", "minLength": 1, "maxLength": 2_000},
             "path": {"type": "string", "minLength": 1, "maxLength": 4_096},
             "source_bytes": {"type": "integer", "minimum": 0},
@@ -6959,7 +7269,11 @@ def _golden_corpus_schema() -> dict[str, Any]:
         "additionalProperties": False,
     }
     semantic_properties: dict[str, Any] = {
-        field: {"type": "string", "minLength": 1, "maxLength": MAX_EVALUATION_METADATA_CHARS}
+        field: {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_EVALUATION_METADATA_CHARS,
+        }
         for field in SEMANTIC_TEXT_FIELDS
     }
     semantic_properties.update(
@@ -7097,18 +7411,32 @@ def _evaluation_result_schema() -> dict[str, Any]:
     call = {
         "type": "object",
         "required": [
-            "source", "component", "raw_reference", "reference", "resolution",
-            "candidate_confidence", "line", "order", "awaited", "control_context",
+            "source",
+            "component",
+            "raw_reference",
+            "reference",
+            "resolution",
+            "candidate_confidence",
+            "line",
+            "order",
+            "awaited",
+            "control_context",
         ],
         "properties": {
-            "source": required_text, "component": required_text,
-            "raw_reference": required_text, "reference": required_text,
+            "source": required_text,
+            "component": required_text,
+            "raw_reference": required_text,
+            "reference": required_text,
             "resolution": required_text,
             "candidate_confidence": {"type": "string", "maxLength": 20},
-            "line": count, "order": count, "awaited": {"type": "boolean"},
+            "line": count,
+            "order": count,
+            "awaited": {"type": "boolean"},
             "control_context": {
-                "type": "array", "maxItems": MAX_GENERATED_LIST_ITEMS,
-                "items": required_text, "uniqueItems": True,
+                "type": "array",
+                "maxItems": MAX_GENERATED_LIST_ITEMS,
+                "items": required_text,
+                "uniqueItems": True,
             },
         },
         "additionalProperties": False,
@@ -7117,10 +7445,14 @@ def _evaluation_result_schema() -> dict[str, Any]:
         "type": "object",
         "required": ["source", "component", "kind", "roles"],
         "properties": {
-            "source": required_text, "component": required_text, "kind": required_text,
+            "source": required_text,
+            "component": required_text,
+            "kind": required_text,
             "roles": {
-                "type": "array", "maxItems": MAX_GENERATED_LIST_ITEMS,
-                "items": required_text, "uniqueItems": True,
+                "type": "array",
+                "maxItems": MAX_GENERATED_LIST_ITEMS,
+                "items": required_text,
+                "uniqueItems": True,
             },
         },
         "additionalProperties": False,
@@ -7161,17 +7493,27 @@ def _evaluation_result_schema() -> dict[str, Any]:
     governance = {
         "type": "object",
         "required": [
-            "independent", "repositories", "labeled_by", "approved_by",
-            "approval_date", "qualification_ready", "authority",
+            "independent",
+            "repositories",
+            "labeled_by",
+            "approved_by",
+            "approval_date",
+            "qualification_ready",
+            "authority",
         ],
         "properties": {
             "independent": {"type": "boolean"},
             "repositories": {
-                "type": "array", "maxItems": MAX_EVALUATION_CASES,
-                "items": required_text, "uniqueItems": True,
+                "type": "array",
+                "maxItems": MAX_EVALUATION_CASES,
+                "items": required_text,
+                "uniqueItems": True,
             },
-            "labeled_by": text, "approved_by": text, "approval_date": text,
-            "qualification_ready": {"type": "boolean"}, "authority": required_text,
+            "labeled_by": text,
+            "approved_by": text,
+            "approval_date": text,
+            "qualification_ready": {"type": "boolean"},
+            "authority": required_text,
         },
         "additionalProperties": False,
     }
@@ -7184,100 +7526,241 @@ def _evaluation_result_schema() -> dict[str, Any]:
         "adapter_provenance_coverage": ratio,
         "repository_source_accounting": ratio,
         "unsupported_verification_claims": {
-            "type": "array", "maxItems": MAX_EVALUATION_CASES, "items": finding,
+            "type": "array",
+            "maxItems": MAX_EVALUATION_CASES,
+            "items": finding,
         },
     }
     corpus_properties = {
-        "format": {"const": EVALUATION_CORPUS_FORMAT}, "content_sha256": digest,
-        "case_count": count, "call_case_count": count, "control_case_count": count,
-        "control_scope_count": count, "semantic_case_count": count,
-        "semantic_claim_count": count, "scope_count": count, "governance": governance,
+        "format": {"const": EVALUATION_CORPUS_FORMAT},
+        "content_sha256": digest,
+        "case_count": count,
+        "call_case_count": count,
+        "control_case_count": count,
+        "control_scope_count": count,
+        "semantic_case_count": count,
+        "semantic_claim_count": count,
+        "scope_count": count,
+        "governance": governance,
     }
     call_properties = {
-        "enabled": {"type": "boolean"}, "expected": count, "actual": count,
-        "matched": count, "recall": ratio, "precision": ratio,
+        "enabled": {"type": "boolean"},
+        "expected": count,
+        "actual": count,
+        "matched": count,
+        "recall": ratio,
+        "precision": ratio,
         "missing": {"type": "array", "maxItems": MAX_EVALUATION_CASES, "items": call},
-        "unexpected": {"type": "array", "maxItems": MAX_EVALUATION_CASES, "items": call},
+        "unexpected": {
+            "type": "array",
+            "maxItems": MAX_EVALUATION_CASES,
+            "items": call,
+        },
         "by_resolution": {
-            "type": "object", "maxProperties": MAX_EVALUATION_CASES,
+            "type": "object",
+            "maxProperties": MAX_EVALUATION_CASES,
             "additionalProperties": metric,
         },
         "notice": required_text,
     }
     control_properties = {
-        "enabled": {"type": "boolean"}, "expected": count, "actual": count,
-        "matched": count, "recall": ratio, "precision": ratio,
-        "missing": {"type": "array", "maxItems": MAX_EVALUATION_CASES, "items": control},
-        "unexpected": {"type": "array", "maxItems": MAX_EVALUATION_CASES, "items": control},
+        "enabled": {"type": "boolean"},
+        "expected": count,
+        "actual": count,
+        "matched": count,
+        "recall": ratio,
+        "precision": ratio,
+        "missing": {
+            "type": "array",
+            "maxItems": MAX_EVALUATION_CASES,
+            "items": control,
+        },
+        "unexpected": {
+            "type": "array",
+            "maxItems": MAX_EVALUATION_CASES,
+            "items": control,
+        },
         "by_kind": {
-            "type": "object", "maxProperties": MAX_EVALUATION_CASES,
+            "type": "object",
+            "maxProperties": MAX_EVALUATION_CASES,
             "additionalProperties": metric,
         },
         "population": {
             "type": "object",
-            "required": ["scope_basis", "scope_patterns", "evaluated_components", "positive_components", "negative_components"],
+            "required": [
+                "scope_basis",
+                "scope_patterns",
+                "evaluated_components",
+                "positive_components",
+                "negative_components",
+            ],
             "properties": {
                 "scope_basis": required_text,
-                "scope_patterns": {"type": "array", "maxItems": MAX_EVALUATION_SCOPES, "items": required_text, "uniqueItems": True},
-                "evaluated_components": count, "positive_components": count, "negative_components": count,
+                "scope_patterns": {
+                    "type": "array",
+                    "maxItems": MAX_EVALUATION_SCOPES,
+                    "items": required_text,
+                    "uniqueItems": True,
+                },
+                "evaluated_components": count,
+                "positive_components": count,
+                "negative_components": count,
             },
             "additionalProperties": False,
         },
-        "qualification_ready_corpus": {"type": "boolean"}, "notice": required_text,
+        "qualification_ready_corpus": {"type": "boolean"},
+        "notice": required_text,
     }
     semantic_properties = {
-        "enabled": {"type": "boolean"}, "expected": count, "actual": count,
-        "matched": count, "recall": ratio, "precision": ratio,
-        "claim_expected": count, "claim_actual": count, "claim_matched": count,
-        "claim_recall": ratio, "claim_precision": ratio,
-        "missing": {"type": "array", "maxItems": MAX_EVALUATION_CASES, "items": semantic_missing},
-        "mismatches": {"type": "array", "maxItems": MAX_EVALUATION_CASES, "items": semantic_mismatch},
-        "by_field": {"type": "object", "maxProperties": 20, "additionalProperties": metric},
-        "by_rule": {"type": "object", "maxProperties": MAX_EVALUATION_CASES, "additionalProperties": metric},
-        "qualification_ready_corpus": {"type": "boolean"}, "authority": required_text,
+        "enabled": {"type": "boolean"},
+        "expected": count,
+        "actual": count,
+        "matched": count,
+        "recall": ratio,
+        "precision": ratio,
+        "claim_expected": count,
+        "claim_actual": count,
+        "claim_matched": count,
+        "claim_recall": ratio,
+        "claim_precision": ratio,
+        "missing": {
+            "type": "array",
+            "maxItems": MAX_EVALUATION_CASES,
+            "items": semantic_missing,
+        },
+        "mismatches": {
+            "type": "array",
+            "maxItems": MAX_EVALUATION_CASES,
+            "items": semantic_mismatch,
+        },
+        "by_field": {
+            "type": "object",
+            "maxProperties": 20,
+            "additionalProperties": metric,
+        },
+        "by_rule": {
+            "type": "object",
+            "maxProperties": MAX_EVALUATION_CASES,
+            "additionalProperties": metric,
+        },
+        "qualification_ready_corpus": {"type": "boolean"},
+        "authority": required_text,
         "notice": required_text,
     }
     confidence_bin = {
         "type": "object",
-        "properties": {"actual": count, "matched": count, "false_positive": count, "empirical_precision": ratio},
+        "properties": {
+            "actual": count,
+            "matched": count,
+            "false_positive": count,
+            "empirical_precision": ratio,
+        },
         "additionalProperties": False,
     }
     properties = {
         "format": {"const": "pysfmea-evaluation-result-1"},
         "verifier": {
-            "type": "object", "required": ["name", "version"],
+            "type": "object",
+            "required": ["name", "version"],
             "properties": {"name": {"const": "PySFMEA"}, "version": required_text},
             "additionalProperties": False,
         },
-        "corpus": {"type": "object", "required": list(corpus_properties), "properties": corpus_properties, "additionalProperties": False},
-        "scope": {"type": "array", "maxItems": MAX_EVALUATION_SCOPES, "items": required_text, "uniqueItems": True},
-        "expected": count, "actual": count, "matched": count,
-        "recall": ratio, "precision": ratio,
-        "missing": {"type": "array", "maxItems": MAX_EVALUATION_CASES, "items": finding},
-        "unexpected": {"type": "array", "maxItems": MAX_EVALUATION_CASES, "items": finding},
-        "by_rule": {"type": "object", "maxProperties": MAX_EVALUATION_CASES, "additionalProperties": metric},
-        "metrics": {"type": "object", "required": list(quality_properties), "properties": quality_properties, "additionalProperties": False},
-        "call_resolution": {"type": "object", "required": list(call_properties), "properties": call_properties, "additionalProperties": False},
+        "corpus": {
+            "type": "object",
+            "required": list(corpus_properties),
+            "properties": corpus_properties,
+            "additionalProperties": False,
+        },
+        "scope": {
+            "type": "array",
+            "maxItems": MAX_EVALUATION_SCOPES,
+            "items": required_text,
+            "uniqueItems": True,
+        },
+        "expected": count,
+        "actual": count,
+        "matched": count,
+        "recall": ratio,
+        "precision": ratio,
+        "missing": {
+            "type": "array",
+            "maxItems": MAX_EVALUATION_CASES,
+            "items": finding,
+        },
+        "unexpected": {
+            "type": "array",
+            "maxItems": MAX_EVALUATION_CASES,
+            "items": finding,
+        },
+        "by_rule": {
+            "type": "object",
+            "maxProperties": MAX_EVALUATION_CASES,
+            "additionalProperties": metric,
+        },
+        "metrics": {
+            "type": "object",
+            "required": list(quality_properties),
+            "properties": quality_properties,
+            "additionalProperties": False,
+        },
+        "call_resolution": {
+            "type": "object",
+            "required": list(call_properties),
+            "properties": call_properties,
+            "additionalProperties": False,
+        },
         "confidence_calibration": {
             "type": "object",
-            "required": ["enabled", "bins", "ranked_labels", "monotonic_empirical_precision", "population", "qualification_ready_corpus", "authority"],
+            "required": [
+                "enabled",
+                "bins",
+                "ranked_labels",
+                "monotonic_empirical_precision",
+                "population",
+                "qualification_ready_corpus",
+                "authority",
+            ],
             "properties": {
                 "enabled": {"type": "boolean"},
-                "bins": {"type": "object", "maxProperties": 20, "additionalProperties": confidence_bin},
-                "ranked_labels": {"type": "array", "maxItems": 20, "items": required_text, "uniqueItems": True},
-                "monotonic_empirical_precision": {"type": "boolean"}, "population": count,
-                "qualification_ready_corpus": {"type": "boolean"}, "authority": required_text,
+                "bins": {
+                    "type": "object",
+                    "maxProperties": 20,
+                    "additionalProperties": confidence_bin,
+                },
+                "ranked_labels": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": required_text,
+                    "uniqueItems": True,
+                },
+                "monotonic_empirical_precision": {"type": "boolean"},
+                "population": count,
+                "qualification_ready_corpus": {"type": "boolean"},
+                "authority": required_text,
             },
             "additionalProperties": False,
         },
-        "control_detection": {"type": "object", "required": list(control_properties), "properties": control_properties, "additionalProperties": False},
-        "semantic_output": {"type": "object", "required": list(semantic_properties), "properties": semantic_properties, "additionalProperties": False},
+        "control_detection": {
+            "type": "object",
+            "required": list(control_properties),
+            "properties": control_properties,
+            "additionalProperties": False,
+        },
+        "semantic_output": {
+            "type": "object",
+            "required": list(semantic_properties),
+            "properties": semantic_properties,
+            "additionalProperties": False,
+        },
         "notice": required_text,
     }
     return {
-        "$schema": JSON_SCHEMA_DRAFT, "$id": _schema_id("evaluation-result"),
-        "title": "PySFMEA evaluation result", "type": "object",
-        "required": list(properties), "properties": properties,
+        "$schema": JSON_SCHEMA_DRAFT,
+        "$id": _schema_id("evaluation-result"),
+        "title": "PySFMEA evaluation result",
+        "type": "object",
+        "required": list(properties),
+        "properties": properties,
         "additionalProperties": False,
     }
 
@@ -7322,7 +7805,11 @@ def _calibration_comparison_schema() -> dict[str, Any]:
                 },
                 "additionalProperties": False,
             },
-            "rules": {"type": "array", "maxItems": MAX_EVALUATION_CASES, "items": {"type": "object"}},
+            "rules": {
+                "type": "array",
+                "maxItems": MAX_EVALUATION_CASES,
+                "items": {"type": "object"},
+            },
             "gates": {"type": "object", "additionalProperties": {"type": "boolean"}},
             "eligible_for_product_change_review": {"type": "boolean"},
             "decision": {"enum": ["eligible_for_review", "blocked"]},
@@ -7335,6 +7822,8 @@ def _calibration_comparison_schema() -> dict[str, Any]:
         },
         "additionalProperties": False,
     }
+
+
 def _qualification_threshold_schema() -> dict[str, Any]:
     count = {"type": "integer", "minimum": 0}
     ratio = {"type": "number", "minimum": 0, "maximum": 1}
@@ -7568,7 +8057,11 @@ def _qualification_result_schema() -> dict[str, Any]:
                 "if": {"properties": {"kind": {"const": "mismatch"}}},
                 "then": {
                     "properties": {
-                        "field": {"type": "string", "minLength": 1, "maxLength": 20_000},
+                        "field": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20_000,
+                        },
                         "expected": semantic_value,
                         "actual": semantic_value,
                     }
@@ -7674,15 +8167,11 @@ def _qualification_result_schema() -> dict[str, Any]:
         "by_call_resolution": _qualification_named_metrics_schema(
             repository_count=False
         ),
-        "by_control_kind": _qualification_named_metrics_schema(
-            repository_count=False
-        ),
+        "by_control_kind": _qualification_named_metrics_schema(repository_count=False),
         "by_semantic_field": _qualification_named_metrics_schema(
             repository_count=False
         ),
-        "by_semantic_rule": _qualification_named_metrics_schema(
-            repository_count=False
-        ),
+        "by_semantic_rule": _qualification_named_metrics_schema(repository_count=False),
         "semantic_diagnostics": semantic_diagnostics,
     }
     segment = {
@@ -7796,15 +8285,9 @@ def _qualification_result_schema() -> dict[str, Any]:
         "by_call_resolution": _qualification_named_metrics_schema(
             repository_count=True
         ),
-        "by_control_kind": _qualification_named_metrics_schema(
-            repository_count=True
-        ),
-        "by_semantic_field": _qualification_named_metrics_schema(
-            repository_count=True
-        ),
-        "by_semantic_rule": _qualification_named_metrics_schema(
-            repository_count=True
-        ),
+        "by_control_kind": _qualification_named_metrics_schema(repository_count=True),
+        "by_semantic_field": _qualification_named_metrics_schema(repository_count=True),
+        "by_semantic_rule": _qualification_named_metrics_schema(repository_count=True),
         "segments": {
             "type": "object",
             "required": ["frameworks", "domains"],
@@ -7933,6 +8416,8 @@ def _qualification_report_verification_schema() -> dict[str, Any]:
         "properties": properties,
         "additionalProperties": False,
     }
+
+
 _SCHEMA_BUILDERS = {
     "calibration-comparison": _calibration_comparison_schema,
     "accessibility-evidence": _accessibility_evidence_sealed_schema,
@@ -7961,6 +8446,8 @@ _SCHEMA_BUILDERS = {
     "diagram": _diagram_schema,
     "diagram-bundle": _diagram_bundle_schema,
     "diagram-bundle-verification": _diagram_bundle_verification_schema,
+    "cross-reference": _cross_reference_schema,
+    "cross-reference-verification": _cross_reference_verification_schema,
     "enhancement-workbench": _enhancement_workbench_schema,
     "enhancement-workbench-verification": (_enhancement_workbench_verification_schema),
     "enhancement-scope-preview": _enhancement_scope_preview_schema,
@@ -8032,6 +8519,8 @@ _SCHEMA_DESCRIPTIONS = {
     "diagram": "Canonical renderer-neutral diagram model.",
     "diagram-bundle": "Generated, state-bound and digest-declaring diagram bundle.",
     "diagram-bundle-verification": "Diagram verification success and rejection verdicts.",
+    "cross-reference": "Digest-bound cross-scanner, finding, guidance, SFTA, verification, and evidence relationship fabric.",
+    "cross-reference-verification": "Cross-reference integrity, referential consistency, accounting, and exact-regeneration verdict.",
     "enhancement-workbench": "Integrated evidence acquisition, review clustering, assurance portfolio, static surface, and governance activation plan.",
     "enhancement-workbench-verification": "Bounded workbench integrity, register completeness, and optional exact analysis-regeneration verdict.",
     "enhancement-scope-preview": "Read-only bounded metadata preview for proposed evidence-only scope changes.",
@@ -8073,6 +8562,8 @@ _SCHEMA_DESCRIPTIONS = {
     "review-package-verification": "Package verification success and rejection verdicts.",
     "workflow-status": "Read-only lifecycle, handoff-gate, evidence, and remediation status.",
 }
+
+
 def schema_document(name: str) -> dict[str, Any]:
     """Return an isolated JSON Schema document by stable catalog name."""
 
@@ -8175,7 +8666,6 @@ def verify_schema_bundle_documents(
         "assurance-program-verification"
     }
 
-
     advanced_review_names = {
         "accessibility-evidence",
         "accessibility-evidence-draft",
@@ -8187,6 +8677,8 @@ def verify_schema_bundle_documents(
         "plugin-run-verification",
         "pull-request-analysis",
         "pull-request-analysis-verification",
+        "cross-reference",
+        "cross-reference-verification",
         "synthesis-apply-receipt",
         "synthesis-workspace",
         "synthesis-workspace-draft",

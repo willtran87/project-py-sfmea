@@ -188,6 +188,26 @@ class ExtensionTests(unittest.TestCase):
         self.assertTrue(bounded["truncated"])
         self.assertIn("max_interactions", bounded["truncation_reasons"])
 
+    def test_traceability_orders_comma_separated_requirement_links(self) -> None:
+        analysis = copy.deepcopy(self.analysis)
+        analysis["context"]["requirements"].extend(
+            [
+                {"id": "REQ-Z", "text": "Last", "source": "SRS", "hazards": []},
+                {"id": "REQ-A", "text": "First", "source": "SRS", "hazards": []},
+            ]
+        )
+        finding = analysis["items"][0]
+        finding["review"]["requirement"] = "REQ-Z, REQ-A"
+        model = traceability_model(analysis)
+        target = f"failure_mode:{finding['id']}"
+        sources = [
+            edge["source"]
+            for edge in model["edges"]
+            if edge["kind"] == "traces_to" and edge["target"] == target
+        ]
+
+        self.assertEqual(sources, ["requirement:REQ-A", "requirement:REQ-Z"])
+
     def test_sequence_retains_control_flow_await_and_interface_candidates(self) -> None:
         (self.root / "flow.py").write_text(
             "import httpx\n\n"
@@ -826,6 +846,7 @@ class ExtensionTests(unittest.TestCase):
                 "assurance_work_queue_projection",
                 "evidence_catalog_projection_v1",
                 "guidance_traceability_projection_v1",
+                "cross_reference_projection_v1",
                 "interchange_artifacts_projection_v1",
                 "package_provenance_projection_v1",
                 "review_views_projection_v1",
@@ -888,7 +909,7 @@ class ExtensionTests(unittest.TestCase):
                     "diagram-bundle-verification",
                     "html-report-verification",
                 },
-                32,
+                33,
             ),
             (
                 {
@@ -899,24 +920,10 @@ class ExtensionTests(unittest.TestCase):
                     "review-package-manifest",
                     "review-package-verification",
                 },
-                34,
+                35,
             ),
             (
                 {
-                    "diagram",
-                    "diagram-bundle",
-                    "diagram-bundle-verification",
-                    "html-report-verification",
-                    "review-package-manifest",
-                    "review-package-verification",
-                    "schema-bundle-verification",
-                    "schema-catalog",
-                },
-                36,
-            ),
-            (
-                {
-                    "detached-signature",
                     "diagram",
                     "diagram-bundle",
                     "diagram-bundle-verification",
@@ -939,9 +946,23 @@ class ExtensionTests(unittest.TestCase):
                     "review-package-verification",
                     "schema-bundle-verification",
                     "schema-catalog",
-                    "workflow-status",
                 },
                 38,
+            ),
+            (
+                {
+                    "detached-signature",
+                    "diagram",
+                    "diagram-bundle",
+                    "diagram-bundle-verification",
+                    "html-report-verification",
+                    "review-package-manifest",
+                    "review-package-verification",
+                    "schema-bundle-verification",
+                    "schema-catalog",
+                    "workflow-status",
+                },
+                39,
             ),
             (
                 {
@@ -957,7 +978,7 @@ class ExtensionTests(unittest.TestCase):
                     "schema-catalog",
                     "workflow-status",
                 },
-                39,
+                40,
             ),
         )
         for index, (retained_names, expected_files) in enumerate(
@@ -1031,6 +1052,7 @@ class ExtensionTests(unittest.TestCase):
         pre_diagnostics_manifest["capabilities"].remove(
             "guidance_traceability_projection_v1"
         )
+        pre_diagnostics_manifest["capabilities"].remove("cross_reference_projection_v1")
         pre_diagnostics_manifest["capabilities"].remove(
             "evidence_catalog_projection_v1"
         )
@@ -1070,6 +1092,7 @@ class ExtensionTests(unittest.TestCase):
         pre_guidance_manifest["capabilities"].remove(
             "guidance_traceability_projection_v1"
         )
+        pre_guidance_manifest["capabilities"].remove("cross_reference_projection_v1")
         pre_guidance_manifest["capabilities"].remove("evidence_catalog_projection_v1")
         pre_guidance_manifest["capabilities"].remove(
             "interchange_artifacts_projection_v1"
@@ -1106,6 +1129,7 @@ class ExtensionTests(unittest.TestCase):
         )
         pre_sfta_manifest["exporter"]["version"] = "0.52.0"
         pre_sfta_manifest["capabilities"].remove("sfta_projection_v1")
+        pre_sfta_manifest["capabilities"].remove("cross_reference_projection_v1")
         pre_sfta_manifest["capabilities"].remove("evidence_catalog_projection_v1")
         pre_sfta_manifest["capabilities"].remove("interchange_artifacts_projection_v1")
         pre_sfta_manifest["capabilities"].remove("review_views_projection_v1")
@@ -1140,6 +1164,7 @@ class ExtensionTests(unittest.TestCase):
         )
         pre_evidence_manifest["exporter"]["version"] = "0.53.0"
         pre_evidence_manifest["capabilities"].remove("evidence_catalog_projection_v1")
+        pre_evidence_manifest["capabilities"].remove("cross_reference_projection_v1")
         pre_evidence_manifest["capabilities"].remove(
             "interchange_artifacts_projection_v1"
         )
@@ -1178,6 +1203,7 @@ class ExtensionTests(unittest.TestCase):
         pre_interchange_manifest["capabilities"].remove(
             "interchange_artifacts_projection_v1"
         )
+        pre_interchange_manifest["capabilities"].remove("cross_reference_projection_v1")
         pre_interchange_manifest["capabilities"].remove("review_views_projection_v1")
         pre_interchange_manifest["capabilities"].remove(
             "package_provenance_projection_v1"
@@ -1214,6 +1240,9 @@ class ExtensionTests(unittest.TestCase):
         )
         pre_review_views_manifest["exporter"]["version"] = "0.55.0"
         pre_review_views_manifest["capabilities"].remove("review_views_projection_v1")
+        pre_review_views_manifest["capabilities"].remove(
+            "cross_reference_projection_v1"
+        )
         pre_review_views_manifest["capabilities"].remove(
             "package_provenance_projection_v1"
         )
@@ -1284,6 +1313,7 @@ class ExtensionTests(unittest.TestCase):
         pre_provenance_manifest["capabilities"].remove(
             "package_provenance_projection_v1"
         )
+        pre_provenance_manifest["capabilities"].remove("cross_reference_projection_v1")
         pre_provenance_sarif_path = pre_provenance / "findings.sarif"
         pre_provenance_sarif = json.loads(
             pre_provenance_sarif_path.read_text(encoding="utf-8")
@@ -1378,6 +1408,7 @@ class ExtensionTests(unittest.TestCase):
             for value in legacy_manifest["files"]
             if value["path"] not in REVIEW_PACKAGE_SCHEMA_FILES
             and value["path"] != "assurance-work.json"
+            and value["path"] != "cross-reference.json"
         ]
         legacy_analysis_raw = legacy_analysis_path.read_bytes()
         legacy_analysis_entry = next(
@@ -1396,6 +1427,7 @@ class ExtensionTests(unittest.TestCase):
         for filename in REVIEW_PACKAGE_SCHEMA_FILES:
             (legacy / filename).unlink()
         (legacy / "assurance-work.json").unlink()
+        (legacy / "cross-reference.json").unlink()
         legacy_verification = verify_review_package(legacy)
         self.assertTrue(legacy_verification["valid"])
         self.assertEqual(legacy_verification["checked_files"], 26)
@@ -1577,7 +1609,7 @@ class ExtensionTests(unittest.TestCase):
                     receipt["checked_files"],
                     len(REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES),
                 )
-                self.assertEqual(len(receipt["capabilities"]), 9)
+                self.assertEqual(len(receipt["capabilities"]), 10)
                 self.assertEqual(Path(receipt["package"]), destination.resolve())
                 self.assertEqual(
                     receipt["publication"],
@@ -2200,6 +2232,7 @@ class ExtensionTests(unittest.TestCase):
                 "assurance_work_queue_projection",
                 "evidence_catalog_projection_v1",
                 "guidance_traceability_projection_v1",
+                "cross_reference_projection_v1",
                 "interchange_artifacts_projection_v1",
                 "package_provenance_projection_v1",
                 "review_views_projection_v1",
@@ -2215,6 +2248,9 @@ class ExtensionTests(unittest.TestCase):
         self.assertGreater(verified["guidance_traceability"]["citation_count"], 0)
         self.assertGreater(verified["guidance_traceability"]["finding_link_count"], 0)
         self.assertTrue(all(verified["guidance_traceability"]["checks"].values()))
+        self.assertTrue(verified["cross_reference"]["valid"])
+        self.assertEqual(verified["cross_reference"]["status"], "matched")
+        self.assertTrue(all(verified["cross_reference"]["checks"].values()))
         self.assertTrue(verified["sfta_projection"]["valid"])
         self.assertEqual(verified["sfta_projection"]["artifact_count"], 2)
         self.assertTrue(all(verified["sfta_projection"]["checks"].values()))
@@ -2269,6 +2305,10 @@ class ExtensionTests(unittest.TestCase):
             human_output.getvalue(),
         )
         self.assertIn(
+            "Cross-reference fabric: valid=True, entities=",
+            human_output.getvalue(),
+        )
+        self.assertIn(
             "SFTA projection: valid=True, trees=",
             human_output.getvalue(),
         )
@@ -2293,6 +2333,7 @@ class ExtensionTests(unittest.TestCase):
             "Capabilities: analysis_diagnostics_projection_v1, "
             "assurance_register_projection, assurance_work_queue_projection, "
             "evidence_catalog_projection_v1, guidance_traceability_projection_v1, "
+            "cross_reference_projection_v1, "
             "interchange_artifacts_projection_v1, package_provenance_projection_v1, "
             "review_views_projection_v1, sfta_projection_v1",
             human_output.getvalue(),
@@ -2865,6 +2906,7 @@ class ExtensionTests(unittest.TestCase):
                 "assurance_work_queue_projection",
                 "evidence_catalog_projection_v1",
                 "guidance_traceability_projection_v1",
+                "cross_reference_projection_v1",
                 "interchange_artifacts_projection_v1",
                 "package_provenance_projection_v1",
                 "review_views_projection_v1",
@@ -2874,6 +2916,7 @@ class ExtensionTests(unittest.TestCase):
         self.assertTrue(verified["assurance_work_queue"]["valid"])
         self.assertTrue(verified["analysis_diagnostics"]["valid"])
         self.assertTrue(verified["guidance_traceability"]["valid"])
+        self.assertTrue(verified["cross_reference"]["valid"])
         self.assertTrue(verified["sfta_projection"]["valid"])
         self.assertTrue(verified["evidence_catalog"]["valid"])
         self.assertTrue(verified["interchange_artifacts"]["valid"])
@@ -2893,9 +2936,7 @@ class ExtensionTests(unittest.TestCase):
         with zipfile.ZipFile(archive) as bundle:
             self.assertEqual(
                 set(bundle.namelist()),
-                REVIEW_PACKAGE_FILES
-                | REVIEW_PACKAGE_SCHEMA_FILES
-                | {"manifest.json"},
+                REVIEW_PACKAGE_FILES | REVIEW_PACKAGE_SCHEMA_FILES | {"manifest.json"},
             )
             contents = {name: bundle.read(name) for name in bundle.namelist()}
         with self.assertRaisesRegex(ValueError, "already exists"):
@@ -3772,7 +3813,9 @@ class ExtensionTests(unittest.TestCase):
         contracts = {value["kind"]: value for value in analysis["context"]["contracts"]}
         self.assertEqual(set(contracts), {"asyncapi", "graphql", "avro"})
         self.assertEqual(contracts["asyncapi"]["version"], "3.0.0")
-        self.assertEqual(contracts["asyncapi"]["operations"], ["PUBLISH orders.created"])
+        self.assertEqual(
+            contracts["asyncapi"]["operations"], ["PUBLISH orders.created"]
+        )
         self.assertEqual(
             set(contracts["graphql"]["operations"]),
             {"QUERY order", "MUTATION createOrder"},

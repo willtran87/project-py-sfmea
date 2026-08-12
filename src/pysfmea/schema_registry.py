@@ -30,6 +30,8 @@ SCHEMA_FILENAMES = {
     "configuration-authoring-apply-receipt": "pysfmea-configuration-authoring-apply-receipt.schema.json",
     "configuration-authoring-draft": "pysfmea-configuration-authoring-draft.schema.json",
     "configuration-authoring-verification": "pysfmea-configuration-authoring-verification.schema.json",
+    "cross-reference": "pysfmea-cross-reference.schema.json",
+    "cross-reference-verification": "pysfmea-cross-reference-verification.schema.json",
     "evaluation-result": "pysfmea-evaluation-result.schema.json",
     "detached-signature": "pysfmea-detached-signature.schema.json",
     "diagram": "pysfmea-diagram.schema.json",

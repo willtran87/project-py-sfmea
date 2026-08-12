@@ -137,6 +137,11 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn('data-view="failure-modes"', document)
         self.assertIn('data-view="coverage"', document)
         self.assertIn('data-view="architecture"', document)
+        self.assertIn('data-view="cross-reference"', document)
+        self.assertIn('id="crossReferenceChains"', document)
+        self.assertIn("action.dataset.openFinding=value.finding_id", document)
+        self.assertIn("Evidence fabric linkage", document)
+        self.assertIn("findingButton.dataset.openFinding", document)
         self.assertIn('id="deploymentTopology"', document)
         self.assertIn('id="sharedFateRegions"', document)
         self.assertIn('id="architectureHierarchy"', document)
@@ -226,9 +231,7 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn("function renderAllViews", document)
         self.assertIn('window.addEventListener("beforeprint",renderAllViews)', document)
         self.assertIn('mode:"progressive_on_demand"', document)
-        self.assertNotIn(
-            "initHeader();renderOverview();renderCoverage();", document
-        )
+        self.assertNotIn("initHeader();renderOverview();renderCoverage();", document)
         self.assertNotIn("<script>bad()</script>", document)
         self.assertNotIn("<script>alert(1)</script>", document)
         self.assertIn(r"\u003c/script\u003e", document)

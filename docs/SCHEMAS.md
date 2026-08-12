@@ -63,6 +63,8 @@ Available names:
 | `configuration-authoring-apply-receipt` | Validated TOML publication and addition-count receipt |
 | `configuration-authoring-draft` | Editable guidance, architecture, and interface proposal workspace |
 | `configuration-authoring-verification` | Integrity, semantics, and optional exact-binding verdict |
+| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, finding chains, and prioritized review leads |
+| `cross-reference-verification` | Fabric integrity, referential consistency, accounting, and optional exact-analysis regeneration verdict |
 | `sfta-authoring` | Sealed exact-analysis-bound fault-tree definitions with named engineering approvals |
 | `sfta-authoring-apply-receipt` | Applied hazard replacements and source/result analysis bindings |
 | `sfta-authoring-draft` | Editable one-entry-per-hazard fault-tree engineering workspace |
@@ -116,6 +118,19 @@ Available names:
 The schemas use stable `urn:pysfmea:schema:…:1` identifiers and have no external `$ref`
 dependencies. A consumer can pin the catalog digest and retain the exported schema beside its
 CI policy or evidence record.
+
+The cross-reference pair is intended for automation as well as report rendering:
+
+```powershell
+sfmea cross-reference analysis.json -o cross-reference.json
+sfmea cross-reference-verify cross-reference.json --analysis analysis.json --json
+sfmea schema cross-reference -o pysfmea-cross-reference.schema.json
+sfmea schema cross-reference-verification -o pysfmea-cross-reference-verification.schema.json
+```
+
+Without `--analysis`, verification checks the fabric's own digest, identities, references,
+fusions, chains, and summary accounting. Supplying the governed analysis additionally requires
+its state binding and byte-independent exact deterministic regeneration.
 
 ### Repository inventory programmatic output
 
