@@ -508,6 +508,7 @@ def cross_reference_diagram(
                     for value in chain.get("cascade_component_ids", [])
                 ),
                 *chain.get("resilience_entity_ids", []),
+                *chain.get("semantic_entity_ids", []),
             )
             if entity_id in entity_by_id
         )
@@ -538,6 +539,24 @@ def cross_reference_diagram(
         "resource_summary": 1,
         "retry_path": 1,
         "circuit_breaker_model": 1,
+        "semantic_profile": 1,
+        "data_flow_edge": 1,
+        "alias_object_binding": 1,
+        "concurrency_operation": 1,
+        "concurrency_relation": 1,
+        "exception_raise": 1,
+        "exception_handler": 1,
+        "exception_propagation_edge": 1,
+        "state_candidate": 1,
+        "state_guard": 1,
+        "state_transition": 1,
+        "authorization_context": 1,
+        "authorization_scope_edge": 1,
+        "contract_operation": 1,
+        "contract_compatibility": 1,
+        "deployment_node": 1,
+        "shared_fate_region": 1,
+        "architecture_node": 1,
         "finding": 2,
         "obligation": 3,
         "execution": 4,
@@ -576,7 +595,7 @@ def cross_reference_diagram(
             "type": "traceability",
             "description": (
                 "Bounded guidance, requirement, hazard, SFTA, component, cascade, resilience, "
-                "finding, verification, execution, and evidence relationships."
+                "semantic exposure, finding, verification, execution, and evidence relationships."
             ),
             "notice": (
                 f"Showing {len(chains)} of {summary['finding_chains']} finding chains and "
@@ -591,6 +610,8 @@ def cross_reference_diagram(
                 "content_sha256": index["content_sha256"],
                 "finding_limit": finding_limit,
                 "total_finding_chains": summary["finding_chains"],
+                "semantic_profiles": summary["semantic_profiles"],
+                "compound_exposure_chains": summary["compound_exposure_chains"],
                 "review_leads": summary["review_leads"],
             },
         }

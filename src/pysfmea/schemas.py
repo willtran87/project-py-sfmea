@@ -43,6 +43,7 @@ from .cross_reference import (
     MAX_FUSIONS,
     MAX_RELATIONSHIPS,
     MAX_REVIEW_LEADS,
+    SEMANTIC_EXPOSURE_DIMENSIONS,
 )
 from .diagrams import (
     DIAGRAM_BUNDLE_SCHEMA,
@@ -1207,6 +1208,7 @@ def _cross_reference_schema() -> dict[str, Any]:
             "component_relationships",
             "cascade_analysis",
             "timing_and_resilience",
+            "semantic_exposure",
         ],
         "properties": {
             name: {"type": "boolean"}
@@ -1222,9 +1224,31 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "component_relationships",
                 "cascade_analysis",
                 "timing_and_resilience",
+                "semantic_exposure",
             )
         },
         "additionalProperties": False,
+    }
+    semantic_dimensions = {
+        "type": "object",
+        "required": list(SEMANTIC_EXPOSURE_DIMENSIONS),
+        "properties": {
+            name: {"type": "boolean"} for name in SEMANTIC_EXPOSURE_DIMENSIONS
+        },
+        "additionalProperties": False,
+    }
+    semantic_profile_properties = {
+        "id": identifier,
+        "component_id": identifier,
+        "dimensions": semantic_dimensions,
+        "entity_ids": string_list,
+        "relationship_ids": string_list,
+        "populated_dimension_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": len(SEMANTIC_EXPOSURE_DIMENSIONS),
+        },
+        "notice": text,
     }
     chain_properties = {
         "finding_id": identifier,
@@ -1246,6 +1270,11 @@ def _cross_reference_schema() -> dict[str, Any]:
         "cascade_path_analysis": metadata,
         "resilience_entity_ids": string_list,
         "timing_relationship_ids": string_list,
+        "semantic_profile_id": {"type": "string", "maxLength": 20_000},
+        "semantic_dimensions": semantic_dimensions,
+        "semantic_entity_ids": string_list,
+        "semantic_relationship_ids": string_list,
+        "compound_exposure_kinds": string_list,
         "dimensions": dimensions,
         "linkage_completeness_percent": {
             "type": "number",
@@ -1275,6 +1304,9 @@ def _cross_reference_schema() -> dict[str, Any]:
         "entities": {"type": "integer", "minimum": 0},
         "relationships": {"type": "integer", "minimum": 0},
         "component_relationship_fusions": {"type": "integer", "minimum": 0},
+        "semantic_profiles": {"type": "integer", "minimum": 0},
+        "semantic_profiles_with_records": {"type": "integer", "minimum": 0},
+        "compound_exposure_chains": {"type": "integer", "minimum": 0},
         "finding_chains": {"type": "integer", "minimum": 0},
         "active_finding_chains": {"type": "integer", "minimum": 0},
         "historical_finding_chains": {"type": "integer", "minimum": 0},
@@ -1283,6 +1315,8 @@ def _cross_reference_schema() -> dict[str, Any]:
         "multi_source_fusions": {"type": "integer", "minimum": 0},
         "classifications": integer_map,
         "review_leads_by_kind": integer_map,
+        "semantic_dimensions": integer_map,
+        "compound_exposures_by_kind": integer_map,
         "omitted_by_bound": integer_map,
     }
     properties = {
@@ -1323,6 +1357,16 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "type": "object",
                 "required": list(fusion_properties),
                 "properties": fusion_properties,
+                "additionalProperties": False,
+            },
+        },
+        "semantic_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(semantic_profile_properties),
+                "properties": semantic_profile_properties,
                 "additionalProperties": False,
             },
         },

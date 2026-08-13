@@ -403,6 +403,12 @@ Finding chains also reference bounded upstream caller paths and the scanner's ti
 retry-amplification, transaction/effect/resource, and circuit-breaker models. These links make the
 existing cascade and resilience analyses navigable together without upgrading static candidates
 to observed causality, latency, or control effectiveness.
+Each scanned component also has a verified semantic-exposure profile that joins exact records from
+data and alias flow, concurrency, exception propagation, state machines, authorization scope,
+contracts, deployment topology, shared fate, and architecture hierarchy. Finding chains surface
+compound intersections such as authorization-plus-data-flow and concurrency-plus-state. Use these
+as bounded review and test-selection leads; co-location does not prove runtime reachability,
+causality, vulnerability, or failure.
 Use `sfmea diagram $analysis --kind data_flow` for the bounded interprocedural view. Its edges map
 caller expressions to callee parameters and callee returns to caller sinks; ambiguity, omissions,
 and the path-insensitive/static authority boundary remain embedded in the model.

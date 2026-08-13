@@ -227,6 +227,106 @@ class CrossReferenceTests(unittest.TestCase):
 
         Draft202012Validator(schema_document("cross-reference")).validate(index)
 
+    def test_cross_links_semantic_analyzers_and_compound_exposures(self) -> None:
+        (self.root / "semantic.py").write_text(
+            "import asyncio\n\n"
+            "def require_scope(user_id, scope):\n"
+            "    return bool(user_id and scope)\n\n"
+            "def worker(tenant_id, state):\n"
+            "    if state.status == 'running':\n"
+            "        state.status = 'done'\n"
+            "    return tenant_id\n\n"
+            "async def endpoint(tenant_id, user_id, state):\n"
+            "    require_scope(user_id, 'records:write')\n"
+            "    if state.status == 'new':\n"
+            "        state.status = 'running'\n"
+            "    task = asyncio.create_task(worker(tenant_id, state))\n"
+            "    await asyncio.gather(task)\n"
+            "    return state.status\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        endpoint = next(
+            value for value in analysis["components"] if value["qualname"] == "endpoint"
+        )
+        finding = next(
+            value
+            for value in analysis["items"]
+            if value["component_id"] == endpoint["id"]
+        )
+
+        index = build_cross_reference_index(analysis)
+        profile = next(
+            value
+            for value in index["semantic_profiles"]
+            if value["component_id"] == endpoint["id"]
+        )
+        chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == finding["id"]
+        )
+
+        self.assertTrue(profile["dimensions"]["data_flow"])
+        self.assertTrue(profile["dimensions"]["authorization_scope"])
+        self.assertTrue(profile["dimensions"]["concurrency"])
+        self.assertTrue(profile["dimensions"]["state_machine"])
+        self.assertEqual(chain["semantic_profile_id"], profile["id"])
+        self.assertTrue(chain["dimensions"]["semantic_exposure"])
+        self.assertIn(
+            "authorization_context_crosses_data_flow",
+            chain["compound_exposure_kinds"],
+        )
+        self.assertIn("concurrent_state_transition", chain["compound_exposure_kinds"])
+        self.assertGreater(index["summary"]["semantic_profiles_with_records"], 0)
+        self.assertGreater(index["summary"]["compound_exposure_chains"], 0)
+        self.assertTrue(
+            any(
+                value["kind"]
+                == "compound_semantic_exposure_authorization_context_crosses_data_flow"
+                for value in index["review_leads"]
+            )
+        )
+        entity_kinds = {
+            value["kind"]
+            for value in index["entities"]
+            if value["id"] in chain["semantic_entity_ids"]
+        }
+        self.assertTrue(
+            {
+                "semantic_profile",
+                "data_flow_edge",
+                "authorization_context",
+                "concurrency_operation",
+                "state_transition",
+            }
+            <= entity_kinds
+        )
+        diagram = build_diagram_models(analysis, kind="cross_reference")[0]
+        self.assertTrue(
+            any(value["kind"] == "semantic_profile" for value in diagram["nodes"])
+        )
+
+        from jsonschema import Draft202012Validator
+
+        Draft202012Validator(schema_document("cross-reference")).validate(index)
+
+    def test_verifier_rejects_semantic_profile_reference_tampering(self) -> None:
+        output = self.root / "fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        tampered = json.loads(output.read_text(encoding="utf-8"))
+        tampered["semantic_profiles"][0]["relationship_ids"].append("XREL-UNKNOWN")
+        content = dict(tampered)
+        content.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(tampered), encoding="utf-8")
+
+        rejected = verify_cross_reference_file(output, analysis=self.analysis)
+
+        self.assertFalse(rejected["valid"])
+        self.assertFalse(rejected["checks"]["semantic_profile_integrity"])
+        self.assertFalse(rejected["checks"]["exact_regeneration"])
+
     def test_aggregates_repetitive_sfta_reconciliation_leads(self) -> None:
         finding_ids = [value["id"] for value in self.analysis["items"][:2]]
         index = build_cross_reference_index(

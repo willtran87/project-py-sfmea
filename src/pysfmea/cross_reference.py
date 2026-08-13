@@ -27,6 +27,7 @@ CROSS_REFERENCE_VERIFICATION_CHECKS = (
     "entity_identity",
     "relationship_integrity",
     "fusion_integrity",
+    "semantic_profile_integrity",
     "finding_chain_integrity",
     "review_lead_integrity",
     "summary_reconciliation",
@@ -41,6 +42,31 @@ MAX_RELATIONSHIPS = 500_000
 MAX_FUSIONS = 100_000
 MAX_CHAINS = 100_000
 MAX_REVIEW_LEADS = 100_000
+
+SEMANTIC_EXPOSURE_DIMENSIONS = (
+    "data_flow",
+    "alias_object_flow",
+    "concurrency",
+    "exception_propagation",
+    "state_machine",
+    "authorization_scope",
+    "contract_semantics",
+    "deployment_topology",
+    "shared_fate",
+    "architecture_hierarchy",
+)
+
+COMPOUND_EXPOSURE_PRIORITIES = {
+    "authorization_context_crosses_data_flow": "high",
+    "concurrent_state_transition": "high",
+    "exception_during_state_transition": "high",
+    "exception_near_resilience_or_side_effect_semantics": "high",
+    "shared_fate_on_declared_deployment": "high",
+    "contract_at_interface_boundary": "medium",
+    "contract_carries_interprocedural_data": "medium",
+    "authorization_context_at_contract_boundary": "high",
+    "state_or_concurrency_near_resilience_semantics": "medium",
+}
 
 
 def _text_values(value: object) -> list[str]:
@@ -80,6 +106,50 @@ def _classification(channels: set[str]) -> str:
     if channels == {"graphify_static"}:
         return "graphify_only_review_lead"
     return "native_static_only"
+
+
+def _compound_exposure_kinds(
+    semantic_dimensions: dict[str, Any], chain_dimensions: dict[str, Any]
+) -> list[str]:
+    exposures: set[str] = set()
+    if semantic_dimensions.get("authorization_scope") and semantic_dimensions.get(
+        "data_flow"
+    ):
+        exposures.add("authorization_context_crosses_data_flow")
+    if semantic_dimensions.get("concurrency") and semantic_dimensions.get(
+        "state_machine"
+    ):
+        exposures.add("concurrent_state_transition")
+    if semantic_dimensions.get("exception_propagation") and semantic_dimensions.get(
+        "state_machine"
+    ):
+        exposures.add("exception_during_state_transition")
+    if semantic_dimensions.get("deployment_topology") and semantic_dimensions.get(
+        "shared_fate"
+    ):
+        exposures.add("shared_fate_on_declared_deployment")
+    if semantic_dimensions.get("contract_semantics") and chain_dimensions.get(
+        "interfaces"
+    ):
+        exposures.add("contract_at_interface_boundary")
+    if semantic_dimensions.get("contract_semantics") and semantic_dimensions.get(
+        "data_flow"
+    ):
+        exposures.add("contract_carries_interprocedural_data")
+    if semantic_dimensions.get("authorization_scope") and semantic_dimensions.get(
+        "contract_semantics"
+    ):
+        exposures.add("authorization_context_at_contract_boundary")
+    if semantic_dimensions.get("exception_propagation") and chain_dimensions.get(
+        "timing_and_resilience"
+    ):
+        exposures.add("exception_near_resilience_or_side_effect_semantics")
+    if (
+        semantic_dimensions.get("concurrency")
+        or semantic_dimensions.get("state_machine")
+    ) and chain_dimensions.get("timing_and_resilience"):
+        exposures.add("state_or_concurrency_near_resilience_semantics")
+    return sorted(exposures)
 
 
 def build_cross_reference_index(
@@ -571,6 +641,393 @@ def build_cross_reference_index(
                 authority="bounded_static_breaker_semantics",
             )
 
+    semantic_entities_by_component: dict[str, set[str]] = defaultdict(set)
+    semantic_relationships_by_component: dict[str, set[str]] = defaultdict(set)
+    semantic_dimensions_by_component: dict[str, set[str]] = defaultdict(set)
+
+    def semantic_metadata(record: dict[str, Any]) -> dict[str, Any]:
+        """Retain decision-useful bounded fields without duplicating complete models."""
+
+        fields = (
+            "kind",
+            "status",
+            "resolution",
+            "disposition",
+            "categories",
+            "dimensions",
+            "risks",
+            "gaps",
+            "exception_type",
+            "state_variable",
+            "target_state_expression",
+            "operation",
+            "component_reference",
+            "line",
+            "path",
+            "node_ids",
+            "affected_component_ids",
+        )
+        metadata: dict[str, Any] = {}
+        for field in fields:
+            value = record.get(field)
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, (str, int, float, bool)):
+                metadata[field] = value
+                continue
+            if isinstance(value, list):
+                scalar_values = [
+                    item
+                    for item in value
+                    if isinstance(item, (str, int, float, bool))
+                ]
+                metadata[field] = scalar_values[:100]
+                if len(scalar_values) > 100:
+                    metadata[f"{field}_omitted"] = len(scalar_values) - 100
+        return metadata
+
+    def link_semantic_record(
+        component_id: str,
+        dimension: str,
+        record_kind: str,
+        raw_id: object,
+        record: dict[str, Any],
+        *,
+        role: str = "record",
+        label: object = "",
+        authority: str = "bounded_static_semantic_projection",
+    ) -> None:
+        if component_id not in components or not raw_id:
+            return
+        entity_id = add_entity(
+            record_kind,
+            raw_id,
+            label or record.get("component_reference") or raw_id,
+            authority=str(record.get("authority") or authority),
+            metadata=semantic_metadata(record),
+        )
+        if entity_id not in entities:
+            return
+        semantic_entities_by_component[component_id].add(entity_id)
+        semantic_dimensions_by_component[component_id].add(dimension)
+        relation_id = add_relation(
+            _entity_id("component", component_id),
+            entity_id,
+            f"has_{dimension}_{role}",
+            dimension,
+            authority=str(record.get("authority") or authority),
+        )
+        if relation_id in relationships:
+            semantic_relationships_by_component[component_id].add(relation_id)
+
+    data_flow = analysis.get("interprocedural_data_flow", {})
+    for edge in data_flow.get("edges", []):
+        if not isinstance(edge, dict) or not edge.get("id"):
+            continue
+        link_semantic_record(
+            str(edge.get("caller_component_id", "")),
+            "data_flow",
+            "data_flow_edge",
+            edge["id"],
+            edge,
+            role="outbound_edge",
+            label=f"{edge.get('caller_reference', '')} → {edge.get('callee_reference', '')}",
+        )
+        link_semantic_record(
+            str(edge.get("callee_component_id", "")),
+            "data_flow",
+            "data_flow_edge",
+            edge["id"],
+            edge,
+            role="inbound_edge",
+            label=f"{edge.get('caller_reference', '')} → {edge.get('callee_reference', '')}",
+        )
+
+    alias_flow = analysis.get("alias_object_flow", {})
+    for index, record in enumerate(alias_flow.get("records", [])):
+        if not isinstance(record, dict):
+            continue
+        record_id = record.get("id") or stable_id(
+            "ALIAS-XREF",
+            str(record.get("component_id", "")),
+            str(record.get("target", "")),
+            str(record.get("line", 0)),
+            str(index),
+        )
+        link_semantic_record(
+            str(record.get("component_id", "")),
+            "alias_object_flow",
+            "alias_object_binding",
+            record_id,
+            record,
+            label=record.get("target") or record_id,
+        )
+
+    concurrency = analysis.get("concurrency_model", {})
+    for operation in concurrency.get("operations", []):
+        if isinstance(operation, dict) and operation.get("id"):
+            link_semantic_record(
+                str(operation.get("component_id", "")),
+                "concurrency",
+                "concurrency_operation",
+                operation["id"],
+                operation,
+                label=operation.get("reference") or operation["id"],
+            )
+    for relation in concurrency.get("relations", []):
+        if isinstance(relation, dict) and relation.get("id"):
+            link_semantic_record(
+                str(relation.get("component_id", "")),
+                "concurrency",
+                "concurrency_relation",
+                relation["id"],
+                relation,
+                label=relation.get("kind") or relation["id"],
+            )
+
+    exception_model = analysis.get("exception_propagation", {})
+    for collection, record_kind, role in (
+        ("raises", "exception_raise", "raise"),
+        ("handlers", "exception_handler", "handler"),
+    ):
+        for record in exception_model.get(collection, []):
+            if isinstance(record, dict) and record.get("id"):
+                link_semantic_record(
+                    str(record.get("component_id", "")),
+                    "exception_propagation",
+                    record_kind,
+                    record["id"],
+                    record,
+                    role=role,
+                    label=record.get("exception_type")
+                    or record.get("component_reference")
+                    or record["id"],
+                )
+    for edge in exception_model.get("edges", []):
+        if not isinstance(edge, dict) or not edge.get("id"):
+            continue
+        label = (
+            f"{edge.get('exception_type', 'exception')} · "
+            f"{edge.get('disposition', 'propagation candidate')}"
+        )
+        link_semantic_record(
+            str(edge.get("caller_component_id", "")),
+            "exception_propagation",
+            "exception_propagation_edge",
+            edge["id"],
+            edge,
+            role="incoming_edge",
+            label=label,
+        )
+        link_semantic_record(
+            str(edge.get("callee_component_id", "")),
+            "exception_propagation",
+            "exception_propagation_edge",
+            edge["id"],
+            edge,
+            role="outgoing_edge",
+            label=label,
+        )
+
+    state_model = analysis.get("state_machine_model", {})
+    for collection, record_kind, role in (
+        ("states", "state_candidate", "state"),
+        ("guards", "state_guard", "guard"),
+        ("transitions", "state_transition", "transition"),
+    ):
+        for record in state_model.get(collection, []):
+            if isinstance(record, dict) and record.get("id"):
+                link_semantic_record(
+                    str(record.get("component_id", "")),
+                    "state_machine",
+                    record_kind,
+                    record["id"],
+                    record,
+                    role=role,
+                    label=record.get("target_state_expression")
+                    or record.get("state_expression")
+                    or record.get("component_reference")
+                    or record["id"],
+                )
+
+    authorization = analysis.get("authorization_scope_flow", {})
+    for record in authorization.get("components", []):
+        if not isinstance(record, dict):
+            continue
+        if not any(
+            record.get(field)
+            for field in ("context_dimensions", "controls", "risks", "boundary")
+        ):
+            continue
+        component_id = str(record.get("component_id", ""))
+        link_semantic_record(
+            component_id,
+            "authorization_scope",
+            "authorization_context",
+            stable_id("AUTH-CONTEXT-XREF", component_id),
+            {
+                **record,
+                "dimensions": _text_values(record.get("context_dimensions")),
+            },
+            label=record.get("component_reference") or component_id,
+        )
+    for edge in authorization.get("edges", []):
+        if not isinstance(edge, dict) or not edge.get("id"):
+            continue
+        for role, field in (
+            ("outbound_edge", "caller_component_id"),
+            ("inbound_edge", "callee_component_id"),
+        ):
+            link_semantic_record(
+                str(edge.get(field, "")),
+                "authorization_scope",
+                "authorization_scope_edge",
+                edge["id"],
+                edge,
+                role=role,
+                label=", ".join(_text_values(edge.get("dimensions"))) or edge["id"],
+            )
+
+    contract_model = analysis.get("contract_semantics", {})
+    contract_records: dict[str, tuple[str, dict[str, Any]]] = {}
+    for collection, record_kind in (
+        ("operations", "contract_operation"),
+        ("compatibility", "contract_compatibility"),
+    ):
+        for record in contract_model.get(collection, []):
+            if isinstance(record, dict) and record.get("id"):
+                contract_records[str(record["id"])] = (record_kind, record)
+    for component_id, component in components.items():
+        index = component.get("contract_semantics", {})
+        if not isinstance(index, dict):
+            continue
+        for role, field in (
+            ("operation", "operation_ids"),
+            ("compatibility", "compatibility_ids"),
+        ):
+            for record_id in _text_values(index.get(field)):
+                record_kind, record = contract_records.get(
+                    record_id, (f"contract_{role}", {"id": record_id})
+                )
+                link_semantic_record(
+                    component_id,
+                    "contract_semantics",
+                    record_kind,
+                    record_id,
+                    record,
+                    role=role,
+                    label=record.get("operation")
+                    or record.get("kind")
+                    or record_id,
+                    authority="governed_local_contract_semantics",
+                )
+
+    deployment = analysis.get("deployment_topology", {})
+    deployment_nodes = {
+        str(record.get("id", "")): record
+        for record in deployment.get("nodes", [])
+        if isinstance(record, dict) and record.get("id")
+    }
+    for placement in deployment.get("placements", []):
+        if not isinstance(placement, dict):
+            continue
+        component_id = str(placement.get("component_id", ""))
+        for node_id in _text_values(placement.get("node_ids")):
+            record = deployment_nodes.get(node_id, {"id": node_id})
+            link_semantic_record(
+                component_id,
+                "deployment_topology",
+                "deployment_node",
+                node_id,
+                record,
+                role="candidate_placement",
+                label=record.get("name") or record.get("path") or node_id,
+                authority="declared_static_deployment_candidate",
+            )
+
+    shared_fate = analysis.get("shared_fate_analysis", {})
+    for region in shared_fate.get("regions", []):
+        if not isinstance(region, dict) or not region.get("id"):
+            continue
+        for component_id in _text_values(region.get("affected_component_ids")):
+            link_semantic_record(
+                component_id,
+                "shared_fate",
+                "shared_fate_region",
+                region["id"],
+                region,
+                role="affected_component",
+                label=region.get("key") or region.get("kind") or region["id"],
+            )
+
+    hierarchy = analysis.get("architecture_hierarchy", {})
+    hierarchy_nodes = {
+        str(record.get("id", "")): record
+        for record in hierarchy.get("nodes", [])
+        if isinstance(record, dict) and record.get("id")
+    }
+    for membership in hierarchy.get("memberships", []):
+        if not isinstance(membership, dict):
+            continue
+        component_id = str(membership.get("component_id", ""))
+        for node_id in _text_values(membership.get("node_ids")):
+            record = hierarchy_nodes.get(node_id, {"id": node_id})
+            link_semantic_record(
+                component_id,
+                "architecture_hierarchy",
+                "architecture_node",
+                node_id,
+                record,
+                role="membership",
+                label=record.get("path") or record.get("name") or node_id,
+                authority="deterministic_architecture_hierarchy_membership",
+            )
+
+    semantic_profiles: list[dict[str, Any]] = []
+    semantic_profile_by_component: dict[str, dict[str, Any]] = {}
+    for component_id in sorted(components):
+        dimensions = {
+            dimension: dimension in semantic_dimensions_by_component[component_id]
+            for dimension in SEMANTIC_EXPOSURE_DIMENSIONS
+        }
+        profile_raw_id = stable_id("SEMANTIC-PROFILE", component_id)
+        profile_entity_id = add_entity(
+            "semantic_profile",
+            profile_raw_id,
+            components[component_id].get("qualname") or component_id,
+            authority="deterministic_cross_analyzer_semantic_profile",
+            metadata={
+                "populated_dimensions": [
+                    dimension for dimension, populated in dimensions.items() if populated
+                ]
+            },
+        )
+        profile_relation_id = add_relation(
+            _entity_id("component", component_id),
+            profile_entity_id,
+            "has_semantic_exposure_profile",
+            "cross_reference",
+            authority="deterministic_cross_analyzer_semantic_profile",
+        )
+        entity_ids = sorted(semantic_entities_by_component[component_id])
+        relationship_ids = sorted(semantic_relationships_by_component[component_id])
+        if profile_relation_id in relationships:
+            relationship_ids.append(profile_relation_id)
+        profile = {
+            "id": profile_entity_id,
+            "component_id": component_id,
+            "dimensions": dimensions,
+            "entity_ids": entity_ids,
+            "relationship_ids": sorted(set(relationship_ids)),
+            "populated_dimension_count": sum(dimensions.values()),
+            "notice": (
+                "The profile joins bounded static analyzer records by stable component identity; "
+                "co-location is a review aid, not proof of reachability, causality, or defect."
+            ),
+        }
+        semantic_profiles.append(profile)
+        semantic_profile_by_component[component_id] = profile
+
     executions = {
         str(value.get("id", "")): value
         for value in assurance.get("executions", [])
@@ -889,6 +1346,39 @@ def build_cross_reference_index(
         chain["dimensions"]["component_relationships"] = bool(
             chain["inbound_fusion_ids"] or chain["outbound_fusion_ids"]
         )
+        semantic_profile = semantic_profile_by_component.get(component_id)
+        semantic_dimensions = (
+            semantic_profile.get("dimensions", {})
+            if isinstance(semantic_profile, dict)
+            else {dimension: False for dimension in SEMANTIC_EXPOSURE_DIMENSIONS}
+        )
+        semantic_entity_ids = (
+            [semantic_profile["id"], *semantic_profile.get("entity_ids", [])]
+            if isinstance(semantic_profile, dict)
+            else []
+        )
+        semantic_relationship_ids = (
+            list(semantic_profile.get("relationship_ids", []))
+            if isinstance(semantic_profile, dict)
+            else []
+        )
+        chain["semantic_profile_id"] = (
+            str(semantic_profile.get("id", ""))
+            if isinstance(semantic_profile, dict)
+            else ""
+        )
+        chain["semantic_dimensions"] = semantic_dimensions
+        chain["semantic_entity_ids"] = sorted(set(semantic_entity_ids))
+        chain["semantic_relationship_ids"] = sorted(
+            set(semantic_relationship_ids)
+        )
+        chain["compound_exposure_kinds"] = _compound_exposure_kinds(
+            semantic_dimensions, chain["dimensions"]
+        )
+        chain["dimensions"]["semantic_exposure"] = bool(
+            semantic_profile
+            and int(semantic_profile.get("populated_dimension_count", 0)) > 0
+        )
         chain["linkage_completeness_percent"] = round(
             100 * sum(chain["dimensions"].values()) / len(chain["dimensions"]),
             1,
@@ -952,6 +1442,7 @@ def build_cross_reference_index(
         "component_relationships": "low",
         "cascade_analysis": "low",
         "timing_and_resilience": "low",
+        "semantic_exposure": "low",
     }
     for dimension, priority in dimension_priorities.items():
         affected = [
@@ -977,6 +1468,32 @@ def build_cross_reference_index(
                     f"{len(affected)} finding chain(s) have no {dimension.replace('_', ' ')} "
                     "link. Confirm applicability and add governed traceability where required; "
                     "absence is not automatically a defect."
+                ),
+            }
+        )
+    compound_exposure_chains: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for chain in finding_chains:
+        if chain.get("source_status", "active") != "active":
+            continue
+        for exposure_kind in _text_values(chain.get("compound_exposure_kinds")):
+            compound_exposure_chains[exposure_kind].append(chain)
+    for exposure_kind, affected in sorted(compound_exposure_chains.items()):
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "compound_semantic_exposure", exposure_kind),
+                "kind": f"compound_semantic_exposure_{exposure_kind}",
+                "priority": COMPOUND_EXPOSURE_PRIORITIES.get(exposure_kind, "medium"),
+                "subject_ids": [
+                    _entity_id("finding", chain["finding_id"])
+                    for chain in affected[:25]
+                ],
+                "affected_count": len(affected),
+                "subject_ids_omitted": max(0, len(affected) - 25),
+                "description": (
+                    f"{len(affected)} active finding chain(s) intersect the independently "
+                    f"derived {exposure_kind.replace('_', ' ')} models. Review the exact "
+                    "semantic record links; intersection is a prioritization lead, not proof "
+                    "of reachability, causality, vulnerability, or failure."
                 ),
             }
         )
@@ -1043,6 +1560,14 @@ def build_cross_reference_index(
             "entities": len(entities_list),
             "relationships": len(relationships_list),
             "component_relationship_fusions": len(fusions),
+            "semantic_profiles": len(semantic_profiles),
+            "semantic_profiles_with_records": sum(
+                value["populated_dimension_count"] > 0 for value in semantic_profiles
+            ),
+            "compound_exposure_chains": sum(
+                bool(value.get("compound_exposure_kinds"))
+                for value in finding_chains
+            ),
             "finding_chains": len(finding_chains),
             "active_finding_chains": sum(
                 value.get("source_status", "active") == "active"
@@ -1063,11 +1588,31 @@ def build_cross_reference_index(
             "review_leads_by_kind": dict(
                 sorted(Counter(value["kind"] for value in review_leads).items())
             ),
+            "semantic_dimensions": dict(
+                sorted(
+                    Counter(
+                        dimension
+                        for profile in semantic_profiles
+                        for dimension, populated in profile["dimensions"].items()
+                        if populated
+                    ).items()
+                )
+            ),
+            "compound_exposures_by_kind": dict(
+                sorted(
+                    Counter(
+                        exposure
+                        for chain in finding_chains
+                        for exposure in chain.get("compound_exposure_kinds", [])
+                    ).items()
+                )
+            ),
             "omitted_by_bound": dict(sorted(omitted.items())),
         },
         "entities": entities_list,
         "relationships": relationships_list,
         "component_relationship_fusions": fusions,
+        "semantic_profiles": semantic_profiles,
         "finding_chains": finding_chains,
         "review_leads": review_leads,
         "limitations": [
@@ -1076,6 +1621,7 @@ def build_cross_reference_index(
             "Guidance links express relevance to a candidate; they do not assert noncompliance.",
             "Configured hazards, requirements, interfaces, and SFTA logic retain project-supplied authority.",
             "Cascade paths, retry amplification, literal timing budgets, and circuit-breaker models are bounded static candidates, not runtime causality, latency, or control-effectiveness proof.",
+            "Semantic profiles join independently bounded static models by stable component identity; compound exposure leads are intersections for review, not proof of reachability, causality, vulnerability, or failure.",
             "Linkage completeness is an accounting measure, not verification success or risk acceptance.",
         ],
     }
@@ -1102,6 +1648,9 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         "entities",
         "relationships",
         "component_relationship_fusions",
+        "semantic_profiles",
+        "semantic_profiles_with_records",
+        "compound_exposure_chains",
         "finding_chains",
         "multi_source_fusions",
         "runtime_observed_fusions",
@@ -1118,6 +1667,28 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         ]
     )
     for key, value in summary.get("classifications", {}).items():
+        lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "## Semantic exposure coverage",
+            "",
+            "| Analyzer dimension | Component profiles |",
+            "|---|---:|",
+        ]
+    )
+    for key, value in summary.get("semantic_dimensions", {}).items():
+        lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "## Compound exposure intersections",
+            "",
+            "| Intersection | Finding chains |",
+            "|---|---:|",
+        ]
+    )
+    for key, value in summary.get("compound_exposures_by_kind", {}).items():
         lines.append(f"| {key.replace('_', ' ')} | {value} |")
     lines.extend(["", "## Prioritized review leads", ""])
     leads = index.get("review_leads", [])[:100]
@@ -1352,6 +1923,64 @@ def verify_cross_reference_file(
             )
         fusion_id_set = set(fusion_ids)
 
+        semantic_profiles = value.get("semantic_profiles")
+        semantic_profile_ids = (
+            [
+                str(profile.get("id", ""))
+                for profile in semantic_profiles
+                if isinstance(profile, dict)
+            ]
+            if isinstance(semantic_profiles, list)
+            else []
+        )
+        semantic_profile_entity_ids = {
+            str(entity.get("id", ""))
+            for entity in entities or []
+            if isinstance(entity, dict) and entity.get("kind") == "semantic_profile"
+        }
+        checks["semantic_profile_integrity"] = bool(
+            isinstance(semantic_profiles, list)
+            and len(semantic_profile_ids) == len(semantic_profiles)
+            and all(semantic_profile_ids)
+            and len(semantic_profile_ids) == len(set(semantic_profile_ids))
+            and set(semantic_profile_ids) == semantic_profile_entity_ids
+            and all(
+                isinstance(profile, dict)
+                and profile.get("component_id") in component_ids
+                and isinstance(profile.get("dimensions"), dict)
+                and set(profile["dimensions"]) == set(SEMANTIC_EXPOSURE_DIMENSIONS)
+                and all(
+                    isinstance(profile["dimensions"][dimension], bool)
+                    for dimension in SEMANTIC_EXPOSURE_DIMENSIONS
+                )
+                and profile.get("populated_dimension_count")
+                == sum(bool(populated) for populated in profile["dimensions"].values())
+                and isinstance(profile.get("entity_ids"), list)
+                and set(_text_values(profile.get("entity_ids"))) <= entity_id_set
+                and isinstance(profile.get("relationship_ids"), list)
+                and set(_text_values(profile.get("relationship_ids")))
+                <= relationship_id_set
+                and all(
+                    relationships_by_id[relation_id].get("source")
+                    == _entity_id("component", profile.get("component_id", ""))
+                    for relation_id in _text_values(profile.get("relationship_ids"))
+                    if relation_id in relationships_by_id
+                )
+                for profile in semantic_profiles
+            )
+        )
+        if not checks["semantic_profile_integrity"]:
+            fail(
+                "cross_reference.semantic_profile_integrity_invalid",
+                "Semantic profiles must map one-to-one to components and resolve every bounded analyzer record.",
+            )
+        semantic_profile_id_set = set(semantic_profile_ids)
+        semantic_profiles_by_id = {
+            str(profile.get("id", "")): profile
+            for profile in semantic_profiles or []
+            if isinstance(profile, dict) and profile.get("id")
+        }
+
         chains = value.get("finding_chains")
         finding_entity_ids = {
             str(entity.get("raw_id", ""))
@@ -1390,6 +2019,9 @@ def verify_cross_reference_file(
                         "cascade_paths",
                         "resilience_entity_ids",
                         "timing_relationship_ids",
+                        "semantic_entity_ids",
+                        "semantic_relationship_ids",
+                        "compound_exposure_kinds",
                         "interface_entity_ids",
                         "inbound_fusion_ids",
                         "outbound_fusion_ids",
@@ -1413,6 +2045,70 @@ def verify_cross_reference_file(
                 <= entity_id_set
                 and set(_text_values(chain.get("timing_relationship_ids")))
                 <= relationship_id_set
+                and (
+                    not chain.get("semantic_profile_id")
+                    or chain.get("semantic_profile_id") in semantic_profile_id_set
+                )
+                and isinstance(chain.get("semantic_dimensions"), dict)
+                and set(chain["semantic_dimensions"])
+                == set(SEMANTIC_EXPOSURE_DIMENSIONS)
+                and all(
+                    isinstance(chain["semantic_dimensions"][dimension], bool)
+                    for dimension in SEMANTIC_EXPOSURE_DIMENSIONS
+                )
+                and (
+                    (
+                        chain["semantic_dimensions"]
+                        == semantic_profiles_by_id[
+                            str(chain.get("semantic_profile_id", ""))
+                        ].get("dimensions")
+                        and set(_text_values(chain.get("semantic_entity_ids")))
+                        == {
+                            str(chain.get("semantic_profile_id", "")),
+                            *_text_values(
+                                semantic_profiles_by_id[
+                                    str(chain.get("semantic_profile_id", ""))
+                                ].get("entity_ids")
+                            ),
+                        }
+                        and set(
+                            _text_values(chain.get("semantic_relationship_ids"))
+                        )
+                        == set(
+                            _text_values(
+                                semantic_profiles_by_id[
+                                    str(chain.get("semantic_profile_id", ""))
+                                ].get("relationship_ids")
+                            )
+                        )
+                        and chain["dimensions"].get("semantic_exposure")
+                        == (
+                            _safe_int(
+                                semantic_profiles_by_id[
+                                    str(chain.get("semantic_profile_id", ""))
+                                ].get("populated_dimension_count", 0)
+                            )
+                            > 0
+                        )
+                    )
+                    if chain.get("semantic_profile_id")
+                    else (
+                        not any(chain["semantic_dimensions"].values())
+                        and not _text_values(chain.get("semantic_entity_ids"))
+                        and not _text_values(chain.get("semantic_relationship_ids"))
+                        and not chain["dimensions"].get("semantic_exposure")
+                    )
+                )
+                and set(_text_values(chain.get("semantic_entity_ids")))
+                <= entity_id_set
+                and set(_text_values(chain.get("semantic_relationship_ids")))
+                <= relationship_id_set
+                and set(_text_values(chain.get("compound_exposure_kinds")))
+                <= set(COMPOUND_EXPOSURE_PRIORITIES)
+                and _text_values(chain.get("compound_exposure_kinds"))
+                == _compound_exposure_kinds(
+                    chain["semantic_dimensions"], chain["dimensions"]
+                )
                 and set(_text_values(chain.get("requirement_ids")))
                 <= entity_raw_ids_by_kind["requirement"]
                 and set(_text_values(chain.get("hazard_ids")))
@@ -1480,12 +2176,47 @@ def verify_cross_reference_file(
                 ).items()
             )
         )
+        semantic_dimension_counts = dict(
+            sorted(
+                Counter(
+                    dimension
+                    for profile in (semantic_profiles or [])
+                    if isinstance(profile, dict)
+                    and isinstance(profile.get("dimensions"), dict)
+                    for dimension, populated in profile["dimensions"].items()
+                    if populated
+                ).items()
+            )
+        )
+        compound_exposure_counts = dict(
+            sorted(
+                Counter(
+                    exposure
+                    for chain in (chains or [])
+                    if isinstance(chain, dict)
+                    for exposure in _text_values(chain.get("compound_exposure_kinds"))
+                ).items()
+            )
+        )
         checks["summary_reconciliation"] = bool(
             isinstance(summary, dict)
             and isinstance(leads, list)
             and summary.get("entities") == len(entities or [])
             and summary.get("relationships") == len(relationships or [])
             and summary.get("component_relationship_fusions") == len(fusions or [])
+            and summary.get("semantic_profiles") == len(semantic_profiles or [])
+            and summary.get("semantic_profiles_with_records")
+            == sum(
+                _safe_int(profile.get("populated_dimension_count", 0)) > 0
+                for profile in (semantic_profiles or [])
+                if isinstance(profile, dict)
+            )
+            and summary.get("compound_exposure_chains")
+            == sum(
+                bool(_text_values(chain.get("compound_exposure_kinds")))
+                for chain in (chains or [])
+                if isinstance(chain, dict)
+            )
             and summary.get("finding_chains") == len(chains or [])
             and summary.get("review_leads") == len(leads)
             and summary.get("active_finding_chains")
@@ -1514,6 +2245,9 @@ def verify_cross_reference_file(
             )
             and summary.get("classifications") == classification_counts
             and summary.get("review_leads_by_kind") == lead_counts
+            and summary.get("semantic_dimensions") == semantic_dimension_counts
+            and summary.get("compound_exposures_by_kind")
+            == compound_exposure_counts
         )
         if not checks["summary_reconciliation"]:
             fail(
@@ -1592,6 +2326,16 @@ def verify_cross_reference_file(
         ),
         "fusion_count": (
             _safe_int(value.get("summary", {}).get("component_relationship_fusions", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "semantic_profile_count": (
+            _safe_int(value.get("summary", {}).get("semantic_profiles", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "compound_exposure_chain_count": (
+            _safe_int(value.get("summary", {}).get("compound_exposure_chains", 0))
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0
         ),

@@ -19,6 +19,12 @@ package; public artifact and schema identifiers carry their own explicit compati
   reconciliation gaps into counted, sampled review leads while retaining the complete source
   register, and make traceability link ordering cross-process deterministic so fresh-process
   package verification cannot disagree with same-process publication.
+  Extend the fabric with one verified semantic-exposure profile per scanned component. Exact
+  records from data/alias flow, concurrency, exception propagation, state machines,
+  authorization scope, contracts, deployment topology, shared fate, and architecture hierarchy
+  now join each finding chain and canonical diagram. Independently derived model intersections
+  become bounded aggregate review leads (for example authorization context crossing data flow or
+  concurrency touching state transitions), with standalone referential and summary verification.
 
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,

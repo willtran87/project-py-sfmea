@@ -64,12 +64,15 @@ and one or more `pysfmea-diagram-1` diagrams. Supported generated categories are
 - `sequence`
 
 The `cross_reference` projection joins the highest-priority finding chains across guidance,
-requirements, hazards, SFTA events, components, findings, verification obligations, executions,
-and evidence artifacts. Its metadata binds the exact analysis and complete cross-reference
+requirements, hazards, SFTA events, components, semantic-exposure profiles, findings,
+verification obligations, executions, and evidence artifacts. Semantic nodes retain exact links
+to bounded data/alias-flow, concurrency, exception, state, authorization, contract, deployment,
+shared-fate, and hierarchy records. Its metadata binds the exact analysis and complete cross-reference
 projection digests. The view is bounded to 40 finding chains and 500 entities; use
 `sfmea cross-reference ANALYSIS --format json` for the complete machine-readable relationship
 and discrepancy registers. Static agreement is corroboration, runtime presence is a bounded
-observation, and configured links retain project-supplied authority. None is promoted to proof
+observation, and configured links retain project-supplied authority. Compound exposure nodes are
+model intersections for prioritization, not inferred runtime paths or new failure findings. None is promoted to proof
 of completeness, compliance, verification success, or risk acceptance.
 
 Generated bundles contain a `binding` record for the baseline, analysis schema, and exact

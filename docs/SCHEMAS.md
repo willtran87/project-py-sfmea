@@ -63,8 +63,8 @@ Available names:
 | `configuration-authoring-apply-receipt` | Validated TOML publication and addition-count receipt |
 | `configuration-authoring-draft` | Editable guidance, architecture, and interface proposal workspace |
 | `configuration-authoring-verification` | Integrity, semantics, and optional exact-binding verdict |
-| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, finding chains, and prioritized review leads |
-| `cross-reference-verification` | Fabric integrity, referential consistency, accounting, and optional exact-analysis regeneration verdict |
+| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure profiles, finding chains, compound-model intersections, and prioritized review leads |
+| `cross-reference-verification` | Fabric integrity, semantic-profile and chain referential consistency, accounting, and optional exact-analysis regeneration verdict |
 | `sfta-authoring` | Sealed exact-analysis-bound fault-tree definitions with named engineering approvals |
 | `sfta-authoring-apply-receipt` | Applied hazard replacements and source/result analysis bindings |
 | `sfta-authoring-draft` | Editable one-entry-per-hazard fault-tree engineering workspace |
@@ -127,6 +127,12 @@ sfmea cross-reference-verify cross-reference.json --analysis analysis.json --jso
 sfmea schema cross-reference -o pysfmea-cross-reference.schema.json
 sfmea schema cross-reference-verification -o pysfmea-cross-reference-verification.schema.json
 ```
+
+Every semantic profile binds one component to exact embedded analyzer-record entities and
+relationships across ten closed dimensions. Finding chains copy that profile binding and expose
+deterministically derived `compound_exposure_kinds`. The verifier reconciles profile identity,
+dimension booleans, record references, compound rules, and all summary counts even when the source
+analysis is not supplied; `--analysis` additionally requires exact regeneration.
 
 Without `--analysis`, verification checks the fabric's own digest, identities, references,
 fusions, chains, and summary accounting. Supplying the governed analysis additionally requires

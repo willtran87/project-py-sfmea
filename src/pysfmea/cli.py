@@ -3891,6 +3891,8 @@ def _verify_package(args: argparse.Namespace) -> int:
                 "Cross-reference fabric: "
                 f"valid={fabric['valid']}, entities={fabric.get('entity_count', 0)}, "
                 f"relationships={fabric.get('relationship_count', 0)}, "
+                f"semantic-profiles={fabric.get('semantic_profile_count', 0)}, "
+                f"compound-exposures={fabric.get('compound_exposure_chain_count', 0)}, "
                 f"finding-chains={fabric.get('finding_chain_count', 0)}, "
                 f"review-leads={fabric.get('review_lead_count', 0)}"
             )
@@ -4132,6 +4134,16 @@ def _cross_reference_verify(args: argparse.Namespace) -> int:
         )
         if verification.get("content_sha256"):
             print(f"Content SHA-256: {verification['content_sha256']}")
+        print(
+            "Projection: "
+            f"entities={verification.get('entity_count', 0)}, "
+            f"relationships={verification.get('relationship_count', 0)}, "
+            f"semantic-profiles={verification.get('semantic_profile_count', 0)}, "
+            "compound-exposure-chains="
+            f"{verification.get('compound_exposure_chain_count', 0)}, "
+            f"finding-chains={verification.get('finding_chain_count', 0)}, "
+            f"review-leads={verification.get('review_lead_count', 0)}"
+        )
         for error in verification.get("errors", []):
             print(f"[{error['code']}] {error['message']}")
         print(verification["notice"])

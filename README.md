@@ -70,7 +70,10 @@ flowchart LR
   imported runtime relationships by directed component pair, then connects components to
   findings, guidance citations, requirements, hazards, SFTA events, verification obligations,
   executions, evidence artifacts, bounded caller cascades, timing budgets, retry amplification,
-  transaction/resource semantics, and circuit-breaker models. Disagreement becomes a prioritized review lead; each
+  transaction/resource semantics, circuit-breaker models, data/alias flow, concurrency,
+  exception propagation, state transitions, authorization scope, contracts, deployment,
+  shared fate, and architecture hierarchy. Each component receives a semantic-exposure profile;
+  compound model intersections become prioritized review leads. Disagreement becomes a prioritized review lead; each
   channel retains its original authority and the output never claims completeness or compliance.
 - Actual actions, residual/post-action ratings, approvals, and audit timestamps
 - Configurable completeness gates with CLI, browser, CSV, and Markdown findings
