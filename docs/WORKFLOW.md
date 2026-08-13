@@ -428,6 +428,12 @@ Review `proposed_machine_suggestions`, `machine_claim_*`, stale-summary, and unr
 leads before using generated text; the verifier reconciles those records even without the source
 analysis, while `--analysis` additionally requires exact regeneration.
 
+`guidance_provenance` closes the gap between the citation export and the comprehensive fabric. It
+links the recorded methodology to selected versioned documents, each document to its exact locator
+records, and each locator to citing findings. Review `guidance_lineage_status` and
+`unresolved_guidance_source_references` before relying on source traceability. A complete chain is
+not a determination that the source applies or that a finding is noncompliant.
+
 The same fabric exposes two previously separate review surfaces:
 
 - `system_context_provenance` models the resolved context, its fields and values, and each explicit

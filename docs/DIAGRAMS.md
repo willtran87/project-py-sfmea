@@ -75,7 +75,9 @@ directly cite, summarize, materialize, duplicate, contradict, or diverge from a 
 their generated-claim authority remains visibly distinct. Finding-context claims, exact resolved
 context values, digest-bound review events, and recorded lifecycle actors appear for selected
 findings when present. Context equality does not imply operational adequacy, and actor labels do
-not imply authenticated approval. Its metadata binds the exact analysis and complete cross-reference
+not imply authenticated approval. Versioned guidance-source nodes now connect to exact citation
+nodes and selected findings, making document lineage traversable without treating it as
+applicability or compliance evidence. Its metadata binds the exact analysis and complete cross-reference
 projection digests. The view is bounded to 40 finding chains and 500 entities; use
 `sfmea cross-reference ANALYSIS --format json` for the complete machine-readable relationship
 and discrepancy registers. Static agreement is corroboration, runtime presence is a bounded

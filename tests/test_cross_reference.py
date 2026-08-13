@@ -637,6 +637,117 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertFalse(rejected["checks"]["machine_assistance_integrity"])
         self.assertFalse(rejected["checks"]["exact_regeneration"])
 
+    def test_cross_links_methodology_sources_citations_and_findings(self) -> None:
+        from jsonschema import Draft202012Validator
+
+        index = build_cross_reference_index(self.analysis)
+        provenance = index["guidance_provenance"]
+        cited_chain = next(
+            value for value in index["finding_chains"] if value["citation_ids"]
+        )
+        cited_profile = next(
+            value
+            for value in provenance["citation_profiles"]
+            if value["citation_id"] == cited_chain["citation_ids"][0]
+        )
+        source_profile = next(
+            value
+            for value in provenance["source_profiles"]
+            if value["id"] == cited_profile["source_entity_id"]
+        )
+        relationship_kinds = {
+            value["kind"]
+            for value in index["relationships"]
+            if value["id"] in provenance["relationship_ids"]
+        }
+
+        self.assertTrue(provenance["source_profiles"])
+        self.assertTrue(provenance["review_check_profiles"])
+        self.assertRegex(provenance["methodology_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(cited_chain["guidance_lineage_status"], "complete")
+        self.assertTrue(cited_chain["dimensions"]["guidance_provenance"])
+        self.assertIn(
+            cited_profile["source_entity_id"],
+            cited_chain["guidance_source_entity_ids"],
+        )
+        self.assertIn(cited_profile["id"], source_profile["citation_entity_ids"])
+        self.assertIn("declares_methodology", relationship_kinds)
+        self.assertIn("uses_methodology_source", relationship_kinds)
+        self.assertIn("defines_review_check", relationship_kinds)
+        self.assertIn("defines_guidance_citation", relationship_kinds)
+        self.assertIn("supported_by_guidance", relationship_kinds)
+        self.assertEqual(
+            index["summary"]["guidance_citations_with_source_lineage"],
+            index["summary"]["guidance_citations"],
+        )
+        self.assertEqual(index["summary"]["unresolved_guidance_source_references"], 0)
+
+        diagram = build_diagram_models(
+            self.analysis, kind="cross_reference", cross_reference_index=index
+        )[0]
+        self.assertTrue(
+            any(value["kind"] == "guidance_source" for value in diagram["nodes"])
+        )
+        self.assertTrue(
+            any(
+                value["kind"] == "defines_guidance_citation"
+                for value in diagram["edges"]
+            )
+        )
+        Draft202012Validator(schema_document("cross-reference")).validate(index)
+
+        output = self.root / "guidance-fabric.json"
+        output.write_text(json.dumps(index), encoding="utf-8")
+        verified = verify_cross_reference_file(output, analysis=self.analysis)
+        self.assertTrue(verified["valid"])
+        self.assertTrue(verified["checks"]["guidance_provenance_integrity"])
+
+    def test_verifier_rejects_rehashed_guidance_lineage_tampering(self) -> None:
+        output = self.root / "guidance-fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        original = json.loads(output.read_text(encoding="utf-8"))
+        self.assertTrue(
+            verify_cross_reference_file(output)["checks"][
+                "guidance_provenance_integrity"
+            ]
+        )
+
+        tampered = json.loads(json.dumps(original))
+        source_profile = tampered["guidance_provenance"]["source_profiles"][0]
+        source_profile["source_record"]["title"] = "Rewritten guidance title"
+        source_profile["source_record_sha256"] = canonical_json_sha256(
+            source_profile["source_record"]
+        )
+        source_entity = next(
+            value
+            for value in tampered["entities"]
+            if value["id"] == source_profile["id"]
+        )
+        source_entity["metadata"]["source_record_sha256"] = source_profile[
+            "source_record_sha256"
+        ]
+        content = dict(tampered)
+        content.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(tampered), encoding="utf-8")
+
+        rejected = verify_cross_reference_file(output)
+        self.assertFalse(rejected["valid"])
+        self.assertFalse(rejected["checks"]["guidance_provenance_integrity"])
+        self.assertTrue(rejected["checks"]["content_integrity"])
+
+        tampered = json.loads(json.dumps(original))
+        chain = next(
+            value for value in tampered["finding_chains"] if value["citation_ids"]
+        )
+        chain["guidance_source_entity_ids"] = []
+        content = dict(tampered)
+        content.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(tampered), encoding="utf-8")
+        rejected_chain = verify_cross_reference_file(output)
+        self.assertFalse(rejected_chain["checks"]["finding_chain_integrity"])
+
     def test_cross_references_system_context_and_lifecycle_history(self) -> None:
         self.analysis["system_context"] = build_system_context(
             {

@@ -1218,6 +1218,7 @@ def _cross_reference_schema() -> dict[str, Any]:
             "requirements",
             "hazards",
             "guidance",
+            "guidance_provenance",
             "verification",
             "evidence",
             "sfta",
@@ -1241,6 +1242,7 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "requirements",
                 "hazards",
                 "guidance",
+                "guidance_provenance",
                 "verification",
                 "evidence",
                 "sfta",
@@ -1483,6 +1485,73 @@ def _cross_reference_schema() -> dict[str, Any]:
         },
         "notice": text,
     }
+    guidance_source_profile_properties = {
+        "id": identifier,
+        "source_id": identifier,
+        "source_record": {"type": "object", "maxProperties": 100},
+        "source_record_sha256": digest,
+        "catalog_record_sha256": {"type": "string", "maxLength": 64},
+        "methodology_basis": {"type": "boolean"},
+        "citation_entity_ids": string_list,
+        "relationship_ids": string_list,
+    }
+    guidance_citation_profile_properties = {
+        "id": identifier,
+        "citation_id": identifier,
+        "citation_record": {"type": "object", "maxProperties": 100},
+        "citation_record_sha256": digest,
+        "source_id": text,
+        "source_entity_id": {"type": "string", "maxLength": 20_000},
+        "finding_entity_ids": string_list,
+        "relationship_ids": string_list,
+    }
+    methodology_review_check_profile_properties = {
+        "id": identifier,
+        "sequence": {"type": "integer", "minimum": 1},
+        "text": text,
+        "text_sha256": digest,
+        "relationship_ids": string_list,
+    }
+    guidance_provenance_properties = {
+        "methodology_entity_id": identifier,
+        "methodology_record": {"type": "object", "maxProperties": 100},
+        "methodology_sha256": digest,
+        "source_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(guidance_source_profile_properties),
+                "properties": guidance_source_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "citation_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(guidance_citation_profile_properties),
+                "properties": guidance_citation_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "review_check_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(methodology_review_check_profile_properties),
+                "properties": methodology_review_check_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "unresolved_methodology_source_ids": string_list,
+        "mismatched_methodology_source_ids": string_list,
+        "unresolved_citation_source_ids": string_list,
+        "relationship_ids": string_list,
+        "notice": text,
+    }
     system_context_field_profile_properties = {
         "id": identifier,
         "field": identifier,
@@ -1620,6 +1689,11 @@ def _cross_reference_schema() -> dict[str, Any]:
         "requirement_ids": string_list,
         "hazard_ids": string_list,
         "citation_ids": string_list,
+        "guidance_source_entity_ids": string_list,
+        "guidance_provenance_relationship_ids": string_list,
+        "guidance_lineage_status": {
+            "enum": ["complete", "unresolved", "not_applicable"]
+        },
         "obligation_ids": string_list,
         "evidence_artifact_ids": string_list,
         "execution_ids": string_list,
@@ -1763,6 +1837,27 @@ def _cross_reference_schema() -> dict[str, Any]:
             "minimum": 0,
         },
         "findings_with_machine_assistance": {"type": "integer", "minimum": 0},
+        "guidance_sources": {"type": "integer", "minimum": 0},
+        "methodology_basis_sources": {"type": "integer", "minimum": 0},
+        "methodology_review_checks": {"type": "integer", "minimum": 0},
+        "guidance_citations": {"type": "integer", "minimum": 0},
+        "guidance_citations_with_source_lineage": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "findings_with_guidance_citations": {"type": "integer", "minimum": 0},
+        "findings_with_complete_guidance_lineage": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "guidance_provenance_relationships": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "unresolved_guidance_source_references": {
+            "type": "integer",
+            "minimum": 0,
+        },
         "system_context_fields": {"type": "integer", "minimum": 0},
         "system_context_values": {"type": "integer", "minimum": 0},
         "finding_context_claims": {"type": "integer", "minimum": 0},
@@ -1898,6 +1993,12 @@ def _cross_reference_schema() -> dict[str, Any]:
             "type": "object",
             "required": list(machine_assistance_properties),
             "properties": machine_assistance_properties,
+            "additionalProperties": False,
+        },
+        "guidance_provenance": {
+            "type": "object",
+            "required": list(guidance_provenance_properties),
+            "properties": guidance_provenance_properties,
             "additionalProperties": False,
         },
         "system_context_provenance": {

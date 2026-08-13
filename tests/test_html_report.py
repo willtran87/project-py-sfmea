@@ -135,6 +135,31 @@ class HtmlReportTests(unittest.TestCase):
         self.assertTrue(chain["dimensions"]["machine_assistance"])
         self.assertIn("non-authoritative", machine["notice"])
 
+    def test_report_projects_guidance_source_lineage(self) -> None:
+        report = build_html_report_data(self.analysis)
+        guidance = report["cross_reference"]["guidance_provenance"]
+        chain = next(
+            value
+            for value in report["cross_reference"]["finding_chains"]
+            if value["citation_ids"]
+        )
+
+        self.assertTrue(guidance["source_profiles"])
+        self.assertTrue(guidance["citation_profiles"])
+        self.assertTrue(guidance["review_check_profiles"])
+        self.assertEqual(guidance["unresolved_methodology_source_ids"], [])
+        self.assertEqual(guidance["mismatched_methodology_source_ids"], [])
+        self.assertEqual(guidance["unresolved_citation_source_ids"], [])
+        self.assertEqual(chain["guidance_lineage_status"], "complete")
+        self.assertTrue(chain["guidance_source_entity_ids"])
+        self.assertIn("traceability only", guidance["notice"])
+
+        output = export_html_report(self.analysis, self.root / "guidance-report.html")
+        document = output.read_text(encoding="utf-8")
+        self.assertIn('"guidance_provenance":', document)
+        self.assertIn("citations with source lineage", document)
+        self.assertIn("Guidance source lineage", document)
+
     def test_report_projects_context_alignment_and_lifecycle_provenance(self) -> None:
         finding = self.analysis["items"][0]
         self.analysis["system_context"] = build_system_context(

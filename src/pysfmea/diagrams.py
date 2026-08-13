@@ -498,6 +498,7 @@ def cross_reference_diagram(
                 *(f"requirement:{value}" for value in chain["requirement_ids"]),
                 *(f"hazard:{value}" for value in chain["hazard_ids"]),
                 *(f"citation:{value}" for value in chain["citation_ids"]),
+                *chain.get("guidance_source_entity_ids", []),
                 *(f"obligation:{value}" for value in chain["obligation_ids"]),
                 *(f"evidence:{value}" for value in chain["evidence_artifact_ids"]),
                 *(f"execution:{value}" for value in chain["execution_ids"]),
@@ -543,6 +544,9 @@ def cross_reference_diagram(
     provenance_seed = set(selected)
     for relationship in index["relationships"]:
         if relationship.get("channel") not in {
+            "guidance_catalog",
+            "methodology_basis",
+            "methodology",
             "system_context",
             "lifecycle_history",
         }:
@@ -564,7 +568,10 @@ def cross_reference_diagram(
         for entity_id in selected
     }
     layer_by_kind = {
-        "citation": 0,
+        "methodology": 0,
+        "guidance_source": 0,
+        "methodology_review_check": 1,
+        "citation": 1,
         "requirement": 0,
         "hazard": 0,
         "sfta_event": 0,
@@ -658,6 +665,8 @@ def cross_reference_diagram(
                 " Source snapshots, adapter attribution, quality diagnostics, and review-governance "
                 "state retain their distinct evidence authority. Machine-generated claims and "
                 "summaries remain explicitly non-authoritative review aids."
+                " Versioned guidance sources and exact citation locators remain traversable"
+                " rather than relying on opaque citation metadata."
                 " Resolved context values, exact finding-context matches, and digest-bound "
                 "lifecycle events expose configuration and review history without implying "
                 "semantic equivalence or authenticated approval."
@@ -708,6 +717,14 @@ def cross_reference_diagram(
                 ],
                 "findings_with_machine_assistance": summary[
                     "findings_with_machine_assistance"
+                ],
+                "guidance_sources": summary["guidance_sources"],
+                "guidance_citations": summary["guidance_citations"],
+                "findings_with_complete_guidance_lineage": summary[
+                    "findings_with_complete_guidance_lineage"
+                ],
+                "unresolved_guidance_source_references": summary[
+                    "unresolved_guidance_source_references"
                 ],
                 "finding_context_claims": summary["finding_context_claims"],
                 "matched_finding_context_claims": summary[

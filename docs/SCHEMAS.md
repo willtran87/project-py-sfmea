@@ -149,6 +149,15 @@ claim counts, finding-chain copies, and summary accounting. These links never co
 text or token similarity into an approved finding, authoritative citation, sufficient evidence, or
 compliance conclusion.
 
+`guidance_provenance` joins the recorded methodology to its selected versioned source records,
+ordered review checks, exact citation locator records, and every citing finding. Source and
+citation profiles embed their bounded records and canonical digests; finding chains copy only the
+source entities and two-hop relationship IDs relevant to that finding. The standalone verifier
+recomputes catalog-record and locator-summary digests, entity identities, typed relationship sets,
+unresolved source partitions, chain copies, and summary counts. Complete lineage proves only that
+the recorded identifiers reconcile; it does not authenticate an official document or establish
+applicability, compliance, or approval.
+
 `system_context_provenance` binds the analysis scope and run-manifest configuration input to the
 resolved context record, field profiles, and exact configured values. Finding review context is
 preserved as separate claim entities with one of `matched`, `outside_catalog`,

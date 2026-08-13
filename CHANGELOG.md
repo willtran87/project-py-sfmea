@@ -60,6 +60,11 @@ package; public artifact and schema identifiers carry their own explicit compati
   becomes digest-bound lifecycle-event entities with exact typed subject references and explicitly
   unauthenticated actor labels. Schemas, standalone verification, finding chains, diagrams, CLI,
   Markdown, and the self-contained HTML report expose and reconcile the same records.
+  Promote methodology, versioned guidance documents, and exact citation locators to first-class
+  digest-bound entities. The complete fabric now carries independently verifiable document →
+  citation → finding lineage instead of leaving the document identifier as opaque citation
+  metadata; unresolved source identities become review leads, and report/diagram/CLI/schema
+  projections expose the same authority-preserving chain.
 
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,

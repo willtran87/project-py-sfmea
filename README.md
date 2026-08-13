@@ -94,6 +94,10 @@ flowchart LR
   uncataloged claims become review leads rather than inferred errors. Analysis and finding-review
   history is projected as ordered, digest-bound lifecycle events with exact typed subject links and
   explicitly unauthenticated actor labels.
+  Recorded methodology, versioned NASA/FAA/NIST/CWE or organizational guidance sources, and exact
+  citation locators are also first-class digest-bound entities. Finding chains expose complete or
+  unresolved document-to-citation lineage, while source presence remains traceability rather than
+  proof of applicability, authenticity, compliance, or approval.
   Source-provenance links then connect components and findings to content-addressed inventory
   entries, dependency/contract declarations, the run-manifest-bound configuration input, and
   excluded regions. Opaque artifacts and missing

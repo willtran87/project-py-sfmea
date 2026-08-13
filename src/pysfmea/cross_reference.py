@@ -41,6 +41,7 @@ CROSS_REFERENCE_VERIFICATION_CHECKS = (
     "adapter_provenance_integrity",
     "repository_provenance_integrity",
     "machine_assistance_integrity",
+    "guidance_provenance_integrity",
     "system_context_integrity",
     "lifecycle_provenance_integrity",
     "finding_chain_integrity",
@@ -1171,11 +1172,152 @@ def build_cross_reference_index(
                     authority="project_configuration",
                 )
 
+    methodology = analysis.get("methodology", {})
+    if not isinstance(methodology, dict):
+        methodology = {}
+    methodology_sha256 = canonical_json_sha256(methodology)
+    methodology_entity = add_entity(
+        "methodology",
+        methodology_sha256,
+        methodology.get("name") or "recorded SFMEA methodology",
+        authority="analysis_bound_recorded_methodology",
+        metadata={
+            "methodology_sha256": methodology_sha256,
+            "basis_count": len(methodology.get("basis", []))
+            if isinstance(methodology.get("basis"), list)
+            else 0,
+            "review_check_count": len(methodology.get("review_checklist", []))
+            if isinstance(methodology.get("review_checklist"), list)
+            else 0,
+        },
+    )
+    guidance_provenance_relationship_ids: set[str] = set()
+    relation_id = add_relation(
+        analysis_scope_entity,
+        methodology_entity,
+        "declares_methodology",
+        "methodology",
+        authority="exact_analysis_methodology_binding",
+    )
+    if relation_id in relationships:
+        guidance_provenance_relationship_ids.add(relation_id)
+
+    guidance_source_by_id = {
+        str(value.get("id", "")): value
+        for value in guidance.get("sources", [])
+        if isinstance(value, dict) and value.get("id")
+    }
+    guidance_source_entity_by_id: dict[str, str] = {}
+    guidance_source_record_sha256_by_id: dict[str, str] = {}
+    guidance_source_relationship_ids_by_id: dict[str, set[str]] = defaultdict(set)
+    guidance_citation_entity_ids_by_source: dict[str, set[str]] = defaultdict(set)
+    for source_id, guidance_source_record in guidance_source_by_id.items():
+        source_record_sha256 = canonical_json_sha256(guidance_source_record)
+        source_entity = add_entity(
+            "guidance_source",
+            source_id,
+            guidance_source_record.get("title") or source_id,
+            authority="versioned_guidance_source_catalog",
+            metadata={
+                "publisher": str(guidance_source_record.get("publisher", "")),
+                "version": str(guidance_source_record.get("version", "")),
+                "status": str(guidance_source_record.get("status", "")),
+                "url": str(guidance_source_record.get("url", "")),
+                "record_sha256": str(
+                    guidance_source_record.get("record_sha256", "")
+                ),
+                "source_record_sha256": source_record_sha256,
+            },
+        )
+        guidance_source_entity_by_id[source_id] = source_entity
+        guidance_source_record_sha256_by_id[source_id] = source_record_sha256
+
+    methodology_basis_record_by_id = {
+        str(value.get("id", "")): value
+        for value in methodology.get("basis", [])
+        if isinstance(value, dict) and value.get("id")
+    }
+    methodology_basis_source_ids = set(methodology_basis_record_by_id)
+    unresolved_methodology_source_ids: set[str] = set()
+    mismatched_methodology_source_ids: set[str] = set()
+    matched_methodology_basis_source_ids: set[str] = set()
+    for source_id in sorted(methodology_basis_source_ids):
+        source_entity = guidance_source_entity_by_id.get(source_id, "")
+        if not source_entity:
+            unresolved_methodology_source_ids.add(source_id)
+            continue
+        if canonical_json_sha256(methodology_basis_record_by_id[source_id]) != canonical_json_sha256(
+            guidance_source_by_id[source_id]
+        ):
+            mismatched_methodology_source_ids.add(source_id)
+            continue
+        matched_methodology_basis_source_ids.add(source_id)
+        relation_id = add_relation(
+            methodology_entity,
+            source_entity,
+            "uses_methodology_source",
+            "methodology_basis",
+            authority="exact_methodology_basis_source_identifier",
+        )
+        if relation_id in relationships:
+            guidance_provenance_relationship_ids.add(relation_id)
+            guidance_source_relationship_ids_by_id[source_id].add(relation_id)
+
+    methodology_review_check_profiles: list[dict[str, Any]] = []
+    review_checklist = methodology.get("review_checklist", [])
+    if not isinstance(review_checklist, list):
+        review_checklist = []
+    for sequence, text_value in enumerate(review_checklist, start=1):
+        if not isinstance(text_value, str) or not text_value.strip():
+            continue
+        check_text = text_value.strip()
+        check_sha256 = hashlib.sha256(check_text.encode("utf-8")).hexdigest()
+        check_entity = add_entity(
+            "methodology_review_check",
+            stable_id(
+                "METHODOLOGY-REVIEW-CHECK",
+                methodology_sha256,
+                str(sequence),
+                check_sha256,
+            ),
+            check_text,
+            authority="recorded_methodology_review_check_not_completion_evidence",
+            metadata={
+                "sequence": sequence,
+                "text_sha256": check_sha256,
+            },
+        )
+        relation_id = add_relation(
+            methodology_entity,
+            check_entity,
+            "defines_review_check",
+            "methodology",
+            authority="ordered_recorded_methodology_review_check",
+            metadata={"sequence": sequence},
+        )
+        check_relationship_ids: list[str] = []
+        if relation_id in relationships:
+            check_relationship_ids.append(relation_id)
+            guidance_provenance_relationship_ids.add(relation_id)
+        methodology_review_check_profiles.append(
+            {
+                "id": check_entity,
+                "sequence": sequence,
+                "text": check_text,
+                "text_sha256": check_sha256,
+                "relationship_ids": check_relationship_ids,
+            }
+        )
+
     citation_by_id = {
         str(value.get("id", "")): value
         for value in guidance.get("citations", [])
         if isinstance(value, dict) and value.get("id")
     }
+    guidance_citation_record_sha256_by_id: dict[str, str] = {}
+    guidance_citation_source_id_by_id: dict[str, str] = {}
+    guidance_citation_relationship_ids_by_id: dict[str, set[str]] = defaultdict(set)
+    unresolved_citation_source_ids: set[str] = set()
     for raw_id, citation in citation_by_id.items():
         locator = citation.get("locator", {})
         locator_label = ""
@@ -1185,13 +1327,41 @@ def build_cross_reference_index(
                 for field in ("section", "heading", "page")
                 if locator.get(field)
             )
-        add_entity(
+        citation_record_sha256 = canonical_json_sha256(citation)
+        guidance_citation_record_sha256_by_id[raw_id] = citation_record_sha256
+        source_id = str(citation.get("source_id", ""))
+        guidance_citation_source_id_by_id[raw_id] = source_id
+        citation_entity = add_entity(
             "citation",
             raw_id,
             locator_label or citation.get("title") or raw_id,
             authority="versioned_guidance_catalog",
-            metadata={"source_id": citation.get("source_id", "")},
+            metadata={
+                "source_id": source_id,
+                "citation_record_sha256": citation_record_sha256,
+            },
         )
+        source_entity = guidance_source_entity_by_id.get(source_id, "")
+        if not source_entity:
+            if source_id:
+                unresolved_citation_source_ids.add(source_id)
+            continue
+        guidance_citation_entity_ids_by_source[source_id].add(citation_entity)
+        relation_id = add_relation(
+            source_entity,
+            citation_entity,
+            "defines_guidance_citation",
+            "guidance_catalog",
+            authority="exact_guidance_catalog_source_identifier",
+        )
+        if relation_id in relationships:
+            guidance_provenance_relationship_ids.add(relation_id)
+            guidance_source_relationship_ids_by_id[source_id].add(relation_id)
+            guidance_citation_relationship_ids_by_id[raw_id].add(relation_id)
+
+    guidance_finding_entity_ids_by_citation: dict[str, set[str]] = defaultdict(set)
+    guidance_source_entity_ids_by_finding: dict[str, set[str]] = defaultdict(set)
+    guidance_relationships_by_finding: dict[str, set[str]] = defaultdict(set)
 
     component_pair_evidence: dict[tuple[str, str], dict[str, list[str]]] = defaultdict(
         lambda: defaultdict(list)
@@ -2278,13 +2448,34 @@ def build_cross_reference_index(
                 authority="reviewed_or_inherited_hazard_link",
             )
         for citation_id in citation_ids:
-            add_relation(
+            relation_id = add_relation(
                 finding_entity,
                 add_entity("citation", citation_id),
                 "supported_by_guidance",
                 "guidance_mapping",
                 authority="guidance_relevance_not_noncompliance",
             )
+            if relation_id in relationships:
+                guidance_provenance_relationship_ids.add(relation_id)
+                guidance_citation_relationship_ids_by_id[citation_id].add(relation_id)
+                guidance_finding_entity_ids_by_citation[citation_id].add(
+                    finding_entity
+                )
+                guidance_relationships_by_finding[finding_id].add(relation_id)
+            source_id = guidance_citation_source_id_by_id.get(citation_id, "")
+            source_entity = guidance_source_entity_by_id.get(source_id, "")
+            if source_entity:
+                guidance_source_entity_ids_by_finding[finding_id].add(source_entity)
+                source_citation_relation_id = _relation_id(
+                    source_entity,
+                    _entity_id("citation", citation_id),
+                    "defines_guidance_citation",
+                    "guidance_catalog",
+                )
+                if source_citation_relation_id in relationships:
+                    guidance_relationships_by_finding[finding_id].add(
+                        source_citation_relation_id
+                    )
         for obligation in finding_obligations:
             obligation_id = str(obligation.get("id", ""))
             add_relation(
@@ -2314,6 +2505,11 @@ def build_cross_reference_index(
                 "sfta_reconciliation",
                 authority="configured_or_derived_sfta_correlation",
             )
+        guidance_lineage_complete = bool(citation_ids) and all(
+            guidance_citation_source_id_by_id.get(citation_id, "")
+            in guidance_source_entity_by_id
+            for citation_id in citation_ids
+        )
         dimensions = {
             "component": component_id in components,
             "source_provenance": bool(
@@ -2322,6 +2518,7 @@ def build_cross_reference_index(
             "requirements": bool(requirements),
             "hazards": bool(hazards),
             "guidance": bool(citation_ids),
+            "guidance_provenance": guidance_lineage_complete,
             "verification": bool(finding_obligations),
             "evidence": bool(evidence_ids or execution_ids),
             "sfta": bool(sfta_nodes_by_finding.get(finding_id)),
@@ -2765,6 +2962,19 @@ def build_cross_reference_index(
                 "requirement_ids": requirements,
                 "hazard_ids": hazards,
                 "citation_ids": citation_ids,
+                "guidance_source_entity_ids": sorted(
+                    guidance_source_entity_ids_by_finding.get(finding_id, set())
+                ),
+                "guidance_provenance_relationship_ids": sorted(
+                    guidance_relationships_by_finding.get(finding_id, set())
+                ),
+                "guidance_lineage_status": (
+                    "not_applicable"
+                    if not citation_ids
+                    else "complete"
+                    if guidance_lineage_complete
+                    else "unresolved"
+                ),
                 "obligation_ids": obligation_ids,
                 "evidence_artifact_ids": sorted(evidence_ids),
                 "execution_ids": sorted(execution_ids),
@@ -2813,6 +3023,49 @@ def build_cross_reference_index(
                 ),
             }
         )
+
+    guidance_source_profiles = [
+        {
+            "id": guidance_source_entity_by_id[source_id],
+            "source_id": source_id,
+            "source_record": guidance_source_record,
+            "source_record_sha256": guidance_source_record_sha256_by_id[source_id],
+            "catalog_record_sha256": str(
+                guidance_source_record.get("record_sha256", "")
+            ),
+            "methodology_basis": source_id in matched_methodology_basis_source_ids,
+            "citation_entity_ids": sorted(
+                guidance_citation_entity_ids_by_source.get(source_id, set())
+            ),
+            "relationship_ids": sorted(
+                guidance_source_relationship_ids_by_id.get(source_id, set())
+            ),
+        }
+        for source_id, guidance_source_record in sorted(
+            guidance_source_by_id.items()
+        )
+    ]
+    guidance_citation_profiles = [
+        {
+            "id": _entity_id("citation", citation_id),
+            "citation_id": citation_id,
+            "citation_record": citation_by_id[citation_id],
+            "citation_record_sha256": guidance_citation_record_sha256_by_id[
+                citation_id
+            ],
+            "source_id": guidance_citation_source_id_by_id.get(citation_id, ""),
+            "source_entity_id": guidance_source_entity_by_id.get(
+                guidance_citation_source_id_by_id.get(citation_id, ""), ""
+            ),
+            "finding_entity_ids": sorted(
+                guidance_finding_entity_ids_by_citation.get(citation_id, set())
+            ),
+            "relationship_ids": sorted(
+                guidance_citation_relationship_ids_by_id.get(citation_id, set())
+            ),
+        }
+        for citation_id in sorted(citation_by_id)
+    ]
 
     # Finding review context is joined to the governed system-context catalog only by
     # exact normalized values. This preserves explicit reviewer language while avoiding
@@ -3819,6 +4072,63 @@ def build_cross_reference_index(
                 "description": f"{len(subjects)} claim(s). {description}",
             }
         )
+    unresolved_guidance_chains = [
+        chain
+        for chain in finding_chains
+        if chain.get("guidance_lineage_status") == "unresolved"
+    ]
+    unresolved_guidance_subjects = sorted(
+        {
+            _entity_id("finding", chain.get("finding_id", ""))
+            for chain in unresolved_guidance_chains
+        }
+    )
+    if unresolved_guidance_chains:
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "unresolved_guidance_source_lineage"),
+                "kind": "unresolved_guidance_source_lineage",
+                "priority": "high",
+                "subject_ids": unresolved_guidance_subjects[:25],
+                "affected_count": len(unresolved_guidance_chains),
+                "subject_ids_omitted": max(
+                    0, len(unresolved_guidance_subjects) - 25
+                ),
+                "description": (
+                    f"{len(unresolved_guidance_chains)} finding chain(s) cite a locator that "
+                    "does not resolve through the current versioned guidance-source catalog. "
+                    "Repair source/citation identity before relying on document lineage."
+                ),
+            }
+        )
+    unresolved_guidance_catalog_references = {
+        *unresolved_methodology_source_ids,
+        *mismatched_methodology_source_ids,
+        *unresolved_citation_source_ids,
+    }
+    if unresolved_guidance_catalog_references:
+        unresolved_catalog_subjects: set[str] = {methodology_entity}
+        unresolved_catalog_subjects.update(
+            str(profile["id"])
+            for profile in guidance_citation_profiles
+            if profile.get("source_id") in unresolved_citation_source_ids
+        )
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "unresolved_guidance_catalog_references"),
+                "kind": "unresolved_guidance_catalog_references",
+                "priority": "high",
+                "subject_ids": sorted(unresolved_catalog_subjects)[:25],
+                "affected_count": len(unresolved_guidance_catalog_references),
+                "subject_ids_omitted": max(
+                    0, len(unresolved_catalog_subjects) - 25
+                ),
+                "description": (
+                    f"{len(unresolved_guidance_catalog_references)} methodology or citation "
+                    "source identifier(s) do not resolve to a current guidance-source record."
+                ),
+            }
+        )
     if unresolved_lifecycle_subject_references:
         unresolved_event_entities = sorted(
             {
@@ -4434,6 +4744,30 @@ def build_cross_reference_index(
                 bool(value.get("machine_assistance_entity_ids"))
                 for value in finding_chains
             ),
+            "guidance_sources": len(guidance_source_profiles),
+            "methodology_basis_sources": sum(
+                bool(value.get("methodology_basis"))
+                for value in guidance_source_profiles
+            ),
+            "methodology_review_checks": len(methodology_review_check_profiles),
+            "guidance_citations": len(guidance_citation_profiles),
+            "guidance_citations_with_source_lineage": sum(
+                bool(value.get("source_entity_id"))
+                for value in guidance_citation_profiles
+            ),
+            "findings_with_guidance_citations": sum(
+                bool(value.get("citation_ids")) for value in finding_chains
+            ),
+            "findings_with_complete_guidance_lineage": sum(
+                value.get("guidance_lineage_status") == "complete"
+                for value in finding_chains
+            ),
+            "guidance_provenance_relationships": len(
+                guidance_provenance_relationship_ids
+            ),
+            "unresolved_guidance_source_references": len(
+                unresolved_guidance_catalog_references
+            ),
             "system_context_fields": len(context_field_profiles),
             "system_context_values": len(context_value_entity_ids),
             "finding_context_claims": len(context_claim_profiles),
@@ -4712,6 +5046,30 @@ def build_cross_reference_index(
                 "risk, evidence sufficiency, or compliance."
             ),
         },
+        "guidance_provenance": {
+            "methodology_entity_id": methodology_entity,
+            "methodology_record": methodology,
+            "methodology_sha256": methodology_sha256,
+            "source_profiles": guidance_source_profiles,
+            "citation_profiles": guidance_citation_profiles,
+            "review_check_profiles": methodology_review_check_profiles,
+            "unresolved_methodology_source_ids": sorted(
+                unresolved_methodology_source_ids
+            ),
+            "mismatched_methodology_source_ids": sorted(
+                mismatched_methodology_source_ids
+            ),
+            "unresolved_citation_source_ids": sorted(
+                unresolved_citation_source_ids
+            ),
+            "relationship_ids": sorted(guidance_provenance_relationship_ids),
+            "notice": (
+                "Guidance lineage preserves exact catalog source and citation identifiers, "
+                "record digests, methodology-basis selection, and finding links. A complete "
+                "lineage establishes traceability only; it is not evidence of applicability, "
+                "compliance, source authenticity, or engineering approval."
+            ),
+        },
         "system_context_provenance": {
             "system_context_entity_id": system_context_entity,
             "configuration_input_entity_id": configuration_input_entity,
@@ -4771,6 +5129,7 @@ def build_cross_reference_index(
             "Adapter provenance links normalized contribution identities to integrity-bound adapter runs and the run manifest; tool attribution does not establish correctness, completeness, qualification, or independence.",
             "Repository provenance links source paths, inventory snapshots, dependencies, contracts, components, and findings without promoting indexed or opaque artifacts to semantic-analysis evidence.",
             "Machine-assistance provenance preserves bounded suggestion, summary, evidence, citation, materialization, and lexical-comparison links; generated text and deterministic text similarity remain review aids, not authoritative engineering conclusions.",
+            "Guidance provenance links recorded methodology, versioned source records, exact citation locators, and candidate findings without asserting applicability, compliance, source authenticity, or approval.",
             "System-context provenance preserves configured fields and values and uses exact normalized matches only; a match does not establish operational adequacy, and a mismatch does not establish an error.",
             "Lifecycle provenance preserves ordered audit-event digests, exact typed subject references, and recorded actor labels without authenticating identity, approval authority, or reviewer independence.",
             "Linkage completeness is an accounting measure, not verification success or risk acceptance.",
@@ -4833,6 +5192,15 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         "machine_assistance_unresolved_evidence_references",
         "machine_assistance_unresolved_citation_references",
         "findings_with_machine_assistance",
+        "guidance_sources",
+        "methodology_basis_sources",
+        "methodology_review_checks",
+        "guidance_citations",
+        "guidance_citations_with_source_lineage",
+        "findings_with_guidance_citations",
+        "findings_with_complete_guidance_lineage",
+        "guidance_provenance_relationships",
+        "unresolved_guidance_source_references",
         "system_context_fields",
         "system_context_values",
         "finding_context_claims",
@@ -5907,6 +6275,478 @@ def verify_cross_reference_file(
                 "cross_reference.machine_assistance_integrity_invalid",
                 "Machine suggestions, summaries, evidence, citation, materialization, and lexical-comparison relationships must reconcile without promoting generated claims.",
             )
+
+        guidance_provenance = value.get("guidance_provenance")
+        guidance_data = (
+            guidance_provenance if isinstance(guidance_provenance, dict) else {}
+        )
+        guidance_source_profiles = guidance_data.get("source_profiles")
+        guidance_citation_profiles = guidance_data.get("citation_profiles")
+        methodology_review_check_profiles = guidance_data.get(
+            "review_check_profiles"
+        )
+        methodology_record = guidance_data.get("methodology_record")
+        methodology_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "methodology"
+        }
+        guidance_source_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "guidance_source"
+        }
+        methodology_review_check_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "methodology_review_check"
+        }
+        catalog_citation_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "citation"
+            and entity.get("metadata", {}).get("citation_record_sha256")
+        }
+        guidance_channel_relationship_ids = {
+            relation_id
+            for relation_id, relation in relationships_by_id.items()
+            if relation.get("channel")
+            in {
+                "methodology",
+                "methodology_basis",
+                "guidance_catalog",
+                "guidance_mapping",
+            }
+            and relation.get("kind")
+            in {
+                "declares_methodology",
+                "uses_methodology_source",
+                "defines_review_check",
+                "defines_guidance_citation",
+                "supported_by_guidance",
+            }
+        }
+        methodology_basis_record_by_id = {
+            str(record.get("id", "")): record
+            for record in (
+                methodology_record.get("basis", [])
+                if isinstance(methodology_record, dict)
+                and isinstance(methodology_record.get("basis"), list)
+                else []
+            )
+            if isinstance(record, dict) and record.get("id")
+        }
+        methodology_basis_ids = set(methodology_basis_record_by_id)
+
+        def guidance_source_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            source_id = str(profile.get("source_id", ""))
+            entity_id = str(profile.get("id", ""))
+            source_record = profile.get("source_record")
+            if not isinstance(source_record, dict):
+                return False
+            expected_relationship_ids = {
+                relation_id
+                for relation_id in guidance_channel_relationship_ids
+                if (
+                    relationships_by_id[relation_id].get("source") == entity_id
+                    and relationships_by_id[relation_id].get("kind")
+                    == "defines_guidance_citation"
+                )
+                or (
+                    relationships_by_id[relation_id].get("target") == entity_id
+                    and relationships_by_id[relation_id].get("kind")
+                    == "uses_methodology_source"
+                )
+            }
+            expected_citation_ids = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "defines_guidance_citation"
+            }
+            entity = entities_by_id.get(entity_id, {})
+            metadata = entity.get("metadata", {})
+            record_sha256 = canonical_json_sha256(source_record)
+            catalog_material = {
+                key: value
+                for key, value in source_record.items()
+                if key != "record_sha256"
+            }
+            expected_catalog_record_sha256 = hashlib.sha256(
+                json.dumps(
+                    catalog_material, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            return bool(
+                source_id
+                and source_record.get("id") == source_id
+                and entity_id == _entity_id("guidance_source", source_id)
+                and entity_id in guidance_source_entity_ids
+                and record_sha256 == profile.get("source_record_sha256")
+                and profile.get("catalog_record_sha256")
+                == str(source_record.get("record_sha256", ""))
+                == expected_catalog_record_sha256
+                and profile.get("methodology_basis")
+                == (
+                    source_id in methodology_basis_record_by_id
+                    and canonical_json_sha256(
+                        methodology_basis_record_by_id[source_id]
+                    )
+                    == record_sha256
+                )
+                == any(
+                    relationships_by_id[relation_id].get("kind")
+                    == "uses_methodology_source"
+                    for relation_id in expected_relationship_ids
+                )
+                and set(_text_values(profile.get("citation_entity_ids")))
+                == expected_citation_ids
+                and set(_text_values(profile.get("relationship_ids")))
+                == expected_relationship_ids
+                and metadata.get("publisher")
+                == str(source_record.get("publisher", ""))
+                and metadata.get("version")
+                == str(source_record.get("version", ""))
+                and metadata.get("status") == str(source_record.get("status", ""))
+                and metadata.get("url") == str(source_record.get("url", ""))
+                and metadata.get("record_sha256")
+                == str(source_record.get("record_sha256", ""))
+                and metadata.get("source_record_sha256") == record_sha256
+            )
+
+        def guidance_citation_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            citation_id = str(profile.get("citation_id", ""))
+            entity_id = str(profile.get("id", ""))
+            source_id = str(profile.get("source_id", ""))
+            source_entity_id = str(profile.get("source_entity_id", ""))
+            citation_record = profile.get("citation_record")
+            if not isinstance(citation_record, dict):
+                return False
+            expected_relationship_ids = {
+                relation_id
+                for relation_id in guidance_channel_relationship_ids
+                if (
+                    relationships_by_id[relation_id].get("target") == entity_id
+                    and relationships_by_id[relation_id].get("kind")
+                    in {"defines_guidance_citation", "supported_by_guidance"}
+                )
+            }
+            source_relationships = [
+                relationships_by_id[relation_id]
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "defines_guidance_citation"
+            ]
+            expected_finding_ids = {
+                str(relationships_by_id[relation_id].get("source", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "supported_by_guidance"
+            }
+            entity = entities_by_id.get(entity_id, {})
+            record_sha256 = canonical_json_sha256(citation_record)
+            catalog_material = {
+                key: value
+                for key, value in citation_record.items()
+                if key != "record_sha256"
+            }
+            expected_catalog_record_sha256 = hashlib.sha256(
+                json.dumps(
+                    catalog_material, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            locator_material = {
+                "source_id": source_id,
+                "locator": citation_record.get("locator", {}),
+                "summary": citation_record.get("summary", ""),
+            }
+            expected_locator_sha256 = hashlib.sha256(
+                json.dumps(
+                    locator_material, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            return bool(
+                citation_id
+                and citation_record.get("id") == citation_id
+                and str(citation_record.get("source_id", "")) == source_id
+                and entity_id == _entity_id("citation", citation_id)
+                and entity_id in catalog_citation_entity_ids
+                and record_sha256 == profile.get("citation_record_sha256")
+                and citation_record.get("record_sha256")
+                == expected_catalog_record_sha256
+                and citation_record.get("locator_summary_sha256")
+                == expected_locator_sha256
+                and entity.get("metadata", {}).get("source_id") == source_id
+                and entity.get("metadata", {}).get("citation_record_sha256")
+                == record_sha256
+                and set(_text_values(profile.get("finding_entity_ids")))
+                == expected_finding_ids
+                and set(_text_values(profile.get("relationship_ids")))
+                == expected_relationship_ids
+                and (
+                    (
+                        len(source_relationships) == 1
+                        and source_entity_id
+                        == str(source_relationships[0].get("source", ""))
+                        == _entity_id("guidance_source", source_id)
+                    )
+                    or (
+                        not source_relationships
+                        and not source_entity_id
+                        and _entity_id("guidance_source", source_id)
+                        not in guidance_source_entity_ids
+                    )
+                )
+            )
+
+        def methodology_review_check_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            entity_id = str(profile.get("id", ""))
+            text_value = str(profile.get("text", ""))
+            sequence = profile.get("sequence")
+            text_sha256 = hashlib.sha256(text_value.encode("utf-8")).hexdigest()
+            expected_relationship_ids = {
+                relation_id
+                for relation_id in guidance_channel_relationship_ids
+                if relationships_by_id[relation_id].get("target") == entity_id
+                and relationships_by_id[relation_id].get("kind")
+                == "defines_review_check"
+            }
+            return bool(
+                isinstance(sequence, int)
+                and not isinstance(sequence, bool)
+                and sequence >= 1
+                and text_value
+                and text_sha256 == profile.get("text_sha256")
+                and entity_id
+                == _entity_id(
+                    "methodology_review_check",
+                    stable_id(
+                        "METHODOLOGY-REVIEW-CHECK",
+                        str(guidance_data.get("methodology_sha256", "")),
+                        str(sequence),
+                        text_sha256,
+                    ),
+                )
+                and entity_id in methodology_review_check_entity_ids
+                and len(expected_relationship_ids) == 1
+                and set(_text_values(profile.get("relationship_ids")))
+                == expected_relationship_ids
+                and relationships_by_id[next(iter(expected_relationship_ids))].get(
+                    "source"
+                )
+                == guidance_data.get("methodology_entity_id")
+                and relationships_by_id[next(iter(expected_relationship_ids))]
+                .get("metadata", {})
+                .get("sequence")
+                == sequence
+            )
+
+        guidance_relationship_shapes_valid = all(
+            (
+                relation.get("kind") == "declares_methodology"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "analysis_scope"
+                and relation.get("target") in methodology_entity_ids
+            )
+            or (
+                relation.get("kind") == "uses_methodology_source"
+                and relation.get("source") in methodology_entity_ids
+                and relation.get("target") in guidance_source_entity_ids
+            )
+            or (
+                relation.get("kind") == "defines_review_check"
+                and relation.get("source") in methodology_entity_ids
+                and relation.get("target") in methodology_review_check_entity_ids
+            )
+            or (
+                relation.get("kind") == "defines_guidance_citation"
+                and relation.get("source") in guidance_source_entity_ids
+                and relation.get("target") in catalog_citation_entity_ids
+            )
+            or (
+                relation.get("kind") == "supported_by_guidance"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "finding"
+                and entities_by_id.get(str(relation.get("target")), {}).get("kind")
+                == "citation"
+            )
+            for relation_id, relation in relationships_by_id.items()
+            if relation_id in guidance_channel_relationship_ids
+        )
+        methodology_sha256 = (
+            canonical_json_sha256(methodology_record)
+            if isinstance(methodology_record, dict)
+            else ""
+        )
+        methodology_entity_id = str(guidance_data.get("methodology_entity_id", ""))
+        methodology_entity = entities_by_id.get(methodology_entity_id, {})
+        methodology_declaration_relationships = [
+            relationship
+            for relationship in relationships_by_id.values()
+            if relationship.get("kind") == "declares_methodology"
+            and relationship.get("target") == methodology_entity_id
+        ]
+        expected_review_check_texts = [
+            str(text_value).strip()
+            for text_value in (
+                methodology_record.get("review_checklist", [])
+                if isinstance(methodology_record, dict)
+                and isinstance(methodology_record.get("review_checklist"), list)
+                else []
+            )
+            if isinstance(text_value, str) and text_value.strip()
+        ]
+        expected_unresolved_methodology_source_ids = {
+            source_id
+            for source_id in methodology_basis_ids
+            if _entity_id("guidance_source", source_id)
+            not in guidance_source_entity_ids
+        }
+        guidance_source_records_by_raw_id = {
+            str(profile.get("source_id", "")): profile.get("source_record")
+            for profile in guidance_source_profiles or []
+            if isinstance(profile, dict)
+            and profile.get("source_id")
+            and isinstance(profile.get("source_record"), dict)
+        }
+        expected_mismatched_methodology_source_ids = {
+            source_id
+            for source_id, basis_record in methodology_basis_record_by_id.items()
+            if source_id in guidance_source_records_by_raw_id
+            and canonical_json_sha256(basis_record)
+            != canonical_json_sha256(guidance_source_records_by_raw_id[source_id])
+        }
+        expected_unresolved_citation_source_ids = {
+            str(profile.get("source_id", ""))
+            for profile in guidance_citation_profiles or []
+            if isinstance(profile, dict)
+            and profile.get("source_id")
+            and _entity_id("guidance_source", profile.get("source_id", ""))
+            not in guidance_source_entity_ids
+        }
+        checks["guidance_provenance_integrity"] = bool(
+            isinstance(guidance_provenance, dict)
+            and isinstance(methodology_record, dict)
+            and isinstance(guidance_source_profiles, list)
+            and isinstance(guidance_citation_profiles, list)
+            and isinstance(methodology_review_check_profiles, list)
+            and methodology_sha256 == guidance_data.get("methodology_sha256")
+            and methodology_entity_id
+            == _entity_id("methodology", methodology_sha256)
+            and methodology_entity_ids == {methodology_entity_id}
+            and methodology_entity.get("metadata", {}).get("methodology_sha256")
+            == methodology_sha256
+            and methodology_entity.get("metadata", {}).get("basis_count")
+            == len(methodology_record.get("basis", []))
+            and methodology_entity.get("metadata", {}).get("review_check_count")
+            == len(methodology_record.get("review_checklist", []))
+            and len(methodology_declaration_relationships) == 1
+            and {str(profile.get("id", "")) for profile in guidance_source_profiles if isinstance(profile, dict)}
+            == guidance_source_entity_ids
+            and {str(profile.get("id", "")) for profile in guidance_citation_profiles if isinstance(profile, dict)}
+            == catalog_citation_entity_ids
+            and {str(profile.get("id", "")) for profile in methodology_review_check_profiles if isinstance(profile, dict)}
+            == methodology_review_check_entity_ids
+            and [
+                str(profile.get("text", ""))
+                for profile in sorted(
+                    methodology_review_check_profiles,
+                    key=lambda profile: profile.get("sequence", 0)
+                    if isinstance(profile, dict)
+                    else 0,
+                )
+                if isinstance(profile, dict)
+            ]
+            == expected_review_check_texts
+            and all(
+                guidance_source_profile_valid(profile)
+                for profile in guidance_source_profiles
+            )
+            and all(
+                guidance_citation_profile_valid(profile)
+                for profile in guidance_citation_profiles
+            )
+            and all(
+                methodology_review_check_profile_valid(profile)
+                for profile in methodology_review_check_profiles
+            )
+            and set(_text_values(guidance_data.get("relationship_ids")))
+            == guidance_channel_relationship_ids
+            and set(
+                guidance_data.get("unresolved_methodology_source_ids", [])
+            )
+            == expected_unresolved_methodology_source_ids
+            and set(
+                guidance_data.get("mismatched_methodology_source_ids", [])
+            )
+            == expected_mismatched_methodology_source_ids
+            and set(guidance_data.get("unresolved_citation_source_ids", []))
+            == expected_unresolved_citation_source_ids
+            and guidance_relationship_shapes_valid
+        )
+        if not checks["guidance_provenance_integrity"]:
+            fail(
+                "cross_reference.guidance_provenance_integrity_invalid",
+                "Methodology, guidance sources, exact citation locators, and finding lineage must reconcile through digest-bound records and typed relationships.",
+            )
+        guidance_citation_profiles_by_raw_id = {
+            str(profile.get("citation_id", "")): profile
+            for profile in guidance_citation_profiles or []
+            if isinstance(profile, dict) and profile.get("citation_id")
+        }
+        verified_guidance_sources_by_finding: dict[str, set[str]] = defaultdict(
+            set
+        )
+        verified_guidance_relationships_by_finding: dict[
+            str, set[str]
+        ] = defaultdict(set)
+        for profile in guidance_citation_profiles or []:
+            if not isinstance(profile, dict):
+                continue
+            citation_entity_id = str(profile.get("id", ""))
+            source_entity_id = str(profile.get("source_entity_id", ""))
+            source_relation_id = (
+                _relation_id(
+                    source_entity_id,
+                    citation_entity_id,
+                    "defines_guidance_citation",
+                    "guidance_catalog",
+                )
+                if source_entity_id
+                else ""
+            )
+            for finding_entity_id in _text_values(
+                profile.get("finding_entity_ids")
+            ):
+                finding_id = str(
+                    entities_by_id.get(finding_entity_id, {}).get("raw_id", "")
+                )
+                if not finding_id:
+                    continue
+                if source_entity_id:
+                    verified_guidance_sources_by_finding[finding_id].add(
+                        source_entity_id
+                    )
+                finding_relation_id = _relation_id(
+                    finding_entity_id,
+                    citation_entity_id,
+                    "supported_by_guidance",
+                    "guidance_mapping",
+                )
+                if finding_relation_id in relationship_id_set:
+                    verified_guidance_relationships_by_finding[finding_id].add(
+                        finding_relation_id
+                    )
+                if source_relation_id in relationship_id_set:
+                    verified_guidance_relationships_by_finding[finding_id].add(
+                        source_relation_id
+                    )
 
         system_context_provenance = value.get("system_context_provenance")
         system_context_data = (
@@ -7455,6 +8295,8 @@ def verify_cross_reference_file(
                         "adapter_provenance_relationship_ids",
                         "machine_assistance_entity_ids",
                         "machine_assistance_relationship_ids",
+                        "guidance_source_entity_ids",
+                        "guidance_provenance_relationship_ids",
                         "system_context_claim_entity_ids",
                         "system_context_value_entity_ids",
                         "system_context_relationship_ids",
@@ -7727,6 +8569,51 @@ def verify_cross_reference_file(
                         str(chain.get("finding_id", "")), set()
                     ),
                     verified_machine_relationships_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                )
+                and (
+                    lambda citation_ids, expected_source_ids, expected_relation_ids: (
+                        set(_text_values(chain.get("guidance_source_entity_ids")))
+                        == expected_source_ids
+                        and set(
+                            _text_values(
+                                chain.get("guidance_provenance_relationship_ids")
+                            )
+                        )
+                        == expected_relation_ids
+                        and chain.get("guidance_lineage_status")
+                        == (
+                            "not_applicable"
+                            if not citation_ids
+                            else "complete"
+                            if all(
+                                citation_id in guidance_citation_profiles_by_raw_id
+                                and guidance_citation_profiles_by_raw_id[citation_id].get(
+                                    "source_entity_id"
+                                )
+                                for citation_id in citation_ids
+                            )
+                            else "unresolved"
+                        )
+                        and chain["dimensions"].get("guidance_provenance")
+                        == (
+                            bool(citation_ids)
+                            and all(
+                                citation_id in guidance_citation_profiles_by_raw_id
+                                and guidance_citation_profiles_by_raw_id[
+                                    citation_id
+                                ].get("source_entity_id")
+                                for citation_id in citation_ids
+                            )
+                        )
+                    )
+                )(
+                    set(_text_values(chain.get("citation_ids"))),
+                    verified_guidance_sources_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                    verified_guidance_relationships_by_finding.get(
                         str(chain.get("finding_id", "")), set()
                     ),
                 )
@@ -8121,6 +9008,44 @@ def verify_cross_reference_file(
                 for chain in (chains or [])
                 if isinstance(chain, dict)
             )
+            and summary.get("guidance_sources")
+            == len(guidance_source_profiles or [])
+            and summary.get("methodology_basis_sources")
+            == sum(
+                bool(profile.get("methodology_basis"))
+                for profile in (guidance_source_profiles or [])
+                if isinstance(profile, dict)
+            )
+            and summary.get("methodology_review_checks")
+            == len(methodology_review_check_profiles or [])
+            and summary.get("guidance_citations")
+            == len(guidance_citation_profiles or [])
+            and summary.get("guidance_citations_with_source_lineage")
+            == sum(
+                bool(profile.get("source_entity_id"))
+                for profile in (guidance_citation_profiles or [])
+                if isinstance(profile, dict)
+            )
+            and summary.get("findings_with_guidance_citations")
+            == sum(
+                bool(_text_values(chain.get("citation_ids")))
+                for chain in (chains or [])
+                if isinstance(chain, dict)
+            )
+            and summary.get("findings_with_complete_guidance_lineage")
+            == sum(
+                chain.get("guidance_lineage_status") == "complete"
+                for chain in (chains or [])
+                if isinstance(chain, dict)
+            )
+            and summary.get("guidance_provenance_relationships")
+            == len(guidance_channel_relationship_ids)
+            and summary.get("unresolved_guidance_source_references")
+            == len(
+                expected_unresolved_methodology_source_ids
+                | expected_mismatched_methodology_source_ids
+                | expected_unresolved_citation_source_ids
+            )
             and summary.get("system_context_fields")
             == len(context_field_profiles or [])
             and summary.get("system_context_values")
@@ -8343,6 +9268,25 @@ def verify_cross_reference_file(
         "machine_claim_relationship_count": (
             _safe_int(
                 value.get("summary", {}).get("machine_claim_relationships", 0)
+            )
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "guidance_source_count": (
+            _safe_int(value.get("summary", {}).get("guidance_sources", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "guidance_citation_count": (
+            _safe_int(value.get("summary", {}).get("guidance_citations", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "complete_guidance_lineage_finding_count": (
+            _safe_int(
+                value.get("summary", {}).get(
+                    "findings_with_complete_guidance_lineage", 0
+                )
             )
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0
