@@ -46,6 +46,13 @@ package; public artifact and schema identifiers carry their own explicit compati
   copies without promoting tool attribution, indexed files, or opaque files to semantic evidence.
   Pre-index adapter-to-finding relations during verification, replacing a quadratic per-chain graph
   scan with a linear pass for large repositories.
+  Integrate governed machine suggestions, generated summaries, and the deterministic suggestion
+  synthesis comparator into the fabric. Typed links now retain component scope, allowlisted
+  evidence, proposed citations, human materialization, summary scope/staleness, and bounded lexical
+  duplicate/contradiction/divergence leads. Finding chains, canonical diagrams, Markdown, CLI, and
+  self-contained HTML expose the same non-authoritative provenance; standalone verification rejects
+  relationship/profile/accounting drift. Grouping comparator candidates by component removes its
+  prior quadratic scan across unrelated components.
 
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,

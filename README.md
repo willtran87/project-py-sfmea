@@ -84,6 +84,10 @@ flowchart LR
   analysis diagnostics remain separate from finding-local blockers, and neither is represented as
   evidence that the candidate failure is credible.
   Adapter-provenance links bind normalized contributions to the exact run ledger and manifest.
+  Governed machine suggestions and generated summaries are also projected as explicitly
+  non-authoritative entities. Their allowlisted evidence, proposed citations, materialized
+  findings, and deterministic duplicate/contradiction/divergence relationships remain navigable,
+  independently verifiable review leads; unresolved references and stale summaries stay visible.
   Source-provenance links then connect components and findings to content-addressed inventory
   entries, dependency/contract declarations, the run-manifest-bound configuration input, and
   excluded regions. Opaque artifacts and missing

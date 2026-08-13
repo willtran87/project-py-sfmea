@@ -420,6 +420,13 @@ configuration, dependency and contract declarations, and exact component/finding
 `unlinked_adapter_contributions`, `opaque_repository_artifacts`, and
 `unaccounted_*_ids` before relying on coverage. A content digest proves identity of the inventoried
 snapshot; it does not prove semantic coverage, dependency safety, or analyzer qualification.
+Machine suggestions and generated summaries enter the same fabric without gaining engineering
+authority. The projection links each claim to its component, allowlisted evidence, proposed
+guidance citations, and any human-materialized unreviewed finding. It also imports the bounded
+deterministic suggestion comparison as duplicate, contradiction, and divergence relationships.
+Review `proposed_machine_suggestions`, `machine_claim_*`, stale-summary, and unresolved-reference
+leads before using generated text; the verifier reconciles those records even without the source
+analysis, while `--analysis` additionally requires exact regeneration.
 Each scanned component also has a verified semantic-exposure profile that joins exact records from
 data and alias flow, concurrency, exception propagation, state machines, authorization scope,
 contracts, deployment topology, shared fate, and architecture hierarchy. Finding chains surface

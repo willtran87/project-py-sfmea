@@ -70,7 +70,9 @@ review-governance profiles, finding-local quality diagnostics, assignments, veri
 obligations, executions, evidence artifacts, adapter runs, content-addressed repository source
 artifacts, and the resolved configuration input for configuration-derived findings. Semantic nodes retain exact links
 to bounded data/alias-flow, concurrency, exception, state, authorization, contract, deployment,
-shared-fate, and hierarchy records. Its metadata binds the exact analysis and complete cross-reference
+shared-fate, and hierarchy records. Machine-suggestion and machine-summary nodes appear when they
+directly cite, summarize, materialize, duplicate, contradict, or diverge from a selected finding;
+their generated-claim authority remains visibly distinct. Its metadata binds the exact analysis and complete cross-reference
 projection digests. The view is bounded to 40 finding chains and 500 entities; use
 `sfmea cross-reference ANALYSIS --format json` for the complete machine-readable relationship
 and discrepancy registers. Static agreement is corroboration, runtime presence is a bounded
@@ -81,6 +83,8 @@ Analysis-scope diagnostics remain in the complete JSON fabric rather than being 
 arbitrary finding; the bounded diagram selects finding-local diagnostics for its chosen chains.
 The source artifact selected for each bounded finding retains its inventory authority and digest;
 its presence does not imply that indexed or opaque content received semantic analysis.
+Likewise, a machine-assistance edge proves only that the governed record contains the supplied link
+or that bounded lexical comparison emitted the relationship; it does not validate the claim.
 
 Generated bundles contain a `binding` record for the baseline, analysis schema, and exact
 governed analysis-state SHA-256. Their `integrity` record hashes the complete canonical

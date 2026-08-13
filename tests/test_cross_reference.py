@@ -486,6 +486,153 @@ class CrossReferenceTests(unittest.TestCase):
             index["summary"]["finding_chains"],
         )
 
+    def test_cross_links_machine_claims_summaries_and_lexical_conflicts(self) -> None:
+        from jsonschema import Draft202012Validator
+
+        finding = next(
+            value
+            for value in self.analysis["items"]
+            if value["component_id"] == self.caller["id"]
+        )
+        finding["review"]["failure_mode"] = "remote service is available"
+        citation_id = self.analysis["guidance"]["citations"][0]["id"]
+        self.analysis["suggestions"] = [
+            {
+                "id": "SUG-CROSS-REFERENCE",
+                "component_id": self.caller["id"],
+                "component_reference": "app.py:caller",
+                "origin": "machine_suggestion",
+                "status": "proposed",
+                "content": {
+                    "failure_mode": "remote service is unavailable",
+                    "trigger": "dependency outage",
+                    "local_effect": "request fails",
+                    "next_higher_effect": "workflow stops",
+                },
+                "evidence_ids": [
+                    self.caller["id"],
+                    finding["id"],
+                    "UNKNOWN-EVIDENCE",
+                ],
+                "proposed_citation_ids": [citation_id, "UNKNOWN-CITATION"],
+                "confidence": "medium",
+                "provenance": {
+                    "provider": "test-provider",
+                    "model": "test-model",
+                    "prompt_version": "test-prompt",
+                    "baseline_id": self.analysis["project"]["baseline"]["id"],
+                    "response_hash": "a" * 64,
+                },
+                "reviewer": "",
+                "materialized_item_id": "",
+            }
+        ]
+        self.analysis["generated_summaries"] = [
+            {
+                "id": "SUM-CROSS-REFERENCE",
+                "group_by": "project",
+                "key": "",
+                "summary": "A bounded machine narrative for review.",
+                "evidence_ids": [finding["id"], "UNKNOWN-SUMMARY-EVIDENCE"],
+                "stale": True,
+                "provider": "test-provider",
+                "model": "test-model",
+                "prompt_version": "test-prompt",
+                "baseline_id": self.analysis["project"]["baseline"]["id"],
+                "response_hash": "b" * 64,
+            }
+        ]
+
+        index = build_cross_reference_index(self.analysis)
+        machine = index["machine_assistance_provenance"]
+        relationship_kinds = {
+            value["kind"]
+            for value in index["relationships"]
+            if value["id"] in machine["relationship_ids"]
+        }
+        chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == finding["id"]
+        )
+
+        self.assertEqual(index["summary"]["machine_suggestions"], 1)
+        self.assertEqual(index["summary"]["machine_summaries"], 1)
+        self.assertGreater(index["summary"]["machine_claim_relationships"], 0)
+        self.assertIn("lexically_contradicts_claim", relationship_kinds)
+        self.assertIn("grounded_in_supplied_evidence", relationship_kinds)
+        self.assertIn("summarizes_supplied_evidence", relationship_kinds)
+        self.assertEqual(
+            set(chain["machine_assistance_entity_ids"]),
+            {
+                "machine_suggestion:SUG-CROSS-REFERENCE",
+                "machine_summary:SUM-CROSS-REFERENCE",
+            },
+        )
+        self.assertTrue(chain["dimensions"]["machine_assistance"])
+        self.assertEqual(
+            machine["unresolved_evidence_references"],
+            [
+                "SUG-CROSS-REFERENCE:UNKNOWN-EVIDENCE",
+                "SUM-CROSS-REFERENCE:UNKNOWN-SUMMARY-EVIDENCE",
+            ],
+        )
+        self.assertEqual(
+            machine["unresolved_citation_references"],
+            ["SUG-CROSS-REFERENCE:UNKNOWN-CITATION"],
+        )
+        lead_kinds = {value["kind"] for value in index["review_leads"]}
+        self.assertIn("machine_claim_contradictions", lead_kinds)
+        self.assertIn("stale_machine_summaries", lead_kinds)
+        self.assertIn("unresolved_machine_assistance_references", lead_kinds)
+        diagram = build_diagram_models(
+            self.analysis, kind="cross_reference", cross_reference_index=index
+        )[0]
+        self.assertTrue(
+            any(value["kind"] == "machine_suggestion" for value in diagram["nodes"])
+        )
+        self.assertTrue(
+            any(value["kind"] == "machine_summary" for value in diagram["nodes"])
+        )
+        Draft202012Validator(schema_document("cross-reference")).validate(index)
+
+    def test_verifier_rejects_machine_assistance_profile_tampering(self) -> None:
+        finding = self.analysis["items"][0]
+        self.analysis["suggestions"] = [
+            {
+                "id": "SUG-TAMPER",
+                "component_id": finding["component_id"],
+                "component_reference": "app.py:caller",
+                "origin": "machine_suggestion",
+                "status": "proposed",
+                "content": {"failure_mode": "A generated failure claim."},
+                "evidence_ids": [finding["component_id"]],
+                "proposed_citation_ids": [],
+                "confidence": "low",
+                "provenance": {},
+                "reviewer": "",
+                "materialized_item_id": "",
+            }
+        ]
+        output = self.root / "fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        valid = verify_cross_reference_file(output, analysis=self.analysis)
+        self.assertTrue(valid["checks"]["machine_assistance_integrity"])
+
+        tampered = json.loads(output.read_text(encoding="utf-8"))
+        tampered["machine_assistance_provenance"]["suggestion_profiles"][0][
+            "evidence_entity_ids"
+        ] = []
+        content = dict(tampered)
+        content.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(tampered), encoding="utf-8")
+
+        rejected = verify_cross_reference_file(output, analysis=self.analysis)
+        self.assertFalse(rejected["valid"])
+        self.assertFalse(rejected["checks"]["machine_assistance_integrity"])
+        self.assertFalse(rejected["checks"]["exact_regeneration"])
+
     def test_projects_test_candidates_and_coverage_without_promoting_evidence(self) -> None:
         (self.root / "test_app.py").write_text(
             "from app import caller\n\n\ndef test_caller():\n    assert caller() == 1\n",
@@ -1020,6 +1167,25 @@ class CrossReferenceTests(unittest.TestCase):
         Draft202012Validator(schema_document("cross-reference-verification")).validate(
             verdict
         )
+
+    def test_public_schema_accepts_nested_repository_artifact_references(self) -> None:
+        from jsonschema import Draft202012Validator
+
+        nested = self.root / "nested"
+        nested.mkdir()
+        (nested / "worker.py").write_text(
+            "def work():\n    return 1\n", encoding="utf-8"
+        )
+        analysis = scan_repository(self.root)
+        fabric = build_cross_reference_index(analysis)
+
+        self.assertTrue(
+            any(
+                value["id"] == "repository_artifact:nested/worker.py"
+                for value in fabric["entities"]
+            )
+        )
+        Draft202012Validator(schema_document("cross-reference")).validate(fabric)
 
 
 if __name__ == "__main__":

@@ -517,6 +517,7 @@ def cross_reference_diagram(
                 chain.get("review_governance_profile_id", ""),
                 *chain.get("quality_diagnostic_entity_ids", []),
                 *chain.get("adapter_run_entity_ids", []),
+                *chain.get("machine_assistance_entity_ids", []),
                 *chain.get("source_repository_artifact_entity_ids", []),
                 chain.get("source_configuration_input_entity_id", ""),
             )
@@ -581,6 +582,8 @@ def cross_reference_diagram(
         "review_governance_profile": 2,
         "quality_gate_diagnostic": 2,
         "adapter_run": 2,
+        "machine_suggestion": 2,
+        "machine_summary": 2,
         "verification_readiness_profile": 3,
         "test_candidate": 3,
         "coverage_observation": 3,
@@ -631,7 +634,8 @@ def cross_reference_diagram(
                 "Bounded guidance, requirement, hazard, SFTA, component, cascade, resilience, "
                 "semantic exposure, finding, verification, execution, and evidence relationships."
                 " Source snapshots, adapter attribution, quality diagnostics, and review-governance "
-                "state retain their distinct evidence authority."
+                "state retain their distinct evidence authority. Machine-generated claims and "
+                "summaries remain explicitly non-authoritative review aids."
             ),
             "notice": (
                 f"Showing {len(chains)} of {summary['finding_chains']} finding chains and "
@@ -671,6 +675,14 @@ def cross_reference_diagram(
                 "configured_source_findings": summary["configured_source_findings"],
                 "findings_with_source_provenance": summary[
                     "findings_with_source_provenance"
+                ],
+                "machine_suggestions": summary["machine_suggestions"],
+                "machine_summaries": summary["machine_summaries"],
+                "machine_claim_relationships": summary[
+                    "machine_claim_relationships"
+                ],
+                "findings_with_machine_assistance": summary[
+                    "findings_with_machine_assistance"
                 ],
                 "compound_exposure_chains": summary["compound_exposure_chains"],
                 "review_leads": summary["review_leads"],

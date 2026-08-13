@@ -131,64 +131,69 @@ def suggestion_relationships(analysis: dict[str, Any]) -> dict[str, Any]:
     """Detect bounded duplicates, contradictions, and divergent claims."""
 
     claims = [*_existing_claims(analysis), *_suggestion_claims(analysis)]
+    claims_by_component: dict[str, list[dict[str, Any]]] = {}
+    for claim in claims:
+        claims_by_component.setdefault(claim["component_id"], []).append(claim)
     duplicates: list[dict[str, Any]] = []
     contradictions: list[dict[str, Any]] = []
     divergences: list[dict[str, Any]] = []
-    for index, left in enumerate(claims):
-        for right in claims[index + 1 :]:
-            if left["component_id"] != right["component_id"]:
-                continue
-            if left["kind"] != "suggestion" and right["kind"] != "suggestion":
-                continue
-            failure_similarity = _similarity(
-                left["content"].get("failure_mode"),
-                right["content"].get("failure_mode"),
-            )
-            if failure_similarity >= 0.84:
-                duplicates.append(
-                    {
+    for component_claims in claims_by_component.values():
+        for index, left in enumerate(component_claims):
+            for right in component_claims[index + 1 :]:
+                if left["kind"] != "suggestion" and right["kind"] != "suggestion":
+                    continue
+                failure_similarity = _similarity(
+                    left["content"].get("failure_mode"),
+                    right["content"].get("failure_mode"),
+                )
+                if failure_similarity >= 0.84:
+                    duplicates.append(
+                        {
+                            "left_id": left["id"],
+                            "right_id": right["id"],
+                            "component_id": left["component_id"],
+                            "similarity": round(failure_similarity, 4),
+                            "reason": "high token overlap in the normalized failure-mode claim",
+                        }
+                    )
+                if failure_similarity < 0.35:
+                    continue
+                for field in _CLAIM_FIELDS:
+                    left_value = left["content"].get(field, "")
+                    right_value = right["content"].get(field, "")
+                    if not left_value or not right_value:
+                        continue
+                    conflict = _polarity_conflict(left_value, right_value)
+                    record = {
                         "left_id": left["id"],
                         "right_id": right["id"],
                         "component_id": left["component_id"],
-                        "similarity": round(failure_similarity, 4),
-                        "reason": "high token overlap in the normalized failure-mode claim",
+                        "field": field,
+                        "left_claim": str(left_value),
+                        "right_claim": str(right_value),
+                        "evidence_overlap": sorted(
+                            set(left["evidence_ids"]) & set(right["evidence_ids"])
+                        ),
                     }
-                )
-            if failure_similarity < 0.35:
-                continue
-            for field in _CLAIM_FIELDS:
-                left_value = left["content"].get(field, "")
-                right_value = right["content"].get(field, "")
-                if not left_value or not right_value:
-                    continue
-                conflict = _polarity_conflict(left_value, right_value)
-                record = {
-                    "left_id": left["id"],
-                    "right_id": right["id"],
-                    "component_id": left["component_id"],
-                    "field": field,
-                    "left_claim": str(left_value),
-                    "right_claim": str(right_value),
-                    "evidence_overlap": sorted(
-                        set(left["evidence_ids"]) & set(right["evidence_ids"])
-                    ),
-                }
-                if conflict:
-                    contradictions.append(
-                        {
-                            **record,
-                            "reason": conflict,
-                            "classification": "lexical_contradiction_review_required",
-                        }
-                    )
-                elif field != "failure_mode" and _similarity(left_value, right_value) < 0.2:
-                    divergences.append(
-                        {
-                            **record,
-                            "reason": "materially different claims for a related failure mode",
-                            "classification": "divergent_claim_review_required",
-                        }
-                    )
+                    if conflict:
+                        contradictions.append(
+                            {
+                                **record,
+                                "reason": conflict,
+                                "classification": "lexical_contradiction_review_required",
+                            }
+                        )
+                    elif (
+                        field != "failure_mode"
+                        and _similarity(left_value, right_value) < 0.2
+                    ):
+                        divergences.append(
+                            {
+                                **record,
+                                "reason": "materially different claims for a related failure mode",
+                                "classification": "divergent_claim_review_required",
+                            }
+                        )
     return {
         "format": "pysfmea-suggestion-relationships-1",
         "duplicates": duplicates[:MAX_SYNTHESIS_ENTRIES],

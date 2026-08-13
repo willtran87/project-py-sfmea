@@ -1139,11 +1139,22 @@ def _cross_reference_schema() -> dict[str, Any]:
     digest = {"type": "string", "pattern": r"^[0-9a-f]{64}$"}
     identifier = _identifier_schema()
     text = {"type": "string", "maxLength": 20_000}
+    entity_reference = {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20_000,
+    }
     string_list = {
         "type": "array",
         "maxItems": 100_000,
         "uniqueItems": True,
-        "items": identifier,
+        "items": entity_reference,
+    }
+    text_list = {
+        "type": "array",
+        "maxItems": 100_000,
+        "uniqueItems": True,
+        "items": text,
     }
     metadata = {
         "type": "object",
@@ -1160,7 +1171,7 @@ def _cross_reference_schema() -> dict[str, Any]:
         },
     }
     entity_properties = {
-        "id": identifier,
+        "id": entity_reference,
         "raw_id": text,
         "kind": identifier,
         "label": text,
@@ -1169,8 +1180,8 @@ def _cross_reference_schema() -> dict[str, Any]:
     }
     relationship_properties = {
         "id": identifier,
-        "source": identifier,
-        "target": identifier,
+        "source": entity_reference,
+        "target": entity_reference,
         "kind": identifier,
         "channel": identifier,
         "authority": text,
@@ -1217,6 +1228,7 @@ def _cross_reference_schema() -> dict[str, Any]:
             "verification_readiness",
             "quality_governance",
             "tool_provenance",
+            "machine_assistance",
         ],
         "properties": {
             name: {"type": "boolean"}
@@ -1237,6 +1249,7 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "verification_readiness",
                 "quality_governance",
                 "tool_provenance",
+                "machine_assistance",
             )
         },
         "additionalProperties": False,
@@ -1383,6 +1396,88 @@ def _cross_reference_schema() -> dict[str, Any]:
         "inventory_truncated": {"type": "boolean"},
         "notice": text,
     }
+    machine_suggestion_profile_properties = {
+        "id": identifier,
+        "suggestion_id": identifier,
+        "component_id": identifier,
+        "status": identifier,
+        "confidence": identifier,
+        "evidence_entity_ids": string_list,
+        "citation_entity_ids": string_list,
+        "materialized_finding_entity_id": {"type": "string", "maxLength": 20_000},
+        "claim_relationship_ids": string_list,
+        "relationship_ids": string_list,
+        "unresolved_evidence_ids": text_list,
+        "unresolved_citation_ids": text_list,
+        "notice": text,
+    }
+    machine_summary_profile_properties = {
+        "id": identifier,
+        "summary_id": identifier,
+        "group_by": {"enum": ["project", "subsystem", "hazard", "component"]},
+        "key": text,
+        "stale": {"type": "boolean"},
+        "scope_entity_id": {"type": "string", "maxLength": 20_000},
+        "evidence_entity_ids": string_list,
+        "unresolved_evidence_ids": text_list,
+        "relationship_ids": string_list,
+        "notice": text,
+    }
+    machine_assistance_properties = {
+        "suggestion_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(machine_suggestion_profile_properties),
+                "properties": machine_suggestion_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "summary_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(machine_summary_profile_properties),
+                "properties": machine_summary_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "claim_relationship_ids": string_list,
+        "relationship_ids": string_list,
+        "unresolved_evidence_references": text_list,
+        "unresolved_citation_references": text_list,
+        "stale_summary_entity_ids": string_list,
+        "lexical_analysis": {
+            "type": "object",
+            "required": ["format", "summary", "notice"],
+            "properties": {
+                "format": {"const": "pysfmea-suggestion-relationships-1"},
+                "summary": {
+                    "type": "object",
+                    "required": [
+                        "claims",
+                        "duplicates",
+                        "contradictions",
+                        "divergences",
+                        "truncated",
+                    ],
+                    "properties": {
+                        "claims": {"type": "integer", "minimum": 0},
+                        "duplicates": {"type": "integer", "minimum": 0},
+                        "contradictions": {"type": "integer", "minimum": 0},
+                        "divergences": {"type": "integer", "minimum": 0},
+                        "truncated": {"type": "boolean"},
+                    },
+                    "additionalProperties": False,
+                },
+                "notice": text,
+            },
+            "additionalProperties": False,
+        },
+        "notice": text,
+    }
     chain_properties = {
         "finding_id": identifier,
         "component_id": identifier,
@@ -1447,6 +1542,8 @@ def _cross_reference_schema() -> dict[str, Any]:
         "adapter_run_entity_ids": string_list,
         "adapter_provenance_relationship_ids": string_list,
         "adapter_statuses": adapter_status_map,
+        "machine_assistance_entity_ids": string_list,
+        "machine_assistance_relationship_ids": string_list,
         "dimensions": dimensions,
         "linkage_completeness_percent": {
             "type": "number",
@@ -1525,6 +1622,21 @@ def _cross_reference_schema() -> dict[str, Any]:
             "type": "integer",
             "minimum": 0,
         },
+        "machine_suggestions": {"type": "integer", "minimum": 0},
+        "proposed_machine_suggestions": {"type": "integer", "minimum": 0},
+        "machine_summaries": {"type": "integer", "minimum": 0},
+        "stale_machine_summaries": {"type": "integer", "minimum": 0},
+        "machine_claim_relationships": {"type": "integer", "minimum": 0},
+        "machine_assistance_relationships": {"type": "integer", "minimum": 0},
+        "machine_assistance_unresolved_evidence_references": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "machine_assistance_unresolved_citation_references": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "findings_with_machine_assistance": {"type": "integer", "minimum": 0},
         "compound_exposure_chains": {"type": "integer", "minimum": 0},
         "finding_chains": {"type": "integer", "minimum": 0},
         "active_finding_chains": {"type": "integer", "minimum": 0},
@@ -1545,6 +1657,8 @@ def _cross_reference_schema() -> dict[str, Any]:
         "source_change_states": integer_map,
         "adapter_run_statuses": integer_map,
         "repository_artifact_statuses": integer_map,
+        "machine_suggestion_statuses": integer_map,
+        "machine_claim_relationship_types": integer_map,
         "omitted_by_bound": integer_map,
     }
     properties = {
@@ -1634,6 +1748,12 @@ def _cross_reference_schema() -> dict[str, Any]:
             "type": "object",
             "required": list(repository_provenance_properties),
             "properties": repository_provenance_properties,
+            "additionalProperties": False,
+        },
+        "machine_assistance_provenance": {
+            "type": "object",
+            "required": list(machine_assistance_properties),
+            "properties": machine_assistance_properties,
             "additionalProperties": False,
         },
         "finding_chains": {

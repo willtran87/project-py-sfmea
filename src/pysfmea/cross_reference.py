@@ -22,6 +22,7 @@ from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_document
 from .model import stable_id
 from .sfta import build_sfta
+from .synthesis import suggestion_relationships
 from .validation import validate_analysis
 from .version import __version__
 
@@ -38,6 +39,7 @@ CROSS_REFERENCE_VERIFICATION_CHECKS = (
     "review_governance_integrity",
     "adapter_provenance_integrity",
     "repository_provenance_integrity",
+    "machine_assistance_integrity",
     "finding_chain_integrity",
     "review_lead_integrity",
     "summary_reconciliation",
@@ -2661,7 +2663,422 @@ def build_cross_reference_index(
             1,
         )
 
+    # Machine-generated suggestions and summaries remain non-authoritative claims, but their
+    # provenance and deterministic lexical relationships are still useful review evidence.
+    machine_suggestion_profiles: list[dict[str, Any]] = []
+    machine_summary_profiles: list[dict[str, Any]] = []
+    machine_assistance_relationship_ids: set[str] = set()
+    machine_claim_relationship_ids: set[str] = set()
+    machine_entities_by_finding: dict[str, set[str]] = defaultdict(set)
+    machine_relationships_by_finding: dict[str, set[str]] = defaultdict(set)
+    unresolved_machine_evidence_references: list[str] = []
+    unresolved_machine_citation_references: list[str] = []
+    unresolved_machine_entity_ids: set[str] = set()
+    suggestion_entity_by_raw_id: dict[str, str] = {}
+    finding_ids = {str(value.get("finding_id", "")) for value in finding_chains}
+
+    def resolve_machine_evidence(raw_id: str) -> str:
+        if raw_id in finding_ids:
+            return _entity_id("finding", raw_id)
+        if raw_id in components:
+            return _entity_id("component", raw_id)
+        return ""
+
+    for suggestion in analysis.get("suggestions", []):
+        if not isinstance(suggestion, dict) or not suggestion.get("id"):
+            continue
+        suggestion_id = str(suggestion["id"])
+        component_id = str(suggestion.get("component_id", ""))
+        provenance = suggestion.get("provenance", {})
+        if not isinstance(provenance, dict):
+            provenance = {}
+        content = suggestion.get("content", {})
+        if not isinstance(content, dict):
+            content = {}
+        suggestion_entity = add_entity(
+            "machine_suggestion",
+            suggestion_id,
+            content.get("failure_mode") or suggestion_id,
+            authority="machine_generated_claim_requires_human_review",
+            metadata={
+                "status": str(suggestion.get("status", "proposed")),
+                "confidence": str(suggestion.get("confidence", "low")),
+                "origin": str(suggestion.get("origin", "machine_suggestion")),
+                "provider": str(provenance.get("provider", "")),
+                "model": str(provenance.get("model", "")),
+                "prompt_version": str(provenance.get("prompt_version", "")),
+                "baseline_id": str(provenance.get("baseline_id", "")),
+                "response_hash": str(provenance.get("response_hash", "")),
+                "reviewer": str(suggestion.get("reviewer", "")),
+            },
+        )
+        suggestion_entity_by_raw_id[suggestion_id] = suggestion_entity
+        suggestion_relationship_id_set: set[str] = set()
+        suggestion_evidence_entity_ids: set[str] = set()
+        suggestion_citation_entity_ids: set[str] = set()
+        suggestion_unresolved_evidence_ids: list[str] = []
+        suggestion_unresolved_citation_ids: list[str] = []
+        if component_id in components:
+            relation_id = add_relation(
+                suggestion_entity,
+                _entity_id("component", component_id),
+                "proposes_failure_mode_for",
+                "machine_assistance",
+                authority="machine_generated_claim_requires_human_review",
+            )
+            if relation_id in relationships:
+                suggestion_relationship_id_set.add(relation_id)
+                machine_assistance_relationship_ids.add(relation_id)
+        for evidence_id in _text_values(suggestion.get("evidence_ids")):
+            evidence_entity = resolve_machine_evidence(evidence_id)
+            if not evidence_entity:
+                suggestion_unresolved_evidence_ids.append(evidence_id)
+                unresolved_machine_evidence_references.append(
+                    f"{suggestion_id}:{evidence_id}"
+                )
+                unresolved_machine_entity_ids.add(suggestion_entity)
+                continue
+            suggestion_evidence_entity_ids.add(evidence_entity)
+            relation_id = add_relation(
+                suggestion_entity,
+                evidence_entity,
+                "grounded_in_supplied_evidence",
+                "machine_assistance",
+                authority="provider_selected_allowlisted_evidence_reference",
+            )
+            if relation_id in relationships:
+                suggestion_relationship_id_set.add(relation_id)
+                machine_assistance_relationship_ids.add(relation_id)
+                if evidence_id in finding_ids:
+                    machine_entities_by_finding[evidence_id].add(suggestion_entity)
+                    machine_relationships_by_finding[evidence_id].add(relation_id)
+        for citation_id in _text_values(suggestion.get("proposed_citation_ids")):
+            citation_entity = _entity_id("citation", citation_id)
+            if citation_entity not in entities:
+                suggestion_unresolved_citation_ids.append(citation_id)
+                unresolved_machine_citation_references.append(
+                    f"{suggestion_id}:{citation_id}"
+                )
+                unresolved_machine_entity_ids.add(suggestion_entity)
+                continue
+            suggestion_citation_entity_ids.add(citation_entity)
+            relation_id = add_relation(
+                suggestion_entity,
+                citation_entity,
+                "proposes_guidance_reference",
+                "machine_assistance",
+                authority="machine_proposed_guidance_relevance_requires_human_review",
+            )
+            if relation_id in relationships:
+                suggestion_relationship_id_set.add(relation_id)
+                machine_assistance_relationship_ids.add(relation_id)
+        materialized_finding_id = str(suggestion.get("materialized_item_id", ""))
+        materialized_finding_entity = ""
+        if materialized_finding_id in finding_ids:
+            materialized_finding_entity = _entity_id(
+                "finding", materialized_finding_id
+            )
+            relation_id = add_relation(
+                suggestion_entity,
+                materialized_finding_entity,
+                "materialized_as_unreviewed_finding",
+                "machine_assistance",
+                authority="human_accepted_suggestion_preserving_machine_provenance",
+            )
+            if relation_id in relationships:
+                suggestion_relationship_id_set.add(relation_id)
+                machine_assistance_relationship_ids.add(relation_id)
+                machine_entities_by_finding[materialized_finding_id].add(
+                    suggestion_entity
+                )
+                machine_relationships_by_finding[materialized_finding_id].add(
+                    relation_id
+                )
+        machine_suggestion_profiles.append(
+            {
+                "id": suggestion_entity,
+                "suggestion_id": suggestion_id,
+                "component_id": component_id,
+                "status": str(suggestion.get("status", "proposed")),
+                "confidence": str(suggestion.get("confidence", "low")),
+                "evidence_entity_ids": sorted(suggestion_evidence_entity_ids),
+                "citation_entity_ids": sorted(suggestion_citation_entity_ids),
+                "materialized_finding_entity_id": materialized_finding_entity,
+                "claim_relationship_ids": [],
+                "relationship_ids": sorted(suggestion_relationship_id_set),
+                "unresolved_evidence_ids": sorted(
+                    set(suggestion_unresolved_evidence_ids)
+                ),
+                "unresolved_citation_ids": sorted(
+                    set(suggestion_unresolved_citation_ids)
+                ),
+                "notice": (
+                    "This is a machine-generated claim and evidence-link projection. Human "
+                    "acceptance materializes an unreviewed finding; it does not approve the "
+                    "claim, citation, risk, or evidence sufficiency."
+                ),
+            }
+        )
+
+    claim_entity_by_raw_id = {
+        **{finding_id: _entity_id("finding", finding_id) for finding_id in finding_ids},
+        **suggestion_entity_by_raw_id,
+    }
+    claim_relationships = suggestion_relationships(analysis)
+    relation_kind_by_collection = {
+        "duplicates": "lexically_duplicates_claim",
+        "contradictions": "lexically_contradicts_claim",
+        "divergences": "lexically_diverges_from_claim",
+    }
+    claim_relationships_by_suggestion: dict[str, set[str]] = defaultdict(set)
+    claim_lead_subjects: dict[str, set[str]] = defaultdict(set)
+    for collection, relation_kind in relation_kind_by_collection.items():
+        for record in claim_relationships.get(collection, []):
+            if not isinstance(record, dict):
+                continue
+            left_raw_id = str(record.get("left_id", ""))
+            right_raw_id = str(record.get("right_id", ""))
+            left_entity = claim_entity_by_raw_id.get(left_raw_id, "")
+            right_entity = claim_entity_by_raw_id.get(right_raw_id, "")
+            if not left_entity or not right_entity:
+                continue
+            field = str(record.get("field", "failure_mode"))
+            relation_id = add_relation(
+                left_entity,
+                right_entity,
+                relation_kind,
+                f"machine_claim_comparison:{field}",
+                authority="bounded_deterministic_lexical_comparison_review_lead",
+                evidence_ids=_text_values(record.get("evidence_overlap")),
+                metadata={
+                    key: record[key]
+                    for key in ("field", "similarity", "reason", "classification")
+                    if key in record
+                },
+            )
+            if relation_id not in relationships:
+                continue
+            machine_claim_relationship_ids.add(relation_id)
+            machine_assistance_relationship_ids.add(relation_id)
+            claim_lead_subjects[collection].update({left_entity, right_entity})
+            for raw_id in (left_raw_id, right_raw_id):
+                if raw_id in suggestion_entity_by_raw_id:
+                    claim_relationships_by_suggestion[raw_id].add(relation_id)
+                if raw_id in finding_ids:
+                    other_entity = right_entity if raw_id == left_raw_id else left_entity
+                    machine_entities_by_finding[raw_id].add(other_entity)
+                    machine_relationships_by_finding[raw_id].add(relation_id)
+    for profile in machine_suggestion_profiles:
+        suggestion_id = str(profile["suggestion_id"])
+        claim_relation_ids = claim_relationships_by_suggestion.get(
+            suggestion_id, set()
+        )
+        profile["claim_relationship_ids"] = sorted(claim_relation_ids)
+        profile["relationship_ids"] = sorted(
+            {*_text_values(profile.get("relationship_ids")), *claim_relation_ids}
+        )
+
+    component_id_by_qualname = {
+        str(component.get("qualname", "")): component_id
+        for component_id, component in components.items()
+        if component.get("qualname")
+    }
+    stale_machine_summary_entity_ids: set[str] = set()
+    for summary_record in analysis.get("generated_summaries", []):
+        if not isinstance(summary_record, dict) or not summary_record.get("id"):
+            continue
+        summary_id = str(summary_record["id"])
+        group_by = str(summary_record.get("group_by", "project"))
+        key = str(summary_record.get("key", ""))
+        summary_entity = add_entity(
+            "machine_summary",
+            summary_id,
+            summary_record.get("summary") or summary_id,
+            authority="machine_generated_summary_requires_human_review",
+            metadata={
+                "group_by": group_by,
+                "key": key,
+                "stale": bool(summary_record.get("stale")),
+                "provider": str(summary_record.get("provider", "")),
+                "model": str(summary_record.get("model", "")),
+                "prompt_version": str(summary_record.get("prompt_version", "")),
+                "baseline_id": str(summary_record.get("baseline_id", "")),
+                "response_hash": str(summary_record.get("response_hash", "")),
+            },
+        )
+        if summary_record.get("stale"):
+            stale_machine_summary_entity_ids.add(summary_entity)
+        scope_entity = ""
+        if group_by == "project":
+            scope_entity = analysis_scope_entity
+        elif group_by == "component":
+            component_id = key if key in components else component_id_by_qualname.get(key, "")
+            if component_id:
+                scope_entity = _entity_id("component", component_id)
+        elif group_by == "hazard" and _entity_id("hazard", key) in entities:
+            scope_entity = _entity_id("hazard", key)
+        elif group_by == "subsystem" and key:
+            scope_entity = add_entity(
+                "subsystem",
+                key,
+                key,
+                authority="repository_static_subsystem_grouping",
+            )
+        summary_relationship_id_set: set[str] = set()
+        if scope_entity:
+            relation_id = add_relation(
+                summary_entity,
+                scope_entity,
+                "summarizes_scope",
+                "machine_assistance",
+                authority="machine_generated_summary_requires_human_review",
+            )
+            if relation_id in relationships:
+                summary_relationship_id_set.add(relation_id)
+                machine_assistance_relationship_ids.add(relation_id)
+        summary_evidence_entity_ids: set[str] = set()
+        summary_unresolved_evidence_ids: list[str] = []
+        for evidence_id in _text_values(summary_record.get("evidence_ids")):
+            evidence_entity = resolve_machine_evidence(evidence_id)
+            if not evidence_entity:
+                summary_unresolved_evidence_ids.append(evidence_id)
+                unresolved_machine_evidence_references.append(
+                    f"{summary_id}:{evidence_id}"
+                )
+                unresolved_machine_entity_ids.add(summary_entity)
+                continue
+            summary_evidence_entity_ids.add(evidence_entity)
+            relation_id = add_relation(
+                summary_entity,
+                evidence_entity,
+                "summarizes_supplied_evidence",
+                "machine_assistance",
+                authority="provider_selected_allowlisted_evidence_reference",
+            )
+            if relation_id in relationships:
+                summary_relationship_id_set.add(relation_id)
+                machine_assistance_relationship_ids.add(relation_id)
+                if evidence_id in finding_ids:
+                    machine_entities_by_finding[evidence_id].add(summary_entity)
+                    machine_relationships_by_finding[evidence_id].add(relation_id)
+        machine_summary_profiles.append(
+            {
+                "id": summary_entity,
+                "summary_id": summary_id,
+                "group_by": group_by,
+                "key": key,
+                "stale": bool(summary_record.get("stale")),
+                "scope_entity_id": scope_entity,
+                "evidence_entity_ids": sorted(summary_evidence_entity_ids),
+                "unresolved_evidence_ids": sorted(
+                    set(summary_unresolved_evidence_ids)
+                ),
+                "relationship_ids": sorted(summary_relationship_id_set),
+                "notice": (
+                    "This narrative is machine generated from bounded evidence references. "
+                    "It is not an engineering conclusion, approval, or risk-acceptance record."
+                ),
+            }
+        )
+
+    for chain in finding_chains:
+        finding_id = str(chain.get("finding_id", ""))
+        chain["machine_assistance_entity_ids"] = sorted(
+            machine_entities_by_finding.get(finding_id, set())
+        )
+        chain["machine_assistance_relationship_ids"] = sorted(
+            machine_relationships_by_finding.get(finding_id, set())
+        )
+        chain["dimensions"]["machine_assistance"] = bool(
+            chain["machine_assistance_entity_ids"]
+        )
+        chain["linkage_completeness_percent"] = round(
+            100 * sum(chain["dimensions"].values()) / len(chain["dimensions"]), 1
+        )
+
     review_leads: list[dict[str, Any]] = []
+    proposed_suggestion_entities = [
+        profile["id"]
+        for profile in machine_suggestion_profiles
+        if profile.get("status") == "proposed"
+    ]
+    if proposed_suggestion_entities:
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "proposed_machine_suggestions"),
+                "kind": "proposed_machine_suggestions",
+                "priority": "medium",
+                "subject_ids": proposed_suggestion_entities[:25],
+                "affected_count": len(proposed_suggestion_entities),
+                "subject_ids_omitted": max(0, len(proposed_suggestion_entities) - 25),
+                "description": (
+                    f"{len(proposed_suggestion_entities)} machine-generated suggestion(s) "
+                    "await explicit human adjudication. Evidence and citations are proposed "
+                    "links only and do not establish correctness or compliance."
+                ),
+            }
+        )
+    for collection, priority in (
+        ("duplicates", "medium"),
+        ("contradictions", "high"),
+        ("divergences", "medium"),
+    ):
+        subjects = sorted(claim_lead_subjects.get(collection, set()))
+        count = _safe_int(claim_relationships.get("summary", {}).get(collection, 0))
+        if not count:
+            continue
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "machine_claim_relationship", collection),
+                "kind": f"machine_claim_{collection}",
+                "priority": priority,
+                "subject_ids": subjects[:25],
+                "affected_count": count,
+                "subject_ids_omitted": max(0, len(subjects) - 25),
+                "description": (
+                    f"Deterministic bounded lexical comparison identified {count} machine-"
+                    f"assisted claim {collection}. Review the linked claims and source "
+                    "evidence; lexical comparison does not determine which claim is correct."
+                ),
+            }
+        )
+    if stale_machine_summary_entity_ids:
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "stale_machine_summaries"),
+                "kind": "stale_machine_summaries",
+                "priority": "medium",
+                "subject_ids": sorted(stale_machine_summary_entity_ids)[:25],
+                "affected_count": len(stale_machine_summary_entity_ids),
+                "subject_ids_omitted": max(
+                    0, len(stale_machine_summary_entity_ids) - 25
+                ),
+                "description": (
+                    "Machine-generated summaries marked stale must be regenerated or excluded "
+                    "from current review decisions."
+                ),
+            }
+        )
+    unresolved_machine_entities = sorted(unresolved_machine_entity_ids)
+    unresolved_machine_reference_count = len(unresolved_machine_evidence_references) + len(
+        unresolved_machine_citation_references
+    )
+    if unresolved_machine_reference_count:
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "unresolved_machine_assistance_references"),
+                "kind": "unresolved_machine_assistance_references",
+                "priority": "high",
+                "subject_ids": unresolved_machine_entities[:25],
+                "affected_count": unresolved_machine_reference_count,
+                "subject_ids_omitted": max(0, len(unresolved_machine_entities) - 25),
+                "description": (
+                    f"{unresolved_machine_reference_count} machine-assistance evidence or "
+                    "citation reference(s) do not resolve to the governed fabric. Exclude them "
+                    "from review decisions until their provenance is repaired."
+                ),
+            }
+        )
     if opaque_repository_artifact_entity_ids:
         review_leads.append(
             {
@@ -3032,6 +3449,8 @@ def build_cross_reference_index(
     verification_readiness_profiles.sort(key=lambda value: value["finding_id"])
     review_governance_profiles.sort(key=lambda value: value["finding_id"])
     adapter_provenance_profiles.sort(key=lambda value: value["adapter_id"])
+    machine_suggestion_profiles.sort(key=lambda value: value["suggestion_id"])
+    machine_summary_profiles.sort(key=lambda value: value["summary_id"])
     classification_counts = Counter(value["classification"] for value in fusions)
     validation_findings = [
         value
@@ -3129,6 +3548,27 @@ def build_cross_reference_index(
             ),
             "repository_provenance_relationships": len(
                 repository_provenance_relationship_ids
+            ),
+            "machine_suggestions": len(machine_suggestion_profiles),
+            "proposed_machine_suggestions": sum(
+                value.get("status") == "proposed"
+                for value in machine_suggestion_profiles
+            ),
+            "machine_summaries": len(machine_summary_profiles),
+            "stale_machine_summaries": len(stale_machine_summary_entity_ids),
+            "machine_claim_relationships": len(machine_claim_relationship_ids),
+            "machine_assistance_relationships": len(
+                machine_assistance_relationship_ids
+            ),
+            "machine_assistance_unresolved_evidence_references": len(
+                unresolved_machine_evidence_references
+            ),
+            "machine_assistance_unresolved_citation_references": len(
+                unresolved_machine_citation_references
+            ),
+            "findings_with_machine_assistance": sum(
+                bool(value.get("machine_assistance_entity_ids"))
+                for value in finding_chains
             ),
             "compound_exposure_chains": sum(
                 bool(value.get("compound_exposure_kinds"))
@@ -3244,6 +3684,21 @@ def build_cross_reference_index(
                     ).items()
                 )
             ),
+            "machine_suggestion_statuses": dict(
+                sorted(
+                    Counter(
+                        value["status"] for value in machine_suggestion_profiles
+                    ).items()
+                )
+            ),
+            "machine_claim_relationship_types": dict(
+                sorted(
+                    Counter(
+                        str(relationships[value].get("kind", ""))
+                        for value in machine_claim_relationship_ids
+                    ).items()
+                )
+            ),
             "omitted_by_bound": dict(sorted(omitted.items())),
         },
         "entities": entities_list,
@@ -3323,6 +3778,30 @@ def build_cross_reference_index(
                 "source completeness, dependency safety, or analytical correctness."
             ),
         },
+        "machine_assistance_provenance": {
+            "suggestion_profiles": machine_suggestion_profiles,
+            "summary_profiles": machine_summary_profiles,
+            "claim_relationship_ids": sorted(machine_claim_relationship_ids),
+            "relationship_ids": sorted(machine_assistance_relationship_ids),
+            "unresolved_evidence_references": sorted(
+                set(unresolved_machine_evidence_references)
+            ),
+            "unresolved_citation_references": sorted(
+                set(unresolved_machine_citation_references)
+            ),
+            "stale_summary_entity_ids": sorted(stale_machine_summary_entity_ids),
+            "lexical_analysis": {
+                "format": str(claim_relationships.get("format", "")),
+                "summary": claim_relationships.get("summary", {}),
+                "notice": str(claim_relationships.get("notice", "")),
+            },
+            "notice": (
+                "Machine suggestions and summaries are untrusted, non-authoritative review "
+                "aids. Links preserve supplied evidence, proposed guidance, human "
+                "materialization, and bounded lexical comparisons without approving claims, "
+                "risk, evidence sufficiency, or compliance."
+            ),
+        },
         "finding_chains": finding_chains,
         "review_leads": review_leads,
         "limitations": [
@@ -3336,6 +3815,7 @@ def build_cross_reference_index(
             "Review-governance profiles cross-reference deterministic quality diagnostics, source change, revalidation, disposition, and assurance next actions; diagnostics are workflow conditions, not software-failure evidence.",
             "Adapter provenance links normalized contribution identities to integrity-bound adapter runs and the run manifest; tool attribution does not establish correctness, completeness, qualification, or independence.",
             "Repository provenance links source paths, inventory snapshots, dependencies, contracts, components, and findings without promoting indexed or opaque artifacts to semantic-analysis evidence.",
+            "Machine-assistance provenance preserves bounded suggestion, summary, evidence, citation, materialization, and lexical-comparison links; generated text and deterministic text similarity remain review aids, not authoritative engineering conclusions.",
             "Linkage completeness is an accounting measure, not verification success or risk acceptance.",
         ],
     }
@@ -3387,6 +3867,15 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         "components_with_source_provenance",
         "findings_with_source_provenance",
         "repository_provenance_relationships",
+        "machine_suggestions",
+        "proposed_machine_suggestions",
+        "machine_summaries",
+        "stale_machine_summaries",
+        "machine_claim_relationships",
+        "machine_assistance_relationships",
+        "machine_assistance_unresolved_evidence_references",
+        "machine_assistance_unresolved_citation_references",
+        "findings_with_machine_assistance",
         "compound_exposure_chains",
         "finding_chains",
         "multi_source_fusions",
@@ -3527,6 +4016,32 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         [
             "",
             "Source-path linkage preserves inventory status and content identity; indexed or opaque files are not promoted to semantic-analysis evidence.",
+        ]
+    )
+    lines.extend(
+        [
+            "",
+            "## Machine-assistance provenance",
+            "",
+            "| Suggestion status | Suggestions |",
+            "|---|---:|",
+        ]
+    )
+    for key, value in summary.get("machine_suggestion_statuses", {}).items():
+        lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "| Lexical relationship | Relationships |",
+            "|---|---:|",
+        ]
+    )
+    for key, value in summary.get("machine_claim_relationship_types", {}).items():
+        lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "Generated claims, narratives, citation proposals, and lexical similarity are review aids only; they cannot approve a finding, evidence, risk, or compliance conclusion.",
         ]
     )
     lines.extend(["", "## Prioritized review leads", ""])
@@ -4107,6 +4622,349 @@ def verify_cross_reference_file(
                 "cross_reference.repository_provenance_integrity_invalid",
                 "Repository provenance must reconcile the inventory, artifact, source, dependency, contract, and exclusion relationships.",
             )
+
+        machine_assistance = value.get("machine_assistance_provenance")
+        machine_assistance_data = (
+            machine_assistance if isinstance(machine_assistance, dict) else {}
+        )
+        suggestion_profiles = machine_assistance_data.get("suggestion_profiles")
+        summary_profiles = machine_assistance_data.get("summary_profiles")
+        machine_suggestion_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "machine_suggestion"
+        }
+        machine_summary_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "machine_summary"
+        }
+        machine_channel_relationship_ids = {
+            relation_id
+            for relation_id, relation in relationships_by_id.items()
+            if relation.get("channel") == "machine_assistance"
+            or str(relation.get("channel", "")).startswith(
+                "machine_claim_comparison:"
+            )
+        }
+        machine_claim_relation_ids = {
+            relation_id
+            for relation_id in machine_channel_relationship_ids
+            if relationships_by_id[relation_id].get("kind")
+            in {
+                "lexically_duplicates_claim",
+                "lexically_contradicts_claim",
+                "lexically_diverges_from_claim",
+            }
+        }
+        declared_machine_relationship_ids = set(
+            _text_values(machine_assistance_data.get("relationship_ids"))
+        )
+        declared_claim_relationship_ids = set(
+            _text_values(machine_assistance_data.get("claim_relationship_ids"))
+        )
+
+        def machine_suggestion_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            entity_id = str(profile.get("id", ""))
+            suggestion_id = str(profile.get("suggestion_id", ""))
+            profile_relationship_ids = set(
+                _text_values(profile.get("relationship_ids"))
+            )
+            expected_relationship_ids = {
+                relation_id
+                for relation_id in machine_channel_relationship_ids
+                if relationships_by_id[relation_id].get("source") == entity_id
+                or (
+                    relation_id in machine_claim_relation_ids
+                    and relationships_by_id[relation_id].get("target") == entity_id
+                )
+            }
+            expected_evidence_entity_ids = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "grounded_in_supplied_evidence"
+            }
+            expected_citation_entity_ids = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "proposes_guidance_reference"
+            }
+            expected_materialized_entities = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "materialized_as_unreviewed_finding"
+            }
+            expected_claim_relationship_ids = (
+                expected_relationship_ids & machine_claim_relation_ids
+            )
+            materialized = str(profile.get("materialized_finding_entity_id", ""))
+            metadata = entities_by_id.get(entity_id, {}).get("metadata", {})
+            return bool(
+                entity_id in machine_suggestion_entity_ids
+                and entities_by_id[entity_id].get("raw_id") == suggestion_id
+                and profile.get("component_id") in component_ids
+                and metadata.get("status") == profile.get("status")
+                and metadata.get("confidence") == profile.get("confidence")
+                and set(_text_values(profile.get("evidence_entity_ids")))
+                == expected_evidence_entity_ids
+                and all(
+                    entities_by_id[target].get("kind") in {"component", "finding"}
+                    for target in _text_values(profile.get("evidence_entity_ids"))
+                )
+                and set(_text_values(profile.get("citation_entity_ids")))
+                == expected_citation_entity_ids
+                and all(
+                    entities_by_id[target].get("kind") == "citation"
+                    for target in _text_values(profile.get("citation_entity_ids"))
+                )
+                and (not materialized or materialized in entity_id_set)
+                and (
+                    not materialized
+                    or entities_by_id[materialized].get("kind") == "finding"
+                )
+                and expected_materialized_entities
+                == ({materialized} if materialized else set())
+                and set(_text_values(profile.get("claim_relationship_ids")))
+                == expected_claim_relationship_ids
+                and profile_relationship_ids == expected_relationship_ids
+                and all(
+                    isinstance(raw_id, str) and raw_id
+                    for raw_id in profile.get("unresolved_evidence_ids", [])
+                )
+                and all(
+                    isinstance(raw_id, str) and raw_id
+                    for raw_id in profile.get("unresolved_citation_ids", [])
+                )
+            )
+
+        def machine_summary_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            entity_id = str(profile.get("id", ""))
+            summary_id = str(profile.get("summary_id", ""))
+            scope_entity_id = str(profile.get("scope_entity_id", ""))
+            profile_relationship_ids = set(
+                _text_values(profile.get("relationship_ids"))
+            )
+            expected_relationship_ids = {
+                relation_id
+                for relation_id in machine_channel_relationship_ids
+                if relationships_by_id[relation_id].get("source") == entity_id
+            }
+            expected_evidence_entity_ids = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "summarizes_supplied_evidence"
+            }
+            expected_scope_entities = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind") == "summarizes_scope"
+            }
+            metadata = entities_by_id.get(entity_id, {}).get("metadata", {})
+            return bool(
+                entity_id in machine_summary_entity_ids
+                and entities_by_id[entity_id].get("raw_id") == summary_id
+                and profile.get("group_by")
+                in {"project", "subsystem", "hazard", "component"}
+                and metadata.get("group_by") == profile.get("group_by")
+                and metadata.get("key") == profile.get("key")
+                and metadata.get("stale") is profile.get("stale")
+                and (not scope_entity_id or scope_entity_id in entity_id_set)
+                and expected_scope_entities
+                == ({scope_entity_id} if scope_entity_id else set())
+                and set(_text_values(profile.get("evidence_entity_ids")))
+                == expected_evidence_entity_ids
+                and all(
+                    entities_by_id[target].get("kind") in {"component", "finding"}
+                    for target in _text_values(profile.get("evidence_entity_ids"))
+                )
+                and profile_relationship_ids == expected_relationship_ids
+                and all(
+                    isinstance(raw_id, str) and raw_id
+                    for raw_id in profile.get("unresolved_evidence_ids", [])
+                )
+            )
+
+        machine_relationship_shapes_valid = all(
+            (
+                relation.get("kind") == "proposes_failure_mode_for"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "machine_suggestion"
+                and entities_by_id.get(str(relation.get("target")), {}).get("kind")
+                == "component"
+            )
+            or (
+                relation.get("kind") == "grounded_in_supplied_evidence"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "machine_suggestion"
+                and entities_by_id.get(str(relation.get("target")), {}).get("kind")
+                in {"component", "finding"}
+            )
+            or (
+                relation.get("kind") == "proposes_guidance_reference"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "machine_suggestion"
+                and entities_by_id.get(str(relation.get("target")), {}).get("kind")
+                == "citation"
+            )
+            or (
+                relation.get("kind") == "materialized_as_unreviewed_finding"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "machine_suggestion"
+                and entities_by_id.get(str(relation.get("target")), {}).get("kind")
+                == "finding"
+            )
+            or (
+                relation.get("kind") == "summarizes_scope"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "machine_summary"
+                and entities_by_id.get(str(relation.get("target")), {}).get("kind")
+                in {"analysis_scope", "component", "hazard", "subsystem"}
+            )
+            or (
+                relation.get("kind") == "summarizes_supplied_evidence"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "machine_summary"
+                and entities_by_id.get(str(relation.get("target")), {}).get("kind")
+                in {"component", "finding"}
+            )
+            or (
+                relation.get("kind")
+                in {
+                    "lexically_duplicates_claim",
+                    "lexically_contradicts_claim",
+                    "lexically_diverges_from_claim",
+                }
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                in {"machine_suggestion", "finding"}
+                and entities_by_id.get(str(relation.get("target")), {}).get("kind")
+                in {"machine_suggestion", "finding"}
+                and "machine_suggestion"
+                in {
+                    entities_by_id.get(str(relation.get("source")), {}).get("kind"),
+                    entities_by_id.get(str(relation.get("target")), {}).get("kind"),
+                }
+            )
+            for relation_id, relation in relationships_by_id.items()
+            if relation_id in machine_channel_relationship_ids
+        )
+        expected_unresolved_evidence_references = {
+            f"{profile.get('suggestion_id', '')}:{raw_id}"
+            for profile in suggestion_profiles or []
+            if isinstance(profile, dict)
+            for raw_id in profile.get("unresolved_evidence_ids", [])
+        } | {
+            f"{profile.get('summary_id', '')}:{raw_id}"
+            for profile in summary_profiles or []
+            if isinstance(profile, dict)
+            for raw_id in profile.get("unresolved_evidence_ids", [])
+        }
+        expected_unresolved_citation_references = {
+            f"{profile.get('suggestion_id', '')}:{raw_id}"
+            for profile in suggestion_profiles or []
+            if isinstance(profile, dict)
+            for raw_id in profile.get("unresolved_citation_ids", [])
+        }
+        expected_stale_summary_ids = {
+            str(profile.get("id", ""))
+            for profile in summary_profiles or []
+            if isinstance(profile, dict) and profile.get("stale") is True
+        }
+        lexical_analysis = machine_assistance_data.get("lexical_analysis", {})
+        lexical_summary = (
+            lexical_analysis.get("summary", {})
+            if isinstance(lexical_analysis, dict)
+            else {}
+        )
+        checks["machine_assistance_integrity"] = bool(
+            isinstance(machine_assistance, dict)
+            and isinstance(suggestion_profiles, list)
+            and isinstance(summary_profiles, list)
+            and {str(profile.get("id", "")) for profile in suggestion_profiles if isinstance(profile, dict)}
+            == machine_suggestion_entity_ids
+            and {str(profile.get("id", "")) for profile in summary_profiles if isinstance(profile, dict)}
+            == machine_summary_entity_ids
+            and all(machine_suggestion_profile_valid(profile) for profile in suggestion_profiles)
+            and all(machine_summary_profile_valid(profile) for profile in summary_profiles)
+            and declared_machine_relationship_ids == machine_channel_relationship_ids
+            and declared_claim_relationship_ids == machine_claim_relation_ids
+            and set(
+                machine_assistance_data.get("unresolved_evidence_references", [])
+            )
+            == expected_unresolved_evidence_references
+            and set(
+                machine_assistance_data.get("unresolved_citation_references", [])
+            )
+            == expected_unresolved_citation_references
+            and set(_text_values(machine_assistance_data.get("stale_summary_entity_ids")))
+            == expected_stale_summary_ids
+            and isinstance(lexical_analysis, dict)
+            and lexical_analysis.get("format")
+            == "pysfmea-suggestion-relationships-1"
+            and isinstance(lexical_summary, dict)
+            and lexical_summary.get("claims")
+            == sum(
+                entity.get("metadata", {}).get("source_status", "active")
+                == "active"
+                for entity in finding_entities_by_raw_id.values()
+            )
+            + sum(
+                profile.get("status") == "proposed"
+                for profile in suggestion_profiles
+                if isinstance(profile, dict)
+            )
+            and all(
+                isinstance(count, int)
+                and not isinstance(count, bool)
+                and count >= 0
+                for count in (
+                    lexical_summary.get(name)
+                    for name in ("duplicates", "contradictions", "divergences")
+                )
+            )
+            and isinstance(lexical_summary.get("truncated"), bool)
+            and machine_relationship_shapes_valid
+        )
+        if not checks["machine_assistance_integrity"]:
+            fail(
+                "cross_reference.machine_assistance_integrity_invalid",
+                "Machine suggestions, summaries, evidence, citation, materialization, and lexical-comparison relationships must reconcile without promoting generated claims.",
+            )
+        verified_machine_entities_by_finding: dict[str, set[str]] = defaultdict(set)
+        verified_machine_relationships_by_finding: dict[str, set[str]] = defaultdict(
+            set
+        )
+        for relation_id in machine_channel_relationship_ids:
+            relation = relationships_by_id[relation_id]
+            source = str(relation.get("source", ""))
+            target = str(relation.get("target", ""))
+            source_kind = entities_by_id.get(source, {}).get("kind")
+            target_kind = entities_by_id.get(target, {}).get("kind")
+            if source_kind == "finding" and target_kind in {
+                "machine_suggestion",
+                "machine_summary",
+            }:
+                finding_id = str(entities_by_id[source].get("raw_id", ""))
+                verified_machine_entities_by_finding[finding_id].add(target)
+                verified_machine_relationships_by_finding[finding_id].add(
+                    relation_id
+                )
+            elif target_kind == "finding" and source_kind in {
+                "machine_suggestion",
+                "machine_summary",
+            }:
+                finding_id = str(entities_by_id[target].get("raw_id", ""))
+                verified_machine_entities_by_finding[finding_id].add(source)
+                verified_machine_relationships_by_finding[finding_id].add(
+                    relation_id
+                )
 
         def readiness_profile_valid(profile: object) -> bool:
             if not isinstance(profile, dict):
@@ -4882,10 +5740,12 @@ def verify_cross_reference_file(
                 and relation.get("source") in adapter_run_entity_ids
             ):
                 continue
-            target = entities_by_id.get(str(relation.get("target", "")), {})
-            if target.get("kind") != "finding":
+            target_entity_record = entities_by_id.get(
+                str(relation.get("target", "")), {}
+            )
+            if target_entity_record.get("kind") != "finding":
                 continue
-            finding_id = str(target.get("raw_id", ""))
+            finding_id = str(target_entity_record.get("raw_id", ""))
             verified_adapter_entities_by_finding[finding_id].add(
                 str(relation.get("source", ""))
             )
@@ -5078,6 +5938,8 @@ def verify_cross_reference_file(
                         "source_provenance_relationship_ids",
                         "adapter_run_entity_ids",
                         "adapter_provenance_relationship_ids",
+                        "machine_assistance_entity_ids",
+                        "machine_assistance_relationship_ids",
                         "interface_entity_ids",
                         "inbound_fusion_ids",
                         "outbound_fusion_ids",
@@ -5322,6 +6184,31 @@ def verify_cross_reference_file(
                         str(chain.get("finding_id", "")), set()
                     ),
                 )
+                and (
+                    lambda expected_entity_ids, expected_relation_ids: (
+                        set(
+                            _text_values(
+                                chain.get("machine_assistance_entity_ids")
+                            )
+                        )
+                        == expected_entity_ids
+                        and set(
+                            _text_values(
+                                chain.get("machine_assistance_relationship_ids")
+                            )
+                        )
+                        == expected_relation_ids
+                        and chain["dimensions"].get("machine_assistance")
+                        == bool(expected_entity_ids)
+                    )
+                )(
+                    verified_machine_entities_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                    verified_machine_relationships_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                )
                 and set(_text_values(chain.get("requirement_ids")))
                 <= entity_raw_ids_by_kind["requirement"]
                 and set(_text_values(chain.get("hazard_ids")))
@@ -5482,6 +6369,23 @@ def verify_cross_reference_file(
                 ).items()
             )
         )
+        machine_suggestion_status_counts = dict(
+            sorted(
+                Counter(
+                    str(profile.get("status", ""))
+                    for profile in (suggestion_profiles or [])
+                    if isinstance(profile, dict)
+                ).items()
+            )
+        )
+        machine_claim_relationship_type_counts = dict(
+            sorted(
+                Counter(
+                    str(relationships_by_id[relation_id].get("kind", ""))
+                    for relation_id in machine_claim_relation_ids
+                ).items()
+            )
+        )
         components_with_repository_source = {
             str(entities_by_id[str(relation.get("source"))].get("raw_id", ""))
             for relation in relationships_by_id.values()
@@ -5605,6 +6509,35 @@ def verify_cross_reference_file(
             )
             and summary.get("repository_provenance_relationships")
             == len(repository_channel_relationship_ids)
+            and summary.get("machine_suggestions")
+            == len(suggestion_profiles or [])
+            and summary.get("proposed_machine_suggestions")
+            == sum(
+                profile.get("status") == "proposed"
+                for profile in (suggestion_profiles or [])
+                if isinstance(profile, dict)
+            )
+            and summary.get("machine_summaries") == len(summary_profiles or [])
+            and summary.get("stale_machine_summaries")
+            == len(expected_stale_summary_ids)
+            and summary.get("machine_claim_relationships")
+            == len(machine_claim_relation_ids)
+            and summary.get("machine_assistance_relationships")
+            == len(machine_channel_relationship_ids)
+            and summary.get(
+                "machine_assistance_unresolved_evidence_references"
+            )
+            == len(expected_unresolved_evidence_references)
+            and summary.get(
+                "machine_assistance_unresolved_citation_references"
+            )
+            == len(expected_unresolved_citation_references)
+            and summary.get("findings_with_machine_assistance")
+            == sum(
+                bool(_text_values(chain.get("machine_assistance_entity_ids")))
+                for chain in (chains or [])
+                if isinstance(chain, dict)
+            )
             and summary.get("compound_exposure_chains")
             == sum(
                 bool(_text_values(chain.get("compound_exposure_kinds")))
@@ -5658,6 +6591,10 @@ def verify_cross_reference_file(
             and summary.get("adapter_run_statuses") == adapter_status_counts
             and summary.get("repository_artifact_statuses")
             == repository_artifact_status_counts
+            and summary.get("machine_suggestion_statuses")
+            == machine_suggestion_status_counts
+            and summary.get("machine_claim_relationship_types")
+            == machine_claim_relationship_type_counts
         )
         if not checks["summary_reconciliation"]:
             fail(
@@ -5768,6 +6705,23 @@ def verify_cross_reference_file(
         ),
         "repository_artifact_count": (
             _safe_int(value.get("summary", {}).get("repository_artifacts", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "machine_suggestion_count": (
+            _safe_int(value.get("summary", {}).get("machine_suggestions", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "machine_summary_count": (
+            _safe_int(value.get("summary", {}).get("machine_summaries", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "machine_claim_relationship_count": (
+            _safe_int(
+                value.get("summary", {}).get("machine_claim_relationships", 0)
+            )
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0
         ),

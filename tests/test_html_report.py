@@ -99,6 +99,41 @@ class HtmlReportTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_report_projects_machine_assistance_without_promoting_it(self) -> None:
+        finding = self.analysis["items"][0]
+        self.analysis["suggestions"] = [
+            {
+                "id": "SUG-REPORT",
+                "component_id": finding["component_id"],
+                "component_reference": "service.py:validate",
+                "origin": "machine_suggestion",
+                "status": "proposed",
+                "content": {"failure_mode": "Generated review claim."},
+                "evidence_ids": [finding["id"]],
+                "proposed_citation_ids": [],
+                "confidence": "low",
+                "provenance": {},
+                "reviewer": "",
+                "materialized_item_id": "",
+            }
+        ]
+
+        report = build_html_report_data(self.analysis)
+        machine = report["cross_reference"]["machine_assistance_provenance"]
+        chain = next(
+            value
+            for value in report["cross_reference"]["finding_chains"]
+            if value["finding_id"] == finding["id"]
+        )
+
+        self.assertEqual(machine["suggestion_profiles"][0]["status"], "proposed")
+        self.assertIn(
+            "machine_suggestion:SUG-REPORT",
+            chain["machine_assistance_entity_ids"],
+        )
+        self.assertTrue(chain["dimensions"]["machine_assistance"])
+        self.assertIn("non-authoritative", machine["notice"])
+
     def test_report_is_self_contained_navigable_and_safely_embedded(self) -> None:
         included_id = self.analysis["items"][-1]["id"]
         notes = self.root / "notes.md"
@@ -153,6 +188,7 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn('"quality_gate_projection":', document)
         self.assertIn('"adapter_provenance":', document)
         self.assertIn('"repository_provenance":', document)
+        self.assertIn('"machine_assistance_provenance":', document)
         self.assertIn("verification_profiles_with_signals", document)
         self.assertIn("value.verification_lifecycle_state", document)
         self.assertIn("value.verification_evidence_posture", document)
