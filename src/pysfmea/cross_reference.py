@@ -23,6 +23,7 @@ from .json_ingestion import load_bounded_json_document
 from .model import stable_id
 from .sfta import build_sfta
 from .synthesis import suggestion_relationships
+from .system_context import CONTEXT_FIELDS
 from .validation import validate_analysis
 from .version import __version__
 
@@ -40,6 +41,8 @@ CROSS_REFERENCE_VERIFICATION_CHECKS = (
     "adapter_provenance_integrity",
     "repository_provenance_integrity",
     "machine_assistance_integrity",
+    "system_context_integrity",
+    "lifecycle_provenance_integrity",
     "finding_chain_integrity",
     "review_lead_integrity",
     "summary_reconciliation",
@@ -143,6 +146,45 @@ REVIEW_GOVERNANCE_STATES = (
     "rejected",
 )
 
+FINDING_CONTEXT_FIELD_MAP = {
+    "operational_mode": "operational_modes",
+    "operational_state": "system_states",
+    "required_safe_state": "safe_states",
+    "degraded_behavior": "degraded_states",
+    "recovery_behavior": "",
+}
+
+LIFECYCLE_SUBJECT_FIELDS = {
+    "finding_id": "finding",
+    "item_id": "finding",
+    "obligation_id": "obligation",
+    "execution_id": "execution",
+    "suggestion_id": "machine_suggestion",
+    "summary_id": "machine_summary",
+    "adapter_id": "adapter_run",
+}
+
+LIFECYCLE_SUBJECT_LIST_FIELDS = {
+    "finding_ids": "finding",
+    "item_ids": "finding",
+    "obligation_ids": "obligation",
+    "execution_ids": "execution",
+    "suggestion_ids": "machine_suggestion",
+    "summary_ids": "machine_summary",
+    "adapter_ids": "adapter_run",
+    "replacement_hazards": "hazard",
+}
+
+LIFECYCLE_SCOPE_PARENT_RELATIONS = {
+    "analysis": ("analysis_scope", "records_analysis_lifecycle_event"),
+    "finding_review": ("finding", "records_finding_review_event"),
+    "assurance_obligation": ("obligation", "records_assurance_obligation_event"),
+    "execution_review": ("execution", "records_execution_review_event"),
+    "machine_suggestion": ("machine_suggestion", "records_machine_suggestion_event"),
+    "sfta_authoring": ("analysis_scope", "records_sfta_authoring_event"),
+    "activation_decision": ("analysis_scope", "records_activation_decision_event"),
+}
+
 
 def _quality_diagnostic_raw_id(
     value: dict[str, Any], *, occurrence: int = 1
@@ -201,6 +243,84 @@ def _safe_int(value: object, default: int = 0) -> int:
 
 def _entity_id(kind: str, raw_id: object) -> str:
     return f"{kind}:{raw_id}"
+
+
+def _canonical_context_value(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, tuple, set)):
+        normalized = sorted(value, key=str) if isinstance(value, set) else value
+        return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return str(value)
+
+
+def _context_values(value: object) -> list[str]:
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    return [
+        canonical
+        for entry in values
+        if (canonical := _canonical_context_value(entry))
+    ]
+
+
+def _normalized_context_value(value: object) -> str:
+    return " ".join(_canonical_context_value(value).split()).casefold()
+
+
+def _lifecycle_actor_labels(event: dict[str, Any]) -> set[str]:
+    labels = {str(event.get("reviewer", "")).strip()}
+    nested_reviews = event.get("reviews", [])
+    if isinstance(nested_reviews, list):
+        labels.update(
+            str(record.get("reviewer", "")).strip()
+            for record in nested_reviews
+            if isinstance(record, dict)
+        )
+    return {label for label in labels if label}
+
+
+def _lifecycle_subject_references(
+    event: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    references: list[tuple[str, str, str]] = []
+    for field, entity_kind in LIFECYCLE_SUBJECT_FIELDS.items():
+        raw_id = str(event.get(field, ""))
+        if raw_id:
+            references.append((field, entity_kind, raw_id))
+    for field, entity_kind in LIFECYCLE_SUBJECT_LIST_FIELDS.items():
+        references.extend(
+            (field, entity_kind, raw_id)
+            for raw_id in _text_values(event.get(field))
+        )
+    subject_kind = str(event.get("kind", ""))
+    if event.get("subject_id") and subject_kind in {
+        "finding",
+        "machine_suggestion",
+        "obligation",
+        "execution",
+    }:
+        references.append(
+            (
+                "subject_id",
+                {
+                    "finding": "finding",
+                    "machine_suggestion": "machine_suggestion",
+                    "obligation": "obligation",
+                    "execution": "execution",
+                }[subject_kind],
+                str(event["subject_id"]),
+            )
+        )
+    nested_reviews = event.get("reviews", [])
+    if isinstance(nested_reviews, list):
+        references.extend(
+            ("reviews.hazard_id", "hazard", str(record["hazard_id"]))
+            for record in nested_reviews
+            if isinstance(record, dict) and record.get("hazard_id")
+        )
+    return references
 
 
 def _relation_id(source: str, target: str, kind: str, channel: str) -> str:
@@ -538,6 +658,166 @@ def build_cross_reference_index(
         )
         if relation_id in relationships:
             adapter_core_relationship_ids.add(relation_id)
+
+    system_context = analysis.get("system_context", {})
+    if not isinstance(system_context, dict):
+        system_context = {}
+    resolved_system_context = system_context.get("resolved", {})
+    if not isinstance(resolved_system_context, dict):
+        resolved_system_context = {}
+    context_digest = str(system_context.get("context_sha256", ""))
+    system_context_entity = add_entity(
+        "system_context",
+        context_digest or stable_id("SYSTEM-CONTEXT", analysis_sha256),
+        "resolved system context",
+        authority="analysis_bound_resolved_project_configuration",
+        metadata={
+            "schema_version": str(system_context.get("schema_version", "")),
+            "status": str(system_context.get("status", "unresolved")),
+            "completeness_percent": system_context.get("completeness_percent", 0),
+            "context_sha256": context_digest,
+        },
+    )
+    system_context_relationship_ids: set[str] = set()
+    for source, target, kind, authority in (
+        (
+            analysis_scope_entity,
+            system_context_entity,
+            "has_resolved_system_context",
+            "exact_analysis_system_context_binding",
+        ),
+        *(
+            [
+                (
+                    configuration_input_entity,
+                    system_context_entity,
+                    "defines_resolved_system_context",
+                    "run_manifest_bound_project_configuration",
+                )
+            ]
+            if configuration_input_entity
+            else []
+        ),
+    ):
+        relation_id = add_relation(
+            source,
+            target,
+            kind,
+            "system_context",
+            authority=authority,
+        )
+        if relation_id in relationships:
+            system_context_relationship_ids.add(relation_id)
+
+    supplied_context_fields = {
+        str(record.get("field", "")): record
+        for record in system_context.get("fields", [])
+        if isinstance(record, dict) and record.get("field")
+    }
+    declared_context_fields = [field for field, _, _ in CONTEXT_FIELDS]
+    context_field_names = [
+        *declared_context_fields,
+        *sorted(set(resolved_system_context) - set(declared_context_fields)),
+    ]
+    context_field_profiles: list[dict[str, Any]] = []
+    context_field_entity_by_name: dict[str, str] = {}
+    context_value_entity_ids: set[str] = set()
+    context_value_entities_by_field_and_normalized: dict[
+        tuple[str, str], str
+    ] = {}
+    for field_name in context_field_names:
+        supplied_record = supplied_context_fields.get(field_name, {})
+        label = str(
+            supplied_record.get("label", field_name.replace("_", " ").title())
+        )
+        values = _context_values(resolved_system_context.get(field_name))
+        field_entity = add_entity(
+            "system_context_field",
+            stable_id("SYSTEM-CONTEXT-FIELD", context_digest, field_name),
+            label,
+            authority="resolved_system_context_field_record",
+            metadata={
+                "field": field_name,
+                "required": bool(supplied_record.get("required", False)),
+                "status": str(
+                    supplied_record.get("status", "provided" if values else "unresolved")
+                ),
+                "provenance": str(
+                    supplied_record.get(
+                        "provenance", f"analysis.system_context.resolved.{field_name}"
+                    )
+                ),
+                "value_count": len(values),
+            },
+        )
+        if field_entity not in entities:
+            continue
+        context_field_entity_by_name[field_name] = field_entity
+        field_relationship_ids: set[str] = set()
+        relation_id = add_relation(
+            system_context_entity,
+            field_entity,
+            "declares_system_context_field",
+            "system_context",
+            authority="resolved_system_context_field_record",
+        )
+        if relation_id in relationships:
+            field_relationship_ids.add(relation_id)
+            system_context_relationship_ids.add(relation_id)
+        field_value_entity_ids: set[str] = set()
+        for value_text in values:
+            normalized_value = _normalized_context_value(value_text)
+            value_entity = add_entity(
+                "system_context_value",
+                stable_id(
+                    "SYSTEM-CONTEXT-VALUE",
+                    context_digest,
+                    field_name,
+                    normalized_value,
+                ),
+                value_text,
+                authority="resolved_project_configuration_value",
+                metadata={
+                    "field": field_name,
+                    "value": value_text,
+                    "normalized_value": normalized_value,
+                },
+            )
+            if value_entity not in entities:
+                continue
+            field_value_entity_ids.add(value_entity)
+            context_value_entity_ids.add(value_entity)
+            context_value_entities_by_field_and_normalized[
+                (field_name, normalized_value)
+            ] = value_entity
+            relation_id = add_relation(
+                field_entity,
+                value_entity,
+                "provides_system_context_value",
+                "system_context",
+                authority="resolved_project_configuration_value",
+            )
+            if relation_id in relationships:
+                field_relationship_ids.add(relation_id)
+                system_context_relationship_ids.add(relation_id)
+        context_field_profiles.append(
+            {
+                "id": field_entity,
+                "field": field_name,
+                "label": label,
+                "required": bool(supplied_record.get("required", False)),
+                "status": str(
+                    supplied_record.get("status", "provided" if values else "unresolved")
+                ),
+                "provenance": str(
+                    supplied_record.get(
+                        "provenance", f"analysis.system_context.resolved.{field_name}"
+                    )
+                ),
+                "value_entity_ids": sorted(field_value_entity_ids),
+                "relationship_ids": sorted(field_relationship_ids),
+            }
+        )
     adapter_run_entities_by_id: dict[str, str] = {}
     for run in adapter_runs:
         adapter_id = str(run.get("adapter_id", ""))
@@ -2534,6 +2814,161 @@ def build_cross_reference_index(
             }
         )
 
+    # Finding review context is joined to the governed system-context catalog only by
+    # exact normalized values. This preserves explicit reviewer language while avoiding
+    # unsupported semantic or fuzzy equivalence claims.
+    context_claim_profiles: list[dict[str, Any]] = []
+    context_claim_entity_ids: set[str] = set()
+    outside_context_claim_entity_ids: set[str] = set()
+    unresolved_catalog_claim_entity_ids: set[str] = set()
+    uncataloged_context_claim_entity_ids: set[str] = set()
+    context_claims_by_finding: dict[str, set[str]] = defaultdict(set)
+    context_values_by_finding: dict[str, set[str]] = defaultdict(set)
+    context_relationships_by_finding: dict[str, set[str]] = defaultdict(set)
+    chain_by_finding_id = {
+        str(chain.get("finding_id", "")): chain for chain in finding_chains
+    }
+    for item in analysis.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        finding_id = str(item.get("id", ""))
+        if finding_id not in chain_by_finding_id:
+            continue
+        review = item.get("review", {})
+        if not isinstance(review, dict):
+            continue
+        finding_entity = _entity_id("finding", finding_id)
+        for review_field, context_field in FINDING_CONTEXT_FIELD_MAP.items():
+            value_text = _canonical_context_value(review.get(review_field))
+            if not value_text:
+                continue
+            normalized_value = _normalized_context_value(value_text)
+            field_entity = context_field_entity_by_name.get(context_field, "")
+            matched_value_entity = context_value_entities_by_field_and_normalized.get(
+                (context_field, normalized_value), ""
+            )
+            field_profile = next(
+                (
+                    profile
+                    for profile in context_field_profiles
+                    if profile.get("field") == context_field
+                ),
+                {},
+            )
+            if matched_value_entity:
+                alignment_status = "matched"
+            elif not context_field:
+                alignment_status = "not_cataloged"
+            elif field_profile.get("value_entity_ids"):
+                alignment_status = "outside_catalog"
+            else:
+                alignment_status = "catalog_unresolved"
+            claim_entity = add_entity(
+                "finding_context_claim",
+                stable_id(
+                    "FINDING-CONTEXT-CLAIM",
+                    finding_id,
+                    review_field,
+                    normalized_value,
+                ),
+                value_text,
+                authority="recorded_finding_review_context_not_approved_equivalence",
+                metadata={
+                    "finding_id": finding_id,
+                    "review_field": review_field,
+                    "context_field": context_field,
+                    "value": value_text,
+                    "normalized_value": normalized_value,
+                    "alignment_status": alignment_status,
+                },
+            )
+            if claim_entity not in entities:
+                continue
+            context_claim_entity_ids.add(claim_entity)
+            context_claims_by_finding[finding_id].add(claim_entity)
+            claim_relationship_ids: set[str] = set()
+            relation_id = add_relation(
+                finding_entity,
+                claim_entity,
+                "declares_finding_context_claim",
+                "system_context",
+                authority="recorded_finding_review_context",
+            )
+            if relation_id in relationships:
+                claim_relationship_ids.add(relation_id)
+                context_relationships_by_finding[finding_id].add(relation_id)
+                system_context_relationship_ids.add(relation_id)
+            if field_entity:
+                relation_id = add_relation(
+                    claim_entity,
+                    field_entity,
+                    "interpreted_against_system_context_field",
+                    "system_context",
+                    authority="declared_review_field_to_context_field_mapping",
+                )
+                if relation_id in relationships:
+                    claim_relationship_ids.add(relation_id)
+                    context_relationships_by_finding[finding_id].add(relation_id)
+                    system_context_relationship_ids.add(relation_id)
+            if matched_value_entity:
+                context_values_by_finding[finding_id].add(matched_value_entity)
+                relation_id = add_relation(
+                    claim_entity,
+                    matched_value_entity,
+                    "exactly_matches_resolved_system_context_value",
+                    "system_context",
+                    authority="exact_casefolded_whitespace_normalized_value_match",
+                )
+                if relation_id in relationships:
+                    claim_relationship_ids.add(relation_id)
+                    context_relationships_by_finding[finding_id].add(relation_id)
+                    system_context_relationship_ids.add(relation_id)
+            elif alignment_status == "outside_catalog":
+                outside_context_claim_entity_ids.add(claim_entity)
+            elif alignment_status == "catalog_unresolved":
+                unresolved_catalog_claim_entity_ids.add(claim_entity)
+            else:
+                uncataloged_context_claim_entity_ids.add(claim_entity)
+            context_claim_profiles.append(
+                {
+                    "id": claim_entity,
+                    "finding_id": finding_id,
+                    "review_field": review_field,
+                    "context_field": context_field,
+                    "value": value_text,
+                    "normalized_value": normalized_value,
+                    "alignment_status": alignment_status,
+                    "field_entity_id": field_entity,
+                    "matched_value_entity_id": matched_value_entity,
+                    "relationship_ids": sorted(claim_relationship_ids),
+                }
+            )
+
+    for chain in finding_chains:
+        finding_id = str(chain.get("finding_id", ""))
+        chain["system_context_claim_entity_ids"] = sorted(
+            context_claims_by_finding.get(finding_id, set())
+        )
+        chain["system_context_value_entity_ids"] = sorted(
+            context_values_by_finding.get(finding_id, set())
+        )
+        chain["system_context_relationship_ids"] = sorted(
+            context_relationships_by_finding.get(finding_id, set())
+        )
+        chain["system_context_alignment_statuses"] = sorted(
+            {
+                str(profile.get("alignment_status", ""))
+                for profile in context_claim_profiles
+                if profile.get("finding_id") == finding_id
+            }
+        )
+        chain["dimensions"]["system_context"] = bool(
+            chain["system_context_claim_entity_ids"]
+        )
+        chain["linkage_completeness_percent"] = round(
+            100 * sum(chain["dimensions"].values()) / len(chain["dimensions"]), 1
+        )
+
     reconciliation = analysis.get("interface_reconciliation", {})
     server_routes = {
         str(value.get("id", "")): value
@@ -2996,7 +3431,416 @@ def build_cross_reference_index(
             100 * sum(chain["dimensions"].values()) / len(chain["dimensions"]), 1
         )
 
+    # Lifecycle records are digest-bound audit events. Subject references are linked only
+    # when their explicit typed identifiers resolve in this fabric; reviewer labels remain
+    # unauthenticated recorded actors rather than approval or independence proof.
+    analysis_lifecycle_event_profiles: list[dict[str, Any]] = []
+    finding_review_event_profiles: list[dict[str, Any]] = []
+    subject_lifecycle_event_profiles: list[dict[str, Any]] = []
+    lifecycle_relationship_ids: set[str] = set()
+    unresolved_lifecycle_subject_references: list[str] = []
+    lifecycle_events_by_finding: dict[str, set[str]] = defaultdict(set)
+    lifecycle_relationships_by_finding: dict[str, set[str]] = defaultdict(set)
+    context_claim_by_current_value = {
+        (
+            str(profile.get("finding_id", "")),
+            str(profile.get("review_field", "")),
+            str(profile.get("normalized_value", "")),
+        ): str(profile.get("id", ""))
+        for profile in context_claim_profiles
+    }
+
+    def project_lifecycle_event(
+        event: dict[str, Any],
+        *,
+        scope: str,
+        sequence: int,
+        parent_entity: str,
+        finding_id: str = "",
+        event_type: str = "",
+        event_at: str = "",
+    ) -> dict[str, Any] | None:
+        event_sha256 = canonical_json_sha256(event)
+        resolved_event_type = event_type or str(event.get("event", "untyped_event"))
+        resolved_event_at = event_at or str(
+            event.get("at", event.get("applied_at", event.get("reviewed_at", "")))
+        )
+        event_entity = add_entity(
+            "lifecycle_event",
+            stable_id(
+                "LIFECYCLE-EVENT",
+                scope,
+                parent_entity,
+                finding_id,
+                str(sequence),
+                event_sha256,
+            ),
+            resolved_event_type,
+            authority="digest_bound_recorded_lifecycle_event",
+            metadata={
+                "scope": scope,
+                "finding_id": finding_id,
+                "sequence": sequence,
+                "event": resolved_event_type,
+                "at": resolved_event_at,
+                "reviewer": str(event.get("reviewer", "")),
+                "event_sha256": event_sha256,
+            },
+        )
+        if event_entity not in entities:
+            return None
+        event_relationship_ids: set[str] = set()
+        parent_relation_kind = LIFECYCLE_SCOPE_PARENT_RELATIONS[scope][1]
+        relation_id = add_relation(
+            parent_entity,
+            event_entity,
+            parent_relation_kind,
+            "lifecycle_history",
+            authority="ordered_digest_bound_audit_record",
+            metadata={"sequence": sequence},
+        )
+        if relation_id in relationships:
+            event_relationship_ids.add(relation_id)
+            lifecycle_relationship_ids.add(relation_id)
+            if finding_id:
+                lifecycle_relationships_by_finding[finding_id].add(relation_id)
+
+        reviewer = str(event.get("reviewer", "")).strip()
+        for actor_label in sorted(_lifecycle_actor_labels(event)):
+            actor_entity = add_entity(
+                "lifecycle_actor",
+                stable_id("LIFECYCLE-ACTOR", actor_label),
+                actor_label,
+                authority="recorded_actor_label_not_authenticated_identity",
+            )
+            relation_id = add_relation(
+                event_entity,
+                actor_entity,
+                "recorded_by_actor",
+                "lifecycle_history",
+                authority="recorded_actor_label_not_identity_or_independence_proof",
+            )
+            if relation_id in relationships:
+                event_relationship_ids.add(relation_id)
+                lifecycle_relationship_ids.add(relation_id)
+                if finding_id:
+                    lifecycle_relationships_by_finding[finding_id].add(relation_id)
+
+        subject_entity_ids: set[str] = set()
+        unresolved_references: list[str] = []
+        subject_references = _lifecycle_subject_references(event)
+        for field, entity_kind, raw_id in subject_references:
+            target_entity = _entity_id(entity_kind, raw_id)
+            reference = f"{event_entity}:{field}:{raw_id}"
+            if target_entity not in entities:
+                unresolved_references.append(reference)
+                unresolved_lifecycle_subject_references.append(reference)
+                continue
+            subject_entity_ids.add(target_entity)
+            relation_id = add_relation(
+                event_entity,
+                target_entity,
+                "affects_lifecycle_subject",
+                "lifecycle_history",
+                authority="exact_typed_identifier_reference",
+                metadata={"reference_field": field},
+            )
+            if relation_id in relationships:
+                event_relationship_ids.add(relation_id)
+                lifecycle_relationship_ids.add(relation_id)
+                if finding_id:
+                    lifecycle_relationships_by_finding[finding_id].add(relation_id)
+
+        changes = event.get("changes", {})
+        changed_fields = sorted(changes) if isinstance(changes, dict) else []
+        if finding_id and isinstance(changes, dict):
+            for field, change in changes.items():
+                if field not in FINDING_CONTEXT_FIELD_MAP or not isinstance(change, dict):
+                    continue
+                after = _normalized_context_value(change.get("after"))
+                claim_entity = context_claim_by_current_value.get(
+                    (finding_id, field, after), ""
+                )
+                if not claim_entity:
+                    continue
+                subject_entity_ids.add(claim_entity)
+                relation_id = add_relation(
+                    event_entity,
+                    claim_entity,
+                    "establishes_current_finding_context_claim",
+                    "lifecycle_history",
+                    authority="exact_review_change_after_value_match",
+                    metadata={"review_field": field},
+                )
+                if relation_id in relationships:
+                    event_relationship_ids.add(relation_id)
+                    lifecycle_relationship_ids.add(relation_id)
+                    lifecycle_relationships_by_finding[finding_id].add(relation_id)
+
+        if finding_id:
+            lifecycle_events_by_finding[finding_id].add(event_entity)
+        return {
+            "id": event_entity,
+            "scope": scope,
+            "parent_entity_id": parent_entity,
+            "finding_id": finding_id,
+            "sequence": sequence,
+            "event": resolved_event_type,
+            "at": resolved_event_at,
+            "reviewer": reviewer,
+            "event_sha256": event_sha256,
+            "event_record": event,
+            "changed_fields": changed_fields,
+            "subject_entity_ids": sorted(subject_entity_ids),
+            "unresolved_subject_references": sorted(set(unresolved_references)),
+            "relationship_ids": sorted(event_relationship_ids),
+        }
+
+    for sequence, event in enumerate(analysis.get("history", []), start=1):
+        if not isinstance(event, dict):
+            continue
+        lifecycle_profile = project_lifecycle_event(
+            event,
+            scope="analysis",
+            sequence=sequence,
+            parent_entity=analysis_scope_entity,
+        )
+        if lifecycle_profile:
+            analysis_lifecycle_event_profiles.append(lifecycle_profile)
+    for item in analysis.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        finding_id = str(item.get("id", ""))
+        finding_entity = _entity_id("finding", finding_id)
+        if finding_entity not in entities:
+            continue
+        for sequence, event in enumerate(item.get("review_history", []), start=1):
+            if not isinstance(event, dict):
+                continue
+            lifecycle_profile = project_lifecycle_event(
+                event,
+                scope="finding_review",
+                sequence=sequence,
+                parent_entity=finding_entity,
+                finding_id=finding_id,
+            )
+            if lifecycle_profile:
+                finding_review_event_profiles.append(lifecycle_profile)
+
+    finding_id_by_obligation_id = {
+        str(obligation.get("id", "")): str(obligation.get("finding_id", ""))
+        for obligation in assurance.get("obligations", [])
+        if isinstance(obligation, dict) and obligation.get("id")
+    }
+    for obligation in assurance.get("obligations", []):
+        if not isinstance(obligation, dict) or not obligation.get("id"):
+            continue
+        obligation_id = str(obligation["id"])
+        obligation_entity = _entity_id("obligation", obligation_id)
+        finding_id = str(obligation.get("finding_id", ""))
+        if obligation_entity not in entities:
+            continue
+        for sequence, event in enumerate(obligation.get("history", []), start=1):
+            if not isinstance(event, dict):
+                continue
+            lifecycle_profile = project_lifecycle_event(
+                event,
+                scope="assurance_obligation",
+                sequence=sequence,
+                parent_entity=obligation_entity,
+                finding_id=finding_id if finding_id in chain_by_finding_id else "",
+            )
+            if lifecycle_profile:
+                subject_lifecycle_event_profiles.append(lifecycle_profile)
+    for execution_id, execution in executions.items():
+        execution_entity = _entity_id("execution", execution_id)
+        if execution_entity not in entities:
+            continue
+        obligation_id = str(execution.get("obligation_id", ""))
+        finding_id = finding_id_by_obligation_id.get(obligation_id, "")
+        for sequence, event in enumerate(execution.get("reviews", []), start=1):
+            if not isinstance(event, dict):
+                continue
+            lifecycle_profile = project_lifecycle_event(
+                event,
+                scope="execution_review",
+                sequence=sequence,
+                parent_entity=execution_entity,
+                finding_id=finding_id if finding_id in chain_by_finding_id else "",
+                event_type="execution_evidence_reviewed",
+            )
+            if lifecycle_profile:
+                subject_lifecycle_event_profiles.append(lifecycle_profile)
+    for suggestion in analysis.get("suggestions", []):
+        if not isinstance(suggestion, dict) or not suggestion.get("id"):
+            continue
+        suggestion_id = str(suggestion["id"])
+        suggestion_entity = _entity_id("machine_suggestion", suggestion_id)
+        if suggestion_entity not in entities:
+            continue
+        materialized_finding_id = str(suggestion.get("materialized_item_id", ""))
+        for sequence, event in enumerate(suggestion.get("history", []), start=1):
+            if not isinstance(event, dict):
+                continue
+            lifecycle_profile = project_lifecycle_event(
+                event,
+                scope="machine_suggestion",
+                sequence=sequence,
+                parent_entity=suggestion_entity,
+                finding_id=(
+                    materialized_finding_id
+                    if materialized_finding_id in chain_by_finding_id
+                    else ""
+                ),
+            )
+            if lifecycle_profile:
+                subject_lifecycle_event_profiles.append(lifecycle_profile)
+    sfta_authoring = analysis.get("sfta_authoring", {})
+    if isinstance(sfta_authoring, dict):
+        for sequence, event in enumerate(sfta_authoring.get("history", []), start=1):
+            if not isinstance(event, dict):
+                continue
+            lifecycle_profile = project_lifecycle_event(
+                event,
+                scope="sfta_authoring",
+                sequence=sequence,
+                parent_entity=analysis_scope_entity,
+                event_type="sfta_authoring_applied",
+            )
+            if lifecycle_profile:
+                subject_lifecycle_event_profiles.append(lifecycle_profile)
+    activation = analysis.get("activation", {})
+    if isinstance(activation, dict):
+        for sequence, event in enumerate(
+            activation.get("decision_history", []), start=1
+        ):
+            if not isinstance(event, dict):
+                continue
+            activation_finding_id = (
+                str(event.get("subject_id", ""))
+                if event.get("kind") == "finding"
+                else ""
+            )
+            lifecycle_profile = project_lifecycle_event(
+                event,
+                scope="activation_decision",
+                sequence=sequence,
+                parent_entity=analysis_scope_entity,
+                finding_id=(
+                    activation_finding_id
+                    if activation_finding_id in chain_by_finding_id
+                    else ""
+                ),
+                event_type="activation_decision_recorded",
+            )
+            if lifecycle_profile:
+                subject_lifecycle_event_profiles.append(lifecycle_profile)
+
+    for chain in finding_chains:
+        finding_id = str(chain.get("finding_id", ""))
+        chain["lifecycle_event_entity_ids"] = sorted(
+            lifecycle_events_by_finding.get(finding_id, set())
+        )
+        chain["lifecycle_relationship_ids"] = sorted(
+            lifecycle_relationships_by_finding.get(finding_id, set())
+        )
+        chain["dimensions"]["lifecycle_history"] = bool(
+            chain["lifecycle_event_entity_ids"]
+        )
+        chain["linkage_completeness_percent"] = round(
+            100 * sum(chain["dimensions"].values()) / len(chain["dimensions"]), 1
+        )
+
     review_leads: list[dict[str, Any]] = []
+    missing_context_fields = sorted(
+        {
+            *_text_values(system_context.get("missing_required")),
+            *_text_values(system_context.get("missing_recommended")),
+        }
+    )
+    if missing_context_fields:
+        missing_field_entities = sorted(
+            context_field_entity_by_name[field]
+            for field in missing_context_fields
+            if field in context_field_entity_by_name
+        )
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "incomplete_system_context"),
+                "kind": "incomplete_system_context",
+                "priority": (
+                    "high" if system_context.get("missing_required") else "medium"
+                ),
+                "subject_ids": missing_field_entities[:25],
+                "affected_count": len(missing_context_fields),
+                "subject_ids_omitted": max(0, len(missing_field_entities) - 25),
+                "description": (
+                    f"{len(missing_context_fields)} governed system-context field(s) are "
+                    "unresolved. Findings can still be screened, but context-specific "
+                    "coverage and approval claims require engineering completion."
+                ),
+            }
+        )
+    for claim_ids, kind, priority, description in (
+        (
+            outside_context_claim_entity_ids,
+            "finding_context_claims_outside_resolved_catalog",
+            "medium",
+            "Finding review context differs from every configured value in its mapped "
+            "system-context field. Review whether the catalog or finding should be updated; "
+            "the exact mismatch does not establish that either value is incorrect.",
+        ),
+        (
+            unresolved_catalog_claim_entity_ids,
+            "finding_context_claims_with_unresolved_catalog",
+            "medium",
+            "Finding review context is recorded, but its mapped system-context catalog field "
+            "has no configured values. Complete the catalog before asserting alignment.",
+        ),
+        (
+            uncataloged_context_claim_entity_ids,
+            "finding_context_claims_without_catalog_field",
+            "low",
+            "Finding review context has no corresponding system-context catalog field. The "
+            "claim is preserved for review without implying configured alignment.",
+        ),
+    ):
+        if not claim_ids:
+            continue
+        subjects = sorted(claim_ids)
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", kind),
+                "kind": kind,
+                "priority": priority,
+                "subject_ids": subjects[:25],
+                "affected_count": len(subjects),
+                "subject_ids_omitted": max(0, len(subjects) - 25),
+                "description": f"{len(subjects)} claim(s). {description}",
+            }
+        )
+    if unresolved_lifecycle_subject_references:
+        unresolved_event_entities = sorted(
+            {
+                reference.split(":", 2)[0] + ":" + reference.split(":", 2)[1]
+                for reference in unresolved_lifecycle_subject_references
+            }
+        )
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "unresolved_lifecycle_subject_references"),
+                "kind": "unresolved_lifecycle_subject_references",
+                "priority": "medium",
+                "subject_ids": unresolved_event_entities[:25],
+                "affected_count": len(set(unresolved_lifecycle_subject_references)),
+                "subject_ids_omitted": max(0, len(unresolved_event_entities) - 25),
+                "description": (
+                    f"{len(set(unresolved_lifecycle_subject_references))} explicit lifecycle "
+                    "subject reference(s) do not resolve to a current fabric entity. Preserve "
+                    "the audit record, then reconcile retired, missing, or malformed subjects."
+                ),
+            }
+        )
     proposed_suggestion_entities = [
         profile["id"]
         for profile in machine_suggestion_profiles
@@ -3324,17 +4168,17 @@ def build_cross_reference_index(
         ("bottom_up_unmapped_findings", "medium"),
         ("hazard_link_mismatches", "high"),
     ):
-        values = [
+        sfta_gap_records = [
             value
             for value in sfta_reconciliation.get(key, [])
             if isinstance(value, dict)
         ]
-        if not values:
+        if not sfta_gap_records:
             continue
         subjects = sorted(
             {
                 _entity_id("finding", value["finding_id"])
-                for value in values
+                for value in sfta_gap_records
                 if value.get("finding_id")
                 and _entity_id("finding", value["finding_id"]) in entities
             }
@@ -3345,10 +4189,10 @@ def build_cross_reference_index(
                 "kind": f"sfta_{key}",
                 "priority": priority,
                 "subject_ids": subjects[:25],
-                "affected_count": len(values),
+                "affected_count": len(sfta_gap_records),
                 "subject_ids_omitted": max(0, len(subjects) - 25),
                 "description": (
-                    f"{len(values)} SFTA {key.replace('_', ' ')} record(s) require "
+                    f"{len(sfta_gap_records)} SFTA {key.replace('_', ' ')} record(s) require "
                     "engineering review. The lead is aggregated; use the complete SFTA "
                     "reconciliation register for every record."
                 ),
@@ -3451,6 +4295,26 @@ def build_cross_reference_index(
     adapter_provenance_profiles.sort(key=lambda value: value["adapter_id"])
     machine_suggestion_profiles.sort(key=lambda value: value["suggestion_id"])
     machine_summary_profiles.sort(key=lambda value: value["summary_id"])
+    context_field_profiles.sort(key=lambda value: value["field"])
+    context_claim_profiles.sort(
+        key=lambda value: (
+            value["finding_id"],
+            value["review_field"],
+            value["normalized_value"],
+        )
+    )
+    analysis_lifecycle_event_profiles.sort(key=lambda value: value["sequence"])
+    finding_review_event_profiles.sort(
+        key=lambda value: (value["finding_id"], value["sequence"])
+    )
+    subject_lifecycle_event_profiles.sort(
+        key=lambda value: (
+            value["scope"],
+            value["finding_id"],
+            value["sequence"],
+            value["id"],
+        )
+    )
     classification_counts = Counter(value["classification"] for value in fusions)
     validation_findings = [
         value
@@ -3568,6 +4432,33 @@ def build_cross_reference_index(
             ),
             "findings_with_machine_assistance": sum(
                 bool(value.get("machine_assistance_entity_ids"))
+                for value in finding_chains
+            ),
+            "system_context_fields": len(context_field_profiles),
+            "system_context_values": len(context_value_entity_ids),
+            "finding_context_claims": len(context_claim_profiles),
+            "matched_finding_context_claims": sum(
+                value.get("alignment_status") == "matched"
+                for value in context_claim_profiles
+            ),
+            "unmatched_finding_context_claims": sum(
+                value.get("alignment_status") != "matched"
+                for value in context_claim_profiles
+            ),
+            "findings_with_explicit_system_context": sum(
+                bool(value.get("system_context_claim_entity_ids"))
+                for value in finding_chains
+            ),
+            "system_context_relationships": len(system_context_relationship_ids),
+            "analysis_lifecycle_events": len(analysis_lifecycle_event_profiles),
+            "finding_review_events": len(finding_review_event_profiles),
+            "subject_lifecycle_events": len(subject_lifecycle_event_profiles),
+            "lifecycle_relationships": len(lifecycle_relationship_ids),
+            "unresolved_lifecycle_subject_references": len(
+                set(unresolved_lifecycle_subject_references)
+            ),
+            "findings_with_review_history": sum(
+                bool(value.get("lifecycle_event_entity_ids"))
                 for value in finding_chains
             ),
             "compound_exposure_chains": sum(
@@ -3699,6 +4590,25 @@ def build_cross_reference_index(
                     ).items()
                 )
             ),
+            "finding_context_alignment_statuses": dict(
+                sorted(
+                    Counter(
+                        value["alignment_status"] for value in context_claim_profiles
+                    ).items()
+                )
+            ),
+            "lifecycle_event_types": dict(
+                sorted(
+                    Counter(
+                        value["event"]
+                        for value in (
+                            *analysis_lifecycle_event_profiles,
+                            *finding_review_event_profiles,
+                            *subject_lifecycle_event_profiles,
+                        )
+                    ).items()
+                )
+            ),
             "omitted_by_bound": dict(sorted(omitted.items())),
         },
         "entities": entities_list,
@@ -3802,6 +4712,51 @@ def build_cross_reference_index(
                 "risk, evidence sufficiency, or compliance."
             ),
         },
+        "system_context_provenance": {
+            "system_context_entity_id": system_context_entity,
+            "configuration_input_entity_id": configuration_input_entity,
+            "status": str(system_context.get("status", "unresolved")),
+            "completeness_percent": system_context.get("completeness_percent", 0),
+            "context_sha256": context_digest,
+            "field_profiles": context_field_profiles,
+            "value_entity_ids": sorted(context_value_entity_ids),
+            "finding_claim_profiles": context_claim_profiles,
+            "outside_catalog_claim_entity_ids": sorted(
+                outside_context_claim_entity_ids
+            ),
+            "unresolved_catalog_claim_entity_ids": sorted(
+                unresolved_catalog_claim_entity_ids
+            ),
+            "uncataloged_claim_entity_ids": sorted(
+                uncataloged_context_claim_entity_ids
+            ),
+            "missing_required_fields": sorted(
+                _text_values(system_context.get("missing_required"))
+            ),
+            "missing_recommended_fields": sorted(
+                _text_values(system_context.get("missing_recommended"))
+            ),
+            "relationship_ids": sorted(system_context_relationship_ids),
+            "notice": (
+                "System-context values retain configuration-derived authority. Finding review "
+                "claims are linked only by declared field mappings and exact case-folded, "
+                "whitespace-normalized equality; unmatched claims are review leads, not errors."
+            ),
+        },
+        "lifecycle_provenance": {
+            "analysis_event_profiles": analysis_lifecycle_event_profiles,
+            "finding_review_event_profiles": finding_review_event_profiles,
+            "subject_event_profiles": subject_lifecycle_event_profiles,
+            "unresolved_subject_references": sorted(
+                set(unresolved_lifecycle_subject_references)
+            ),
+            "relationship_ids": sorted(lifecycle_relationship_ids),
+            "notice": (
+                "Lifecycle events are ordered, digest-bound projections of recorded audit "
+                "history. Subject links require exact typed identifiers; actor labels are not "
+                "authenticated identities, approvals, or independence evidence."
+            ),
+        },
         "finding_chains": finding_chains,
         "review_leads": review_leads,
         "limitations": [
@@ -3816,6 +4771,8 @@ def build_cross_reference_index(
             "Adapter provenance links normalized contribution identities to integrity-bound adapter runs and the run manifest; tool attribution does not establish correctness, completeness, qualification, or independence.",
             "Repository provenance links source paths, inventory snapshots, dependencies, contracts, components, and findings without promoting indexed or opaque artifacts to semantic-analysis evidence.",
             "Machine-assistance provenance preserves bounded suggestion, summary, evidence, citation, materialization, and lexical-comparison links; generated text and deterministic text similarity remain review aids, not authoritative engineering conclusions.",
+            "System-context provenance preserves configured fields and values and uses exact normalized matches only; a match does not establish operational adequacy, and a mismatch does not establish an error.",
+            "Lifecycle provenance preserves ordered audit-event digests, exact typed subject references, and recorded actor labels without authenticating identity, approval authority, or reviewer independence.",
             "Linkage completeness is an accounting measure, not verification success or risk acceptance.",
         ],
     }
@@ -3876,6 +4833,19 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         "machine_assistance_unresolved_evidence_references",
         "machine_assistance_unresolved_citation_references",
         "findings_with_machine_assistance",
+        "system_context_fields",
+        "system_context_values",
+        "finding_context_claims",
+        "matched_finding_context_claims",
+        "unmatched_finding_context_claims",
+        "findings_with_explicit_system_context",
+        "system_context_relationships",
+        "analysis_lifecycle_events",
+        "finding_review_events",
+        "subject_lifecycle_events",
+        "lifecycle_relationships",
+        "unresolved_lifecycle_subject_references",
+        "findings_with_review_history",
         "compound_exposure_chains",
         "finding_chains",
         "multi_source_fusions",
@@ -4937,6 +5907,551 @@ def verify_cross_reference_file(
                 "cross_reference.machine_assistance_integrity_invalid",
                 "Machine suggestions, summaries, evidence, citation, materialization, and lexical-comparison relationships must reconcile without promoting generated claims.",
             )
+
+        system_context_provenance = value.get("system_context_provenance")
+        system_context_data = (
+            system_context_provenance
+            if isinstance(system_context_provenance, dict)
+            else {}
+        )
+        context_field_profiles = system_context_data.get("field_profiles")
+        context_claim_profiles = system_context_data.get("finding_claim_profiles")
+        system_context_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "system_context"
+        }
+        context_field_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "system_context_field"
+        }
+        context_value_entity_id_set = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "system_context_value"
+        }
+        context_claim_entity_id_set = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "finding_context_claim"
+        }
+        system_context_channel_relationship_ids = {
+            relation_id
+            for relation_id, relation in relationships_by_id.items()
+            if relation.get("channel") == "system_context"
+        }
+        declared_system_context_relationship_ids = set(
+            _text_values(system_context_data.get("relationship_ids"))
+        )
+        system_context_entity_id = str(
+            system_context_data.get("system_context_entity_id", "")
+        )
+
+        def context_field_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            entity_id = str(profile.get("id", ""))
+            entity = entities_by_id.get(entity_id, {})
+            metadata = entity.get("metadata", {})
+            expected_relationship_ids = {
+                relation_id
+                for relation_id in system_context_channel_relationship_ids
+                if (
+                    relationships_by_id[relation_id].get("source")
+                    == system_context_entity_id
+                    and relationships_by_id[relation_id].get("target") == entity_id
+                    and relationships_by_id[relation_id].get("kind")
+                    == "declares_system_context_field"
+                )
+                or (
+                    relationships_by_id[relation_id].get("source") == entity_id
+                    and relationships_by_id[relation_id].get("kind")
+                    == "provides_system_context_value"
+                )
+            }
+            expected_value_ids = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "provides_system_context_value"
+            }
+            return bool(
+                entity_id in context_field_entity_ids
+                and entity.get("label") == profile.get("label")
+                and metadata.get("field") == profile.get("field")
+                and metadata.get("required") == profile.get("required")
+                and metadata.get("status") == profile.get("status")
+                and metadata.get("provenance") == profile.get("provenance")
+                and metadata.get("value_count") == len(expected_value_ids)
+                and set(_text_values(profile.get("value_entity_ids")))
+                == expected_value_ids
+                and expected_value_ids <= context_value_entity_id_set
+                and set(_text_values(profile.get("relationship_ids")))
+                == expected_relationship_ids
+            )
+
+        def context_claim_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            entity_id = str(profile.get("id", ""))
+            finding_id = str(profile.get("finding_id", ""))
+            field_entity_id = str(profile.get("field_entity_id", ""))
+            matched_value_id = str(profile.get("matched_value_entity_id", ""))
+            alignment_status = str(profile.get("alignment_status", ""))
+            entity = entities_by_id.get(entity_id, {})
+            metadata = entity.get("metadata", {})
+            expected_relationship_ids = {
+                relation_id
+                for relation_id in system_context_channel_relationship_ids
+                if (
+                    relationships_by_id[relation_id].get("source") == entity_id
+                    or relationships_by_id[relation_id].get("target") == entity_id
+                )
+            }
+            expected_field_ids = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "interpreted_against_system_context_field"
+            }
+            expected_value_ids = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "exactly_matches_resolved_system_context_value"
+            }
+            expected_finding_ids = {
+                str(entities_by_id.get(str(relationships_by_id[relation_id].get("source")), {}).get("raw_id", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "declares_finding_context_claim"
+            }
+            matched_metadata = entities_by_id.get(matched_value_id, {}).get(
+                "metadata", {}
+            )
+            return bool(
+                entity_id in context_claim_entity_id_set
+                and finding_id in finding_entity_ids
+                and expected_finding_ids == {finding_id}
+                and metadata.get("finding_id") == finding_id
+                and metadata.get("review_field") == profile.get("review_field")
+                and metadata.get("context_field") == profile.get("context_field")
+                and metadata.get("value") == profile.get("value")
+                and metadata.get("normalized_value")
+                == profile.get("normalized_value")
+                and metadata.get("alignment_status") == alignment_status
+                and set(_text_values(profile.get("relationship_ids")))
+                == expected_relationship_ids
+                and expected_field_ids == ({field_entity_id} if field_entity_id else set())
+                and expected_value_ids == ({matched_value_id} if matched_value_id else set())
+                and (
+                    not field_entity_id
+                    or field_entity_id in context_field_entity_ids
+                )
+                and (
+                    not matched_value_id
+                    or (
+                        matched_value_id in context_value_entity_id_set
+                        and matched_metadata.get("field")
+                        == profile.get("context_field")
+                        and matched_metadata.get("normalized_value")
+                        == profile.get("normalized_value")
+                    )
+                )
+                and (alignment_status == "matched") == bool(matched_value_id)
+                and alignment_status
+                in {
+                    "matched",
+                    "outside_catalog",
+                    "catalog_unresolved",
+                    "not_cataloged",
+                }
+            )
+
+        context_relationship_shapes_valid = all(
+            (
+                relation.get("kind") == "has_resolved_system_context"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "analysis_scope"
+                and relation.get("target") == system_context_entity_id
+            )
+            or (
+                relation.get("kind") == "defines_resolved_system_context"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "configuration_input"
+                and relation.get("target") == system_context_entity_id
+            )
+            or (
+                relation.get("kind") == "declares_system_context_field"
+                and relation.get("source") == system_context_entity_id
+                and relation.get("target") in context_field_entity_ids
+            )
+            or (
+                relation.get("kind") == "provides_system_context_value"
+                and relation.get("source") in context_field_entity_ids
+                and relation.get("target") in context_value_entity_id_set
+            )
+            or (
+                relation.get("kind") == "declares_finding_context_claim"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "finding"
+                and relation.get("target") in context_claim_entity_id_set
+            )
+            or (
+                relation.get("kind") == "interpreted_against_system_context_field"
+                and relation.get("source") in context_claim_entity_id_set
+                and relation.get("target") in context_field_entity_ids
+            )
+            or (
+                relation.get("kind")
+                == "exactly_matches_resolved_system_context_value"
+                and relation.get("source") in context_claim_entity_id_set
+                and relation.get("target") in context_value_entity_id_set
+            )
+            for relation_id, relation in relationships_by_id.items()
+            if relation_id in system_context_channel_relationship_ids
+        )
+        expected_outside_context_claim_ids = {
+            str(profile.get("id", ""))
+            for profile in context_claim_profiles or []
+            if isinstance(profile, dict)
+            and profile.get("alignment_status") == "outside_catalog"
+        }
+        expected_unresolved_catalog_claim_ids = {
+            str(profile.get("id", ""))
+            for profile in context_claim_profiles or []
+            if isinstance(profile, dict)
+            and profile.get("alignment_status") == "catalog_unresolved"
+        }
+        expected_uncataloged_claim_ids = {
+            str(profile.get("id", ""))
+            for profile in context_claim_profiles or []
+            if isinstance(profile, dict)
+            and profile.get("alignment_status") == "not_cataloged"
+        }
+        context_metadata = entities_by_id.get(system_context_entity_id, {}).get(
+            "metadata", {}
+        )
+        checks["system_context_integrity"] = bool(
+            isinstance(system_context_provenance, dict)
+            and isinstance(context_field_profiles, list)
+            and isinstance(context_claim_profiles, list)
+            and len(system_context_entity_ids) == 1
+            and system_context_entity_id in system_context_entity_ids
+            and {str(profile.get("id", "")) for profile in context_field_profiles if isinstance(profile, dict)}
+            == context_field_entity_ids
+            and {str(profile.get("id", "")) for profile in context_claim_profiles if isinstance(profile, dict)}
+            == context_claim_entity_id_set
+            and set(_text_values(system_context_data.get("value_entity_ids")))
+            == context_value_entity_id_set
+            and all(context_field_profile_valid(profile) for profile in context_field_profiles)
+            and all(context_claim_profile_valid(profile) for profile in context_claim_profiles)
+            and declared_system_context_relationship_ids
+            == system_context_channel_relationship_ids
+            and set(_text_values(system_context_data.get("outside_catalog_claim_entity_ids")))
+            == expected_outside_context_claim_ids
+            and set(_text_values(system_context_data.get("unresolved_catalog_claim_entity_ids")))
+            == expected_unresolved_catalog_claim_ids
+            and set(_text_values(system_context_data.get("uncataloged_claim_entity_ids")))
+            == expected_uncataloged_claim_ids
+            and context_metadata.get("status") == system_context_data.get("status")
+            and context_metadata.get("completeness_percent")
+            == system_context_data.get("completeness_percent")
+            and context_metadata.get("context_sha256")
+            == system_context_data.get("context_sha256")
+            and str(system_context_data.get("configuration_input_entity_id", ""))
+            == configuration_input_entity_id
+            and isinstance(system_context_data.get("missing_required_fields"), list)
+            and isinstance(system_context_data.get("missing_recommended_fields"), list)
+            and context_relationship_shapes_valid
+        )
+        if not checks["system_context_integrity"]:
+            fail(
+                "cross_reference.system_context_integrity_invalid",
+                "System-context fields, values, exact finding-claim matches, and unresolved alignment partitions must reconcile.",
+            )
+
+        lifecycle_provenance = value.get("lifecycle_provenance")
+        lifecycle_data = (
+            lifecycle_provenance if isinstance(lifecycle_provenance, dict) else {}
+        )
+        analysis_event_profiles = lifecycle_data.get("analysis_event_profiles")
+        finding_event_profiles = lifecycle_data.get("finding_review_event_profiles")
+        subject_event_profiles = lifecycle_data.get("subject_event_profiles")
+        lifecycle_event_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "lifecycle_event"
+        }
+        lifecycle_channel_relationship_ids = {
+            relation_id
+            for relation_id, relation in relationships_by_id.items()
+            if relation.get("channel") == "lifecycle_history"
+        }
+        all_lifecycle_profiles = [
+            *(
+                analysis_event_profiles
+                if isinstance(analysis_event_profiles, list)
+                else []
+            ),
+            *(finding_event_profiles if isinstance(finding_event_profiles, list) else []),
+            *(subject_event_profiles if isinstance(subject_event_profiles, list) else []),
+        ]
+
+        def lifecycle_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            entity_id = str(profile.get("id", ""))
+            scope = str(profile.get("scope", ""))
+            finding_id = str(profile.get("finding_id", ""))
+            entity = entities_by_id.get(entity_id, {})
+            metadata = entity.get("metadata", {})
+            event_record = profile.get("event_record")
+            expected_relationship_ids = {
+                relation_id
+                for relation_id in lifecycle_channel_relationship_ids
+                if relationships_by_id[relation_id].get("source") == entity_id
+                or relationships_by_id[relation_id].get("target") == entity_id
+            }
+            expected_subject_ids = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                in {
+                    "affects_lifecycle_subject",
+                    "establishes_current_finding_context_claim",
+                }
+            }
+            parent_relationships = [
+                relationships_by_id[relation_id]
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                in {
+                    relation_kind
+                    for _parent_kind, relation_kind in LIFECYCLE_SCOPE_PARENT_RELATIONS.values()
+                }
+            ]
+            expected_parent_kind, expected_parent_relation_kind = (
+                LIFECYCLE_SCOPE_PARENT_RELATIONS.get(scope, ("", ""))
+            )
+            expected_actor_labels = (
+                _lifecycle_actor_labels(event_record)
+                if isinstance(event_record, dict)
+                else set()
+            )
+            expected_actor_entity_ids = {
+                _entity_id(
+                    "lifecycle_actor", stable_id("LIFECYCLE-ACTOR", actor_label)
+                )
+                for actor_label in expected_actor_labels
+            }
+            linked_actor_entity_ids = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "recorded_by_actor"
+            }
+            resolved_subject_entity_ids: set[str] = set()
+            expected_unresolved_references: set[str] = set()
+            if isinstance(event_record, dict):
+                for field, entity_kind, raw_id in _lifecycle_subject_references(
+                    event_record
+                ):
+                    target_entity = _entity_id(entity_kind, raw_id)
+                    if target_entity in entity_id_set:
+                        resolved_subject_entity_ids.add(target_entity)
+                    else:
+                        expected_unresolved_references.add(
+                            f"{entity_id}:{field}:{raw_id}"
+                        )
+            current_context_claim_targets = {
+                str(relationships_by_id[relation_id].get("target", ""))
+                for relation_id in expected_relationship_ids
+                if relationships_by_id[relation_id].get("kind")
+                == "establishes_current_finding_context_claim"
+            }
+            parent_entity_id = (
+                str(parent_relationships[0].get("source", ""))
+                if len(parent_relationships) == 1
+                else ""
+            )
+            return bool(
+                entity_id in lifecycle_event_entity_ids
+                and scope in LIFECYCLE_SCOPE_PARENT_RELATIONS
+                and (scope != "finding_review" or finding_id in finding_entity_ids)
+                and (not finding_id or finding_id in finding_entity_ids)
+                and isinstance(profile.get("sequence"), int)
+                and not isinstance(profile.get("sequence"), bool)
+                and profile.get("sequence", 0) >= 1
+                and re.fullmatch(r"[0-9a-f]{64}", str(profile.get("event_sha256", "")))
+                is not None
+                and metadata.get("scope") == scope
+                and metadata.get("finding_id") == finding_id
+                and metadata.get("sequence") == profile.get("sequence")
+                and metadata.get("event") == profile.get("event")
+                and metadata.get("at") == profile.get("at")
+                and metadata.get("reviewer") == profile.get("reviewer")
+                and metadata.get("event_sha256") == profile.get("event_sha256")
+                and isinstance(event_record, dict)
+                and canonical_json_sha256(event_record)
+                == profile.get("event_sha256")
+                and len(parent_relationships) == 1
+                and profile.get("parent_entity_id") == parent_entity_id
+                and parent_relationships[0].get("kind")
+                == expected_parent_relation_kind
+                and entities_by_id.get(str(parent_relationships[0].get("source")), {}).get("kind")
+                == expected_parent_kind
+                and parent_relationships[0].get("target") == entity_id
+                and entity_id
+                == _entity_id(
+                    "lifecycle_event",
+                    stable_id(
+                        "LIFECYCLE-EVENT",
+                        scope,
+                        parent_entity_id,
+                        finding_id,
+                        str(profile.get("sequence")),
+                        str(profile.get("event_sha256", "")),
+                    ),
+                )
+                and (
+                    scope != "finding_review"
+                    or not finding_id
+                    or entities_by_id.get(str(parent_relationships[0].get("source")), {}).get("raw_id")
+                    == finding_id
+                )
+                and set(_text_values(profile.get("subject_entity_ids")))
+                == expected_subject_ids
+                == resolved_subject_entity_ids | current_context_claim_targets
+                and expected_subject_ids <= entity_id_set
+                and linked_actor_entity_ids == expected_actor_entity_ids
+                and all(
+                    entities_by_id.get(actor_id, {}).get("label") in expected_actor_labels
+                    for actor_id in linked_actor_entity_ids
+                )
+                and isinstance(profile.get("changed_fields"), list)
+                and isinstance(profile.get("unresolved_subject_references"), list)
+                and set(profile.get("unresolved_subject_references", []))
+                == expected_unresolved_references
+                and set(_text_values(profile.get("relationship_ids")))
+                == expected_relationship_ids
+            )
+
+        lifecycle_relationship_shapes_valid = all(
+            (
+                relation.get("kind") == "records_analysis_lifecycle_event"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "analysis_scope"
+                and relation.get("target") in lifecycle_event_entity_ids
+            )
+            or (
+                relation.get("kind")
+                in {
+                    relation_kind
+                    for _parent_kind, relation_kind in LIFECYCLE_SCOPE_PARENT_RELATIONS.values()
+                }
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                in {
+                    parent_kind
+                    for parent_kind, _relation_kind in LIFECYCLE_SCOPE_PARENT_RELATIONS.values()
+                }
+                and relation.get("target") in lifecycle_event_entity_ids
+            )
+            or (
+                relation.get("kind") == "recorded_by_actor"
+                and relation.get("source") in lifecycle_event_entity_ids
+                and entities_by_id.get(str(relation.get("target")), {}).get("kind")
+                == "lifecycle_actor"
+            )
+            or (
+                relation.get("kind") == "affects_lifecycle_subject"
+                and relation.get("source") in lifecycle_event_entity_ids
+                and relation.get("target") in entity_id_set
+            )
+            or (
+                relation.get("kind") == "establishes_current_finding_context_claim"
+                and relation.get("source") in lifecycle_event_entity_ids
+                and relation.get("target") in context_claim_entity_id_set
+            )
+            for relation_id, relation in relationships_by_id.items()
+            if relation_id in lifecycle_channel_relationship_ids
+        )
+        expected_unresolved_lifecycle_references = {
+            reference
+            for profile in all_lifecycle_profiles
+            if isinstance(profile, dict)
+            for reference in profile.get("unresolved_subject_references", [])
+            if isinstance(reference, str) and reference
+        }
+        lifecycle_profile_ids = [
+            str(profile.get("id", ""))
+            for profile in all_lifecycle_profiles
+            if isinstance(profile, dict)
+        ]
+        lifecycle_sequence_keys = [
+            (
+                str(profile.get("scope", "")),
+                str(profile.get("parent_entity_id", "")),
+                str(profile.get("finding_id", "")),
+                profile.get("sequence"),
+            )
+            for profile in all_lifecycle_profiles
+            if isinstance(profile, dict)
+        ]
+        checks["lifecycle_provenance_integrity"] = bool(
+            isinstance(lifecycle_provenance, dict)
+            and isinstance(analysis_event_profiles, list)
+            and isinstance(finding_event_profiles, list)
+            and isinstance(subject_event_profiles, list)
+            and set(lifecycle_profile_ids) == lifecycle_event_entity_ids
+            and len(lifecycle_profile_ids) == len(set(lifecycle_profile_ids))
+            and len(lifecycle_sequence_keys) == len(set(lifecycle_sequence_keys))
+            and all(lifecycle_profile_valid(profile) for profile in all_lifecycle_profiles)
+            and set(_text_values(lifecycle_data.get("relationship_ids")))
+            == lifecycle_channel_relationship_ids
+            and set(lifecycle_data.get("unresolved_subject_references", []))
+            == expected_unresolved_lifecycle_references
+            and lifecycle_relationship_shapes_valid
+        )
+        if not checks["lifecycle_provenance_integrity"]:
+            fail(
+                "cross_reference.lifecycle_provenance_integrity_invalid",
+                "Lifecycle event identities, ordering, parent scope, actor labels, and exact typed subject links must reconcile.",
+            )
+
+        verified_context_claims_by_finding: dict[str, set[str]] = defaultdict(set)
+        verified_context_values_by_finding: dict[str, set[str]] = defaultdict(set)
+        verified_context_relationships_by_finding: dict[str, set[str]] = defaultdict(set)
+        verified_context_statuses_by_finding: dict[str, set[str]] = defaultdict(set)
+        for profile in context_claim_profiles or []:
+            if not isinstance(profile, dict):
+                continue
+            finding_id = str(profile.get("finding_id", ""))
+            verified_context_claims_by_finding[finding_id].add(str(profile.get("id", "")))
+            matched_value_id = str(profile.get("matched_value_entity_id", ""))
+            if matched_value_id:
+                verified_context_values_by_finding[finding_id].add(matched_value_id)
+            verified_context_statuses_by_finding[finding_id].add(
+                str(profile.get("alignment_status", ""))
+            )
+            verified_context_relationships_by_finding[finding_id].update(
+                _text_values(profile.get("relationship_ids"))
+            )
+
+        verified_lifecycle_events_by_finding: dict[str, set[str]] = defaultdict(set)
+        verified_lifecycle_relationships_by_finding: dict[str, set[str]] = defaultdict(set)
+        for profile in [
+            *(finding_event_profiles or []),
+            *(subject_event_profiles or []),
+        ]:
+            if not isinstance(profile, dict):
+                continue
+            finding_id = str(profile.get("finding_id", ""))
+            verified_lifecycle_events_by_finding[finding_id].add(str(profile.get("id", "")))
+            verified_lifecycle_relationships_by_finding[finding_id].update(
+                _text_values(profile.get("relationship_ids"))
+            )
         verified_machine_entities_by_finding: dict[str, set[str]] = defaultdict(set)
         verified_machine_relationships_by_finding: dict[str, set[str]] = defaultdict(
             set
@@ -5940,6 +7455,12 @@ def verify_cross_reference_file(
                         "adapter_provenance_relationship_ids",
                         "machine_assistance_entity_ids",
                         "machine_assistance_relationship_ids",
+                        "system_context_claim_entity_ids",
+                        "system_context_value_entity_ids",
+                        "system_context_relationship_ids",
+                        "system_context_alignment_statuses",
+                        "lifecycle_event_entity_ids",
+                        "lifecycle_relationship_ids",
                         "interface_entity_ids",
                         "inbound_fusion_ids",
                         "outbound_fusion_ids",
@@ -6209,6 +7730,50 @@ def verify_cross_reference_file(
                         str(chain.get("finding_id", "")), set()
                     ),
                 )
+                and (
+                    lambda expected_claim_ids, expected_value_ids, expected_relation_ids, expected_statuses: (
+                        set(_text_values(chain.get("system_context_claim_entity_ids")))
+                        == expected_claim_ids
+                        and set(_text_values(chain.get("system_context_value_entity_ids")))
+                        == expected_value_ids
+                        and set(_text_values(chain.get("system_context_relationship_ids")))
+                        == expected_relation_ids
+                        and set(_text_values(chain.get("system_context_alignment_statuses")))
+                        == expected_statuses
+                        and chain["dimensions"].get("system_context")
+                        == bool(expected_claim_ids)
+                    )
+                )(
+                    verified_context_claims_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                    verified_context_values_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                    verified_context_relationships_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                    verified_context_statuses_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                )
+                and (
+                    lambda expected_event_ids, expected_relation_ids: (
+                        set(_text_values(chain.get("lifecycle_event_entity_ids")))
+                        == expected_event_ids
+                        and set(_text_values(chain.get("lifecycle_relationship_ids")))
+                        == expected_relation_ids
+                        and chain["dimensions"].get("lifecycle_history")
+                        == bool(expected_event_ids)
+                    )
+                )(
+                    verified_lifecycle_events_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                    verified_lifecycle_relationships_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                )
                 and set(_text_values(chain.get("requirement_ids")))
                 <= entity_raw_ids_by_kind["requirement"]
                 and set(_text_values(chain.get("hazard_ids")))
@@ -6386,6 +7951,24 @@ def verify_cross_reference_file(
                 ).items()
             )
         )
+        context_alignment_status_counts = dict(
+            sorted(
+                Counter(
+                    str(profile.get("alignment_status", ""))
+                    for profile in (context_claim_profiles or [])
+                    if isinstance(profile, dict)
+                ).items()
+            )
+        )
+        lifecycle_event_type_counts = dict(
+            sorted(
+                Counter(
+                    str(profile.get("event", ""))
+                    for profile in all_lifecycle_profiles
+                    if isinstance(profile, dict)
+                ).items()
+            )
+        )
         components_with_repository_source = {
             str(entities_by_id[str(relation.get("source"))].get("raw_id", ""))
             for relation in relationships_by_id.values()
@@ -6538,6 +8121,41 @@ def verify_cross_reference_file(
                 for chain in (chains or [])
                 if isinstance(chain, dict)
             )
+            and summary.get("system_context_fields")
+            == len(context_field_profiles or [])
+            and summary.get("system_context_values")
+            == len(context_value_entity_id_set)
+            and summary.get("finding_context_claims")
+            == len(context_claim_profiles or [])
+            and summary.get("matched_finding_context_claims")
+            == context_alignment_status_counts.get("matched", 0)
+            and summary.get("unmatched_finding_context_claims")
+            == len(context_claim_profiles or [])
+            - context_alignment_status_counts.get("matched", 0)
+            and summary.get("findings_with_explicit_system_context")
+            == sum(
+                bool(_text_values(chain.get("system_context_claim_entity_ids")))
+                for chain in (chains or [])
+                if isinstance(chain, dict)
+            )
+            and summary.get("system_context_relationships")
+            == len(system_context_channel_relationship_ids)
+            and summary.get("analysis_lifecycle_events")
+            == len(analysis_event_profiles or [])
+            and summary.get("finding_review_events")
+            == len(finding_event_profiles or [])
+            and summary.get("subject_lifecycle_events")
+            == len(subject_event_profiles or [])
+            and summary.get("lifecycle_relationships")
+            == len(lifecycle_channel_relationship_ids)
+            and summary.get("unresolved_lifecycle_subject_references")
+            == len(expected_unresolved_lifecycle_references)
+            and summary.get("findings_with_review_history")
+            == sum(
+                bool(_text_values(chain.get("lifecycle_event_entity_ids")))
+                for chain in (chains or [])
+                if isinstance(chain, dict)
+            )
             and summary.get("compound_exposure_chains")
             == sum(
                 bool(_text_values(chain.get("compound_exposure_kinds")))
@@ -6595,6 +8213,10 @@ def verify_cross_reference_file(
             == machine_suggestion_status_counts
             and summary.get("machine_claim_relationship_types")
             == machine_claim_relationship_type_counts
+            and summary.get("finding_context_alignment_statuses")
+            == context_alignment_status_counts
+            and summary.get("lifecycle_event_types")
+            == lifecycle_event_type_counts
         )
         if not checks["summary_reconciliation"]:
             fail(
@@ -6722,6 +8344,23 @@ def verify_cross_reference_file(
             _safe_int(
                 value.get("summary", {}).get("machine_claim_relationships", 0)
             )
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "system_context_field_count": (
+            _safe_int(value.get("summary", {}).get("system_context_fields", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "finding_context_claim_count": (
+            _safe_int(value.get("summary", {}).get("finding_context_claims", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "lifecycle_event_count": (
+            _safe_int(value.get("summary", {}).get("analysis_lifecycle_events", 0))
+            + _safe_int(value.get("summary", {}).get("finding_review_events", 0))
+            + _safe_int(value.get("summary", {}).get("subject_lifecycle_events", 0))
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0
         ),

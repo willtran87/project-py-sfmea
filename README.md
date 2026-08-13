@@ -88,6 +88,12 @@ flowchart LR
   non-authoritative entities. Their allowlisted evidence, proposed citations, materialized
   findings, and deterministic duplicate/contradiction/divergence relationships remain navigable,
   independently verifiable review leads; unresolved references and stale summaries stay visible.
+  Resolved system-context fields and values are first-class governed entities. Finding mode,
+  state, safe-state, degraded-behavior, and recovery claims remain separate reviewer records and
+  receive only declared-field plus exact case-folded/whitespace-normalized links; mismatches and
+  uncataloged claims become review leads rather than inferred errors. Analysis and finding-review
+  history is projected as ordered, digest-bound lifecycle events with exact typed subject links and
+  explicitly unauthenticated actor labels.
   Source-provenance links then connect components and findings to content-addressed inventory
   entries, dependency/contract declarations, the run-manifest-bound configuration input, and
   excluded regions. Opaque artifacts and missing

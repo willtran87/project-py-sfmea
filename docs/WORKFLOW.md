@@ -427,6 +427,20 @@ deterministic suggestion comparison as duplicate, contradiction, and divergence 
 Review `proposed_machine_suggestions`, `machine_claim_*`, stale-summary, and unresolved-reference
 leads before using generated text; the verifier reconciles those records even without the source
 analysis, while `--analysis` additionally requires exact regeneration.
+
+The same fabric exposes two previously separate review surfaces:
+
+- `system_context_provenance` models the resolved context, its fields and values, and each explicit
+  finding mode/state/safe-state/degraded/recovery claim. Only declared field mappings and exact
+  case-folded, whitespace-normalized values are joined. An unmatched claim is a reconciliation
+  lead, not proof that the finding or configuration is wrong.
+- `lifecycle_provenance` models ordered analysis history and per-finding review history as
+  digest-bound events. Exact typed identifiers link events to current findings, obligations,
+  executions, machine suggestions/summaries, or adapter runs; unresolved references remain review
+  leads. Reviewer names are recorded labels, not authenticated identity or independence proof.
+
+The HTML chain cards and canonical cross-reference diagram expose both projections. Use the JSON
+fabric and its standalone verifier when complete identities and relationship sets are required.
 Each scanned component also has a verified semantic-exposure profile that joins exact records from
 data and alias flow, concurrency, exception propagation, state machines, authorization scope,
 contracts, deployment topology, shared fate, and architecture hierarchy. Finding chains surface

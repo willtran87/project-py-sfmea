@@ -63,8 +63,8 @@ Available names:
 | `configuration-authoring-apply-receipt` | Validated TOML publication and addition-count receipt |
 | `configuration-authoring-draft` | Editable guidance, architecture, and interface proposal workspace |
 | `configuration-authoring-verification` | Integrity, semantics, and optional exact-binding verdict |
-| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure, verification-readiness, review-governance, adapter-run, repository-source, and non-authoritative machine-assistance provenance, finding chains, quality diagnostics, compound-model/claim intersections, and prioritized review leads |
-| `cross-reference-verification` | Fabric integrity, semantic/readiness/governance/repository/machine provenance and chain referential consistency, diagnostic scope/identity, accounting, and optional exact-analysis regeneration verdict |
+| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure, verification-readiness, review-governance, adapter-run, repository-source, non-authoritative machine-assistance, resolved system-context, and lifecycle-history provenance, finding chains, quality diagnostics, compound-model/claim intersections, and prioritized review leads |
+| `cross-reference-verification` | Fabric integrity, semantic/readiness/governance/repository/machine/context/lifecycle provenance and chain referential consistency, diagnostic scope/identity, accounting, and optional exact-analysis regeneration verdict |
 | `sfta-authoring` | Sealed exact-analysis-bound fault-tree definitions with named engineering approvals |
 | `sfta-authoring-apply-receipt` | Applied hazard replacements and source/result analysis bindings |
 | `sfta-authoring-draft` | Editable one-entry-per-hazard fault-tree engineering workspace |
@@ -148,6 +148,20 @@ profile/entity identity, exact relationship sets and shapes, unresolved referenc
 claim counts, finding-chain copies, and summary accounting. These links never convert generated
 text or token similarity into an approved finding, authoritative citation, sufficient evidence, or
 compliance conclusion.
+
+`system_context_provenance` binds the analysis scope and run-manifest configuration input to the
+resolved context record, field profiles, and exact configured values. Finding review context is
+preserved as separate claim entities with one of `matched`, `outside_catalog`,
+`catalog_unresolved`, or `not_cataloged`. Matching uses only the declared review-to-context field
+map and case-folded whitespace-normalized equality. The verifier reconstructs entity partitions,
+relationship shapes, match targets, unmatched partitions, chain copies, and summary counts.
+
+`lifecycle_provenance` projects ordered analysis history and per-finding `review_history` into
+digest-bound event profiles. Parent scope, sequence, timestamp, event kind, changed fields,
+recorded actor labels, exact typed subject links, unresolved references, chain copies, and counts
+are independently reconciled. Actor labels are intentionally not identity, approval, or reviewer-
+independence evidence.
+
 Entity references are bounded non-empty strings rather than slug-only identifiers because exact
 repository-artifact identities intentionally retain normalized relative paths such as
 `src/package/module.py`; relationship IDs and typed kind/channel names remain identifier-shaped.

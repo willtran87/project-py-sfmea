@@ -72,7 +72,10 @@ artifacts, and the resolved configuration input for configuration-derived findin
 to bounded data/alias-flow, concurrency, exception, state, authorization, contract, deployment,
 shared-fate, and hierarchy records. Machine-suggestion and machine-summary nodes appear when they
 directly cite, summarize, materialize, duplicate, contradict, or diverge from a selected finding;
-their generated-claim authority remains visibly distinct. Its metadata binds the exact analysis and complete cross-reference
+their generated-claim authority remains visibly distinct. Finding-context claims, exact resolved
+context values, digest-bound review events, and recorded lifecycle actors appear for selected
+findings when present. Context equality does not imply operational adequacy, and actor labels do
+not imply authenticated approval. Its metadata binds the exact analysis and complete cross-reference
 projection digests. The view is bounded to 40 finding chains and 500 entities; use
 `sfmea cross-reference ANALYSIS --format json` for the complete machine-readable relationship
 and discrepancy registers. Static agreement is corroboration, runtime presence is a bounded

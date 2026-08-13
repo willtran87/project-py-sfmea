@@ -32,6 +32,7 @@ from pysfmea.report import analysis_state_sha256
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
 from pysfmea.store import save_analysis
+from pysfmea.system_context import build_system_context
 from pysfmea.version import __version__
 
 
@@ -134,6 +135,51 @@ class HtmlReportTests(unittest.TestCase):
         self.assertTrue(chain["dimensions"]["machine_assistance"])
         self.assertIn("non-authoritative", machine["notice"])
 
+    def test_report_projects_context_alignment_and_lifecycle_provenance(self) -> None:
+        finding = self.analysis["items"][0]
+        self.analysis["system_context"] = build_system_context(
+            {
+                "project": {
+                    "purpose": "Checkout",
+                    "boundary": "Repository",
+                    "operating_context": "Hosted service",
+                    "operational_modes": ["Normal"],
+                }
+            }
+        )
+        finding["review"]["operational_mode"] = "normal"
+        finding["review_history"] = [
+            {
+                "event": "review_update",
+                "at": "2026-08-13T12:00:00Z",
+                "reviewer": "Jordan",
+                "changes": {
+                    "operational_mode": {"before": "", "after": "normal"}
+                },
+            }
+        ]
+
+        report = build_html_report_data(self.analysis)
+        context = report["cross_reference"]["system_context_provenance"]
+        lifecycle = report["cross_reference"]["lifecycle_provenance"]
+        chain = next(
+            value
+            for value in report["cross_reference"]["finding_chains"]
+            if value["finding_id"] == finding["id"]
+        )
+
+        self.assertEqual(
+            context["finding_claim_profiles"][0]["alignment_status"], "matched"
+        )
+        self.assertEqual(
+            lifecycle["finding_review_event_profiles"][0]["event"],
+            "review_update",
+        )
+        self.assertTrue(chain["dimensions"]["system_context"])
+        self.assertTrue(chain["dimensions"]["lifecycle_history"])
+        self.assertIn("exact case-folded", context["notice"])
+        self.assertIn("not authenticated", lifecycle["notice"])
+
     def test_report_is_self_contained_navigable_and_safely_embedded(self) -> None:
         included_id = self.analysis["items"][-1]["id"]
         notes = self.root / "notes.md"
@@ -189,6 +235,8 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn('"adapter_provenance":', document)
         self.assertIn('"repository_provenance":', document)
         self.assertIn('"machine_assistance_provenance":', document)
+        self.assertIn('"system_context_provenance":', document)
+        self.assertIn('"lifecycle_provenance":', document)
         self.assertIn("verification_profiles_with_signals", document)
         self.assertIn("value.verification_lifecycle_state", document)
         self.assertIn("value.verification_evidence_posture", document)
@@ -197,6 +245,8 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn("value.review_next_action_id", document)
         self.assertIn("value.quality_diagnostic_counts", document)
         self.assertIn("value.adapter_statuses", document)
+        self.assertIn("value.system_context_alignment_statuses", document)
+        self.assertIn("value.lifecycle_event_entity_ids", document)
         self.assertIn("findings with tool provenance", document)
         self.assertIn("findings with source provenance", document)
         self.assertIn("value.source_repository_path", document)

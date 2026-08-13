@@ -53,6 +53,13 @@ package; public artifact and schema identifiers carry their own explicit compati
   self-contained HTML expose the same non-authoritative provenance; standalone verification rejects
   relationship/profile/accounting drift. Grouping comparator candidates by component removes its
   prior quadratic scan across unrelated components.
+  Add governed system-context and lifecycle-history projections to the fabric. Resolved context
+  fields and values now cross-reference explicit finding mode, state, safe-state, degraded, and
+  recovery claims through declared-field and exact normalized matches; unmatched, unresolved, and
+  uncataloged claims remain bounded review leads. Ordered analysis and finding-review history
+  becomes digest-bound lifecycle-event entities with exact typed subject references and explicitly
+  unauthenticated actor labels. Schemas, standalone verification, finding chains, diagrams, CLI,
+  Markdown, and the self-contained HTML report expose and reconcile the same records.
 
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,

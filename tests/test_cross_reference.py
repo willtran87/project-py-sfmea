@@ -26,6 +26,7 @@ from pysfmea.report import export_review_package, verify_review_package
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
 from pysfmea.store import save_analysis
+from pysfmea.system_context import build_system_context
 
 
 class CrossReferenceTests(unittest.TestCase):
@@ -616,6 +617,9 @@ class CrossReferenceTests(unittest.TestCase):
         ]
         output = self.root / "fabric.json"
         export_cross_reference_index(self.analysis, output)
+        standalone = verify_cross_reference_file(output)
+        self.assertTrue(standalone["checks"]["system_context_integrity"])
+        self.assertTrue(standalone["checks"]["lifecycle_provenance_integrity"])
         valid = verify_cross_reference_file(output, analysis=self.analysis)
         self.assertTrue(valid["checks"]["machine_assistance_integrity"])
 
@@ -632,6 +636,181 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertFalse(rejected["valid"])
         self.assertFalse(rejected["checks"]["machine_assistance_integrity"])
         self.assertFalse(rejected["checks"]["exact_regeneration"])
+
+    def test_cross_references_system_context_and_lifecycle_history(self) -> None:
+        self.analysis["system_context"] = build_system_context(
+            {
+                "project": {
+                    "purpose": "Process governed workflows",
+                    "boundary": "The scanned Python repository",
+                    "operating_context": "Hosted service",
+                    "operational_modes": ["Normal", "Maintenance"],
+                    "system_states": ["Ready"],
+                    "safe_states": ["Read only"],
+                    "degraded_states": ["Queue requests"],
+                }
+            }
+        )
+        matched = self.analysis["items"][0]
+        unmatched = self.analysis["items"][1]
+        matched["review"].update(
+            {
+                "operational_mode": "  NORMAL  ",
+                "operational_state": "Ready",
+                "required_safe_state": "Read only",
+                "degraded_behavior": "Queue requests",
+                "recovery_behavior": "Drain the queue",
+            }
+        )
+        matched["review_history"] = [
+            {
+                "event": "review_update",
+                "at": "2026-08-13T12:00:00Z",
+                "reviewer": "Jordan",
+                "changes": {
+                    "operational_mode": {"before": "", "after": "  NORMAL  "}
+                },
+            }
+        ]
+        unmatched["review"]["operational_mode"] = "Emergency"
+        self.analysis["history"] = [
+            {
+                "event": "finding_selected_for_review",
+                "at": "2026-08-13T11:00:00Z",
+                "item_id": matched["id"],
+            },
+            {
+                "event": "orphan_subject_recorded",
+                "at": "2026-08-13T11:30:00Z",
+                "suggestion_id": "SUG-MISSING",
+            },
+        ]
+
+        index = build_cross_reference_index(self.analysis)
+        context = index["system_context_provenance"]
+        lifecycle = index["lifecycle_provenance"]
+        matched_chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == matched["id"]
+        )
+        unmatched_chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == unmatched["id"]
+        )
+
+        matched_profiles = [
+            value
+            for value in context["finding_claim_profiles"]
+            if value["finding_id"] == matched["id"]
+        ]
+        self.assertEqual(
+            next(
+                value
+                for value in matched_profiles
+                if value["review_field"] == "operational_mode"
+            )["alignment_status"],
+            "matched",
+        )
+        self.assertEqual(
+            next(
+                value
+                for value in matched_profiles
+                if value["review_field"] == "recovery_behavior"
+            )["alignment_status"],
+            "not_cataloged",
+        )
+        self.assertIn("matched", matched_chain["system_context_alignment_statuses"])
+        self.assertIn(
+            "outside_catalog", unmatched_chain["system_context_alignment_statuses"]
+        )
+        self.assertTrue(matched_chain["dimensions"]["system_context"])
+        self.assertTrue(matched_chain["dimensions"]["lifecycle_history"])
+        self.assertTrue(matched_chain["lifecycle_event_entity_ids"])
+        self.assertEqual(index["summary"]["analysis_lifecycle_events"], 2)
+        self.assertEqual(index["summary"]["finding_review_events"], 1)
+        self.assertEqual(
+            lifecycle["unresolved_subject_references"][0].split(":")[-1],
+            "SUG-MISSING",
+        )
+        lead_kinds = {value["kind"] for value in index["review_leads"]}
+        self.assertIn(
+            "finding_context_claims_outside_resolved_catalog", lead_kinds
+        )
+        self.assertIn("finding_context_claims_without_catalog_field", lead_kinds)
+        self.assertIn("unresolved_lifecycle_subject_references", lead_kinds)
+
+        diagram = build_diagram_models(
+            self.analysis, kind="cross_reference", cross_reference_index=index
+        )[0]
+        diagram_kinds = {value["kind"] for value in diagram["nodes"]}
+        self.assertIn("finding_context_claim", diagram_kinds)
+        self.assertIn("system_context_value", diagram_kinds)
+        self.assertIn("lifecycle_event", diagram_kinds)
+        self.assertIn("lifecycle_actor", diagram_kinds)
+
+        from jsonschema import Draft202012Validator
+
+        Draft202012Validator(schema_document("cross-reference")).validate(index)
+
+    def test_verifier_rejects_context_and_lifecycle_tampering(self) -> None:
+        self.analysis["system_context"] = build_system_context(
+            {
+                "project": {
+                    "purpose": "Test",
+                    "boundary": "Repository",
+                    "operating_context": "Service",
+                    "operational_modes": ["Normal"],
+                }
+            }
+        )
+        finding = self.analysis["items"][0]
+        finding["review"]["operational_mode"] = "Normal"
+        finding["review_history"] = [
+            {
+                "event": "review_update",
+                "at": "2026-08-13T12:00:00Z",
+                "reviewer": "Jordan",
+                "changes": {
+                    "operational_mode": {"before": "", "after": "Normal"}
+                },
+            }
+        ]
+        output = self.root / "fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        valid = verify_cross_reference_file(output, analysis=self.analysis)
+        self.assertTrue(valid["checks"]["system_context_integrity"])
+        self.assertTrue(valid["checks"]["lifecycle_provenance_integrity"])
+
+        context_tampered = json.loads(output.read_text(encoding="utf-8"))
+        context_tampered["system_context_provenance"]["finding_claim_profiles"][0][
+            "normalized_value"
+        ] = "tampered"
+        content = dict(context_tampered)
+        content.pop("content_sha256")
+        context_tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(context_tampered), encoding="utf-8")
+        rejected_context = verify_cross_reference_file(
+            output, analysis=self.analysis
+        )
+        self.assertFalse(rejected_context["checks"]["system_context_integrity"])
+
+        export_cross_reference_index(self.analysis, output)
+        lifecycle_tampered = json.loads(output.read_text(encoding="utf-8"))
+        lifecycle_tampered["lifecycle_provenance"][
+            "finding_review_event_profiles"
+        ][0]["event_sha256"] = "0" * 64
+        content = dict(lifecycle_tampered)
+        content.pop("content_sha256")
+        lifecycle_tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(lifecycle_tampered), encoding="utf-8")
+        rejected_lifecycle = verify_cross_reference_file(
+            output, analysis=self.analysis
+        )
+        self.assertFalse(
+            rejected_lifecycle["checks"]["lifecycle_provenance_integrity"]
+        )
 
     def test_projects_test_candidates_and_coverage_without_promoting_evidence(self) -> None:
         (self.root / "test_app.py").write_text(

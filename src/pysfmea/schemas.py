@@ -38,6 +38,7 @@ from .cross_reference import (
     CROSS_REFERENCE_FORMAT,
     CROSS_REFERENCE_VERIFICATION_CHECKS,
     CROSS_REFERENCE_VERIFICATION_FORMAT,
+    LIFECYCLE_SCOPE_PARENT_RELATIONS,
     MAX_CHAINS,
     MAX_ENTITIES,
     MAX_FUSIONS,
@@ -1229,6 +1230,8 @@ def _cross_reference_schema() -> dict[str, Any]:
             "quality_governance",
             "tool_provenance",
             "machine_assistance",
+            "system_context",
+            "lifecycle_history",
         ],
         "properties": {
             name: {"type": "boolean"}
@@ -1250,6 +1253,8 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "quality_governance",
                 "tool_provenance",
                 "machine_assistance",
+                "system_context",
+                "lifecycle_history",
             )
         },
         "additionalProperties": False,
@@ -1478,6 +1483,121 @@ def _cross_reference_schema() -> dict[str, Any]:
         },
         "notice": text,
     }
+    system_context_field_profile_properties = {
+        "id": identifier,
+        "field": identifier,
+        "label": text,
+        "required": {"type": "boolean"},
+        "status": text,
+        "provenance": text,
+        "value_entity_ids": string_list,
+        "relationship_ids": string_list,
+    }
+    finding_context_claim_profile_properties = {
+        "id": identifier,
+        "finding_id": identifier,
+        "review_field": identifier,
+        "context_field": {"type": "string", "maxLength": 20_000},
+        "value": text,
+        "normalized_value": text,
+        "alignment_status": {
+            "enum": [
+                "matched",
+                "outside_catalog",
+                "catalog_unresolved",
+                "not_cataloged",
+            ]
+        },
+        "field_entity_id": {"type": "string", "maxLength": 20_000},
+        "matched_value_entity_id": {"type": "string", "maxLength": 20_000},
+        "relationship_ids": string_list,
+    }
+    system_context_provenance_properties = {
+        "system_context_entity_id": identifier,
+        "configuration_input_entity_id": {"type": "string", "maxLength": 20_000},
+        "status": text,
+        "completeness_percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "context_sha256": {"type": "string", "maxLength": 64},
+        "field_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(system_context_field_profile_properties),
+                "properties": system_context_field_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "value_entity_ids": string_list,
+        "finding_claim_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(finding_context_claim_profile_properties),
+                "properties": finding_context_claim_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "outside_catalog_claim_entity_ids": string_list,
+        "unresolved_catalog_claim_entity_ids": string_list,
+        "uncataloged_claim_entity_ids": string_list,
+        "missing_required_fields": string_list,
+        "missing_recommended_fields": string_list,
+        "relationship_ids": string_list,
+        "notice": text,
+    }
+    lifecycle_event_profile_properties = {
+        "id": identifier,
+        "scope": {"enum": list(LIFECYCLE_SCOPE_PARENT_RELATIONS)},
+        "parent_entity_id": identifier,
+        "finding_id": {"type": "string", "maxLength": 20_000},
+        "sequence": {"type": "integer", "minimum": 1},
+        "event": text,
+        "at": {"type": "string", "maxLength": 20_000},
+        "reviewer": {"type": "string", "maxLength": 20_000},
+        "event_sha256": digest,
+        "event_record": {"type": "object", "maxProperties": 100},
+        "changed_fields": string_list,
+        "subject_entity_ids": string_list,
+        "unresolved_subject_references": text_list,
+        "relationship_ids": string_list,
+    }
+    lifecycle_provenance_properties = {
+        "analysis_event_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(lifecycle_event_profile_properties),
+                "properties": lifecycle_event_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "finding_review_event_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(lifecycle_event_profile_properties),
+                "properties": lifecycle_event_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "subject_event_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(lifecycle_event_profile_properties),
+                "properties": lifecycle_event_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "unresolved_subject_references": text_list,
+        "relationship_ids": string_list,
+        "notice": text,
+    }
     chain_properties = {
         "finding_id": identifier,
         "component_id": identifier,
@@ -1544,6 +1664,12 @@ def _cross_reference_schema() -> dict[str, Any]:
         "adapter_statuses": adapter_status_map,
         "machine_assistance_entity_ids": string_list,
         "machine_assistance_relationship_ids": string_list,
+        "system_context_claim_entity_ids": string_list,
+        "system_context_value_entity_ids": string_list,
+        "system_context_relationship_ids": string_list,
+        "system_context_alignment_statuses": string_list,
+        "lifecycle_event_entity_ids": string_list,
+        "lifecycle_relationship_ids": string_list,
         "dimensions": dimensions,
         "linkage_completeness_percent": {
             "type": "number",
@@ -1637,6 +1763,22 @@ def _cross_reference_schema() -> dict[str, Any]:
             "minimum": 0,
         },
         "findings_with_machine_assistance": {"type": "integer", "minimum": 0},
+        "system_context_fields": {"type": "integer", "minimum": 0},
+        "system_context_values": {"type": "integer", "minimum": 0},
+        "finding_context_claims": {"type": "integer", "minimum": 0},
+        "matched_finding_context_claims": {"type": "integer", "minimum": 0},
+        "unmatched_finding_context_claims": {"type": "integer", "minimum": 0},
+        "findings_with_explicit_system_context": {"type": "integer", "minimum": 0},
+        "system_context_relationships": {"type": "integer", "minimum": 0},
+        "analysis_lifecycle_events": {"type": "integer", "minimum": 0},
+        "finding_review_events": {"type": "integer", "minimum": 0},
+        "subject_lifecycle_events": {"type": "integer", "minimum": 0},
+        "lifecycle_relationships": {"type": "integer", "minimum": 0},
+        "unresolved_lifecycle_subject_references": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "findings_with_review_history": {"type": "integer", "minimum": 0},
         "compound_exposure_chains": {"type": "integer", "minimum": 0},
         "finding_chains": {"type": "integer", "minimum": 0},
         "active_finding_chains": {"type": "integer", "minimum": 0},
@@ -1659,6 +1801,8 @@ def _cross_reference_schema() -> dict[str, Any]:
         "repository_artifact_statuses": integer_map,
         "machine_suggestion_statuses": integer_map,
         "machine_claim_relationship_types": integer_map,
+        "finding_context_alignment_statuses": integer_map,
+        "lifecycle_event_types": integer_map,
         "omitted_by_bound": integer_map,
     }
     properties = {
@@ -1754,6 +1898,18 @@ def _cross_reference_schema() -> dict[str, Any]:
             "type": "object",
             "required": list(machine_assistance_properties),
             "properties": machine_assistance_properties,
+            "additionalProperties": False,
+        },
+        "system_context_provenance": {
+            "type": "object",
+            "required": list(system_context_provenance_properties),
+            "properties": system_context_provenance_properties,
+            "additionalProperties": False,
+        },
+        "lifecycle_provenance": {
+            "type": "object",
+            "required": list(lifecycle_provenance_properties),
+            "properties": lifecycle_provenance_properties,
             "additionalProperties": False,
         },
         "finding_chains": {

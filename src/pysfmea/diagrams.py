@@ -518,6 +518,9 @@ def cross_reference_diagram(
                 *chain.get("quality_diagnostic_entity_ids", []),
                 *chain.get("adapter_run_entity_ids", []),
                 *chain.get("machine_assistance_entity_ids", []),
+                *chain.get("system_context_claim_entity_ids", []),
+                *chain.get("system_context_value_entity_ids", []),
+                *chain.get("lifecycle_event_entity_ids", []),
                 *chain.get("source_repository_artifact_entity_ids", []),
                 chain.get("source_configuration_input_entity_id", ""),
             )
@@ -537,6 +540,20 @@ def cross_reference_diagram(
                 )
         if len(selected) >= node_limit:
             break
+    provenance_seed = set(selected)
+    for relationship in index["relationships"]:
+        if relationship.get("channel") not in {
+            "system_context",
+            "lifecycle_history",
+        }:
+            continue
+        source = str(relationship.get("source", ""))
+        target = str(relationship.get("target", ""))
+        if source in provenance_seed or target in provenance_seed:
+            if source in entity_by_id:
+                selected.add(source)
+            if target in entity_by_id:
+                selected.add(target)
     selected = set(sorted(selected)[:node_limit])
     diagram_node_id_by_entity = {
         entity_id: (
@@ -553,6 +570,8 @@ def cross_reference_diagram(
         "sfta_event": 0,
         "repository_artifact": 0,
         "configuration_input": 0,
+        "system_context_value": 0,
+        "system_context_field": 0,
         "component": 1,
         "resilience_operation": 1,
         "resilience_effect_summary": 1,
@@ -584,6 +603,9 @@ def cross_reference_diagram(
         "adapter_run": 2,
         "machine_suggestion": 2,
         "machine_summary": 2,
+        "finding_context_claim": 2,
+        "lifecycle_event": 2,
+        "lifecycle_actor": 2,
         "verification_readiness_profile": 3,
         "test_candidate": 3,
         "coverage_observation": 3,
@@ -636,6 +658,9 @@ def cross_reference_diagram(
                 " Source snapshots, adapter attribution, quality diagnostics, and review-governance "
                 "state retain their distinct evidence authority. Machine-generated claims and "
                 "summaries remain explicitly non-authoritative review aids."
+                " Resolved context values, exact finding-context matches, and digest-bound "
+                "lifecycle events expose configuration and review history without implying "
+                "semantic equivalence or authenticated approval."
             ),
             "notice": (
                 f"Showing {len(chains)} of {summary['finding_chains']} finding chains and "
@@ -684,6 +709,16 @@ def cross_reference_diagram(
                 "findings_with_machine_assistance": summary[
                     "findings_with_machine_assistance"
                 ],
+                "finding_context_claims": summary["finding_context_claims"],
+                "matched_finding_context_claims": summary[
+                    "matched_finding_context_claims"
+                ],
+                "findings_with_explicit_system_context": summary[
+                    "findings_with_explicit_system_context"
+                ],
+                "analysis_lifecycle_events": summary["analysis_lifecycle_events"],
+                "finding_review_events": summary["finding_review_events"],
+                "subject_lifecycle_events": summary["subject_lifecycle_events"],
                 "compound_exposure_chains": summary["compound_exposure_chains"],
                 "review_leads": summary["review_leads"],
             },
