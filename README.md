@@ -83,6 +83,11 @@ flowchart LR
   revalidation flag, disposition, and resulting review next action for every finding. Global
   analysis diagnostics remain separate from finding-local blockers, and neither is represented as
   evidence that the candidate failure is credible.
+  Adapter-provenance links bind normalized contributions to the exact run ledger and manifest.
+  Source-provenance links then connect components and findings to content-addressed inventory
+  entries, dependency/contract declarations, the run-manifest-bound configuration input, and
+  excluded regions. Opaque artifacts and missing
+  source links become explicit review leads; inventory accounting does not imply semantic coverage.
 - Actual actions, residual/post-action ratings, approvals, and audit timestamps
 - Configurable completeness gates with CLI, browser, CSV, and Markdown findings
 - Functional propagation and system/component inventory worksheets

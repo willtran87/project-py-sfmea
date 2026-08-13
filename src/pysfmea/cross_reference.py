@@ -37,6 +37,7 @@ CROSS_REFERENCE_VERIFICATION_CHECKS = (
     "verification_readiness_integrity",
     "review_governance_integrity",
     "adapter_provenance_integrity",
+    "repository_provenance_integrity",
     "finding_chain_integrity",
     "review_lead_integrity",
     "summary_reconciliation",
@@ -473,6 +474,35 @@ def build_cross_reference_index(
             ),
         },
     )
+    configuration_digest = str(
+        run_manifest.get("resolved_inputs", {}).get("configuration_digest", "")
+    )
+    configuration_path = str(
+        run_manifest.get("tool", {}).get("settings", {}).get("config_file", "")
+    )
+    configuration_input_entity = ""
+    analysis_input_relationship_ids: set[str] = set()
+    if configuration_digest or configuration_path:
+        configuration_input_entity = add_entity(
+            "configuration_input",
+            configuration_digest or stable_id("CONFIGURATION-INPUT", configuration_path),
+            configuration_path or "resolved project configuration",
+            authority="run_manifest_bound_resolved_configuration_input",
+            metadata={
+                "path": configuration_path,
+                "sha256": configuration_digest,
+                "source_label": "sfmea.toml",
+            },
+        )
+        relation_id = add_relation(
+            run_manifest_entity,
+            configuration_input_entity,
+            "binds_configuration_input",
+            "analysis_input",
+            authority="run_manifest_bound_resolved_configuration_input",
+        )
+        if relation_id in relationships:
+            analysis_input_relationship_ids.add(relation_id)
     adapter_core_relationship_ids: set[str] = set()
     for source, target, kind, channel, authority in (
         (
@@ -534,6 +564,261 @@ def build_cross_reference_index(
         )
         if relation_id in relationships:
             adapter_core_relationship_ids.add(relation_id)
+
+    repository_inventory = analysis.get("repository_inventory", {})
+    if not isinstance(repository_inventory, dict):
+        repository_inventory = {}
+    inventory_entries = [
+        value
+        for value in repository_inventory.get("entries", [])
+        if isinstance(value, dict) and value.get("path")
+    ]
+    inventory_regions = [
+        value
+        for value in repository_inventory.get("regions", [])
+        if isinstance(value, dict) and value.get("path")
+    ]
+    repository_inventory_raw_id = str(
+        repository_inventory.get("inventory_sha256", "")
+    ) or stable_id("REPOSITORY-INVENTORY", analysis_sha256)
+    repository_inventory_entity = add_entity(
+        "repository_inventory",
+        repository_inventory_raw_id,
+        "repository inventory",
+        authority="integrity_bound_repository_inventory",
+        metadata={
+            "inventory_sha256": str(
+                repository_inventory.get("inventory_sha256", "")
+            ),
+            "schema_version": str(repository_inventory.get("schema_version", "")),
+            "truncated": bool(repository_inventory.get("truncated")),
+            "artifact_count": len(inventory_entries),
+            "region_count": len(inventory_regions),
+        },
+    )
+    repository_provenance_relationship_ids: set[str] = set()
+    repository_provenance_relationship_ids.update(analysis_input_relationship_ids)
+    relation_id = add_relation(
+        analysis_scope_entity,
+        repository_inventory_entity,
+        "has_repository_inventory",
+        "repository_inventory",
+        authority="exact_analysis_repository_inventory_binding",
+    )
+    if relation_id in relationships:
+        repository_provenance_relationship_ids.add(relation_id)
+
+    repository_artifact_entities_by_path: dict[str, str] = {}
+    repository_artifact_records_by_path: dict[str, dict[str, Any]] = {}
+    opaque_repository_artifact_entity_ids: set[str] = set()
+    for entry in inventory_entries:
+        path = str(entry.get("path", ""))
+        artifact_entity = add_entity(
+            "repository_artifact",
+            path,
+            path,
+            authority="integrity_bound_repository_inventory_entry",
+            metadata={
+                "path": path,
+                "kind": str(entry.get("kind", "")),
+                "status": str(entry.get("status", "")),
+                "analysis_depth": str(entry.get("analysis_depth", "")),
+                "reason": str(entry.get("reason", "")),
+                "size": _safe_int(entry.get("size", 0)),
+                "sha256": str(entry.get("sha256", "")),
+                "snapshot_source": str(entry.get("snapshot_source", "")),
+                "adapter_ids": sorted(set(_text_values(entry.get("adapter_ids")))),
+            },
+        )
+        if artifact_entity not in entities:
+            omitted["repository_artifacts"] += 1
+            continue
+        repository_artifact_entities_by_path[path] = artifact_entity
+        repository_artifact_records_by_path[path] = entry
+        if entry.get("status") == "opaque":
+            opaque_repository_artifact_entity_ids.add(artifact_entity)
+        relation_id = add_relation(
+            repository_inventory_entity,
+            artifact_entity,
+            "accounts_for_repository_artifact",
+            "repository_inventory",
+            authority="integrity_bound_repository_inventory_entry",
+        )
+        if relation_id in relationships:
+            repository_provenance_relationship_ids.add(relation_id)
+
+    repository_region_entity_ids: set[str] = set()
+    for region in inventory_regions:
+        path = str(region.get("path", ""))
+        region_entity = add_entity(
+            "repository_region",
+            path,
+            path,
+            authority="declared_repository_inventory_exclusion",
+            metadata={
+                "path": path,
+                "status": str(region.get("status", "")),
+                "reason": str(region.get("reason", "")),
+            },
+        )
+        if region_entity not in entities:
+            omitted["repository_regions"] += 1
+            continue
+        repository_region_entity_ids.add(region_entity)
+        relation_id = add_relation(
+            repository_inventory_entity,
+            region_entity,
+            "excludes_repository_region",
+            "repository_inventory",
+            authority="declared_repository_inventory_exclusion",
+        )
+        if relation_id in relationships:
+            repository_provenance_relationship_ids.add(relation_id)
+
+    context_dependencies = [
+        value
+        for value in analysis.get("context", {}).get("dependencies", [])
+        if isinstance(value, dict) and value.get("name")
+    ]
+    dependency_source_artifact_entities = {
+        repository_artifact_entities_by_path[source]
+        for source in {
+            str(value.get("source", "")) for value in context_dependencies
+        }
+        if source in repository_artifact_entities_by_path
+    }
+    component_source_relationship_ids: dict[str, set[str]] = defaultdict(set)
+    component_source_artifact_entities: dict[str, set[str]] = defaultdict(set)
+    component_configuration_input_entities: dict[str, set[str]] = defaultdict(set)
+    configured_component_ids: set[str] = set()
+    unaccounted_component_ids: list[str] = []
+    for component_id, component in components.items():
+        source_path = str(component.get("source", {}).get("path", ""))
+        artifact_entities = {
+            repository_artifact_entities_by_path[source_path]
+        } if source_path in repository_artifact_entities_by_path else set()
+        if (
+            not artifact_entities
+            and component.get("kind") == "environment"
+            and "runtime_environment" in _text_values(component.get("signals"))
+        ):
+            artifact_entities = set(dependency_source_artifact_entities)
+        if (
+            not artifact_entities
+            and component.get("kind") == "common_cause"
+            and configuration_input_entity
+        ):
+            component_configuration_input_entities[component_id].add(
+                configuration_input_entity
+            )
+            configured_component_ids.add(component_id)
+            relation_id = add_relation(
+                _entity_id("component", component_id),
+                configuration_input_entity,
+                "configured_by_analysis_input",
+                "analysis_input",
+                authority="run_manifest_bound_project_configuration",
+            )
+            if relation_id in relationships:
+                component_source_relationship_ids[component_id].add(relation_id)
+                analysis_input_relationship_ids.add(relation_id)
+                repository_provenance_relationship_ids.add(relation_id)
+            continue
+        if not artifact_entities:
+            unaccounted_component_ids.append(component_id)
+            continue
+        component_source_artifact_entities[component_id].update(artifact_entities)
+        for artifact_entity in sorted(artifact_entities):
+            relation_id = add_relation(
+                _entity_id("component", component_id),
+                artifact_entity,
+                "defined_in_repository_artifact",
+                "repository_inventory",
+                authority=(
+                    "exact_component_source_path_to_inventory_entry"
+                    if len(artifact_entities) == 1
+                    and source_path in repository_artifact_entities_by_path
+                    else "aggregate_environment_component_to_dependency_manifests"
+                ),
+            )
+            if relation_id in relationships:
+                component_source_relationship_ids[component_id].add(relation_id)
+                repository_provenance_relationship_ids.add(relation_id)
+
+    dependency_entity_ids: set[str] = set()
+    for dependency in context_dependencies:
+        dependency_raw_id = (
+            "dependency:"
+            + str(dependency.get("source", ""))
+            + ":"
+            + str(dependency.get("name", ""))
+        )
+        dependency_entity = add_entity(
+            "dependency",
+            dependency_raw_id,
+            dependency.get("specification") or dependency.get("name"),
+            authority="bounded_dependency_manifest_inventory",
+            metadata={
+                "name": str(dependency.get("name", "")),
+                "specification": str(dependency.get("specification", "")),
+                "source": str(dependency.get("source", "")),
+                "evidence_type": str(dependency.get("evidence_type", "")),
+                "sha256": str(dependency.get("sha256", "")),
+            },
+        )
+        if dependency_entity not in entities:
+            omitted["dependencies"] += 1
+            continue
+        dependency_entity_ids.add(dependency_entity)
+        source_artifact = repository_artifact_entities_by_path.get(
+            str(dependency.get("source", "")), ""
+        )
+        if source_artifact:
+            relation_id = add_relation(
+                dependency_entity,
+                source_artifact,
+                "declared_by_repository_artifact",
+                "dependency_inventory",
+                authority="bounded_dependency_manifest_inventory",
+            )
+            if relation_id in relationships:
+                repository_provenance_relationship_ids.add(relation_id)
+
+    contract_entity_ids: set[str] = set()
+    for contract in analysis.get("context", {}).get("contracts", []):
+        if not isinstance(contract, dict):
+            continue
+        contract_raw_id = str(
+            contract.get("id") or contract.get("path") or contract.get("source") or ""
+        )
+        if not contract_raw_id:
+            continue
+        contract_entity = add_entity(
+            "contract",
+            contract_raw_id,
+            contract.get("name") or contract_raw_id,
+            authority="project_configured_contract_reference",
+            metadata={
+                "path": str(contract.get("path", "")),
+                "source": str(contract.get("source", "")),
+            },
+        )
+        if contract_entity not in entities:
+            omitted["contracts"] += 1
+            continue
+        contract_entity_ids.add(contract_entity)
+        source_path = str(contract.get("path") or contract.get("source") or "")
+        source_artifact = repository_artifact_entities_by_path.get(source_path, "")
+        if source_artifact:
+            relation_id = add_relation(
+                contract_entity,
+                source_artifact,
+                "declared_by_repository_artifact",
+                "contract_inventory",
+                authority="project_configured_contract_reference",
+            )
+            if relation_id in relationships:
+                repository_provenance_relationship_ids.add(relation_id)
     diagnostic_entities_by_finding: dict[str, list[str]] = defaultdict(list)
     diagnostic_records_by_finding: dict[str, list[dict[str, Any]]] = defaultdict(list)
     global_diagnostic_entity_ids: list[str] = []
@@ -1570,6 +1855,7 @@ def build_cross_reference_index(
     finding_chains: list[dict[str, Any]] = []
     verification_readiness_profiles: list[dict[str, Any]] = []
     review_governance_profiles: list[dict[str, Any]] = []
+    unaccounted_finding_ids: list[str] = []
     for item in analysis.get("items", []):
         if not isinstance(item, dict) or not item.get("id"):
             continue
@@ -1605,6 +1891,73 @@ def build_cross_reference_index(
                 "sfmea",
                 authority="candidate_requires_engineering_review",
             )
+
+        source_path = str(item.get("source", {}).get("path", ""))
+        source_artifact_entities = {
+            repository_artifact_entities_by_path[source_path]
+        } if source_path in repository_artifact_entities_by_path else set()
+        if not source_artifact_entities:
+            source_artifact_entities = set(
+                component_source_artifact_entities.get(component_id, set())
+            )
+        source_configuration_entities = set(
+            component_configuration_input_entities.get(component_id, set())
+        )
+        source_artifact_entity = (
+            sorted(source_artifact_entities)[0] if source_artifact_entities else ""
+        )
+        source_configuration_input_entity = (
+            sorted(source_configuration_entities)[0]
+            if source_configuration_entities
+            else ""
+        )
+        source_provenance_relationship_ids = set(
+            component_source_relationship_ids.get(component_id, set())
+        )
+        for artifact_entity in sorted(source_artifact_entities):
+            relation_id = add_relation(
+                finding_entity,
+                artifact_entity,
+                "originates_from_repository_artifact",
+                "repository_inventory",
+                authority=(
+                    "exact_finding_source_path_to_inventory_entry"
+                    if len(source_artifact_entities) == 1
+                    and source_path in repository_artifact_entities_by_path
+                    else "aggregate_environment_finding_to_dependency_manifests"
+                ),
+            )
+            if relation_id in relationships:
+                source_provenance_relationship_ids.add(relation_id)
+                repository_provenance_relationship_ids.add(relation_id)
+        if source_configuration_input_entity:
+            relation_id = add_relation(
+                finding_entity,
+                source_configuration_input_entity,
+                "originates_from_analysis_input",
+                "analysis_input",
+                authority="run_manifest_bound_project_configuration",
+            )
+            if relation_id in relationships:
+                source_provenance_relationship_ids.add(relation_id)
+                analysis_input_relationship_ids.add(relation_id)
+                repository_provenance_relationship_ids.add(relation_id)
+        if not source_artifact_entities and not source_configuration_input_entity:
+            unaccounted_finding_ids.append(finding_id)
+        source_artifact_record = (
+            entities[source_artifact_entity].get("metadata", {})
+            if source_artifact_entity
+            else {}
+        )
+        source_adapter_ids = sorted(
+            {
+                adapter_id
+                for artifact_entity in source_artifact_entities
+                for adapter_id in _text_values(
+                    entities[artifact_entity].get("metadata", {}).get("adapter_ids")
+                )
+            }
+        )
 
         requirements = sorted(
             set(_text_values(item.get("component", {}).get("requirement_ids")))
@@ -1681,6 +2034,9 @@ def build_cross_reference_index(
             )
         dimensions = {
             "component": component_id in components,
+            "source_provenance": bool(
+                source_artifact_entities or source_configuration_input_entity
+            ),
             "requirements": bool(requirements),
             "hazards": bool(hazards),
             "guidance": bool(citation_ids),
@@ -2091,6 +2447,39 @@ def build_cross_reference_index(
                 "finding_id": finding_id,
                 "component_id": component_id,
                 "source_status": item.get("source_status", "active"),
+                "source_repository_artifact_entity_id": source_artifact_entity,
+                "source_repository_artifact_entity_ids": sorted(
+                    source_artifact_entities
+                ),
+                "source_configuration_input_entity_id": (
+                    source_configuration_input_entity
+                ),
+                "source_repository_path": source_path,
+                "source_repository_status": str(
+                    source_artifact_record.get("status", "")
+                    if len(source_artifact_entities) == 1
+                    else "multiple"
+                    if source_artifact_entities
+                    else "configured"
+                ),
+                "source_analysis_depth": str(
+                    source_artifact_record.get("analysis_depth", "")
+                    if len(source_artifact_entities) == 1
+                    else "aggregate_dependency_manifests"
+                    if source_artifact_entities
+                    else "project_configuration"
+                ),
+                "source_snapshot_sha256": str(
+                    source_artifact_record.get("sha256", "")
+                    if len(source_artifact_entities) == 1
+                    else configuration_digest
+                    if source_configuration_input_entity
+                    else ""
+                ),
+                "source_adapter_ids": source_adapter_ids,
+                "source_provenance_relationship_ids": sorted(
+                    source_provenance_relationship_ids
+                ),
                 "requirement_ids": requirements,
                 "hazard_ids": hazards,
                 "citation_ids": citation_ids,
@@ -2273,6 +2662,59 @@ def build_cross_reference_index(
         )
 
     review_leads: list[dict[str, Any]] = []
+    if opaque_repository_artifact_entity_ids:
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "opaque_repository_artifacts"),
+                "kind": "repository_artifacts_without_semantic_analysis",
+                "priority": "medium",
+                "subject_ids": sorted(opaque_repository_artifact_entity_ids)[:25],
+                "affected_count": len(opaque_repository_artifact_entity_ids),
+                "subject_ids_omitted": max(
+                    0, len(opaque_repository_artifact_entity_ids) - 25
+                ),
+                "description": (
+                    f"{len(opaque_repository_artifact_entity_ids)} inventoried repository "
+                    "artifact(s) have metadata-and-digest coverage but no registered semantic "
+                    "analyzer. Confirm applicability or add a bounded analyzer; opacity is a "
+                    "coverage condition, not evidence of a defect."
+                ),
+            }
+        )
+    if repository_inventory.get("truncated"):
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "repository_inventory_truncated"),
+                "kind": "repository_inventory_truncated",
+                "priority": "high",
+                "subject_ids": [repository_inventory_entity],
+                "affected_count": 1,
+                "subject_ids_omitted": 0,
+                "description": (
+                    "The repository inventory reached a configured bound. Review the inventory "
+                    "limits before treating source coverage as complete."
+                ),
+            }
+        )
+    if unaccounted_component_ids:
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "components_without_repository_provenance"),
+                "kind": "components_without_repository_provenance",
+                "priority": "high",
+                "subject_ids": [
+                    _entity_id("component", value)
+                    for value in sorted(unaccounted_component_ids)[:25]
+                ],
+                "affected_count": len(unaccounted_component_ids),
+                "subject_ids_omitted": max(0, len(unaccounted_component_ids) - 25),
+                "description": (
+                    f"{len(unaccounted_component_ids)} component(s) do not resolve to an "
+                    "integrity-bound repository-inventory entry. Reconcile source paths and "
+                    "inventory coverage before relying on their provenance."
+                ),
+            }
+        )
     for fusion in fusions:
         if fusion["classification"] not in {
             "graphify_only_review_lead",
@@ -2320,6 +2762,7 @@ def build_cross_reference_index(
         )
     dimension_priorities = {
         "component": "high",
+        "source_provenance": "high",
         "guidance": "medium",
         "verification": "medium",
         "evidence": "low",
@@ -2651,6 +3094,42 @@ def build_cross_reference_index(
                 len(value["unlinked_contribution_entity_ids"])
                 for value in adapter_provenance_profiles
             ),
+            "repository_artifacts": len(repository_artifact_entities_by_path),
+            "semantically_analyzed_repository_artifacts": sum(
+                value.get("status") == "analyzed"
+                for value in repository_artifact_records_by_path.values()
+            ),
+            "opaque_repository_artifacts": len(
+                opaque_repository_artifact_entity_ids
+            ),
+            "excluded_repository_regions": len(repository_region_entity_ids),
+            "dependency_entities": len(dependency_entity_ids),
+            "contract_entities": len(contract_entity_ids),
+            "components_with_repository_provenance": (
+                sum(
+                    bool(component_source_artifact_entities.get(component_id))
+                    for component_id in components
+                )
+            ),
+            "findings_with_repository_provenance": sum(
+                bool(value.get("source_repository_artifact_entity_id"))
+                for value in finding_chains
+            ),
+            "configured_source_components": len(configured_component_ids),
+            "configured_source_findings": sum(
+                bool(value.get("source_configuration_input_entity_id"))
+                for value in finding_chains
+            ),
+            "components_with_source_provenance": (
+                len(components) - len(unaccounted_component_ids)
+            ),
+            "findings_with_source_provenance": sum(
+                bool(value.get("dimensions", {}).get("source_provenance"))
+                for value in finding_chains
+            ),
+            "repository_provenance_relationships": len(
+                repository_provenance_relationship_ids
+            ),
             "compound_exposure_chains": sum(
                 bool(value.get("compound_exposure_kinds"))
                 for value in finding_chains
@@ -2757,6 +3236,14 @@ def build_cross_reference_index(
                     ).items()
                 )
             ),
+            "repository_artifact_statuses": dict(
+                sorted(
+                    Counter(
+                        str(value.get("status", "unknown"))
+                        for value in repository_artifact_records_by_path.values()
+                    ).items()
+                )
+            ),
             "omitted_by_bound": dict(sorted(omitted.items())),
         },
         "entities": entities_list,
@@ -2807,6 +3294,35 @@ def build_cross_reference_index(
                 "completeness, qualification, or independence."
             ),
         },
+        "repository_provenance": {
+            "repository_inventory_entity_id": repository_inventory_entity,
+            "configuration_input_entity_id": configuration_input_entity,
+            "repository_artifact_entity_ids": sorted(
+                repository_artifact_entities_by_path.values()
+            ),
+            "repository_region_entity_ids": sorted(repository_region_entity_ids),
+            "dependency_entity_ids": sorted(dependency_entity_ids),
+            "contract_entity_ids": sorted(contract_entity_ids),
+            "opaque_repository_artifact_entity_ids": sorted(
+                opaque_repository_artifact_entity_ids
+            ),
+            "unaccounted_component_ids": sorted(unaccounted_component_ids),
+            "unaccounted_finding_ids": sorted(unaccounted_finding_ids),
+            "configured_component_ids": sorted(configured_component_ids),
+            "configured_finding_ids": sorted(
+                value["finding_id"]
+                for value in finding_chains
+                if value.get("source_configuration_input_entity_id")
+            ),
+            "relationship_ids": sorted(repository_provenance_relationship_ids),
+            "inventory_truncated": bool(repository_inventory.get("truncated")),
+            "notice": (
+                "Repository provenance binds component and finding source paths to inventoried "
+                "content digests and analyzer attribution. Indexed or opaque artifacts are "
+                "accounted for but not semantically analyzed; the projection does not prove "
+                "source completeness, dependency safety, or analytical correctness."
+            ),
+        },
         "finding_chains": finding_chains,
         "review_leads": review_leads,
         "limitations": [
@@ -2819,6 +3335,7 @@ def build_cross_reference_index(
             "Verification-readiness profiles keep textual test candidates, coverage observations, registered implementations, executions, evidence review, assignments, and lifecycle decisions distinct; no lower-authority signal is promoted to verification evidence.",
             "Review-governance profiles cross-reference deterministic quality diagnostics, source change, revalidation, disposition, and assurance next actions; diagnostics are workflow conditions, not software-failure evidence.",
             "Adapter provenance links normalized contribution identities to integrity-bound adapter runs and the run manifest; tool attribution does not establish correctness, completeness, qualification, or independence.",
+            "Repository provenance links source paths, inventory snapshots, dependencies, contracts, components, and findings without promoting indexed or opaque artifacts to semantic-analysis evidence.",
             "Linkage completeness is an accounting measure, not verification success or risk acceptance.",
         ],
     }
@@ -2857,6 +3374,19 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         "findings_with_tool_provenance",
         "adapter_contribution_relationships",
         "unlinked_adapter_contributions",
+        "repository_artifacts",
+        "semantically_analyzed_repository_artifacts",
+        "opaque_repository_artifacts",
+        "excluded_repository_regions",
+        "dependency_entities",
+        "contract_entities",
+        "components_with_repository_provenance",
+        "findings_with_repository_provenance",
+        "configured_source_components",
+        "configured_source_findings",
+        "components_with_source_provenance",
+        "findings_with_source_provenance",
+        "repository_provenance_relationships",
         "compound_exposure_chains",
         "finding_chains",
         "multi_source_fusions",
@@ -2980,6 +3510,23 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         [
             "",
             "Adapter contribution identity provides traceable tool attribution; it does not establish analytical correctness, coverage, qualification, or independence.",
+        ]
+    )
+    lines.extend(
+        [
+            "",
+            "## Repository source provenance",
+            "",
+            "| Inventory status | Artifacts |",
+            "|---|---:|",
+        ]
+    )
+    for key, value in summary.get("repository_artifact_statuses", {}).items():
+        lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "Source-path linkage preserves inventory status and content identity; indexed or opaque files are not promoted to semantic-analysis evidence.",
         ]
     )
     lines.extend(["", "## Prioritized review leads", ""])
@@ -3309,6 +3856,257 @@ def verify_cross_reference_file(
             for entity in entities or []
             if isinstance(entity, dict) and entity.get("kind") == "finding"
         }
+
+        repository_provenance = value.get("repository_provenance")
+        repository_provenance_data = (
+            repository_provenance
+            if isinstance(repository_provenance, dict)
+            else {}
+        )
+        repository_inventory_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "repository_inventory"
+        }
+        repository_artifact_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "repository_artifact"
+        }
+        repository_region_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "repository_region"
+        }
+        dependency_entity_id_set = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "dependency"
+        }
+        contract_entity_id_set = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "contract"
+        }
+        configuration_input_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "configuration_input"
+        }
+        repository_channel_relationship_ids = {
+            relation_id
+            for relation_id, relation in relationships_by_id.items()
+            if relation.get("channel")
+            in {
+                "repository_inventory",
+                "dependency_inventory",
+                "contract_inventory",
+                "analysis_input",
+            }
+        }
+        declared_repository_relationship_ids = (
+            set(_text_values(repository_provenance.get("relationship_ids")))
+            if isinstance(repository_provenance, dict)
+            else set()
+        )
+        opaque_entity_ids = {
+            entity_id
+            for entity_id in repository_artifact_entity_ids
+            if entities_by_id[entity_id].get("metadata", {}).get("status")
+            == "opaque"
+        }
+        inventory_entity_id = (
+            str(repository_provenance.get("repository_inventory_entity_id", ""))
+            if isinstance(repository_provenance, dict)
+            else ""
+        )
+        configuration_input_entity_id = (
+            str(repository_provenance.get("configuration_input_entity_id", ""))
+            if isinstance(repository_provenance, dict)
+            else ""
+        )
+        repository_entity_records_valid = all(
+            entity.get("raw_id") == entity.get("metadata", {}).get("path")
+            and isinstance(entity.get("metadata", {}).get("size"), int)
+            and entity.get("metadata", {}).get("size", -1) >= 0
+            and isinstance(entity.get("metadata", {}).get("adapter_ids"), list)
+            for entity in (
+                entities_by_id[entity_id]
+                for entity_id in repository_artifact_entity_ids
+            )
+        )
+        configuration_entity_record_valid = bool(
+            not configuration_input_entity_id
+            or (
+                entities_by_id.get(configuration_input_entity_id, {}).get("kind")
+                == "configuration_input"
+                and (
+                    (
+                        entities_by_id[configuration_input_entity_id]
+                        .get("metadata", {})
+                        .get("sha256")
+                        == entities_by_id[configuration_input_entity_id].get("raw_id")
+                        and re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(
+                                entities_by_id[configuration_input_entity_id]
+                                .get("metadata", {})
+                                .get("sha256", "")
+                            ),
+                        )
+                        is not None
+                    )
+                    if entities_by_id[configuration_input_entity_id]
+                    .get("metadata", {})
+                    .get("sha256")
+                    else bool(
+                        entities_by_id[configuration_input_entity_id].get("raw_id")
+                    )
+                )
+            )
+        )
+        repository_relationship_shapes_valid = all(
+            (
+                relation.get("kind") == "has_repository_inventory"
+                and relation.get("target") == inventory_entity_id
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "analysis_scope"
+            )
+            or (
+                relation.get("kind") == "accounts_for_repository_artifact"
+                and relation.get("source") == inventory_entity_id
+                and relation.get("target") in repository_artifact_entity_ids
+            )
+            or (
+                relation.get("kind") == "excludes_repository_region"
+                and relation.get("source") == inventory_entity_id
+                and relation.get("target") in repository_region_entity_ids
+            )
+            or (
+                relation.get("kind") == "defined_in_repository_artifact"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "component"
+                and relation.get("target") in repository_artifact_entity_ids
+            )
+            or (
+                relation.get("kind") == "originates_from_repository_artifact"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "finding"
+                and relation.get("target") in repository_artifact_entity_ids
+            )
+            or (
+                relation.get("kind") == "declared_by_repository_artifact"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                in {"dependency", "contract"}
+                and relation.get("target") in repository_artifact_entity_ids
+            )
+            or (
+                relation.get("kind") == "binds_configuration_input"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "run_manifest"
+                and relation.get("target") == configuration_input_entity_id
+            )
+            or (
+                relation.get("kind") == "configured_by_analysis_input"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "component"
+                and relation.get("target") == configuration_input_entity_id
+            )
+            or (
+                relation.get("kind") == "originates_from_analysis_input"
+                and entities_by_id.get(str(relation.get("source")), {}).get("kind")
+                == "finding"
+                and relation.get("target") == configuration_input_entity_id
+            )
+            for relation_id, relation in relationships_by_id.items()
+            if relation_id in repository_channel_relationship_ids
+        )
+        relationship_configured_component_ids = {
+            str(entities_by_id[str(relation.get("source"))].get("raw_id", ""))
+            for relation in relationships_by_id.values()
+            if relation.get("kind") == "configured_by_analysis_input"
+            and str(relation.get("source")) in entities_by_id
+        }
+        relationship_configured_finding_ids = {
+            str(entities_by_id[str(relation.get("source"))].get("raw_id", ""))
+            for relation in relationships_by_id.values()
+            if relation.get("kind") == "originates_from_analysis_input"
+            and str(relation.get("source")) in entities_by_id
+        }
+        checks["repository_provenance_integrity"] = bool(
+            isinstance(repository_provenance, dict)
+            and len(repository_inventory_entity_ids) == 1
+            and inventory_entity_id in repository_inventory_entity_ids
+            and (
+                (not configuration_input_entity_ids and not configuration_input_entity_id)
+                or (
+                    len(configuration_input_entity_ids) == 1
+                    and configuration_input_entity_id
+                    in configuration_input_entity_ids
+                )
+            )
+            and set(
+                _text_values(
+                    repository_provenance.get("repository_artifact_entity_ids")
+                )
+            )
+            == repository_artifact_entity_ids
+            and set(
+                _text_values(
+                    repository_provenance.get("repository_region_entity_ids")
+                )
+            )
+            == repository_region_entity_ids
+            and set(_text_values(repository_provenance.get("dependency_entity_ids")))
+            == dependency_entity_id_set
+            and set(_text_values(repository_provenance.get("contract_entity_ids")))
+            == contract_entity_id_set
+            and set(
+                _text_values(
+                    repository_provenance.get(
+                        "opaque_repository_artifact_entity_ids"
+                    )
+                )
+            )
+            == opaque_entity_ids
+            and declared_repository_relationship_ids
+            == repository_channel_relationship_ids
+            and set(
+                _text_values(repository_provenance.get("unaccounted_component_ids"))
+            )
+            <= component_ids
+            and set(
+                _text_values(repository_provenance.get("unaccounted_finding_ids"))
+            )
+            <= finding_entity_ids
+            and set(
+                _text_values(repository_provenance.get("configured_component_ids"))
+            )
+            == relationship_configured_component_ids
+            and set(
+                _text_values(repository_provenance.get("configured_finding_ids"))
+            )
+            == relationship_configured_finding_ids
+            and set(
+                _text_values(repository_provenance.get("configured_component_ids"))
+            ).isdisjoint(
+                _text_values(repository_provenance.get("unaccounted_component_ids"))
+            )
+            and set(
+                _text_values(repository_provenance.get("configured_finding_ids"))
+            ).isdisjoint(
+                _text_values(repository_provenance.get("unaccounted_finding_ids"))
+            )
+            and isinstance(repository_provenance.get("inventory_truncated"), bool)
+            and repository_entity_records_valid
+            and configuration_entity_record_valid
+            and repository_relationship_shapes_valid
+        )
+        if not checks["repository_provenance_integrity"]:
+            fail(
+                "cross_reference.repository_provenance_integrity_invalid",
+                "Repository provenance must reconcile the inventory, artifact, source, dependency, contract, and exclusion relationships.",
+            )
 
         def readiness_profile_valid(profile: object) -> bool:
             if not isinstance(profile, dict):
@@ -4073,6 +4871,27 @@ def verify_cross_reference_file(
             for profile in adapter_profiles or []
             if isinstance(profile, dict) and profile.get("id")
         }
+        verified_adapter_entities_by_finding: dict[str, set[str]] = defaultdict(set)
+        verified_adapter_relationships_by_finding: dict[str, set[str]] = defaultdict(
+            set
+        )
+        for relation in relationships or []:
+            if not (
+                isinstance(relation, dict)
+                and relation.get("kind") == "contributed_entity"
+                and relation.get("source") in adapter_run_entity_ids
+            ):
+                continue
+            target = entities_by_id.get(str(relation.get("target", "")), {})
+            if target.get("kind") != "finding":
+                continue
+            finding_id = str(target.get("raw_id", ""))
+            verified_adapter_entities_by_finding[finding_id].add(
+                str(relation.get("source", ""))
+            )
+            verified_adapter_relationships_by_finding[finding_id].add(
+                str(relation.get("id", ""))
+            )
 
         chains = value.get("finding_chains")
         chain_ids = (
@@ -4084,6 +4903,141 @@ def verify_cross_reference_file(
             if isinstance(chains, list)
             else []
         )
+
+        def source_chain_valid(chain: object) -> bool:
+            if not isinstance(chain, dict):
+                return False
+            artifact_ids = _text_values(
+                chain.get("source_repository_artifact_entity_ids")
+            )
+            artifact_id_set = set(artifact_ids)
+            artifact_id = str(chain.get("source_repository_artifact_entity_id", ""))
+            configuration_source_id = str(
+                chain.get("source_configuration_input_entity_id", "")
+            )
+            supplied_relationship_ids = set(
+                _text_values(chain.get("source_provenance_relationship_ids"))
+            )
+            if not artifact_ids and not configuration_source_id:
+                return bool(
+                    artifact_id == ""
+                    and not chain.get("source_repository_status")
+                    and not chain.get("source_analysis_depth")
+                    and not chain.get("source_snapshot_sha256")
+                    and not _text_values(chain.get("source_adapter_ids"))
+                    and not supplied_relationship_ids
+                    and not chain.get("dimensions", {}).get("source_provenance")
+                    and chain.get("finding_id")
+                    in set(
+                        _text_values(
+                            repository_provenance_data.get(
+                                "unaccounted_finding_ids", []
+                            )
+                        )
+                    )
+                )
+            if not (
+                artifact_ids == sorted(artifact_id_set)
+                and artifact_id == (artifact_ids[0] if artifact_ids else "")
+                and artifact_id_set <= repository_artifact_entity_ids
+                and (
+                    not configuration_source_id
+                    or configuration_source_id == configuration_input_entity_id
+                )
+            ):
+                return False
+            expected_relationship_ids = ({
+                _relation_id(
+                    _entity_id("finding", chain.get("finding_id", "")),
+                    source_artifact_id,
+                    "originates_from_repository_artifact",
+                    "repository_inventory",
+                )
+                for source_artifact_id in artifact_id_set
+            } | {
+                _relation_id(
+                    _entity_id("component", chain.get("component_id", "")),
+                    source_artifact_id,
+                    "defined_in_repository_artifact",
+                    "repository_inventory",
+                )
+                for source_artifact_id in artifact_id_set
+            } | ({
+                _relation_id(
+                    _entity_id("component", chain.get("component_id", "")),
+                    configuration_source_id,
+                    "configured_by_analysis_input",
+                    "analysis_input",
+                ),
+                _relation_id(
+                    _entity_id("finding", chain.get("finding_id", "")),
+                    configuration_source_id,
+                    "originates_from_analysis_input",
+                    "analysis_input",
+                ),
+            } if configuration_source_id else set())) & relationship_id_set
+            expected_adapter_ids = sorted(
+                {
+                    adapter_id
+                    for source_artifact_id in artifact_id_set
+                    for adapter_id in _text_values(
+                        entities_by_id[source_artifact_id]
+                        .get("metadata", {})
+                        .get("adapter_ids")
+                    )
+                }
+            )
+            primary_metadata = (
+                entities_by_id[artifact_id].get("metadata", {})
+                if artifact_id
+                else {}
+            )
+            configuration_metadata = (
+                entities_by_id[configuration_source_id].get("metadata", {})
+                if configuration_source_id
+                else {}
+            )
+            return bool(
+                (
+                    len(artifact_ids) != 1
+                    or chain.get("source_repository_path")
+                    == primary_metadata.get("path")
+                )
+                and (
+                    not configuration_source_id
+                    or chain.get("source_repository_path")
+                    == configuration_metadata.get("source_label")
+                )
+                and chain.get("source_repository_status")
+                == (
+                    primary_metadata.get("status")
+                    if len(artifact_ids) == 1
+                    else "multiple"
+                    if artifact_ids
+                    else "configured"
+                )
+                and chain.get("source_analysis_depth")
+                == (
+                    primary_metadata.get("analysis_depth")
+                    if len(artifact_ids) == 1
+                    else "aggregate_dependency_manifests"
+                    if artifact_ids
+                    else "project_configuration"
+                )
+                and chain.get("source_snapshot_sha256")
+                == (
+                    primary_metadata.get("sha256")
+                    if len(artifact_ids) == 1
+                    else configuration_metadata.get("sha256", "")
+                    if configuration_source_id
+                    else ""
+                )
+                and _text_values(chain.get("source_adapter_ids"))
+                == expected_adapter_ids
+                and supplied_relationship_ids == expected_relationship_ids
+                and chain.get("dimensions", {}).get("source_provenance") is True
+            )
+
         checks["finding_chain_integrity"] = bool(
             isinstance(chains, list)
             and len(chain_ids) == len(chains)
@@ -4119,6 +5073,9 @@ def verify_cross_reference_file(
                         "quality_diagnostic_entity_ids",
                         "blocking_quality_diagnostic_entity_ids",
                         "review_governance_relationship_ids",
+                        "source_adapter_ids",
+                        "source_repository_artifact_entity_ids",
+                        "source_provenance_relationship_ids",
                         "adapter_run_entity_ids",
                         "adapter_provenance_relationship_ids",
                         "interface_entity_ids",
@@ -4126,6 +5083,7 @@ def verify_cross_reference_file(
                         "outbound_fusion_ids",
                     )
                 )
+                and source_chain_valid(chain)
                 and set(
                     _text_values(chain.get("inbound_fusion_ids"))
                     + _text_values(chain.get("outbound_fusion_ids"))
@@ -4357,24 +5315,12 @@ def verify_cross_reference_file(
                         == bool(expected_adapter_ids)
                     )
                 )(
-                    {
-                        str(relation.get("source", ""))
-                        for relation in relationships or []
-                        if isinstance(relation, dict)
-                        and relation.get("kind") == "contributed_entity"
-                        and relation.get("target")
-                        == _entity_id("finding", chain.get("finding_id", ""))
-                        and relation.get("source") in adapter_run_entity_ids
-                    },
-                    {
-                        str(relation.get("id", ""))
-                        for relation in relationships or []
-                        if isinstance(relation, dict)
-                        and relation.get("kind") == "contributed_entity"
-                        and relation.get("target")
-                        == _entity_id("finding", chain.get("finding_id", ""))
-                        and relation.get("source") in adapter_run_entity_ids
-                    },
+                    verified_adapter_entities_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
+                    verified_adapter_relationships_by_finding.get(
+                        str(chain.get("finding_id", "")), set()
+                    ),
                 )
                 and set(_text_values(chain.get("requirement_ids")))
                 <= entity_raw_ids_by_kind["requirement"]
@@ -4528,6 +5474,29 @@ def verify_cross_reference_file(
                 ).items()
             )
         )
+        repository_artifact_status_counts = dict(
+            sorted(
+                Counter(
+                    str(entities_by_id[entity_id].get("metadata", {}).get("status", "unknown"))
+                    for entity_id in repository_artifact_entity_ids
+                ).items()
+            )
+        )
+        components_with_repository_source = {
+            str(entities_by_id[str(relation.get("source"))].get("raw_id", ""))
+            for relation in relationships_by_id.values()
+            if relation.get("kind") == "defined_in_repository_artifact"
+            and relation.get("target") in repository_artifact_entity_ids
+            and str(relation.get("source")) in entities_by_id
+        }
+        configured_component_id_set = set(
+            _text_values(
+                repository_provenance_data.get("configured_component_ids", [])
+            )
+        )
+        configured_finding_id_set = set(
+            _text_values(repository_provenance_data.get("configured_finding_ids", []))
+        )
         checks["summary_reconciliation"] = bool(
             isinstance(summary, dict)
             and isinstance(leads, list)
@@ -4591,6 +5560,51 @@ def verify_cross_reference_file(
                 for profile in (adapter_profiles or [])
                 if isinstance(profile, dict)
             )
+            and summary.get("repository_artifacts")
+            == len(repository_artifact_entity_ids)
+            and summary.get("semantically_analyzed_repository_artifacts")
+            == sum(
+                entities_by_id[entity_id].get("metadata", {}).get("status")
+                == "analyzed"
+                for entity_id in repository_artifact_entity_ids
+            )
+            and summary.get("opaque_repository_artifacts")
+            == len(opaque_entity_ids)
+            and summary.get("excluded_repository_regions")
+            == len(repository_region_entity_ids)
+            and summary.get("dependency_entities") == len(dependency_entity_id_set)
+            and summary.get("contract_entities") == len(contract_entity_id_set)
+            and summary.get("components_with_repository_provenance")
+            == len(components_with_repository_source)
+            and summary.get("findings_with_repository_provenance")
+            == sum(
+                bool(chain.get("source_repository_artifact_entity_id"))
+                for chain in (chains or [])
+                if isinstance(chain, dict)
+            )
+            and summary.get("configured_source_components")
+            == len(configured_component_id_set)
+            and summary.get("configured_source_findings")
+            == len(configured_finding_id_set)
+            and summary.get("components_with_source_provenance")
+            == len(component_ids)
+            - len(
+                set(
+                    _text_values(
+                        repository_provenance_data.get(
+                            "unaccounted_component_ids", []
+                        )
+                    )
+                )
+            )
+            and summary.get("findings_with_source_provenance")
+            == sum(
+                bool(chain.get("dimensions", {}).get("source_provenance"))
+                for chain in (chains or [])
+                if isinstance(chain, dict)
+            )
+            and summary.get("repository_provenance_relationships")
+            == len(repository_channel_relationship_ids)
             and summary.get("compound_exposure_chains")
             == sum(
                 bool(_text_values(chain.get("compound_exposure_kinds")))
@@ -4642,6 +5656,8 @@ def verify_cross_reference_file(
             == governance_state_counts
             and summary.get("source_change_states") == source_change_counts
             and summary.get("adapter_run_statuses") == adapter_status_counts
+            and summary.get("repository_artifact_statuses")
+            == repository_artifact_status_counts
         )
         if not checks["summary_reconciliation"]:
             fail(
@@ -4747,6 +5763,11 @@ def verify_cross_reference_file(
         ),
         "adapter_run_count": (
             _safe_int(value.get("summary", {}).get("adapter_runs", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "repository_artifact_count": (
+            _safe_int(value.get("summary", {}).get("repository_artifacts", 0))
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0
         ),

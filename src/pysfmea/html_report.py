@@ -879,6 +879,55 @@ def build_html_report_data(
                 ],
                 "notice": cross_reference["adapter_provenance"]["notice"],
             },
+            "repository_provenance": {
+                "repository_inventory_entity_id": cross_reference[
+                    "repository_provenance"
+                ]["repository_inventory_entity_id"],
+                "configuration_input_entity_id": cross_reference[
+                    "repository_provenance"
+                ]["configuration_input_entity_id"],
+                "repository_artifact_count": len(
+                    cross_reference["repository_provenance"][
+                        "repository_artifact_entity_ids"
+                    ]
+                ),
+                "repository_region_count": len(
+                    cross_reference["repository_provenance"][
+                        "repository_region_entity_ids"
+                    ]
+                ),
+                "dependency_entity_count": len(
+                    cross_reference["repository_provenance"][
+                        "dependency_entity_ids"
+                    ]
+                ),
+                "contract_entity_count": len(
+                    cross_reference["repository_provenance"][
+                        "contract_entity_ids"
+                    ]
+                ),
+                "opaque_repository_artifact_count": len(
+                    cross_reference["repository_provenance"][
+                        "opaque_repository_artifact_entity_ids"
+                    ]
+                ),
+                "unaccounted_component_ids": cross_reference[
+                    "repository_provenance"
+                ]["unaccounted_component_ids"],
+                "unaccounted_finding_ids": cross_reference[
+                    "repository_provenance"
+                ]["unaccounted_finding_ids"],
+                "configured_component_ids": cross_reference[
+                    "repository_provenance"
+                ]["configured_component_ids"],
+                "configured_finding_ids": cross_reference[
+                    "repository_provenance"
+                ]["configured_finding_ids"],
+                "inventory_truncated": cross_reference["repository_provenance"][
+                    "inventory_truncated"
+                ],
+                "notice": cross_reference["repository_provenance"]["notice"],
+            },
             "finding_chains": cross_reference["finding_chains"][:500],
             "review_leads": cross_reference["review_leads"][:500],
             "limitations": cross_reference["limitations"],
@@ -1535,6 +1584,11 @@ function renderCrossReference(){
     metric(fmt(s.adapter_runs),"adapter runs","info"),
     metric(fmt(s.findings_with_tool_provenance),"findings with tool provenance",s.findings_with_tool_provenance?"good":"warning"),
     metric(fmt(s.unlinked_adapter_contributions),"unlinked adapter contributions",s.unlinked_adapter_contributions?"warning":"good"),
+    metric(fmt(s.repository_artifacts),"inventoried repository artifacts","info"),
+    metric(fmt(s.findings_with_source_provenance),"findings with source provenance",s.findings_with_source_provenance===s.finding_chains?"good":"warning"),
+    metric(fmt(s.configured_source_findings),"configuration-sourced findings","info"),
+    metric(fmt(s.opaque_repository_artifacts),"opaque repository artifacts",s.opaque_repository_artifacts?"warning":"good"),
+    metric(fmt(s.dependency_entities),"dependency records","info"),
     metric(fmt(s.verification_profiles_with_signals),"profiles with evidence signals",s.verification_profiles_with_signals?"good":"warning"),
     metric(fmt(s.compound_exposure_chains),"compound exposure chains",s.compound_exposure_chains?"warning":"good"),
     metric(fmt(s.multi_source_fusions),"multi-source edges",s.multi_source_fusions?"good":""),
@@ -1568,6 +1622,8 @@ function renderCrossReference(){
     if(value.review_governance_state)meta.append(tag(`review: ${value.review_governance_state.replaceAll("_"," ")}`,value.review_governance_state.includes("blocked")||value.review_governance_state.includes("revalidation")?"error":"info"));
     if(value.review_next_action_id&&value.review_next_action_id!=="none")meta.append(tag(`review next: ${value.review_next_action_id.replaceAll("_"," ")}`,"info"));
     if(value.source_change)meta.append(tag(`source: ${value.source_change.replaceAll("_"," ")}`,value.source_change==="changed"||value.source_change==="impacted"?"warning":"info"));
+    if(value.source_repository_path)meta.append(tag(`file: ${value.source_repository_path}`,value.source_repository_status==="analyzed"?"accepted":"warning"));
+    if(value.source_analysis_depth)meta.append(tag(`depth: ${value.source_analysis_depth.replaceAll("_"," ")}`,"info"));
     if(value.revalidation_required)meta.append(tag("revalidation required","error"));
     Object.entries(value.quality_diagnostic_counts||{}).forEach(([level,count])=>meta.append(tag(`${count} ${level} diagnostic${count===1?"":"s"}`,level==="error"?"error":"warning")));
     Object.entries(value.adapter_statuses||{}).forEach(([adapter,status])=>meta.append(tag(`${adapter}: ${status.replaceAll("_"," ")}`,status==="completed"?"accepted":"info")));

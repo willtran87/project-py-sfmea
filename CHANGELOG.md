@@ -38,6 +38,14 @@ package; public artifact and schema identifiers carry their own explicit compati
   exact duplicate diagnostics without conflation, while standalone verification recomputes identity,
   scope partitioning, severity counts, state, next action, and chain copies without treating a
   workflow diagnostic as proof of a software failure.
+  Bind the exact scan manifest and adapter ledger into the same fabric, then connect each adapter
+  run to every normalized entity it claims to contribute. Add repository-inventory, artifact,
+  excluded-region, dependency, contract, and resolved-configuration entities; trace components and
+  findings to content-addressed repository or run-manifest inputs; and expose opaque or unaccounted source coverage as bounded
+  review leads. Standalone verification reconciles the complete provenance graph and finding-chain
+  copies without promoting tool attribution, indexed files, or opaque files to semantic evidence.
+  Pre-index adapter-to-finding relations during verification, replacing a quadratic per-chain graph
+  scan with a linear pass for large repositories.
 
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,

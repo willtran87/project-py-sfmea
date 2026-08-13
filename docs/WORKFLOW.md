@@ -415,6 +415,11 @@ take precedence over ordinary review and assurance actions; global analysis diag
 separate analysis-scope projection. Use the profile's next action for workflow routing, while
 retaining the original diagnostic rule and message for review. A passing quality gate means the
 configured workflow is complete and consistent, not that the code is safe or correct.
+The fabric also binds the run manifest, adapter ledger, repository inventory, resolved project
+configuration, dependency and contract declarations, and exact component/finding sources. Review
+`unlinked_adapter_contributions`, `opaque_repository_artifacts`, and
+`unaccounted_*_ids` before relying on coverage. A content digest proves identity of the inventoried
+snapshot; it does not prove semantic coverage, dependency safety, or analyzer qualification.
 Each scanned component also has a verified semantic-exposure profile that joins exact records from
 data and alias flow, concurrency, exception propagation, state machines, authorization scope,
 contracts, deployment topology, shared fate, and architecture hierarchy. Finding chains surface

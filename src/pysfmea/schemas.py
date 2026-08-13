@@ -1202,6 +1202,7 @@ def _cross_reference_schema() -> dict[str, Any]:
         "type": "object",
         "required": [
             "component",
+            "source_provenance",
             "requirements",
             "hazards",
             "guidance",
@@ -1221,6 +1222,7 @@ def _cross_reference_schema() -> dict[str, Any]:
             name: {"type": "boolean"}
             for name in (
                 "component",
+                "source_provenance",
                 "requirements",
                 "hazards",
                 "guidance",
@@ -1362,10 +1364,44 @@ def _cross_reference_schema() -> dict[str, Any]:
         "relationship_ids": string_list,
         "notice": text,
     }
+    repository_provenance_properties = {
+        "repository_inventory_entity_id": identifier,
+        "configuration_input_entity_id": {
+            "type": "string",
+            "maxLength": 20_000,
+        },
+        "repository_artifact_entity_ids": string_list,
+        "repository_region_entity_ids": string_list,
+        "dependency_entity_ids": string_list,
+        "contract_entity_ids": string_list,
+        "opaque_repository_artifact_entity_ids": string_list,
+        "unaccounted_component_ids": string_list,
+        "unaccounted_finding_ids": string_list,
+        "configured_component_ids": string_list,
+        "configured_finding_ids": string_list,
+        "relationship_ids": string_list,
+        "inventory_truncated": {"type": "boolean"},
+        "notice": text,
+    }
     chain_properties = {
         "finding_id": identifier,
         "component_id": identifier,
         "source_status": text,
+        "source_repository_artifact_entity_id": {
+            "type": "string",
+            "maxLength": 20_000,
+        },
+        "source_repository_artifact_entity_ids": string_list,
+        "source_configuration_input_entity_id": {
+            "type": "string",
+            "maxLength": 20_000,
+        },
+        "source_repository_path": text,
+        "source_repository_status": text,
+        "source_analysis_depth": text,
+        "source_snapshot_sha256": {"type": "string", "maxLength": 64},
+        "source_adapter_ids": string_list,
+        "source_provenance_relationship_ids": string_list,
         "requirement_ids": string_list,
         "hazard_ids": string_list,
         "citation_ids": string_list,
@@ -1458,6 +1494,37 @@ def _cross_reference_schema() -> dict[str, Any]:
         "findings_with_tool_provenance": {"type": "integer", "minimum": 0},
         "adapter_contribution_relationships": {"type": "integer", "minimum": 0},
         "unlinked_adapter_contributions": {"type": "integer", "minimum": 0},
+        "repository_artifacts": {"type": "integer", "minimum": 0},
+        "semantically_analyzed_repository_artifacts": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "opaque_repository_artifacts": {"type": "integer", "minimum": 0},
+        "excluded_repository_regions": {"type": "integer", "minimum": 0},
+        "dependency_entities": {"type": "integer", "minimum": 0},
+        "contract_entities": {"type": "integer", "minimum": 0},
+        "components_with_repository_provenance": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "findings_with_repository_provenance": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "configured_source_components": {"type": "integer", "minimum": 0},
+        "configured_source_findings": {"type": "integer", "minimum": 0},
+        "components_with_source_provenance": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "findings_with_source_provenance": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "repository_provenance_relationships": {
+            "type": "integer",
+            "minimum": 0,
+        },
         "compound_exposure_chains": {"type": "integer", "minimum": 0},
         "finding_chains": {"type": "integer", "minimum": 0},
         "active_finding_chains": {"type": "integer", "minimum": 0},
@@ -1477,6 +1544,7 @@ def _cross_reference_schema() -> dict[str, Any]:
         "review_governance_states": integer_map,
         "source_change_states": integer_map,
         "adapter_run_statuses": integer_map,
+        "repository_artifact_statuses": integer_map,
         "omitted_by_bound": integer_map,
     }
     properties = {
@@ -1560,6 +1628,12 @@ def _cross_reference_schema() -> dict[str, Any]:
             "type": "object",
             "required": list(adapter_provenance_properties),
             "properties": adapter_provenance_properties,
+            "additionalProperties": False,
+        },
+        "repository_provenance": {
+            "type": "object",
+            "required": list(repository_provenance_properties),
+            "properties": repository_provenance_properties,
             "additionalProperties": False,
         },
         "finding_chains": {

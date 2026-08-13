@@ -4152,6 +4152,8 @@ def _cross_reference_verify(args: argparse.Namespace) -> int:
             "quality-diagnostics="
             f"{verification.get('quality_gate_diagnostic_count', 0)}, "
             f"adapter-runs={verification.get('adapter_run_count', 0)}, "
+            "repository-artifacts="
+            f"{verification.get('repository_artifact_count', 0)}, "
             "compound-exposure-chains="
             f"{verification.get('compound_exposure_chain_count', 0)}, "
             f"finding-chains={verification.get('finding_chain_count', 0)}, "

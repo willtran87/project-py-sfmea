@@ -63,8 +63,8 @@ Available names:
 | `configuration-authoring-apply-receipt` | Validated TOML publication and addition-count receipt |
 | `configuration-authoring-draft` | Editable guidance, architecture, and interface proposal workspace |
 | `configuration-authoring-verification` | Integrity, semantics, and optional exact-binding verdict |
-| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure, verification-readiness, and review-governance profiles, finding chains, quality diagnostics, compound-model intersections, and prioritized review leads |
-| `cross-reference-verification` | Fabric integrity, semantic/readiness/governance-profile and chain referential consistency, diagnostic scope/identity, accounting, and optional exact-analysis regeneration verdict |
+| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure, verification-readiness, review-governance, adapter-run, and repository-source provenance, finding chains, quality diagnostics, compound-model intersections, and prioritized review leads |
+| `cross-reference-verification` | Fabric integrity, semantic/readiness/governance/provenance and chain referential consistency, diagnostic scope/identity, accounting, and optional exact-analysis regeneration verdict |
 | `sfta-authoring` | Sealed exact-analysis-bound fault-tree definitions with named engineering approvals |
 | `sfta-authoring-apply-receipt` | Applied hazard replacements and source/result analysis bindings |
 | `sfta-authoring-draft` | Editable one-entry-per-hazard fault-tree engineering workspace |
@@ -133,6 +133,15 @@ relationships across ten closed dimensions. Finding chains copy that profile bin
 deterministically derived `compound_exposure_kinds`. The verifier reconciles profile identity,
 dimension booleans, record references, compound rules, and all summary counts even when the source
 analysis is not supplied; `--analysis` additionally requires exact regeneration.
+
+`repository_provenance` binds the analysis scope to its integrity-declaring inventory, every
+inventoried artifact and excluded region, dependency and contract declarations, the resolved
+configuration input, and exact component/finding source relationships. Finding chains copy the source path, inventory
+status, analysis depth, digest, adapter IDs, and relationship IDs. The verifier reconciles every
+typed entity and relationship, opaque-artifact partition, unaccounted source ID, and summary count.
+Configuration-derived common-cause findings retain the run manifest's configuration digest rather
+than being misclassified as missing repository files. An `indexed` or `opaque` status remains
+repository accounting only, not semantic-analysis credit.
 
 Every finding also has one `verification_readiness_profile`. It references candidate tests,
 coverage observations, registered test implementations, executions, evidence artifacts, and

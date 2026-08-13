@@ -517,6 +517,8 @@ def cross_reference_diagram(
                 chain.get("review_governance_profile_id", ""),
                 *chain.get("quality_diagnostic_entity_ids", []),
                 *chain.get("adapter_run_entity_ids", []),
+                *chain.get("source_repository_artifact_entity_ids", []),
+                chain.get("source_configuration_input_entity_id", ""),
             )
             if entity_id in entity_by_id
         )
@@ -535,11 +537,21 @@ def cross_reference_diagram(
         if len(selected) >= node_limit:
             break
     selected = set(sorted(selected)[:node_limit])
+    diagram_node_id_by_entity = {
+        entity_id: (
+            entity_id
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", entity_id)
+            else stable_id("XNODE", entity_id)
+        )
+        for entity_id in selected
+    }
     layer_by_kind = {
         "citation": 0,
         "requirement": 0,
         "hazard": 0,
         "sfta_event": 0,
+        "repository_artifact": 0,
+        "configuration_input": 0,
         "component": 1,
         "resilience_operation": 1,
         "resilience_effect_summary": 1,
@@ -583,12 +595,15 @@ def cross_reference_diagram(
     }
     nodes = [
         _node(
-            entity_id,
+            diagram_node_id_by_entity[entity_id],
             str(entity_by_id[entity_id].get("label", entity_id)),
             str(entity_by_id[entity_id].get("kind", "entity")),
             group=str(entity_by_id[entity_id].get("kind", "entity")),
             description=str(entity_by_id[entity_id].get("authority", "")),
-            tags=[str(entity_by_id[entity_id].get("raw_id", ""))],
+            tags=[
+                str(entity_by_id[entity_id].get("raw_id", "")),
+                entity_id,
+            ],
             layer=layer_by_kind.get(str(entity_by_id[entity_id].get("kind", ""))),
         )
         for entity_id in sorted(selected)
@@ -596,8 +611,8 @@ def cross_reference_diagram(
     edges = [
         _edge(
             value["id"],
-            value["source"],
-            value["target"],
+            diagram_node_id_by_entity[value["source"]],
+            diagram_node_id_by_entity[value["target"]],
             value["kind"].replace("_", " "),
             value["kind"],
             evidence=value["channel"],
@@ -615,7 +630,8 @@ def cross_reference_diagram(
             "description": (
                 "Bounded guidance, requirement, hazard, SFTA, component, cascade, resilience, "
                 "semantic exposure, finding, verification, execution, and evidence relationships."
-                " Quality diagnostics and review-governance state remain workflow evidence."
+                " Source snapshots, adapter attribution, quality diagnostics, and review-governance "
+                "state retain their distinct evidence authority."
             ),
             "notice": (
                 f"Showing {len(chains)} of {summary['finding_chains']} finding chains and "
@@ -644,6 +660,17 @@ def cross_reference_diagram(
                 "adapter_runs": summary["adapter_runs"],
                 "findings_with_tool_provenance": summary[
                     "findings_with_tool_provenance"
+                ],
+                "repository_artifacts": summary["repository_artifacts"],
+                "findings_with_repository_provenance": summary[
+                    "findings_with_repository_provenance"
+                ],
+                "opaque_repository_artifacts": summary[
+                    "opaque_repository_artifacts"
+                ],
+                "configured_source_findings": summary["configured_source_findings"],
+                "findings_with_source_provenance": summary[
+                    "findings_with_source_provenance"
                 ],
                 "compound_exposure_chains": summary["compound_exposure_chains"],
                 "review_leads": summary["review_leads"],

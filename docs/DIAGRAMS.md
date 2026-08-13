@@ -67,7 +67,8 @@ The `cross_reference` projection joins the highest-priority finding chains acros
 requirements, hazards, SFTA events, components, semantic-exposure profiles, findings,
 verification-readiness profiles, test candidates, coverage observations, registered tests,
 review-governance profiles, finding-local quality diagnostics, assignments, verification
-obligations, executions, and evidence artifacts. Semantic nodes retain exact links
+obligations, executions, evidence artifacts, adapter runs, content-addressed repository source
+artifacts, and the resolved configuration input for configuration-derived findings. Semantic nodes retain exact links
 to bounded data/alias-flow, concurrency, exception, state, authorization, contract, deployment,
 shared-fate, and hierarchy records. Its metadata binds the exact analysis and complete cross-reference
 projection digests. The view is bounded to 40 finding chains and 500 entities; use
@@ -78,6 +79,8 @@ model intersections for prioritization, not inferred runtime paths or new failur
 of completeness, compliance, verification success, or risk acceptance.
 Analysis-scope diagnostics remain in the complete JSON fabric rather than being attached to an
 arbitrary finding; the bounded diagram selects finding-local diagnostics for its chosen chains.
+The source artifact selected for each bounded finding retains its inventory authority and digest;
+its presence does not imply that indexed or opaque content received semantic analysis.
 
 Generated bundles contain a `binding` record for the baseline, analysis schema, and exact
 governed analysis-state SHA-256. Their `integrity` record hashes the complete canonical

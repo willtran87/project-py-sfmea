@@ -336,6 +336,156 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertFalse(rejected["checks"]["adapter_provenance_integrity"])
         self.assertFalse(rejected["checks"]["exact_regeneration"])
 
+    def test_cross_links_repository_inventory_sources_and_dependencies(self) -> None:
+        (self.root / "requirements.txt").write_text(
+            "httpx>=0.28,<1\n", encoding="utf-8"
+        )
+        (self.root / "opaque.asset").write_bytes(b"opaque")
+        analysis = scan_repository(self.root)
+        caller = next(
+            value for value in analysis["components"] if value["qualname"] == "caller"
+        )
+        finding = next(
+            value
+            for value in analysis["items"]
+            if value["component_id"] == caller["id"]
+        )
+
+        index = build_cross_reference_index(analysis)
+        provenance = index["repository_provenance"]
+        chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == finding["id"]
+        )
+        entities = {value["id"]: value for value in index["entities"]}
+        artifact = entities[chain["source_repository_artifact_entity_id"]]
+
+        self.assertEqual(artifact["kind"], "repository_artifact")
+        self.assertEqual(artifact["raw_id"], "app.py")
+        self.assertEqual(chain["source_repository_path"], "app.py")
+        self.assertEqual(chain["source_repository_status"], "analyzed")
+        self.assertEqual(chain["source_analysis_depth"], "python_ast")
+        self.assertRegex(chain["source_snapshot_sha256"], r"^[0-9a-f]{64}$")
+        self.assertTrue(chain["source_provenance_relationship_ids"])
+        self.assertTrue(chain["dimensions"]["source_provenance"])
+        self.assertFalse(provenance["unaccounted_component_ids"])
+        self.assertFalse(provenance["unaccounted_finding_ids"])
+        environment_finding_id = next(
+            value["id"]
+            for value in analysis["items"]
+            if value["scanner"]["rule_id"] == "environment.dependency_drift"
+        )
+        environment_chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == environment_finding_id
+        )
+        self.assertGreaterEqual(
+            len(environment_chain["source_repository_artifact_entity_ids"]), 1
+        )
+        self.assertTrue(environment_chain["dimensions"]["source_provenance"])
+        self.assertTrue(provenance["opaque_repository_artifact_entity_ids"])
+        self.assertTrue(provenance["dependency_entity_ids"])
+        self.assertTrue(
+            any(
+                value["kind"] == "repository_artifacts_without_semantic_analysis"
+                for value in index["review_leads"]
+            )
+        )
+        dependency_profile = next(
+            value
+            for value in index["adapter_provenance"]["adapter_run_profiles"]
+            if value["adapter_id"] == "python.dependency_inventory"
+        )
+        self.assertTrue(
+            any(
+                value.startswith("dependency:requirements.txt:")
+                for value in dependency_profile["linked_contribution_entity_ids"]
+            )
+        )
+        repository_profile = next(
+            value
+            for value in index["adapter_provenance"]["adapter_run_profiles"]
+            if value["adapter_id"] == "python.repository_discoverer"
+        )
+        self.assertIn("app.py", repository_profile["linked_contribution_entity_ids"])
+        self.assertEqual(
+            index["summary"]["findings_with_repository_provenance"],
+            index["summary"]["finding_chains"],
+        )
+        diagram = build_diagram_models(analysis, kind="cross_reference")[0]
+        self.assertTrue(
+            any(value["kind"] == "repository_artifact" for value in diagram["nodes"])
+        )
+
+    def test_verifier_rejects_repository_provenance_tampering(self) -> None:
+        output = self.root / "fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        tampered = json.loads(output.read_text(encoding="utf-8"))
+        tampered["repository_provenance"][
+            "opaque_repository_artifact_entity_ids"
+        ].append("repository_artifact:forged")
+        content = dict(tampered)
+        content.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(tampered), encoding="utf-8")
+
+        rejected = verify_cross_reference_file(output, analysis=self.analysis)
+
+        self.assertFalse(rejected["valid"])
+        self.assertFalse(rejected["checks"]["repository_provenance_integrity"])
+        self.assertFalse(rejected["checks"]["exact_regeneration"])
+
+    def test_configuration_derived_findings_bind_to_manifest_input(self) -> None:
+        analysis = scan_repository(
+            self.root,
+            config={
+                "project": {"name": "configured-source"},
+                "common_causes": [
+                    {
+                        "id": "CC-SHARED",
+                        "description": "Shared configuration corrupts behavior.",
+                        "component_patterns": ["app.py:*"],
+                        "hazards": [],
+                        "requirements": [],
+                        "causes": ["Invalid shared configuration"],
+                        "controls": ["Independent configuration validation"],
+                    }
+                ],
+            },
+        )
+        finding = next(
+            value
+            for value in analysis["items"]
+            if value["scanner"]["rule_id"] == "common_cause.CC-SHARED"
+        )
+
+        index = build_cross_reference_index(analysis)
+        provenance = index["repository_provenance"]
+        chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == finding["id"]
+        )
+        config_entity = next(
+            value
+            for value in index["entities"]
+            if value["id"] == chain["source_configuration_input_entity_id"]
+        )
+
+        self.assertEqual(config_entity["kind"], "configuration_input")
+        self.assertEqual(chain["source_repository_status"], "configured")
+        self.assertEqual(chain["source_analysis_depth"], "project_configuration")
+        self.assertRegex(chain["source_snapshot_sha256"], r"^[0-9a-f]{64}$")
+        self.assertTrue(chain["dimensions"]["source_provenance"])
+        self.assertIn(finding["id"], provenance["configured_finding_ids"])
+        self.assertNotIn(finding["id"], provenance["unaccounted_finding_ids"])
+        self.assertEqual(
+            index["summary"]["findings_with_source_provenance"],
+            index["summary"]["finding_chains"],
+        )
+
     def test_projects_test_candidates_and_coverage_without_promoting_evidence(self) -> None:
         (self.root / "test_app.py").write_text(
             "from app import caller\n\n\ndef test_caller():\n    assert caller() == 1\n",
