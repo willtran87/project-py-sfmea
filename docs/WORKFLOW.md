@@ -409,6 +409,12 @@ evidence artifacts, and owner/reviewer assignments to the exact finding and obli
 lifecycle state and next action come from the accepted-finding assurance work queue; unreviewed,
 historical, revalidation-required, and out-of-scope findings remain explicit. Treat candidate
 tests and coverage as planning signals only, not verification evidence.
+The same chain carries a review-governance profile derived from quality validation, source-change
+classification, revalidation, disposition, and assurance state. Finding-local blocking diagnostics
+take precedence over ordinary review and assurance actions; global analysis diagnostics stay in a
+separate analysis-scope projection. Use the profile's next action for workflow routing, while
+retaining the original diagnostic rule and message for review. A passing quality gate means the
+configured workflow is complete and consistent, not that the code is safe or correct.
 Each scanned component also has a verified semantic-exposure profile that joins exact records from
 data and alias flow, concurrency, exception propagation, state machines, authorization scope,
 contracts, deployment topology, shared fate, and architecture hierarchy. Finding chains surface

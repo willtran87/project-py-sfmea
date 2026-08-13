@@ -31,6 +31,13 @@ package; public artifact and schema identifiers carry their own explicit compati
   prioritized aggregate leads, while candidate tests and coverage remain explicitly below
   verification-evidence authority. Schemas, exact verification, canonical diagrams, Markdown,
   CLI summaries, review packages, and the self-contained HTML report expose the same contract.
+  Cross-reference deterministic quality-gate diagnostics, source-change classification,
+  revalidation, finding disposition, and assurance lifecycle through one verified review-governance
+  profile per finding. Analysis-scope diagnostics remain separately typed and counted; actionable
+  non-review diagnostics become bounded aggregate leads. Stable occurrence-aware identities retain
+  exact duplicate diagnostics without conflation, while standalone verification recomputes identity,
+  scope partitioning, severity counts, state, next action, and chain copies without treating a
+  workflow diagnostic as proof of a software failure.
 
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,

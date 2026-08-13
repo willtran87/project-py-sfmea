@@ -22,6 +22,7 @@ from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_document
 from .model import stable_id
 from .sfta import build_sfta
+from .validation import validate_analysis
 from .version import __version__
 
 CROSS_REFERENCE_FORMAT = "pysfmea-cross-reference-index-1"
@@ -34,6 +35,8 @@ CROSS_REFERENCE_VERIFICATION_CHECKS = (
     "fusion_integrity",
     "semantic_profile_integrity",
     "verification_readiness_integrity",
+    "review_governance_integrity",
+    "adapter_provenance_integrity",
     "finding_chain_integrity",
     "review_lead_integrity",
     "summary_reconciliation",
@@ -125,6 +128,57 @@ VERIFICATION_READINESS_STATE_ACTIONS = {
     "awaiting_finding_review": "review_finding",
     "outside_accepted_assurance_scope": "none",
 }
+
+REVIEW_GOVERNANCE_STATES = (
+    "historical",
+    "revalidation_required",
+    "blocked_by_validation",
+    "awaiting_finding_review",
+    "needs_information",
+    "accepted_assurance_work",
+    "accepted_resolved",
+    "rejected",
+)
+
+
+def _quality_diagnostic_raw_id(
+    value: dict[str, Any], *, occurrence: int = 1
+) -> str:
+    return stable_id(
+        "QUALITY-DIAGNOSTIC",
+        str(value.get("rule_id", "")),
+        str(value.get("level", "")),
+        str(value.get("item_id", "")),
+        str(value.get("field", "")),
+        str(value.get("message", "")),
+        str(occurrence),
+    )
+
+
+def _review_governance_state(
+    *,
+    source_status: str,
+    revalidation_required: bool,
+    blocking_error_count: int,
+    disposition: str,
+    readiness_state: str,
+    readiness_next_action: str,
+) -> tuple[str, str]:
+    if source_status != "active":
+        return "historical", "none"
+    if revalidation_required:
+        return "revalidation_required", "revalidate_finding"
+    if blocking_error_count:
+        return "blocked_by_validation", "resolve_quality_gate_diagnostics"
+    if disposition == "unreviewed":
+        return "awaiting_finding_review", "review_finding"
+    if disposition == "needs_information":
+        return "needs_information", "collect_missing_information"
+    if disposition == "accepted":
+        if readiness_state == "resolved":
+            return "accepted_resolved", "none"
+        return "accepted_assurance_work", readiness_next_action
+    return "rejected", "none"
 
 
 def _text_values(value: object) -> list[str]:
@@ -266,6 +320,7 @@ def build_cross_reference_index(
     guidance_trace: dict[str, Any] | None = None,
     sfta_model: dict[str, Any] | None = None,
     architecture: dict[str, Any] | None = None,
+    validation_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fuse independently derived relationships without overstating their authority."""
 
@@ -274,6 +329,7 @@ def build_cross_reference_index(
     guidance = guidance_trace or guidance_traceability(analysis)
     sfta = sfta_model or build_sfta(analysis)
     graph = architecture or architecture_graph(analysis)
+    validation = validation_report or validate_analysis(analysis)
 
     entities: dict[str, dict[str, Any]] = {}
     relationships: dict[str, dict[str, Any]] = {}
@@ -359,6 +415,179 @@ def build_cross_reference_index(
                 "path": component.get("source", {}).get("path", ""),
             },
         )
+
+    analysis_scope_entity = add_entity(
+        "analysis_scope",
+        analysis_sha256,
+        analysis.get("project", {}).get("name") or analysis_sha256[:12],
+        authority="exact_governed_analysis_state",
+        metadata={
+            "analysis_state_sha256": analysis_sha256,
+            "baseline_id": str(
+                analysis.get("project", {}).get("baseline", {}).get("id", "")
+            ),
+        },
+    )
+    adapter_ledger = analysis.get("adapter_runs", {})
+    if not isinstance(adapter_ledger, dict):
+        adapter_ledger = {}
+    adapter_runs = [
+        value
+        for value in adapter_ledger.get("runs", [])
+        if isinstance(value, dict) and value.get("adapter_id")
+    ]
+    adapter_ledger_raw_id = str(adapter_ledger.get("ledger_sha256", "")) or stable_id(
+        "ADAPTER-LEDGER", analysis_sha256
+    )
+    adapter_ledger_entity = add_entity(
+        "adapter_ledger",
+        adapter_ledger_raw_id,
+        "adapter execution ledger",
+        authority="integrity_bound_adapter_execution_ledger",
+        metadata={
+            "ledger_sha256": str(adapter_ledger.get("ledger_sha256", "")),
+            "schema_version": str(adapter_ledger.get("schema_version", "")),
+            "run_count": len(adapter_runs),
+        },
+    )
+    run_manifest = analysis.get("run_manifest", {})
+    if not isinstance(run_manifest, dict):
+        run_manifest = {}
+    run_manifest_raw_id = str(run_manifest.get("id", "")) or stable_id(
+        "RUN-MANIFEST", analysis_sha256
+    )
+    run_manifest_entity = add_entity(
+        "run_manifest",
+        run_manifest_raw_id,
+        run_manifest.get("id") or "run manifest",
+        authority="integrity_bound_scan_reproducibility_manifest",
+        metadata={
+            "manifest_sha256": str(run_manifest.get("manifest_sha256", "")),
+            "resolved_inputs_sha256": str(
+                run_manifest.get("resolved_inputs_sha256", "")
+            ),
+            "adapter_run_ledger_sha256": str(
+                run_manifest.get("resolved_inputs", {}).get(
+                    "adapter_run_ledger_sha256", ""
+                )
+            ),
+        },
+    )
+    adapter_core_relationship_ids: set[str] = set()
+    for source, target, kind, channel, authority in (
+        (
+            analysis_scope_entity,
+            run_manifest_entity,
+            "has_run_manifest",
+            "run_manifest",
+            "exact_analysis_reproducibility_binding",
+        ),
+        (
+            analysis_scope_entity,
+            adapter_ledger_entity,
+            "has_adapter_ledger",
+            "adapter_ledger",
+            "exact_analysis_adapter_ledger_binding",
+        ),
+        (
+            run_manifest_entity,
+            adapter_ledger_entity,
+            "binds_adapter_ledger",
+            "run_manifest",
+            "manifest_recorded_adapter_ledger_digest",
+        ),
+    ):
+        relation_id = add_relation(
+            source,
+            target,
+            kind,
+            channel,
+            authority=authority,
+        )
+        if relation_id in relationships:
+            adapter_core_relationship_ids.add(relation_id)
+    adapter_run_entities_by_id: dict[str, str] = {}
+    for run in adapter_runs:
+        adapter_id = str(run.get("adapter_id", ""))
+        adapter_entity = add_entity(
+            "adapter_run",
+            adapter_id,
+            adapter_id,
+            authority="integrity_bound_adapter_execution_record",
+            metadata={
+                "adapter_id": adapter_id,
+                "adapter_version": str(run.get("adapter_version", "")),
+                "status": str(run.get("status", "")),
+                "reason": str(run.get("reason", "")),
+                "input_sha256": str(run.get("input_sha256", "")),
+                "output_sha256": str(run.get("output_sha256", "")),
+                "contribution_count": _safe_int(run.get("contribution_count", 0)),
+            },
+        )
+        adapter_run_entities_by_id[adapter_id] = adapter_entity
+        relation_id = add_relation(
+            adapter_ledger_entity,
+            adapter_entity,
+            "records_adapter_run",
+            "adapter_ledger",
+            authority="integrity_bound_adapter_execution_record",
+        )
+        if relation_id in relationships:
+            adapter_core_relationship_ids.add(relation_id)
+    diagnostic_entities_by_finding: dict[str, list[str]] = defaultdict(list)
+    diagnostic_records_by_finding: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    global_diagnostic_entity_ids: list[str] = []
+    global_diagnostic_relationship_ids: list[str] = []
+    diagnostic_occurrences: Counter[tuple[str, str, str, str, str]] = Counter()
+    diagnostic_entity_by_object_id: dict[int, str] = {}
+    for diagnostic in validation.get("findings", []):
+        if not isinstance(diagnostic, dict) or not diagnostic.get("rule_id"):
+            continue
+        diagnostic_key = (
+            str(diagnostic.get("rule_id", "")),
+            str(diagnostic.get("level", "")),
+            str(diagnostic.get("item_id", "")),
+            str(diagnostic.get("field", "")),
+            str(diagnostic.get("message", "")),
+        )
+        diagnostic_occurrences[diagnostic_key] += 1
+        raw_id = _quality_diagnostic_raw_id(
+            diagnostic, occurrence=diagnostic_occurrences[diagnostic_key]
+        )
+        diagnostic_entity = add_entity(
+            "quality_gate_diagnostic",
+            raw_id,
+            diagnostic.get("rule_id") or raw_id,
+            authority="deterministic_quality_gate_diagnostic",
+            metadata={
+                "rule_id": str(diagnostic.get("rule_id", "")),
+                "level": str(diagnostic.get("level", "")),
+                "field": str(diagnostic.get("field", "")),
+                "item_id": str(diagnostic.get("item_id", "")),
+                "message": str(diagnostic.get("message", "")),
+                "scope": "finding" if diagnostic.get("item_id") else "analysis",
+                "occurrence": diagnostic_occurrences[diagnostic_key],
+            },
+        )
+        if diagnostic_entity not in entities:
+            omitted["quality_gate_diagnostics"] += 1
+            continue
+        diagnostic_entity_by_object_id[id(diagnostic)] = diagnostic_entity
+        finding_id = str(diagnostic.get("item_id", ""))
+        if finding_id:
+            diagnostic_entities_by_finding[finding_id].append(diagnostic_entity)
+            diagnostic_records_by_finding[finding_id].append(diagnostic)
+            continue
+        global_diagnostic_entity_ids.append(diagnostic_entity)
+        relation_id = add_relation(
+            analysis_scope_entity,
+            diagnostic_entity,
+            "has_analysis_quality_gate_diagnostic",
+            "validation",
+            authority="deterministic_analysis_scope_quality_gate_diagnostic",
+        )
+        if relation_id in relationships:
+            global_diagnostic_relationship_ids.append(relation_id)
 
     context = analysis.get("context", {})
     for kind, collection in (
@@ -1340,6 +1569,7 @@ def build_cross_reference_index(
 
     finding_chains: list[dict[str, Any]] = []
     verification_readiness_profiles: list[dict[str, Any]] = []
+    review_governance_profiles: list[dict[str, Any]] = []
     for item in analysis.get("items", []):
         if not isinstance(item, dict) or not item.get("id"):
             continue
@@ -1359,6 +1589,11 @@ def build_cross_reference_index(
                 "disposition": item.get("review", {}).get("disposition", "unreviewed"),
                 "priority": item.get("scanner", {}).get("screening_priority", ""),
                 "source_status": item.get("source_status", "active"),
+                "source_change": item.get("source_change", ""),
+                "workflow_status": item.get("review", {}).get("status", "draft"),
+                "revalidation_required": bool(
+                    item.get("review", {}).get("revalidation_required")
+                ),
             },
         )
         component_entity = _entity_id("component", component_id)
@@ -1751,6 +1986,102 @@ def build_cross_reference_index(
             ),
         }
         verification_readiness_profiles.append(readiness_profile)
+        diagnostic_entity_ids = sorted(
+            set(diagnostic_entities_by_finding.get(finding_id, []))
+        )
+        diagnostic_records = diagnostic_records_by_finding.get(finding_id, [])
+        diagnostic_counts = dict(
+            sorted(
+                Counter(
+                    str(value.get("level", "unknown"))
+                    for value in diagnostic_records
+                ).items()
+            )
+        )
+        blocking_diagnostic_entity_ids = sorted(
+            {
+                diagnostic_entity
+                for diagnostic_entity, diagnostic in zip(
+                    diagnostic_entities_by_finding.get(finding_id, []),
+                    diagnostic_records,
+                )
+                if diagnostic.get("level") == "error"
+                and diagnostic.get("rule_id") != "review.unreviewed"
+            }
+        )
+        governance_state, governance_next_action = _review_governance_state(
+            source_status=str(item.get("source_status", "active")),
+            revalidation_required=bool(review.get("revalidation_required")),
+            blocking_error_count=len(blocking_diagnostic_entity_ids),
+            disposition=disposition,
+            readiness_state=lifecycle_state,
+            readiness_next_action=next_action_id,
+        )
+        governance_raw_id = stable_id("REVIEW-GOVERNANCE", finding_id)
+        governance_profile_entity = add_entity(
+            "review_governance_profile",
+            governance_raw_id,
+            finding_id,
+            authority="deterministic_quality_gate_and_lifecycle_projection",
+            metadata={
+                "state": governance_state,
+                "next_action_id": governance_next_action,
+                "source_change": str(item.get("source_change", "")),
+                "blocking_error_count": len(blocking_diagnostic_entity_ids),
+            },
+        )
+        governance_relationship_ids: set[str] = set()
+        relation_id = add_relation(
+            finding_entity,
+            governance_profile_entity,
+            "has_review_governance_profile",
+            "cross_reference",
+            authority="deterministic_quality_gate_and_lifecycle_projection",
+        )
+        if relation_id in relationships:
+            governance_relationship_ids.add(relation_id)
+        for diagnostic_entity_id in diagnostic_entity_ids:
+            relation_id = add_relation(
+                governance_profile_entity,
+                diagnostic_entity_id,
+                "has_finding_quality_gate_diagnostic",
+                "validation",
+                authority="deterministic_finding_scope_quality_gate_diagnostic",
+            )
+            if relation_id in relationships:
+                governance_relationship_ids.add(relation_id)
+        governance_profile = {
+            "id": governance_profile_entity,
+            "finding_id": finding_id,
+            "component_id": component_id,
+            "source_status": str(item.get("source_status", "active")),
+            "source_change": str(item.get("source_change", "")),
+            "screening_priority": str(
+                item.get("scanner", {}).get("screening_priority", "")
+            ),
+            "finding_disposition": disposition,
+            "workflow_status": str(review.get("status", "draft")),
+            "revalidation_required": bool(review.get("revalidation_required")),
+            "state": governance_state,
+            "next_action_id": governance_next_action,
+            "readiness_profile_id": readiness_profile_entity,
+            "diagnostic_entity_ids": diagnostic_entity_ids,
+            "blocking_diagnostic_entity_ids": blocking_diagnostic_entity_ids,
+            "diagnostic_counts": diagnostic_counts,
+            "relationship_ids": sorted(governance_relationship_ids),
+            "notice": (
+                "Quality-gate diagnostics are deterministic workflow findings, not proof of a "
+                "software failure. Global analysis-scope diagnostics remain separate from "
+                "finding-local review state."
+            ),
+        }
+        review_governance_profiles.append(governance_profile)
+        dimensions["quality_governance"] = bool(
+            diagnostic_entity_ids
+            or review.get("revalidation_required")
+            or item.get("source_change")
+            or disposition != "unreviewed"
+        )
         dimensions["cascade_analysis"] = bool(upstream_paths)
         dimensions["timing_and_resilience"] = bool(
             resilience_entity_ids or timing_relation_ids
@@ -1788,6 +2119,19 @@ def build_cross_reference_index(
                 "verification_evidence_posture": evidence_posture,
                 "verification_next_action_id": next_action_id,
                 "verification_readiness_gaps": sorted(readiness_gaps),
+                "review_governance_profile_id": governance_profile_entity,
+                "quality_diagnostic_entity_ids": diagnostic_entity_ids,
+                "blocking_quality_diagnostic_entity_ids": (
+                    blocking_diagnostic_entity_ids
+                ),
+                "review_governance_relationship_ids": sorted(
+                    governance_relationship_ids
+                ),
+                "review_governance_state": governance_state,
+                "review_next_action_id": governance_next_action,
+                "quality_diagnostic_counts": diagnostic_counts,
+                "source_change": str(item.get("source_change", "")),
+                "revalidation_required": bool(review.get("revalidation_required")),
                 "dimensions": dimensions,
                 "linkage_completeness_percent": round(
                     100 * sum(dimensions.values()) / len(dimensions), 1
@@ -2066,6 +2410,54 @@ def build_cross_reference_index(
                 ),
             }
         )
+    quality_diagnostics_by_scope_rule: dict[
+        tuple[str, str, str], list[dict[str, Any]]
+    ] = defaultdict(list)
+    for diagnostic in validation.get("findings", []):
+        if not isinstance(diagnostic, dict):
+            continue
+        embedded_diagnostic_entity = diagnostic_entity_by_object_id.get(id(diagnostic))
+        if not embedded_diagnostic_entity:
+            continue
+        level = str(diagnostic.get("level", ""))
+        rule_id = str(diagnostic.get("rule_id", ""))
+        finding_id = str(diagnostic.get("item_id", ""))
+        if level not in {"error", "warning"} or not rule_id:
+            continue
+        if finding_id and rule_id == "review.unreviewed":
+            continue
+        scope = "finding" if finding_id else "analysis"
+        quality_diagnostics_by_scope_rule[(scope, level, rule_id)].append(diagnostic)
+    for (scope, level, rule_id), affected in sorted(
+        quality_diagnostics_by_scope_rule.items()
+    ):
+        subject_ids = sorted(
+            {
+                (
+                    _entity_id("finding", diagnostic.get("item_id", ""))
+                    if diagnostic.get("item_id")
+                    else diagnostic_entity_by_object_id[id(diagnostic)]
+                )
+                for diagnostic in affected
+            }
+        )
+        review_leads.append(
+            {
+                "id": stable_id(
+                    "XLEAD", "quality_gate_diagnostic", scope, level, rule_id
+                ),
+                "kind": f"quality_gate_{scope}_{rule_id}",
+                "priority": "high" if level == "error" else "medium",
+                "subject_ids": subject_ids[:25],
+                "affected_count": len(affected),
+                "subject_ids_omitted": max(0, len(subject_ids) - 25),
+                "description": (
+                    f"{len(affected)} {scope}-scope {level} diagnostic(s) use quality-gate "
+                    f"rule {rule_id}. Resolve the governed workflow condition; the diagnostic "
+                    "does not establish a software failure or control ineffectiveness."
+                ),
+            }
+        )
     sfta_reconciliation = sfta.get("reconciliation", {})
     for key, priority in (
         ("top_down_uncovered_events", "high"),
@@ -2113,11 +2505,99 @@ def build_cross_reference_index(
         omitted["review_leads"] += len(review_leads) - MAX_REVIEW_LEADS
         review_leads = review_leads[:MAX_REVIEW_LEADS]
 
+    entity_ids_by_raw_id: dict[str, list[str]] = defaultdict(list)
+    for entity_id, entity in entities.items():
+        entity_ids_by_raw_id[str(entity.get("raw_id", ""))].append(entity_id)
+    adapter_provenance_profiles: list[dict[str, Any]] = []
+    adapter_relationships_by_finding: dict[str, set[str]] = defaultdict(set)
+    adapter_entities_by_finding: dict[str, set[str]] = defaultdict(set)
+    adapter_statuses_by_finding: dict[str, dict[str, str]] = defaultdict(dict)
+    all_adapter_relationship_ids = set(adapter_core_relationship_ids)
+    for run in adapter_runs:
+        adapter_id = str(run.get("adapter_id", ""))
+        adapter_entity = adapter_run_entities_by_id.get(adapter_id, "")
+        contribution_ids = sorted(
+            set(_text_values(run.get("contribution_entity_ids")))
+        )
+        linked_relationship_ids: set[str] = set()
+        linked_contribution_ids: set[str] = set()
+        for contribution_id in contribution_ids:
+            targets = sorted(set(entity_ids_by_raw_id.get(contribution_id, [])))
+            for target_entity_id in targets:
+                if target_entity_id == adapter_entity:
+                    continue
+                relation_id = add_relation(
+                    adapter_entity,
+                    target_entity_id,
+                    "contributed_entity",
+                    "adapter_ledger",
+                    authority="integrity_bound_adapter_contribution_identity",
+                    metadata={"contribution_entity_id": contribution_id},
+                )
+                if relation_id not in relationships:
+                    continue
+                linked_relationship_ids.add(relation_id)
+                all_adapter_relationship_ids.add(relation_id)
+                linked_contribution_ids.add(contribution_id)
+                target_entity = entities[target_entity_id]
+                if target_entity.get("kind") == "finding":
+                    finding_id = str(target_entity.get("raw_id", ""))
+                    adapter_relationships_by_finding[finding_id].add(relation_id)
+                    adapter_entities_by_finding[finding_id].add(adapter_entity)
+                    adapter_statuses_by_finding[finding_id][adapter_id] = str(
+                        run.get("status", "")
+                    )
+        adapter_provenance_profiles.append(
+            {
+                "id": adapter_entity,
+                "adapter_id": adapter_id,
+                "status": str(run.get("status", "")),
+                "contribution_entity_ids": contribution_ids,
+                "linked_contribution_entity_ids": sorted(linked_contribution_ids),
+                "unlinked_contribution_entity_ids": sorted(
+                    set(contribution_ids) - linked_contribution_ids
+                ),
+                "relationship_ids": sorted(linked_relationship_ids),
+                "notice": (
+                    "Contribution identity proves only that the recorded adapter emitted the "
+                    "normalized entity ID; it does not prove analytical correctness, coverage, "
+                    "or independent verification."
+                ),
+            }
+        )
+    for chain in finding_chains:
+        finding_id = str(chain.get("finding_id", ""))
+        chain["adapter_run_entity_ids"] = sorted(
+            adapter_entities_by_finding.get(finding_id, set())
+        )
+        chain["adapter_provenance_relationship_ids"] = sorted(
+            adapter_relationships_by_finding.get(finding_id, set())
+        )
+        chain["adapter_statuses"] = dict(
+            sorted(adapter_statuses_by_finding.get(finding_id, {}).items())
+        )
+        chain["dimensions"]["tool_provenance"] = bool(
+            chain["adapter_run_entity_ids"]
+        )
+        chain["linkage_completeness_percent"] = round(
+            100 * sum(chain["dimensions"].values()) / len(chain["dimensions"]), 1
+        )
+
     entities_list = sorted(entities.values(), key=lambda value: value["id"])
     relationships_list = sorted(relationships.values(), key=lambda value: value["id"])
     finding_chains.sort(key=lambda value: value["finding_id"])
     verification_readiness_profiles.sort(key=lambda value: value["finding_id"])
+    review_governance_profiles.sort(key=lambda value: value["finding_id"])
+    adapter_provenance_profiles.sort(key=lambda value: value["adapter_id"])
     classification_counts = Counter(value["classification"] for value in fusions)
+    validation_findings = [
+        value
+        for value in validation.get("findings", [])
+        if isinstance(value, dict) and id(value) in diagnostic_entity_by_object_id
+    ]
+    global_validation_findings = [
+        value for value in validation_findings if not value.get("item_id")
+    ]
     result = {
         "format": CROSS_REFERENCE_FORMAT,
         "analysis_state_sha256": analysis_sha256,
@@ -2151,6 +2631,25 @@ def build_cross_reference_index(
                     )
                 )
                 for value in verification_readiness_profiles
+            ),
+            "review_governance_profiles": len(review_governance_profiles),
+            "quality_gate_diagnostics": len(validation_findings),
+            "global_quality_gate_diagnostics": len(global_validation_findings),
+            "profiles_with_blocking_quality_diagnostics": sum(
+                bool(value["blocking_diagnostic_entity_ids"])
+                for value in review_governance_profiles
+            ),
+            "adapter_runs": len(adapter_provenance_profiles),
+            "findings_with_tool_provenance": sum(
+                bool(value.get("adapter_run_entity_ids")) for value in finding_chains
+            ),
+            "adapter_contribution_relationships": sum(
+                len(value["relationship_ids"])
+                for value in adapter_provenance_profiles
+            ),
+            "unlinked_adapter_contributions": sum(
+                len(value["unlinked_contribution_entity_ids"])
+                for value in adapter_provenance_profiles
             ),
             "compound_exposure_chains": sum(
                 bool(value.get("compound_exposure_kinds"))
@@ -2220,6 +2719,44 @@ def build_cross_reference_index(
                     ).items()
                 )
             ),
+            "quality_diagnostics_by_level": dict(
+                sorted(
+                    Counter(
+                        str(value.get("level", "unknown"))
+                        for value in validation_findings
+                    ).items()
+                )
+            ),
+            "global_quality_diagnostics_by_level": dict(
+                sorted(
+                    Counter(
+                        str(value.get("level", "unknown"))
+                        for value in global_validation_findings
+                    ).items()
+                )
+            ),
+            "review_governance_states": dict(
+                sorted(
+                    Counter(
+                        value["state"] for value in review_governance_profiles
+                    ).items()
+                )
+            ),
+            "source_change_states": dict(
+                sorted(
+                    Counter(
+                        value["source_change"] or "unspecified"
+                        for value in review_governance_profiles
+                    ).items()
+                )
+            ),
+            "adapter_run_statuses": dict(
+                sorted(
+                    Counter(
+                        value["status"] for value in adapter_provenance_profiles
+                    ).items()
+                )
+            ),
             "omitted_by_bound": dict(sorted(omitted.items())),
         },
         "entities": entities_list,
@@ -2227,6 +2764,49 @@ def build_cross_reference_index(
         "component_relationship_fusions": fusions,
         "semantic_profiles": semantic_profiles,
         "verification_readiness_profiles": verification_readiness_profiles,
+        "quality_gate_projection": {
+            "analysis_scope_entity_id": analysis_scope_entity,
+            "global_diagnostic_entity_ids": sorted(
+                set(global_diagnostic_entity_ids)
+            ),
+            "global_relationship_ids": sorted(
+                set(global_diagnostic_relationship_ids)
+            ),
+            "global_diagnostic_counts": dict(
+                sorted(
+                    Counter(
+                        str(value.get("level", "unknown"))
+                        for value in global_validation_findings
+                    ).items()
+                )
+            ),
+            "analysis_gate_state": (
+                "blocked"
+                if any(value.get("level") == "error" for value in validation_findings)
+                else "review_required"
+                if any(
+                    value.get("level") == "warning" for value in validation_findings
+                )
+                else "clear"
+            ),
+            "notice": (
+                "Analysis-scope diagnostics govern handoff readiness and remain separate from "
+                "finding-local review state. A clear quality gate proves workflow completeness "
+                "only; it does not prove correctness, safety, or compliance."
+            ),
+        },
+        "review_governance_profiles": review_governance_profiles,
+        "adapter_provenance": {
+            "run_manifest_entity_id": run_manifest_entity,
+            "adapter_ledger_entity_id": adapter_ledger_entity,
+            "adapter_run_profiles": adapter_provenance_profiles,
+            "relationship_ids": sorted(all_adapter_relationship_ids),
+            "notice": (
+                "Adapter provenance binds normalized contribution identities to integrity-bound "
+                "run records and the scan manifest. It does not establish analytical correctness, "
+                "completeness, qualification, or independence."
+            ),
+        },
         "finding_chains": finding_chains,
         "review_leads": review_leads,
         "limitations": [
@@ -2237,6 +2817,8 @@ def build_cross_reference_index(
             "Cascade paths, retry amplification, literal timing budgets, and circuit-breaker models are bounded static candidates, not runtime causality, latency, or control-effectiveness proof.",
             "Semantic profiles join independently bounded static models by stable component identity; compound exposure leads are intersections for review, not proof of reachability, causality, vulnerability, or failure.",
             "Verification-readiness profiles keep textual test candidates, coverage observations, registered implementations, executions, evidence review, assignments, and lifecycle decisions distinct; no lower-authority signal is promoted to verification evidence.",
+            "Review-governance profiles cross-reference deterministic quality diagnostics, source change, revalidation, disposition, and assurance next actions; diagnostics are workflow conditions, not software-failure evidence.",
+            "Adapter provenance links normalized contribution identities to integrity-bound adapter runs and the run manifest; tool attribution does not establish correctness, completeness, qualification, or independence.",
             "Linkage completeness is an accounting measure, not verification success or risk acceptance.",
         ],
     }
@@ -2267,6 +2849,14 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         "semantic_profiles_with_records",
         "verification_readiness_profiles",
         "verification_profiles_with_signals",
+        "review_governance_profiles",
+        "quality_gate_diagnostics",
+        "global_quality_gate_diagnostics",
+        "profiles_with_blocking_quality_diagnostics",
+        "adapter_runs",
+        "findings_with_tool_provenance",
+        "adapter_contribution_relationships",
+        "unlinked_adapter_contributions",
         "compound_exposure_chains",
         "finding_chains",
         "multi_source_fusions",
@@ -2335,6 +2925,61 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         [
             "",
             "Textual test links and coverage observations remain candidate or observed-execution signals; they are not verification evidence.",
+        ]
+    )
+    lines.extend(
+        [
+            "",
+            "## Review governance",
+            "",
+            f"Analysis gate state: `{index.get('quality_gate_projection', {}).get('analysis_gate_state', 'unknown')}`",
+            "",
+            "### Finding governance states",
+            "",
+            "| State | Finding profiles |",
+            "|---|---:|",
+        ]
+    )
+    for key, value in summary.get("review_governance_states", {}).items():
+        lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "### Quality diagnostics",
+            "",
+            "| Level | All diagnostics | Analysis-scope diagnostics |",
+            "|---|---:|---:|",
+        ]
+    )
+    diagnostic_levels = set(summary.get("quality_diagnostics_by_level", {})) | set(
+        summary.get("global_quality_diagnostics_by_level", {})
+    )
+    for level in sorted(diagnostic_levels):
+        lines.append(
+            f"| {level} | {summary.get('quality_diagnostics_by_level', {}).get(level, 0)} "
+            f"| {summary.get('global_quality_diagnostics_by_level', {}).get(level, 0)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "Quality diagnostics express workflow completeness and consistency; they do not establish software failure, safety, or compliance.",
+        ]
+    )
+    lines.extend(
+        [
+            "",
+            "## Tool provenance",
+            "",
+            "| Adapter run status | Runs |",
+            "|---|---:|",
+        ]
+    )
+    for key, value in summary.get("adapter_run_statuses", {}).items():
+        lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "Adapter contribution identity provides traceable tool attribution; it does not establish analytical correctness, coverage, qualification, or independence.",
         ]
     )
     lines.extend(["", "## Prioritized review leads", ""])
@@ -2659,11 +3304,19 @@ def verify_cross_reference_file(
             for profile in readiness_profiles or []
             if isinstance(profile, dict) and profile.get("id")
         }
+        finding_entities_by_raw_id = {
+            str(entity.get("raw_id", "")): entity
+            for entity in entities or []
+            if isinstance(entity, dict) and entity.get("kind") == "finding"
+        }
 
         def readiness_profile_valid(profile: object) -> bool:
             if not isinstance(profile, dict):
                 return False
             signals = profile.get("evidence_signals")
+            finding_metadata = finding_entities_by_raw_id.get(
+                str(profile.get("finding_id", "")), {}
+            ).get("metadata", {})
             if not (
                 profile.get("id") in readiness_profile_entity_ids
                 and profile.get("finding_id") in finding_entity_ids
@@ -2681,6 +3334,10 @@ def verify_cross_reference_file(
                 ]
                 and set(_text_values(profile.get("readiness_gaps")))
                 <= set(READINESS_GAP_PRIORITIES)
+                and profile.get("source_status")
+                == finding_metadata.get("source_status")
+                and profile.get("finding_disposition")
+                == finding_metadata.get("disposition")
             ):
                 return False
             entity_fields = (
@@ -2960,6 +3617,463 @@ def verify_cross_reference_file(
             )
         readiness_profile_id_set = set(readiness_profile_ids)
 
+        quality_gate_projection = value.get("quality_gate_projection")
+        governance_profiles = value.get("review_governance_profiles")
+        governance_profile_ids = (
+            [
+                str(profile.get("id", ""))
+                for profile in governance_profiles
+                if isinstance(profile, dict)
+            ]
+            if isinstance(governance_profiles, list)
+            else []
+        )
+        governance_profile_entity_ids = {
+            str(entity.get("id", ""))
+            for entity in entities or []
+            if isinstance(entity, dict)
+            and entity.get("kind") == "review_governance_profile"
+        }
+        quality_diagnostic_entity_ids = {
+            str(entity.get("id", ""))
+            for entity in entities or []
+            if isinstance(entity, dict)
+            and entity.get("kind") == "quality_gate_diagnostic"
+        }
+        governance_profiles_by_id = {
+            str(profile.get("id", "")): profile
+            for profile in governance_profiles or []
+            if isinstance(profile, dict) and profile.get("id")
+        }
+        diagnostic_identity_groups: dict[tuple[str, str, str, str, str], list[int]] = (
+            defaultdict(list)
+        )
+        diagnostic_identity_valid = True
+        for diagnostic_id in quality_diagnostic_entity_ids:
+            entity = entities_by_id.get(diagnostic_id, {})
+            metadata_value = entity.get("metadata", {})
+            occurrence = metadata_value.get("occurrence")
+            if not isinstance(occurrence, int) or isinstance(occurrence, bool):
+                diagnostic_identity_valid = False
+                continue
+            expected_raw_id = _quality_diagnostic_raw_id(
+                metadata_value, occurrence=occurrence
+            )
+            if (
+                entity.get("raw_id") != expected_raw_id
+                or diagnostic_id
+                != _entity_id("quality_gate_diagnostic", expected_raw_id)
+                or metadata_value.get("level")
+                not in {"error", "warning", "information"}
+                or metadata_value.get("scope") not in {"analysis", "finding"}
+            ):
+                diagnostic_identity_valid = False
+            identity_key = (
+                str(metadata_value.get("rule_id", "")),
+                str(metadata_value.get("level", "")),
+                str(metadata_value.get("item_id", "")),
+                str(metadata_value.get("field", "")),
+                str(metadata_value.get("message", "")),
+            )
+            diagnostic_identity_groups[identity_key].append(occurrence)
+        diagnostic_identity_valid = diagnostic_identity_valid and all(
+            sorted(occurrences) == list(range(1, len(occurrences) + 1))
+            for occurrences in diagnostic_identity_groups.values()
+        )
+
+        def governance_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            profile_id = str(profile.get("id", ""))
+            finding_id = str(profile.get("finding_id", ""))
+            diagnostic_ids = _text_values(profile.get("diagnostic_entity_ids"))
+            blocking_ids = _text_values(
+                profile.get("blocking_diagnostic_entity_ids")
+            )
+            relationship_ids_for_profile = set(
+                _text_values(profile.get("relationship_ids"))
+            )
+            readiness_profile = readiness_profiles_by_id.get(
+                str(profile.get("readiness_profile_id", ""))
+            )
+            finding_metadata = finding_entities_by_raw_id.get(finding_id, {}).get(
+                "metadata", {}
+            )
+            if not (
+                profile_id in governance_profile_entity_ids
+                and finding_id in finding_entity_ids
+                and profile.get("component_id") in component_ids
+                and isinstance(profile.get("revalidation_required"), bool)
+                and isinstance(profile.get("diagnostic_entity_ids"), list)
+                and isinstance(profile.get("blocking_diagnostic_entity_ids"), list)
+                and isinstance(profile.get("diagnostic_counts"), dict)
+                and isinstance(profile.get("relationship_ids"), list)
+                and profile.get("state") in REVIEW_GOVERNANCE_STATES
+                and readiness_profile is not None
+                and readiness_profile.get("finding_id") == finding_id
+                and profile.get("source_status")
+                == finding_metadata.get("source_status")
+                and profile.get("source_change")
+                == finding_metadata.get("source_change")
+                and profile.get("screening_priority")
+                == finding_metadata.get("priority")
+                and profile.get("finding_disposition")
+                == finding_metadata.get("disposition")
+                and profile.get("workflow_status")
+                == finding_metadata.get("workflow_status")
+                and profile.get("revalidation_required")
+                == finding_metadata.get("revalidation_required")
+                and set(diagnostic_ids) <= quality_diagnostic_entity_ids
+                and set(blocking_ids) <= set(diagnostic_ids)
+                and relationship_ids_for_profile <= relationship_id_set
+            ):
+                return False
+            diagnostic_metadata = [
+                entities_by_id[diagnostic_id].get("metadata", {})
+                for diagnostic_id in diagnostic_ids
+                if diagnostic_id in entities_by_id
+            ]
+            if any(
+                metadata.get("scope") != "finding"
+                or metadata.get("item_id") != finding_id
+                for metadata in diagnostic_metadata
+            ):
+                return False
+            expected_counts = dict(
+                sorted(
+                    Counter(
+                        str(metadata.get("level", "unknown"))
+                        for metadata in diagnostic_metadata
+                    ).items()
+                )
+            )
+            expected_blocking_ids = sorted(
+                diagnostic_id
+                for diagnostic_id in diagnostic_ids
+                if entities_by_id[diagnostic_id].get("metadata", {}).get("level")
+                == "error"
+                and entities_by_id[diagnostic_id]
+                .get("metadata", {})
+                .get("rule_id")
+                != "review.unreviewed"
+            )
+            expected_state, expected_next_action = _review_governance_state(
+                source_status=str(profile.get("source_status", "active")),
+                revalidation_required=bool(profile.get("revalidation_required")),
+                blocking_error_count=len(expected_blocking_ids),
+                disposition=str(profile.get("finding_disposition", "")),
+                readiness_state=str(readiness_profile.get("lifecycle_state", "")),
+                readiness_next_action=str(readiness_profile.get("next_action_id", "")),
+            )
+            profile_relation = _relation_id(
+                _entity_id("finding", finding_id),
+                profile_id,
+                "has_review_governance_profile",
+                "cross_reference",
+            )
+            diagnostic_relations = {
+                _relation_id(
+                    profile_id,
+                    diagnostic_id,
+                    "has_finding_quality_gate_diagnostic",
+                    "validation",
+                )
+                for diagnostic_id in diagnostic_ids
+            }
+            return bool(
+                profile.get("diagnostic_counts") == expected_counts
+                and blocking_ids == expected_blocking_ids
+                and profile.get("state") == expected_state
+                and profile.get("next_action_id") == expected_next_action
+                and profile_relation in relationship_ids_for_profile
+                and profile_relation in relationship_id_set
+                and diagnostic_relations <= relationship_ids_for_profile
+                and diagnostic_relations <= relationship_id_set
+            )
+
+        global_diagnostic_ids = (
+            _text_values(quality_gate_projection.get("global_diagnostic_entity_ids"))
+            if isinstance(quality_gate_projection, dict)
+            else []
+        )
+        analysis_scope_entity_id = (
+            str(quality_gate_projection.get("analysis_scope_entity_id", ""))
+            if isinstance(quality_gate_projection, dict)
+            else ""
+        )
+        global_relationship_ids = (
+            _text_values(quality_gate_projection.get("global_relationship_ids"))
+            if isinstance(quality_gate_projection, dict)
+            else []
+        )
+        global_metadata = [
+            entities_by_id[diagnostic_id].get("metadata", {})
+            for diagnostic_id in global_diagnostic_ids
+            if diagnostic_id in entities_by_id
+        ]
+        expected_global_counts = dict(
+            sorted(
+                Counter(
+                    str(metadata.get("level", "unknown"))
+                    for metadata in global_metadata
+                ).items()
+            )
+        )
+        all_diagnostic_metadata = [
+            entities_by_id[diagnostic_id].get("metadata", {})
+            for diagnostic_id in quality_diagnostic_entity_ids
+            if diagnostic_id in entities_by_id
+        ]
+        expected_analysis_gate_state = (
+            "blocked"
+            if any(
+                metadata.get("level") == "error"
+                for metadata in all_diagnostic_metadata
+            )
+            else "review_required"
+            if any(
+                metadata.get("level") == "warning"
+                for metadata in all_diagnostic_metadata
+            )
+            else "clear"
+        )
+        expected_global_relations = {
+            _relation_id(
+                analysis_scope_entity_id,
+                diagnostic_id,
+                "has_analysis_quality_gate_diagnostic",
+                "validation",
+            )
+            for diagnostic_id in global_diagnostic_ids
+        }
+        finding_diagnostic_ids = {
+            diagnostic_id
+            for profile in governance_profiles or []
+            if isinstance(profile, dict)
+            for diagnostic_id in _text_values(profile.get("diagnostic_entity_ids"))
+        }
+        checks["review_governance_integrity"] = bool(
+            isinstance(quality_gate_projection, dict)
+            and isinstance(governance_profiles, list)
+            and len(governance_profile_ids) == len(governance_profiles)
+            and all(governance_profile_ids)
+            and len(governance_profile_ids) == len(set(governance_profile_ids))
+            and set(governance_profile_ids) == governance_profile_entity_ids
+            and diagnostic_identity_valid
+            and {
+                str(profile.get("finding_id", ""))
+                for profile in governance_profiles
+                if isinstance(profile, dict)
+            }
+            == finding_entity_ids
+            and all(governance_profile_valid(profile) for profile in governance_profiles)
+            and analysis_scope_entity_id in entities_by_id
+            and entities_by_id[analysis_scope_entity_id].get("kind")
+            == "analysis_scope"
+            and set(global_diagnostic_ids) <= quality_diagnostic_entity_ids
+            and all(metadata.get("scope") == "analysis" for metadata in global_metadata)
+            and set(global_relationship_ids) == expected_global_relations
+            and expected_global_relations <= relationship_id_set
+            and quality_gate_projection.get("global_diagnostic_counts")
+            == expected_global_counts
+            and quality_gate_projection.get("analysis_gate_state")
+            == expected_analysis_gate_state
+            and set(global_diagnostic_ids).isdisjoint(finding_diagnostic_ids)
+            and set(global_diagnostic_ids) | finding_diagnostic_ids
+            == quality_diagnostic_entity_ids
+        )
+        if not checks["review_governance_integrity"]:
+            fail(
+                "cross_reference.review_governance_integrity_invalid",
+                "Review-governance profiles must partition global and finding diagnostics, preserve source/revalidation state, and resolve deterministic next actions.",
+            )
+        governance_profile_id_set = set(governance_profile_ids)
+
+        adapter_provenance = value.get("adapter_provenance")
+        adapter_profiles = (
+            adapter_provenance.get("adapter_run_profiles")
+            if isinstance(adapter_provenance, dict)
+            else None
+        )
+        adapter_profile_ids = (
+            [
+                str(profile.get("id", ""))
+                for profile in adapter_profiles
+                if isinstance(profile, dict)
+            ]
+            if isinstance(adapter_profiles, list)
+            else []
+        )
+        adapter_run_entity_ids = {
+            str(entity.get("id", ""))
+            for entity in entities or []
+            if isinstance(entity, dict) and entity.get("kind") == "adapter_run"
+        }
+        run_manifest_entity_id = (
+            str(adapter_provenance.get("run_manifest_entity_id", ""))
+            if isinstance(adapter_provenance, dict)
+            else ""
+        )
+        adapter_ledger_entity_id = (
+            str(adapter_provenance.get("adapter_ledger_entity_id", ""))
+            if isinstance(adapter_provenance, dict)
+            else ""
+        )
+        analysis_scope_entity_ids = {
+            str(entity.get("id", ""))
+            for entity in entities or []
+            if isinstance(entity, dict) and entity.get("kind") == "analysis_scope"
+        }
+        raw_entity_index: dict[str, set[str]] = defaultdict(set)
+        for entity in entities or []:
+            if isinstance(entity, dict) and entity.get("id"):
+                raw_entity_index[str(entity.get("raw_id", ""))].add(
+                    str(entity["id"])
+                )
+        expected_adapter_relationship_ids: set[str] = set()
+        if len(analysis_scope_entity_ids) == 1:
+            analysis_scope_id = next(iter(analysis_scope_entity_ids))
+            expected_adapter_relationship_ids.update(
+                {
+                    _relation_id(
+                        analysis_scope_id,
+                        run_manifest_entity_id,
+                        "has_run_manifest",
+                        "run_manifest",
+                    ),
+                    _relation_id(
+                        analysis_scope_id,
+                        adapter_ledger_entity_id,
+                        "has_adapter_ledger",
+                        "adapter_ledger",
+                    ),
+                    _relation_id(
+                        run_manifest_entity_id,
+                        adapter_ledger_entity_id,
+                        "binds_adapter_ledger",
+                        "run_manifest",
+                    ),
+                }
+            )
+        expected_adapter_relationship_ids.update(
+            _relation_id(
+                adapter_ledger_entity_id,
+                profile_id,
+                "records_adapter_run",
+                "adapter_ledger",
+            )
+            for profile_id in adapter_profile_ids
+        )
+
+        def adapter_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            profile_id = str(profile.get("id", ""))
+            adapter_id = str(profile.get("adapter_id", ""))
+            entity = entities_by_id.get(profile_id, {})
+            contribution_ids = _text_values(profile.get("contribution_entity_ids"))
+            linked_ids = _text_values(
+                profile.get("linked_contribution_entity_ids")
+            )
+            unlinked_ids = _text_values(
+                profile.get("unlinked_contribution_entity_ids")
+            )
+            supplied_relationship_ids = set(
+                _text_values(profile.get("relationship_ids"))
+            )
+            if not (
+                profile_id in adapter_run_entity_ids
+                and entity.get("raw_id") == adapter_id
+                and entity.get("metadata", {}).get("adapter_id") == adapter_id
+                and entity.get("metadata", {}).get("status")
+                == profile.get("status")
+                and isinstance(profile.get("contribution_entity_ids"), list)
+                and isinstance(profile.get("linked_contribution_entity_ids"), list)
+                and isinstance(profile.get("unlinked_contribution_entity_ids"), list)
+                and isinstance(profile.get("relationship_ids"), list)
+                and contribution_ids == sorted(set(contribution_ids))
+                and linked_ids == sorted(set(linked_ids))
+                and unlinked_ids == sorted(set(unlinked_ids))
+                and set(linked_ids).isdisjoint(unlinked_ids)
+                and set(linked_ids) | set(unlinked_ids) == set(contribution_ids)
+                and _safe_int(entity.get("metadata", {}).get("contribution_count", 0))
+                == len(contribution_ids)
+            ):
+                return False
+            expected_linked_ids = {
+                contribution_id
+                for contribution_id in contribution_ids
+                if raw_entity_index.get(contribution_id, set()) - {profile_id}
+            }
+            expected_relationship_ids = {
+                _relation_id(
+                    profile_id,
+                    target_entity_id,
+                    "contributed_entity",
+                    "adapter_ledger",
+                )
+                for contribution_id in contribution_ids
+                for target_entity_id in raw_entity_index.get(contribution_id, set())
+                if target_entity_id != profile_id
+            }
+            if not all(
+                relationships_by_id.get(relation_id, {}).get("metadata", {}).get(
+                    "contribution_entity_id"
+                )
+                in contribution_ids
+                for relation_id in expected_relationship_ids
+            ):
+                return False
+            expected_adapter_relationship_ids.update(expected_relationship_ids)
+            return bool(
+                set(linked_ids) == expected_linked_ids
+                and set(unlinked_ids) == set(contribution_ids) - expected_linked_ids
+                and supplied_relationship_ids == expected_relationship_ids
+                and expected_relationship_ids <= relationship_id_set
+            )
+
+        adapter_profiles_valid = bool(
+            isinstance(adapter_profiles, list)
+            and len(adapter_profile_ids) == len(adapter_profiles)
+            and all(adapter_profile_ids)
+            and len(adapter_profile_ids) == len(set(adapter_profile_ids))
+            and set(adapter_profile_ids) == adapter_run_entity_ids
+            and all(adapter_profile_valid(profile) for profile in adapter_profiles)
+        )
+        supplied_adapter_relationship_ids = (
+            set(_text_values(adapter_provenance.get("relationship_ids")))
+            if isinstance(adapter_provenance, dict)
+            else set()
+        )
+        checks["adapter_provenance_integrity"] = bool(
+            isinstance(adapter_provenance, dict)
+            and adapter_profiles_valid
+            and run_manifest_entity_id in entities_by_id
+            and entities_by_id[run_manifest_entity_id].get("kind") == "run_manifest"
+            and adapter_ledger_entity_id in entities_by_id
+            and entities_by_id[adapter_ledger_entity_id].get("kind")
+            == "adapter_ledger"
+            and entities_by_id[run_manifest_entity_id]
+            .get("metadata", {})
+            .get("adapter_run_ledger_sha256")
+            == entities_by_id[adapter_ledger_entity_id]
+            .get("metadata", {})
+            .get("ledger_sha256")
+            and supplied_adapter_relationship_ids
+            == expected_adapter_relationship_ids
+            and expected_adapter_relationship_ids <= relationship_id_set
+        )
+        if not checks["adapter_provenance_integrity"]:
+            fail(
+                "cross_reference.adapter_provenance_integrity_invalid",
+                "Adapter provenance must bind the run manifest and ledger, retain every contribution identity, and resolve exact contribution relationships without implying correctness.",
+            )
+        adapter_profiles_by_id = {
+            str(profile.get("id", "")): profile
+            for profile in adapter_profiles or []
+            if isinstance(profile, dict) and profile.get("id")
+        }
+
         chains = value.get("finding_chains")
         chain_ids = (
             [
@@ -3002,6 +4116,11 @@ def verify_cross_reference_file(
                         "assignment_entity_ids",
                         "readiness_relationship_ids",
                         "verification_readiness_gaps",
+                        "quality_diagnostic_entity_ids",
+                        "blocking_quality_diagnostic_entity_ids",
+                        "review_governance_relationship_ids",
+                        "adapter_run_entity_ids",
+                        "adapter_provenance_relationship_ids",
                         "interface_entity_ids",
                         "inbound_fusion_ids",
                         "outbound_fusion_ids",
@@ -3154,6 +4273,109 @@ def verify_cross_reference_file(
                 <= entity_id_set
                 and set(_text_values(chain.get("readiness_relationship_ids")))
                 <= relationship_id_set
+                and chain.get("review_governance_profile_id")
+                in governance_profile_id_set
+                and (
+                    chain.get("quality_diagnostic_entity_ids")
+                    == governance_profiles_by_id[
+                        str(chain.get("review_governance_profile_id", ""))
+                    ].get("diagnostic_entity_ids")
+                    and chain.get("blocking_quality_diagnostic_entity_ids")
+                    == governance_profiles_by_id[
+                        str(chain.get("review_governance_profile_id", ""))
+                    ].get("blocking_diagnostic_entity_ids")
+                    and chain.get("review_governance_relationship_ids")
+                    == governance_profiles_by_id[
+                        str(chain.get("review_governance_profile_id", ""))
+                    ].get("relationship_ids")
+                    and chain.get("review_governance_state")
+                    == governance_profiles_by_id[
+                        str(chain.get("review_governance_profile_id", ""))
+                    ].get("state")
+                    and chain.get("review_next_action_id")
+                    == governance_profiles_by_id[
+                        str(chain.get("review_governance_profile_id", ""))
+                    ].get("next_action_id")
+                    and chain.get("quality_diagnostic_counts")
+                    == governance_profiles_by_id[
+                        str(chain.get("review_governance_profile_id", ""))
+                    ].get("diagnostic_counts")
+                    and chain.get("source_change")
+                    == governance_profiles_by_id[
+                        str(chain.get("review_governance_profile_id", ""))
+                    ].get("source_change")
+                    and chain.get("revalidation_required")
+                    == governance_profiles_by_id[
+                        str(chain.get("review_governance_profile_id", ""))
+                    ].get("revalidation_required")
+                    and chain["dimensions"].get("quality_governance")
+                    == bool(
+                        governance_profiles_by_id[
+                            str(chain.get("review_governance_profile_id", ""))
+                        ].get("diagnostic_entity_ids")
+                        or governance_profiles_by_id[
+                            str(chain.get("review_governance_profile_id", ""))
+                        ].get("revalidation_required")
+                        or governance_profiles_by_id[
+                            str(chain.get("review_governance_profile_id", ""))
+                        ].get("source_change")
+                        or governance_profiles_by_id[
+                            str(chain.get("review_governance_profile_id", ""))
+                        ].get("finding_disposition")
+                        != "unreviewed"
+                    )
+                )
+                and set(_text_values(chain.get("quality_diagnostic_entity_ids")))
+                <= quality_diagnostic_entity_ids
+                and set(
+                    _text_values(chain.get("blocking_quality_diagnostic_entity_ids"))
+                )
+                <= quality_diagnostic_entity_ids
+                and set(
+                    _text_values(chain.get("review_governance_relationship_ids"))
+                )
+                <= relationship_id_set
+                and isinstance(chain.get("adapter_statuses"), dict)
+                and (
+                    lambda expected_adapter_ids, expected_relation_ids: (
+                        set(_text_values(chain.get("adapter_run_entity_ids")))
+                        == expected_adapter_ids
+                        and set(
+                            _text_values(
+                                chain.get("adapter_provenance_relationship_ids")
+                            )
+                        )
+                        == expected_relation_ids
+                        and chain.get("adapter_statuses")
+                        == {
+                            str(adapter_profiles_by_id[adapter_id]["adapter_id"]): str(
+                                adapter_profiles_by_id[adapter_id]["status"]
+                            )
+                            for adapter_id in sorted(expected_adapter_ids)
+                        }
+                        and chain["dimensions"].get("tool_provenance")
+                        == bool(expected_adapter_ids)
+                    )
+                )(
+                    {
+                        str(relation.get("source", ""))
+                        for relation in relationships or []
+                        if isinstance(relation, dict)
+                        and relation.get("kind") == "contributed_entity"
+                        and relation.get("target")
+                        == _entity_id("finding", chain.get("finding_id", ""))
+                        and relation.get("source") in adapter_run_entity_ids
+                    },
+                    {
+                        str(relation.get("id", ""))
+                        for relation in relationships or []
+                        if isinstance(relation, dict)
+                        and relation.get("kind") == "contributed_entity"
+                        and relation.get("target")
+                        == _entity_id("finding", chain.get("finding_id", ""))
+                        and relation.get("source") in adapter_run_entity_ids
+                    },
+                )
                 and set(_text_values(chain.get("requirement_ids")))
                 <= entity_raw_ids_by_kind["requirement"]
                 and set(_text_values(chain.get("hazard_ids")))
@@ -3271,6 +4493,41 @@ def verify_cross_reference_file(
                 ).items()
             )
         )
+        quality_diagnostic_counts = dict(
+            sorted(
+                Counter(
+                    str(metadata.get("level", "unknown"))
+                    for metadata in all_diagnostic_metadata
+                ).items()
+            )
+        )
+        governance_state_counts = dict(
+            sorted(
+                Counter(
+                    str(profile.get("state", ""))
+                    for profile in (governance_profiles or [])
+                    if isinstance(profile, dict)
+                ).items()
+            )
+        )
+        source_change_counts = dict(
+            sorted(
+                Counter(
+                    str(profile.get("source_change", "")) or "unspecified"
+                    for profile in (governance_profiles or [])
+                    if isinstance(profile, dict)
+                ).items()
+            )
+        )
+        adapter_status_counts = dict(
+            sorted(
+                Counter(
+                    str(profile.get("status", ""))
+                    for profile in (adapter_profiles or [])
+                    if isinstance(profile, dict)
+                ).items()
+            )
+        )
         checks["summary_reconciliation"] = bool(
             isinstance(summary, dict)
             and isinstance(leads, list)
@@ -3301,6 +4558,37 @@ def verify_cross_reference_file(
                     )
                 )
                 for profile in (readiness_profiles or [])
+                if isinstance(profile, dict)
+            )
+            and summary.get("review_governance_profiles")
+            == len(governance_profiles or [])
+            and summary.get("quality_gate_diagnostics")
+            == len(quality_diagnostic_entity_ids)
+            and summary.get("global_quality_gate_diagnostics")
+            == len(global_diagnostic_ids)
+            and summary.get("profiles_with_blocking_quality_diagnostics")
+            == sum(
+                bool(_text_values(profile.get("blocking_diagnostic_entity_ids")))
+                for profile in (governance_profiles or [])
+                if isinstance(profile, dict)
+            )
+            and summary.get("adapter_runs") == len(adapter_profiles or [])
+            and summary.get("findings_with_tool_provenance")
+            == sum(
+                bool(_text_values(chain.get("adapter_run_entity_ids")))
+                for chain in (chains or [])
+                if isinstance(chain, dict)
+            )
+            and summary.get("adapter_contribution_relationships")
+            == sum(
+                len(_text_values(profile.get("relationship_ids")))
+                for profile in (adapter_profiles or [])
+                if isinstance(profile, dict)
+            )
+            and summary.get("unlinked_adapter_contributions")
+            == sum(
+                len(_text_values(profile.get("unlinked_contribution_entity_ids")))
+                for profile in (adapter_profiles or [])
                 if isinstance(profile, dict)
             )
             and summary.get("compound_exposure_chains")
@@ -3346,6 +4634,14 @@ def verify_cross_reference_file(
             == verification_posture_counts
             and summary.get("verification_readiness_gaps")
             == verification_gap_counts
+            and summary.get("quality_diagnostics_by_level")
+            == quality_diagnostic_counts
+            and summary.get("global_quality_diagnostics_by_level")
+            == expected_global_counts
+            and summary.get("review_governance_states")
+            == governance_state_counts
+            and summary.get("source_change_states") == source_change_counts
+            and summary.get("adapter_run_statuses") == adapter_status_counts
         )
         if not checks["summary_reconciliation"]:
             fail(
@@ -3436,6 +4732,21 @@ def verify_cross_reference_file(
             _safe_int(
                 value.get("summary", {}).get("verification_readiness_profiles", 0)
             )
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "review_governance_profile_count": (
+            _safe_int(value.get("summary", {}).get("review_governance_profiles", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "quality_gate_diagnostic_count": (
+            _safe_int(value.get("summary", {}).get("quality_gate_diagnostics", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "adapter_run_count": (
+            _safe_int(value.get("summary", {}).get("adapter_runs", 0))
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0
         ),

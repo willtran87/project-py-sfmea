@@ -43,6 +43,7 @@ from .cross_reference import (
     MAX_FUSIONS,
     MAX_RELATIONSHIPS,
     MAX_REVIEW_LEADS,
+    REVIEW_GOVERNANCE_STATES,
     SEMANTIC_EXPOSURE_DIMENSIONS,
     VERIFICATION_EVIDENCE_POSTURES,
     VERIFICATION_EVIDENCE_SIGNAL_NAMES,
@@ -1213,6 +1214,8 @@ def _cross_reference_schema() -> dict[str, Any]:
             "timing_and_resilience",
             "semantic_exposure",
             "verification_readiness",
+            "quality_governance",
+            "tool_provenance",
         ],
         "properties": {
             name: {"type": "boolean"}
@@ -1230,6 +1233,8 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "timing_and_resilience",
                 "semantic_exposure",
                 "verification_readiness",
+                "quality_governance",
+                "tool_provenance",
             )
         },
         "additionalProperties": False,
@@ -1294,6 +1299,69 @@ def _cross_reference_schema() -> dict[str, Any]:
         "latest_execution_status": text,
         "notice": text,
     }
+    diagnostic_count_map = {
+        "type": "object",
+        "maxProperties": 10,
+        "additionalProperties": {"type": "integer", "minimum": 0},
+    }
+    governance_profile_properties = {
+        "id": identifier,
+        "finding_id": identifier,
+        "component_id": identifier,
+        "source_status": text,
+        "source_change": text,
+        "screening_priority": text,
+        "finding_disposition": text,
+        "workflow_status": text,
+        "revalidation_required": {"type": "boolean"},
+        "state": {"enum": list(REVIEW_GOVERNANCE_STATES)},
+        "next_action_id": identifier,
+        "readiness_profile_id": identifier,
+        "diagnostic_entity_ids": string_list,
+        "blocking_diagnostic_entity_ids": string_list,
+        "diagnostic_counts": diagnostic_count_map,
+        "relationship_ids": string_list,
+        "notice": text,
+    }
+    quality_gate_projection_properties = {
+        "analysis_scope_entity_id": identifier,
+        "global_diagnostic_entity_ids": string_list,
+        "global_relationship_ids": string_list,
+        "global_diagnostic_counts": diagnostic_count_map,
+        "analysis_gate_state": {"enum": ["blocked", "review_required", "clear"]},
+        "notice": text,
+    }
+    adapter_status_map = {
+        "type": "object",
+        "maxProperties": 1_000,
+        "additionalProperties": text,
+    }
+    adapter_provenance_profile_properties = {
+        "id": identifier,
+        "adapter_id": identifier,
+        "status": text,
+        "contribution_entity_ids": string_list,
+        "linked_contribution_entity_ids": string_list,
+        "unlinked_contribution_entity_ids": string_list,
+        "relationship_ids": string_list,
+        "notice": text,
+    }
+    adapter_provenance_properties = {
+        "run_manifest_entity_id": identifier,
+        "adapter_ledger_entity_id": identifier,
+        "adapter_run_profiles": {
+            "type": "array",
+            "maxItems": MAX_ENTITIES,
+            "items": {
+                "type": "object",
+                "required": list(adapter_provenance_profile_properties),
+                "properties": adapter_provenance_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "relationship_ids": string_list,
+        "notice": text,
+    }
     chain_properties = {
         "finding_id": identifier,
         "component_id": identifier,
@@ -1331,6 +1399,18 @@ def _cross_reference_schema() -> dict[str, Any]:
         },
         "verification_next_action_id": identifier,
         "verification_readiness_gaps": string_list,
+        "review_governance_profile_id": identifier,
+        "quality_diagnostic_entity_ids": string_list,
+        "blocking_quality_diagnostic_entity_ids": string_list,
+        "review_governance_relationship_ids": string_list,
+        "review_governance_state": {"enum": list(REVIEW_GOVERNANCE_STATES)},
+        "review_next_action_id": identifier,
+        "quality_diagnostic_counts": diagnostic_count_map,
+        "source_change": text,
+        "revalidation_required": {"type": "boolean"},
+        "adapter_run_entity_ids": string_list,
+        "adapter_provenance_relationship_ids": string_list,
+        "adapter_statuses": adapter_status_map,
         "dimensions": dimensions,
         "linkage_completeness_percent": {
             "type": "number",
@@ -1367,6 +1447,17 @@ def _cross_reference_schema() -> dict[str, Any]:
             "type": "integer",
             "minimum": 0,
         },
+        "review_governance_profiles": {"type": "integer", "minimum": 0},
+        "quality_gate_diagnostics": {"type": "integer", "minimum": 0},
+        "global_quality_gate_diagnostics": {"type": "integer", "minimum": 0},
+        "profiles_with_blocking_quality_diagnostics": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "adapter_runs": {"type": "integer", "minimum": 0},
+        "findings_with_tool_provenance": {"type": "integer", "minimum": 0},
+        "adapter_contribution_relationships": {"type": "integer", "minimum": 0},
+        "unlinked_adapter_contributions": {"type": "integer", "minimum": 0},
         "compound_exposure_chains": {"type": "integer", "minimum": 0},
         "finding_chains": {"type": "integer", "minimum": 0},
         "active_finding_chains": {"type": "integer", "minimum": 0},
@@ -1381,6 +1472,11 @@ def _cross_reference_schema() -> dict[str, Any]:
         "verification_lifecycle_states": integer_map,
         "verification_evidence_postures": integer_map,
         "verification_readiness_gaps": integer_map,
+        "quality_diagnostics_by_level": integer_map,
+        "global_quality_diagnostics_by_level": integer_map,
+        "review_governance_states": integer_map,
+        "source_change_states": integer_map,
+        "adapter_run_statuses": integer_map,
         "omitted_by_bound": integer_map,
     }
     properties = {
@@ -1443,6 +1539,28 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "properties": readiness_profile_properties,
                 "additionalProperties": False,
             },
+        },
+        "quality_gate_projection": {
+            "type": "object",
+            "required": list(quality_gate_projection_properties),
+            "properties": quality_gate_projection_properties,
+            "additionalProperties": False,
+        },
+        "review_governance_profiles": {
+            "type": "array",
+            "maxItems": MAX_CHAINS,
+            "items": {
+                "type": "object",
+                "required": list(governance_profile_properties),
+                "properties": governance_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "adapter_provenance": {
+            "type": "object",
+            "required": list(adapter_provenance_properties),
+            "properties": adapter_provenance_properties,
+            "additionalProperties": False,
         },
         "finding_chains": {
             "type": "array",

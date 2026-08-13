@@ -514,6 +514,9 @@ def cross_reference_diagram(
                 *chain.get("coverage_entity_ids", []),
                 *chain.get("implemented_test_entity_ids", []),
                 *chain.get("assignment_entity_ids", []),
+                chain.get("review_governance_profile_id", ""),
+                *chain.get("quality_diagnostic_entity_ids", []),
+                *chain.get("adapter_run_entity_ids", []),
             )
             if entity_id in entity_by_id
         )
@@ -563,6 +566,9 @@ def cross_reference_diagram(
         "shared_fate_region": 1,
         "architecture_node": 1,
         "finding": 2,
+        "review_governance_profile": 2,
+        "quality_gate_diagnostic": 2,
+        "adapter_run": 2,
         "verification_readiness_profile": 3,
         "test_candidate": 3,
         "coverage_observation": 3,
@@ -609,6 +615,7 @@ def cross_reference_diagram(
             "description": (
                 "Bounded guidance, requirement, hazard, SFTA, component, cascade, resilience, "
                 "semantic exposure, finding, verification, execution, and evidence relationships."
+                " Quality diagnostics and review-governance state remain workflow evidence."
             ),
             "notice": (
                 f"Showing {len(chains)} of {summary['finding_chains']} finding chains and "
@@ -629,6 +636,14 @@ def cross_reference_diagram(
                 ],
                 "verification_profiles_with_signals": summary[
                     "verification_profiles_with_signals"
+                ],
+                "review_governance_profiles": summary[
+                    "review_governance_profiles"
+                ],
+                "quality_gate_diagnostics": summary["quality_gate_diagnostics"],
+                "adapter_runs": summary["adapter_runs"],
+                "findings_with_tool_provenance": summary[
+                    "findings_with_tool_provenance"
                 ],
                 "compound_exposure_chains": summary["compound_exposure_chains"],
                 "review_leads": summary["review_leads"],

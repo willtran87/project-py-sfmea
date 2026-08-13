@@ -63,8 +63,8 @@ Available names:
 | `configuration-authoring-apply-receipt` | Validated TOML publication and addition-count receipt |
 | `configuration-authoring-draft` | Editable guidance, architecture, and interface proposal workspace |
 | `configuration-authoring-verification` | Integrity, semantics, and optional exact-binding verdict |
-| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure and verification-readiness profiles, finding chains, compound-model intersections, and prioritized review leads |
-| `cross-reference-verification` | Fabric integrity, semantic/readiness-profile and chain referential consistency, accounting, and optional exact-analysis regeneration verdict |
+| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure, verification-readiness, and review-governance profiles, finding chains, quality diagnostics, compound-model intersections, and prioritized review leads |
+| `cross-reference-verification` | Fabric integrity, semantic/readiness/governance-profile and chain referential consistency, diagnostic scope/identity, accounting, and optional exact-analysis regeneration verdict |
 | `sfta-authoring` | Sealed exact-analysis-bound fault-tree definitions with named engineering approvals |
 | `sfta-authoring-apply-receipt` | Applied hazard replacements and source/result analysis bindings |
 | `sfta-authoring-draft` | Editable one-entry-per-hazard fault-tree engineering workspace |
@@ -141,6 +141,16 @@ closed evidence posture; and emits gaps only for active accepted findings. Candi
 and coverage are never promoted to execution evidence or verification success. The verifier
 recomputes the evidence signals and posture from the referenced entities, reconciles the copied
 finding-chain fields, and checks every readiness summary count.
+
+Every finding also has one `review_governance_profile`. It binds source-change and revalidation
+state, disposition, workflow status, finding-local quality diagnostics, blocking diagnostics, the
+verification-readiness profile, and the deterministic next review action. The separate
+`quality_gate_projection` anchors global diagnostics to the exact analysis state. Diagnostic IDs
+include a deterministic occurrence ordinal so byte-identical repeats remain distinct. Standalone
+verification reconstructs those identities, partitions global and local diagnostics, checks
+counts and relationships, derives governance state/action, and reconciles every chain copy.
+Diagnostics express workflow completeness and consistency; they do not establish a software
+failure, safety, or compliance.
 
 Without `--analysis`, verification checks the fabric's own digest, identities, references,
 fusions, chains, and summary accounting. Supplying the governed analysis additionally requires

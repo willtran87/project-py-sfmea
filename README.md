@@ -79,6 +79,10 @@ flowchart LR
   state, and next action distinct. Disagreement and accepted-finding readiness gaps become
   prioritized review leads; each channel retains its original authority and the output never
   claims completeness, compliance, or verification success.
+  Review-governance profiles add the exact quality-gate diagnostics, source-change state,
+  revalidation flag, disposition, and resulting review next action for every finding. Global
+  analysis diagnostics remain separate from finding-local blockers, and neither is represented as
+  evidence that the candidate failure is credible.
 - Actual actions, residual/post-action ratings, approvals, and audit timestamps
 - Configurable completeness gates with CLI, browser, CSV, and Markdown findings
 - Functional propagation and system/component inventory worksheets
@@ -1018,7 +1022,9 @@ still rejected. The standalone `cross-reference-verify` command performs the sam
 referential, readiness-profile, accounting, binding, and exact-regeneration checks outside a
 package. Verification-readiness profiles deliberately separate textual test candidates and
 coverage observations from registered implementations, recorded executions, independently
-reviewed evidence, and terminal verification decisions.
+reviewed evidence, and terminal verification decisions. The same verifier reconstructs
+occurrence-aware quality-diagnostic identities, global-versus-finding scope, review-governance
+states and next actions, and their exact finding-chain copies.
 It also regenerates the
 summary, validation findings, resolved system context, repository inventory, and adapter-run
 ledger from packaged analysis. A changed diagnostic artifact remains invalid even if its

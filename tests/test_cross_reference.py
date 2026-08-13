@@ -136,6 +136,206 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertTrue(chain["outbound_fusion_ids"])
         self.assertTrue(chain["dimensions"]["component_relationships"])
 
+    def test_cross_links_quality_gates_change_and_review_governance(self) -> None:
+        index = build_cross_reference_index(self.analysis)
+        finding = next(
+            value
+            for value in self.analysis["items"]
+            if value["component_id"] == self.caller["id"]
+        )
+        profile = next(
+            value
+            for value in index["review_governance_profiles"]
+            if value["finding_id"] == finding["id"]
+        )
+        chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == finding["id"]
+        )
+
+        self.assertEqual(profile["state"], "awaiting_finding_review")
+        self.assertEqual(profile["next_action_id"], "review_finding")
+        self.assertEqual(profile["source_change"], "new")
+        self.assertEqual(profile["diagnostic_counts"], {"error": 1})
+        self.assertFalse(profile["blocking_diagnostic_entity_ids"])
+        self.assertTrue(profile["diagnostic_entity_ids"])
+        diagnostic = next(
+            value
+            for value in index["entities"]
+            if value["id"] == profile["diagnostic_entity_ids"][0]
+        )
+        self.assertEqual(diagnostic["kind"], "quality_gate_diagnostic")
+        self.assertEqual(diagnostic["metadata"]["rule_id"], "review.unreviewed")
+        self.assertEqual(diagnostic["metadata"]["scope"], "finding")
+        self.assertEqual(
+            chain["review_governance_profile_id"], profile["id"]
+        )
+        self.assertEqual(chain["review_governance_state"], profile["state"])
+        self.assertEqual(
+            chain["quality_diagnostic_entity_ids"],
+            profile["diagnostic_entity_ids"],
+        )
+        self.assertTrue(chain["dimensions"]["quality_governance"])
+        global_ids = index["quality_gate_projection"][
+            "global_diagnostic_entity_ids"
+        ]
+        self.assertTrue(global_ids)
+        self.assertTrue(set(global_ids).isdisjoint(profile["diagnostic_entity_ids"]))
+        self.assertEqual(
+            index["summary"]["quality_gate_diagnostics"],
+            len(
+                [
+                    value
+                    for value in index["entities"]
+                    if value["kind"] == "quality_gate_diagnostic"
+                ]
+            ),
+        )
+        diagram = build_diagram_models(self.analysis, kind="cross_reference")[0]
+        diagram_kinds = {value["kind"] for value in diagram["nodes"]}
+        self.assertIn("review_governance_profile", diagram_kinds)
+        self.assertIn("quality_gate_diagnostic", diagram_kinds)
+
+        from jsonschema import Draft202012Validator
+
+        Draft202012Validator(schema_document("cross-reference")).validate(index)
+
+    def test_accepted_incomplete_finding_is_blocked_by_local_quality_gate(self) -> None:
+        finding = self.analysis["items"][0]
+        finding["review"]["disposition"] = "accepted"
+
+        index = build_cross_reference_index(self.analysis)
+        profile = next(
+            value
+            for value in index["review_governance_profiles"]
+            if value["finding_id"] == finding["id"]
+        )
+
+        self.assertEqual(profile["state"], "blocked_by_validation")
+        self.assertEqual(
+            profile["next_action_id"], "resolve_quality_gate_diagnostics"
+        )
+        self.assertTrue(profile["blocking_diagnostic_entity_ids"])
+        self.assertGreater(profile["diagnostic_counts"]["error"], 0)
+        self.assertTrue(
+            any(
+                value["kind"].startswith("quality_gate_finding_")
+                and finding["id"] in " ".join(value["subject_ids"])
+                for value in index["review_leads"]
+            )
+        )
+
+    def test_verifier_rejects_review_governance_tampering(self) -> None:
+        output = self.root / "fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        tampered = json.loads(output.read_text(encoding="utf-8"))
+        tampered["review_governance_profiles"][0]["next_action_id"] = "none"
+        content = dict(tampered)
+        content.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(tampered), encoding="utf-8")
+
+        rejected = verify_cross_reference_file(output, analysis=self.analysis)
+
+        self.assertFalse(rejected["valid"])
+        self.assertFalse(rejected["checks"]["review_governance_integrity"])
+        self.assertFalse(rejected["checks"]["exact_regeneration"])
+
+    def test_duplicate_quality_diagnostics_keep_distinct_verified_identity(self) -> None:
+        diagnostic = {
+            "rule_id": "synthetic.repeated",
+            "level": "warning",
+            "message": "Repeated bounded diagnostic.",
+            "item_id": "",
+            "component": "",
+            "field": "context",
+        }
+        index = build_cross_reference_index(
+            self.analysis,
+            validation_report={"findings": [diagnostic, dict(diagnostic)]},
+        )
+        output = self.root / "duplicate-diagnostics.json"
+        output.write_text(json.dumps(index), encoding="utf-8")
+
+        diagnostic_entities = [
+            value
+            for value in index["entities"]
+            if value["kind"] == "quality_gate_diagnostic"
+        ]
+        self.assertEqual(len(diagnostic_entities), 2)
+        self.assertEqual(
+            sorted(value["metadata"]["occurrence"] for value in diagnostic_entities),
+            [1, 2],
+        )
+        verdict = verify_cross_reference_file(output)
+        self.assertTrue(verdict["valid"])
+        self.assertTrue(verdict["checks"]["review_governance_integrity"])
+
+    def test_cross_links_adapter_runs_ledger_manifest_and_findings(self) -> None:
+        index = build_cross_reference_index(self.analysis)
+        finding = next(
+            value
+            for value in self.analysis["items"]
+            if value["component_id"] == self.caller["id"]
+        )
+        chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == finding["id"]
+        )
+        provenance = index["adapter_provenance"]
+
+        self.assertTrue(chain["adapter_run_entity_ids"])
+        self.assertTrue(chain["adapter_provenance_relationship_ids"])
+        self.assertTrue(chain["dimensions"]["tool_provenance"])
+        self.assertIn("python.failure_rule_analyzer", chain["adapter_statuses"])
+        self.assertEqual(
+            chain["adapter_statuses"]["python.failure_rule_analyzer"],
+            "completed",
+        )
+        self.assertTrue(
+            any(
+                value["adapter_id"] == "python.failure_rule_analyzer"
+                and finding["id"] in value["linked_contribution_entity_ids"]
+                for value in provenance["adapter_run_profiles"]
+            )
+        )
+        entity_kinds = {
+            value["id"]: value["kind"] for value in index["entities"]
+        }
+        self.assertEqual(
+            entity_kinds[provenance["run_manifest_entity_id"]], "run_manifest"
+        )
+        self.assertEqual(
+            entity_kinds[provenance["adapter_ledger_entity_id"]], "adapter_ledger"
+        )
+        self.assertEqual(
+            index["summary"]["findings_with_tool_provenance"],
+            len(index["finding_chains"]),
+        )
+        diagram = build_diagram_models(self.analysis, kind="cross_reference")[0]
+        self.assertTrue(
+            any(value["kind"] == "adapter_run" for value in diagram["nodes"])
+        )
+
+    def test_verifier_rejects_adapter_provenance_tampering(self) -> None:
+        output = self.root / "fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        tampered = json.loads(output.read_text(encoding="utf-8"))
+        profile = tampered["adapter_provenance"]["adapter_run_profiles"][0]
+        profile["unlinked_contribution_entity_ids"].append("FORGED-CONTRIBUTION")
+        content = dict(tampered)
+        content.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(tampered), encoding="utf-8")
+
+        rejected = verify_cross_reference_file(output, analysis=self.analysis)
+
+        self.assertFalse(rejected["valid"])
+        self.assertFalse(rejected["checks"]["adapter_provenance_integrity"])
+        self.assertFalse(rejected["checks"]["exact_regeneration"])
+
     def test_projects_test_candidates_and_coverage_without_promoting_evidence(self) -> None:
         (self.root / "test_app.py").write_text(
             "from app import caller\n\n\ndef test_caller():\n    assert caller() == 1\n",
