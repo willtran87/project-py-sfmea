@@ -44,6 +44,9 @@ from .cross_reference import (
     MAX_RELATIONSHIPS,
     MAX_REVIEW_LEADS,
     SEMANTIC_EXPOSURE_DIMENSIONS,
+    VERIFICATION_EVIDENCE_POSTURES,
+    VERIFICATION_EVIDENCE_SIGNAL_NAMES,
+    VERIFICATION_READINESS_STATE_ACTIONS,
 )
 from .diagrams import (
     DIAGRAM_BUNDLE_SCHEMA,
@@ -1209,6 +1212,7 @@ def _cross_reference_schema() -> dict[str, Any]:
             "cascade_analysis",
             "timing_and_resilience",
             "semantic_exposure",
+            "verification_readiness",
         ],
         "properties": {
             name: {"type": "boolean"}
@@ -1225,6 +1229,7 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "cascade_analysis",
                 "timing_and_resilience",
                 "semantic_exposure",
+                "verification_readiness",
             )
         },
         "additionalProperties": False,
@@ -1248,6 +1253,45 @@ def _cross_reference_schema() -> dict[str, Any]:
             "minimum": 0,
             "maximum": len(SEMANTIC_EXPOSURE_DIMENSIONS),
         },
+        "notice": text,
+    }
+    evidence_signals = {
+        "type": "object",
+        "required": list(VERIFICATION_EVIDENCE_SIGNAL_NAMES),
+        "properties": {
+            name: {"type": "boolean"}
+            for name in VERIFICATION_EVIDENCE_SIGNAL_NAMES
+        },
+        "additionalProperties": False,
+    }
+    readiness_profile_properties = {
+        "id": identifier,
+        "finding_id": identifier,
+        "component_id": identifier,
+        "source_status": text,
+        "finding_disposition": text,
+        "lifecycle_state": {"enum": list(VERIFICATION_READINESS_STATE_ACTIONS)},
+        "next_action_id": {
+            "enum": sorted(set(VERIFICATION_READINESS_STATE_ACTIONS.values()))
+        },
+        "blockers": {
+            "type": "array",
+            "maxItems": 1_000,
+            "items": text,
+        },
+        "evidence_posture": {"enum": list(VERIFICATION_EVIDENCE_POSTURES)},
+        "evidence_signals": evidence_signals,
+        "readiness_gaps": string_list,
+        "test_candidate_entity_ids": string_list,
+        "coverage_entity_ids": string_list,
+        "implemented_test_entity_ids": string_list,
+        "assignment_entity_ids": string_list,
+        "obligation_ids": string_list,
+        "execution_ids": string_list,
+        "evidence_artifact_ids": string_list,
+        "relationship_ids": string_list,
+        "latest_execution_id": text,
+        "latest_execution_status": text,
         "notice": text,
     }
     chain_properties = {
@@ -1275,6 +1319,18 @@ def _cross_reference_schema() -> dict[str, Any]:
         "semantic_entity_ids": string_list,
         "semantic_relationship_ids": string_list,
         "compound_exposure_kinds": string_list,
+        "verification_readiness_profile_id": identifier,
+        "test_candidate_entity_ids": string_list,
+        "coverage_entity_ids": string_list,
+        "implemented_test_entity_ids": string_list,
+        "assignment_entity_ids": string_list,
+        "readiness_relationship_ids": string_list,
+        "verification_lifecycle_state": identifier,
+        "verification_evidence_posture": {
+            "enum": list(VERIFICATION_EVIDENCE_POSTURES)
+        },
+        "verification_next_action_id": identifier,
+        "verification_readiness_gaps": string_list,
         "dimensions": dimensions,
         "linkage_completeness_percent": {
             "type": "number",
@@ -1306,6 +1362,11 @@ def _cross_reference_schema() -> dict[str, Any]:
         "component_relationship_fusions": {"type": "integer", "minimum": 0},
         "semantic_profiles": {"type": "integer", "minimum": 0},
         "semantic_profiles_with_records": {"type": "integer", "minimum": 0},
+        "verification_readiness_profiles": {"type": "integer", "minimum": 0},
+        "verification_profiles_with_signals": {
+            "type": "integer",
+            "minimum": 0,
+        },
         "compound_exposure_chains": {"type": "integer", "minimum": 0},
         "finding_chains": {"type": "integer", "minimum": 0},
         "active_finding_chains": {"type": "integer", "minimum": 0},
@@ -1317,6 +1378,9 @@ def _cross_reference_schema() -> dict[str, Any]:
         "review_leads_by_kind": integer_map,
         "semantic_dimensions": integer_map,
         "compound_exposures_by_kind": integer_map,
+        "verification_lifecycle_states": integer_map,
+        "verification_evidence_postures": integer_map,
+        "verification_readiness_gaps": integer_map,
         "omitted_by_bound": integer_map,
     }
     properties = {
@@ -1367,6 +1431,16 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "type": "object",
                 "required": list(semantic_profile_properties),
                 "properties": semantic_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "verification_readiness_profiles": {
+            "type": "array",
+            "maxItems": MAX_CHAINS,
+            "items": {
+                "type": "object",
+                "required": list(readiness_profile_properties),
+                "properties": readiness_profile_properties,
                 "additionalProperties": False,
             },
         },

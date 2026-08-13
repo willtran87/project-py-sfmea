@@ -73,8 +73,12 @@ flowchart LR
   transaction/resource semantics, circuit-breaker models, data/alias flow, concurrency,
   exception propagation, state transitions, authorization scope, contracts, deployment,
   shared fate, and architecture hierarchy. Each component receives a semantic-exposure profile;
-  compound model intersections become prioritized review leads. Disagreement becomes a prioritized review lead; each
-  channel retains its original authority and the output never claims completeness or compliance.
+  compound model intersections become prioritized review leads. Each finding also receives a
+  verification-readiness profile that keeps candidate test links, coverage observations,
+  registered implementations, executions, independent reviews, evidence, assignments, lifecycle
+  state, and next action distinct. Disagreement and accepted-finding readiness gaps become
+  prioritized review leads; each channel retains its original authority and the output never
+  claims completeness, compliance, or verification success.
 - Actual actions, residual/post-action ratings, approvals, and audit timestamps
 - Configurable completeness gates with CLI, browser, CSV, and Markdown findings
 - Functional propagation and system/component inventory worksheets
@@ -1011,7 +1015,10 @@ and requires that embedded and standalone queues agree exactly. It also regenera
 typed `cross-reference.json` evidence fabric and requires exact agreement with the packaged
 analysis, so a structurally valid relationship edit with refreshed file and manifest digests is
 still rejected. The standalone `cross-reference-verify` command performs the same integrity,
-referential, accounting, binding, and exact-regeneration checks outside a package.
+referential, readiness-profile, accounting, binding, and exact-regeneration checks outside a
+package. Verification-readiness profiles deliberately separate textual test candidates and
+coverage observations from registered implementations, recorded executions, independently
+reviewed evidence, and terminal verification decisions.
 It also regenerates the
 summary, validation findings, resolved system context, repository inventory, and adapter-run
 ledger from packaged analysis. A changed diagnostic artifact remains invalid even if its

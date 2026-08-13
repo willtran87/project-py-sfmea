@@ -25,6 +25,12 @@ package; public artifact and schema identifiers carry their own explicit compati
   now join each finding chain and canonical diagram. Independently derived model intersections
   become bounded aggregate review leads (for example authorization context crossing data flow or
   concurrency touching state transitions), with standalone referential and summary verification.
+  Add one verification-readiness profile per finding that cross-references textual test candidates,
+  coverage observations, registered implementations, executions, independent reviews, evidence,
+  owners, reviewers, lifecycle state, and deterministic next action. Accepted-finding gaps become
+  prioritized aggregate leads, while candidate tests and coverage remain explicitly below
+  verification-evidence authority. Schemas, exact verification, canonical diagrams, Markdown,
+  CLI summaries, review packages, and the self-contained HTML report expose the same contract.
 
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,

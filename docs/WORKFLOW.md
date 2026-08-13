@@ -403,6 +403,12 @@ Finding chains also reference bounded upstream caller paths and the scanner's ti
 retry-amplification, transaction/effect/resource, and circuit-breaker models. These links make the
 existing cascade and resilience analyses navigable together without upgrading static candidates
 to observed causality, latency, or control effectiveness.
+Every finding chain includes a verification-readiness profile. The profile connects discovered
+test references, imported coverage, registered implementations, executions, independent reviews,
+evidence artifacts, and owner/reviewer assignments to the exact finding and obligation. Its
+lifecycle state and next action come from the accepted-finding assurance work queue; unreviewed,
+historical, revalidation-required, and out-of-scope findings remain explicit. Treat candidate
+tests and coverage as planning signals only, not verification evidence.
 Each scanned component also has a verified semantic-exposure profile that joins exact records from
 data and alias flow, concurrency, exception propagation, state machines, authorization scope,
 contracts, deployment topology, shared fate, and architecture hierarchy. Finding chains surface

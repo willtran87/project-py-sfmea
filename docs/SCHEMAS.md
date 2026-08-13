@@ -63,8 +63,8 @@ Available names:
 | `configuration-authoring-apply-receipt` | Validated TOML publication and addition-count receipt |
 | `configuration-authoring-draft` | Editable guidance, architecture, and interface proposal workspace |
 | `configuration-authoring-verification` | Integrity, semantics, and optional exact-binding verdict |
-| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure profiles, finding chains, compound-model intersections, and prioritized review leads |
-| `cross-reference-verification` | Fabric integrity, semantic-profile and chain referential consistency, accounting, and optional exact-analysis regeneration verdict |
+| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure and verification-readiness profiles, finding chains, compound-model intersections, and prioritized review leads |
+| `cross-reference-verification` | Fabric integrity, semantic/readiness-profile and chain referential consistency, accounting, and optional exact-analysis regeneration verdict |
 | `sfta-authoring` | Sealed exact-analysis-bound fault-tree definitions with named engineering approvals |
 | `sfta-authoring-apply-receipt` | Applied hazard replacements and source/result analysis bindings |
 | `sfta-authoring-draft` | Editable one-entry-per-hazard fault-tree engineering workspace |
@@ -133,6 +133,14 @@ relationships across ten closed dimensions. Finding chains copy that profile bin
 deterministically derived `compound_exposure_kinds`. The verifier reconciles profile identity,
 dimension booleans, record references, compound rules, and all summary counts even when the source
 analysis is not supplied; `--analysis` additionally requires exact regeneration.
+
+Every finding also has one `verification_readiness_profile`. It references candidate tests,
+coverage observations, registered test implementations, executions, evidence artifacts, and
+assignments as separately typed entities; records lifecycle state, blockers, next action, and a
+closed evidence posture; and emits gaps only for active accepted findings. Candidate references
+and coverage are never promoted to execution evidence or verification success. The verifier
+recomputes the evidence signals and posture from the referenced entities, reconciles the copied
+finding-chain fields, and checks every readiness summary count.
 
 Without `--analysis`, verification checks the fabric's own digest, identities, references,
 fusions, chains, and summary accounting. Supplying the governed analysis additionally requires

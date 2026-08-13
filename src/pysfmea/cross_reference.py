@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from .architecture import architecture_graph
-from .assurance import ensure_assurance_register
+from .assurance import (
+    ASSURANCE_WORK_NEXT_ACTIONS,
+    ASSURANCE_WORK_STATES,
+    assurance_work_queue,
+    ensure_assurance_register,
+)
 from .file_publication import atomic_publish_text
 from .guidance import guidance_traceability
 from .integrity import canonical_json_sha256
@@ -28,6 +33,7 @@ CROSS_REFERENCE_VERIFICATION_CHECKS = (
     "relationship_integrity",
     "fusion_integrity",
     "semantic_profile_integrity",
+    "verification_readiness_integrity",
     "finding_chain_integrity",
     "review_lead_integrity",
     "summary_reconciliation",
@@ -66,6 +72,58 @@ COMPOUND_EXPOSURE_PRIORITIES = {
     "contract_carries_interprocedural_data": "medium",
     "authorization_context_at_contract_boundary": "high",
     "state_or_concurrency_near_resilience_semantics": "medium",
+}
+
+VERIFICATION_EVIDENCE_POSTURES = (
+    "verified_with_sufficient_evidence",
+    "risk_accepted_not_verification_evidence",
+    "not_applicable",
+    "execution_failed",
+    "reviewed_execution_recorded",
+    "execution_review_pending",
+    "execution_recorded",
+    "implementation_registered",
+    "candidate_tests_and_coverage",
+    "candidate_tests_only",
+    "coverage_observation_only",
+    "no_verification_signal",
+)
+
+VERIFICATION_EVIDENCE_SIGNAL_NAMES = (
+    "finding_accepted",
+    "source_current",
+    "assigned_owner",
+    "named_reviewer",
+    "candidate_test_links",
+    "coverage_observation",
+    "implementation_registered",
+    "execution_recorded",
+    "passing_execution_recorded",
+    "independent_execution_review",
+    "evidence_artifact_recorded",
+    "evidence_sufficient",
+    "terminal_verification",
+)
+
+READINESS_GAP_PRIORITIES = {
+    "accepted_finding_without_owner": "high",
+    "accepted_finding_without_reviewer": "high",
+    "accepted_finding_requires_revalidation": "high",
+    "accepted_finding_without_test_candidate": "medium",
+    "accepted_finding_without_registered_implementation": "medium",
+    "implemented_test_without_execution": "medium",
+    "failed_or_incomplete_execution": "high",
+    "passing_execution_without_independent_review": "high",
+    "sufficient_evidence_without_terminal_verification": "medium",
+    "coverage_without_test_or_execution_evidence": "low",
+}
+
+VERIFICATION_READINESS_STATE_ACTIONS = {
+    **dict(zip(ASSURANCE_WORK_STATES, ASSURANCE_WORK_NEXT_ACTIONS)),
+    "historical": "none",
+    "revalidation_required": "revalidate_finding",
+    "awaiting_finding_review": "review_finding",
+    "outside_accepted_assurance_scope": "none",
 }
 
 
@@ -150,6 +208,55 @@ def _compound_exposure_kinds(
     ) and chain_dimensions.get("timing_and_resilience"):
         exposures.add("state_or_concurrency_near_resilience_semantics")
     return sorted(exposures)
+
+
+def _candidate_test_paths(value: object) -> list[str]:
+    """Normalize scanner lists and legacy comma-joined obligation candidates."""
+
+    paths: set[str] = set()
+    for candidate in _text_values(value):
+        for path in candidate.split(","):
+            normalized = path.strip().replace("\\", "/")
+            if normalized:
+                paths.add(normalized)
+    return sorted(paths)
+
+
+def _verification_evidence_posture(
+    *,
+    assurance_statuses: set[str],
+    evidence_statuses: set[str],
+    implementation_registered: bool,
+    candidate_tests: bool,
+    coverage_observed: bool,
+    executions: list[dict[str, Any]],
+) -> str:
+    latest = executions[-1] if executions else {}
+    latest_status = str(latest.get("status", ""))
+    independently_reviewed = bool(latest.get("reviews"))
+    if assurance_statuses & {"verified", "closed"} and "sufficient" in evidence_statuses:
+        return "verified_with_sufficient_evidence"
+    if "accepted_risk" in assurance_statuses:
+        return "risk_accepted_not_verification_evidence"
+    if assurance_statuses and assurance_statuses <= {"not_applicable", "retired"}:
+        return "not_applicable"
+    if latest_status in {"failed", "timeout", "error"}:
+        return "execution_failed"
+    if latest_status == "passed" and independently_reviewed:
+        return "reviewed_execution_recorded"
+    if latest_status == "passed":
+        return "execution_review_pending"
+    if executions:
+        return "execution_recorded"
+    if implementation_registered:
+        return "implementation_registered"
+    if candidate_tests and coverage_observed:
+        return "candidate_tests_and_coverage"
+    if candidate_tests:
+        return "candidate_tests_only"
+    if coverage_observed:
+        return "coverage_observation_only"
+    return "no_verification_signal"
 
 
 def build_cross_reference_index(
@@ -1039,6 +1146,10 @@ def build_cross_reference_index(
             execution_id,
             execution.get("status") or execution_id,
             authority="recorded_execution",
+            metadata={
+                "status": str(execution.get("status", "")),
+                "independently_reviewed": bool(execution.get("reviews")),
+            },
         )
         obligation_id = str(execution.get("obligation_id", ""))
         if obligation_id in obligations:
@@ -1049,6 +1160,152 @@ def build_cross_reference_index(
                 "assurance_register",
                 authority="recorded_execution",
             )
+
+    work_queue = assurance_work_queue(analysis)
+    work_queue_by_finding = {
+        str(value.get("finding_id", "")): value
+        for value in work_queue.get("items", [])
+        if isinstance(value, dict) and value.get("finding_id")
+    }
+    test_candidate_entities_by_component: dict[str, set[str]] = defaultdict(set)
+    coverage_entities_by_component: dict[str, set[str]] = defaultdict(set)
+    readiness_relationships_by_component: dict[str, set[str]] = defaultdict(set)
+    for component_id, component in components.items():
+        for test_path in _candidate_test_paths(component.get("test_references")):
+            test_entity = add_entity(
+                "test_candidate",
+                stable_id("TEST-CANDIDATE", test_path),
+                test_path,
+                authority="textual_static_test_reference_not_execution_or_adequacy_evidence",
+                metadata={"path": test_path, "source": "component_test_reference"},
+            )
+            test_candidate_entities_by_component[component_id].add(test_entity)
+            relation_id = add_relation(
+                _entity_id("component", component_id),
+                test_entity,
+                "has_static_test_candidate",
+                "test_reference",
+                authority="textual_static_test_reference_not_execution_or_adequacy_evidence",
+            )
+            if relation_id in relationships:
+                readiness_relationships_by_component[component_id].add(relation_id)
+        coverage = component.get("coverage")
+        if isinstance(coverage, dict):
+            coverage_id = stable_id("COVERAGE-OBSERVATION", component_id)
+            coverage_entity = add_entity(
+                "coverage_observation",
+                coverage_id,
+                component.get("qualname") or coverage_id,
+                authority="coverage_py_observed_line_and_branch_execution_not_test_adequacy",
+                metadata={
+                    field: coverage.get(field)
+                    for field in (
+                        "line_percent",
+                        "covered_lines",
+                        "missing_lines",
+                        "branch_percent",
+                        "covered_branches",
+                        "missing_branches",
+                    )
+                    if coverage.get(field) is not None
+                },
+            )
+            coverage_entities_by_component[component_id].add(coverage_entity)
+            relation_id = add_relation(
+                _entity_id("component", component_id),
+                coverage_entity,
+                "has_coverage_observation",
+                "coverage_py",
+                authority="observed_execution_lines_and_branches_not_control_effectiveness",
+            )
+            if relation_id in relationships:
+                readiness_relationships_by_component[component_id].add(relation_id)
+
+    obligation_test_candidate_entities: dict[str, set[str]] = defaultdict(set)
+    obligation_implemented_test_entities: dict[str, set[str]] = defaultdict(set)
+    obligation_assignment_entities: dict[str, set[str]] = defaultdict(set)
+    readiness_relationships_by_obligation: dict[str, set[str]] = defaultdict(set)
+    for obligation_id, obligation in obligations.items():
+        component_id = str(obligation.get("component_id", ""))
+        for test_path in _candidate_test_paths(obligation.get("existing_test_candidates")):
+            test_entity = add_entity(
+                "test_candidate",
+                stable_id("TEST-CANDIDATE", test_path),
+                test_path,
+                authority="textual_static_test_reference_not_execution_or_adequacy_evidence",
+                metadata={"path": test_path, "source": "obligation_existing_candidate"},
+            )
+            obligation_test_candidate_entities[obligation_id].add(test_entity)
+            if component_id in components:
+                test_candidate_entities_by_component[component_id].add(test_entity)
+            relation_id = add_relation(
+                _entity_id("obligation", obligation_id),
+                test_entity,
+                "has_static_test_candidate",
+                "assurance_planner",
+                authority="candidate_link_not_implemented_test_or_execution_evidence",
+            )
+            if relation_id in relationships:
+                readiness_relationships_by_obligation[obligation_id].add(relation_id)
+        automation = obligation.get("automation", {})
+        if not isinstance(automation, dict):
+            automation = {}
+        implemented_path = str(automation.get("implemented_test_path", "")).strip()
+        implementation_status = str(
+            automation.get("implementation_status", "not_implemented")
+        )
+        if implementation_status == "implemented" and implemented_path:
+            test_sha256 = str(automation.get("test_sha256", ""))
+            implementation_entity = add_entity(
+                "implemented_test",
+                stable_id(
+                    "IMPLEMENTED-TEST", obligation_id, implemented_path, test_sha256
+                ),
+                implemented_path,
+                authority="registered_content_bound_test_implementation_not_execution_evidence",
+                metadata={
+                    "path": implemented_path,
+                    "test_sha256": test_sha256,
+                    "implementation_origin": str(
+                        automation.get("implementation_origin", "")
+                    ),
+                },
+            )
+            obligation_implemented_test_entities[obligation_id].add(
+                implementation_entity
+            )
+            relation_id = add_relation(
+                _entity_id("obligation", obligation_id),
+                implementation_entity,
+                "implemented_by_test",
+                "assurance_register",
+                authority="registered_content_bound_test_implementation_not_execution_evidence",
+            )
+            if relation_id in relationships:
+                readiness_relationships_by_obligation[obligation_id].add(relation_id)
+        review = obligation.get("review", {})
+        if not isinstance(review, dict):
+            review = {}
+        for role, field in (("owner", "owner"), ("reviewer", "reviewer")):
+            participant = str(review.get(field, "")).strip()
+            if not participant:
+                continue
+            participant_entity = add_entity(
+                f"assurance_{role}",
+                stable_id(f"ASSURANCE-{role.upper()}", participant),
+                participant,
+                authority="recorded_assurance_assignment",
+            )
+            obligation_assignment_entities[obligation_id].add(participant_entity)
+            relation_id = add_relation(
+                _entity_id("obligation", obligation_id),
+                participant_entity,
+                f"assigned_{role}",
+                "assurance_register",
+                authority="recorded_assurance_assignment_not_independence_or_approval_proof",
+            )
+            if relation_id in relationships:
+                readiness_relationships_by_obligation[obligation_id].add(relation_id)
 
     sfta_nodes_by_finding: dict[str, list[str]] = defaultdict(list)
     for tree in sfta.get("trees", []):
@@ -1082,6 +1339,7 @@ def build_cross_reference_index(
                 sfta_nodes_by_finding[finding_id].append(qualified_id)
 
     finding_chains: list[dict[str, Any]] = []
+    verification_readiness_profiles: list[dict[str, Any]] = []
     for item in analysis.get("items", []):
         if not isinstance(item, dict) or not item.get("id"):
             continue
@@ -1215,6 +1473,284 @@ def build_cross_reference_index(
         timing_relation_ids = sorted(
             set(timing_relationships_by_component.get(component_id, []))
         )
+        obligation_ids = sorted(
+            str(value.get("id", "")) for value in finding_obligations
+        )
+        test_candidate_entity_ids = sorted(
+            {
+                *test_candidate_entities_by_component.get(component_id, set()),
+                *(
+                    entity_id
+                    for obligation_id in obligation_ids
+                    for entity_id in obligation_test_candidate_entities.get(
+                        obligation_id, set()
+                    )
+                ),
+            }
+        )
+        coverage_entity_ids = sorted(
+            coverage_entities_by_component.get(component_id, set())
+        )
+        implemented_test_entity_ids = sorted(
+            {
+                entity_id
+                for obligation_id in obligation_ids
+                for entity_id in obligation_implemented_test_entities.get(
+                    obligation_id, set()
+                )
+            }
+        )
+        assignment_entity_ids = {
+            entity_id
+            for obligation_id in obligation_ids
+            for entity_id in obligation_assignment_entities.get(obligation_id, set())
+        }
+        readiness_relationship_ids = {
+            *readiness_relationships_by_component.get(component_id, set()),
+            *(
+                relationship_id
+                for obligation_id in obligation_ids
+                for relationship_id in readiness_relationships_by_obligation.get(
+                    obligation_id, set()
+                )
+            ),
+        }
+        review = item.get("review", {})
+        if not isinstance(review, dict):
+            review = {}
+        for role, field in (("owner", "owner"), ("reviewer", "reviewer")):
+            participant = str(review.get(field, "")).strip()
+            if not participant:
+                continue
+            participant_entity = add_entity(
+                f"finding_{role}",
+                stable_id(f"FINDING-{role.upper()}", participant),
+                participant,
+                authority="recorded_finding_review_assignment",
+            )
+            assignment_entity_ids.add(participant_entity)
+            relation_id = add_relation(
+                finding_entity,
+                participant_entity,
+                f"assigned_{role}",
+                "sfmea_review",
+                authority="recorded_review_assignment_not_independence_or_approval_proof",
+            )
+            if relation_id in relationships:
+                readiness_relationship_ids.add(relation_id)
+        finding_executions = [
+            execution
+            for execution_id, execution in executions.items()
+            if execution_id in execution_ids
+        ]
+        assurance_statuses = {
+            str(value.get("assurance_status", ""))
+            for value in finding_obligations
+            if value.get("assurance_status")
+        }
+        evidence_statuses = {
+            str(value.get("evidence_status", ""))
+            for value in finding_obligations
+            if value.get("evidence_status")
+        }
+        implementation_registered = bool(implemented_test_entity_ids)
+        evidence_posture = _verification_evidence_posture(
+            assurance_statuses=assurance_statuses,
+            evidence_statuses=evidence_statuses,
+            implementation_registered=implementation_registered,
+            candidate_tests=bool(test_candidate_entity_ids),
+            coverage_observed=bool(coverage_entity_ids),
+            executions=finding_executions,
+        )
+        disposition = str(review.get("disposition", "unreviewed"))
+        work_item = work_queue_by_finding.get(finding_id, {})
+        if item.get("source_status", "active") != "active":
+            lifecycle_state = "historical"
+            next_action_id = "none"
+            blockers: list[str] = []
+        elif review.get("revalidation_required"):
+            lifecycle_state = "revalidation_required"
+            next_action_id = "revalidate_finding"
+            blockers = ["reviewed finding requires revalidation against current source"]
+        elif work_item:
+            lifecycle_state = str(work_item.get("state", "contract_gap"))
+            next_action_id = str(work_item.get("next_action_id", ""))
+            blockers = _text_values(work_item.get("blockers"))
+        elif disposition == "unreviewed":
+            lifecycle_state = "awaiting_finding_review"
+            next_action_id = "review_finding"
+            blockers = ["finding disposition is unreviewed"]
+        else:
+            lifecycle_state = "outside_accepted_assurance_scope"
+            next_action_id = "none"
+            blockers = [
+                f"finding disposition {disposition!r} is outside the accepted assurance workflow"
+            ]
+        owner_present = any(
+            entity_id.startswith(("finding_owner:", "assurance_owner:"))
+            for entity_id in assignment_entity_ids
+        )
+        reviewer_present = any(
+            entity_id.startswith(("finding_reviewer:", "assurance_reviewer:"))
+            for entity_id in assignment_entity_ids
+        )
+        latest_execution = finding_executions[-1] if finding_executions else {}
+        passing_execution = str(latest_execution.get("status", "")) == "passed"
+        independently_reviewed_execution = bool(latest_execution.get("reviews"))
+        readiness_gaps: set[str] = set()
+        if (
+            disposition == "accepted"
+            and item.get("source_status", "active") == "active"
+            and lifecycle_state != "resolved"
+        ):
+            if not owner_present:
+                readiness_gaps.add("accepted_finding_without_owner")
+            if not reviewer_present:
+                readiness_gaps.add("accepted_finding_without_reviewer")
+            if review.get("revalidation_required"):
+                readiness_gaps.add("accepted_finding_requires_revalidation")
+            if not test_candidate_entity_ids and not implementation_registered:
+                readiness_gaps.add("accepted_finding_without_test_candidate")
+            if not implementation_registered:
+                readiness_gaps.add(
+                    "accepted_finding_without_registered_implementation"
+                )
+            if implementation_registered and not finding_executions:
+                readiness_gaps.add("implemented_test_without_execution")
+            if str(latest_execution.get("status", "")) in {
+                "failed",
+                "timeout",
+                "error",
+            }:
+                readiness_gaps.add("failed_or_incomplete_execution")
+            if passing_execution and not independently_reviewed_execution:
+                readiness_gaps.add(
+                    "passing_execution_without_independent_review"
+                )
+            if (
+                "sufficient" in evidence_statuses
+                and not assurance_statuses & {"verified", "closed"}
+            ):
+                readiness_gaps.add(
+                    "sufficient_evidence_without_terminal_verification"
+                )
+            if (
+                coverage_entity_ids
+                and not test_candidate_entity_ids
+                and not implementation_registered
+                and not finding_executions
+            ):
+                readiness_gaps.add(
+                    "coverage_without_test_or_execution_evidence"
+                )
+        readiness_profile_raw_id = stable_id(
+            "VERIFICATION-READINESS", finding_id
+        )
+        readiness_profile_entity = add_entity(
+            "verification_readiness_profile",
+            readiness_profile_raw_id,
+            finding_id,
+            authority="deterministic_assurance_evidence_readiness_projection",
+            metadata={
+                "lifecycle_state": lifecycle_state,
+                "evidence_posture": evidence_posture,
+                "next_action_id": next_action_id,
+                "readiness_gaps": sorted(readiness_gaps),
+            },
+        )
+        relation_id = add_relation(
+            finding_entity,
+            readiness_profile_entity,
+            "has_verification_readiness_profile",
+            "cross_reference",
+            authority="deterministic_assurance_evidence_readiness_projection",
+        )
+        if relation_id in relationships:
+            readiness_relationship_ids.add(relation_id)
+        readiness_targets = {
+            *test_candidate_entity_ids,
+            *coverage_entity_ids,
+            *implemented_test_entity_ids,
+            *assignment_entity_ids,
+            *(_entity_id("obligation", value) for value in obligation_ids),
+            *(_entity_id("execution", value) for value in execution_ids),
+            *(_entity_id("evidence", value) for value in evidence_ids),
+        }
+        for target_entity_id in sorted(readiness_targets):
+            if target_entity_id not in entities:
+                continue
+            relation_id = add_relation(
+                readiness_profile_entity,
+                target_entity_id,
+                "considers_readiness_evidence",
+                "verification_readiness",
+                authority="typed_reference_preserving_source_evidence_authority",
+                metadata={"target_kind": target_entity_id.split(":", 1)[0]},
+            )
+            if relation_id in relationships:
+                readiness_relationship_ids.add(relation_id)
+        evidence_signals = {
+            "finding_accepted": disposition == "accepted",
+            "source_current": bool(
+                item.get("source_status", "active") == "active"
+                and not review.get("revalidation_required")
+            ),
+            "assigned_owner": owner_present,
+            "named_reviewer": reviewer_present,
+            "candidate_test_links": bool(test_candidate_entity_ids),
+            "coverage_observation": bool(coverage_entity_ids),
+            "implementation_registered": implementation_registered,
+            "execution_recorded": bool(finding_executions),
+            "passing_execution_recorded": passing_execution,
+            "independent_execution_review": independently_reviewed_execution,
+            "evidence_artifact_recorded": bool(evidence_ids),
+            "evidence_sufficient": "sufficient" in evidence_statuses,
+            "terminal_verification": bool(
+                assurance_statuses & {"verified", "closed"}
+            ),
+        }
+        dimensions["verification_readiness"] = any(
+            evidence_signals[field]
+            for field in (
+                "assigned_owner",
+                "named_reviewer",
+                "candidate_test_links",
+                "coverage_observation",
+                "implementation_registered",
+                "execution_recorded",
+                "evidence_artifact_recorded",
+            )
+        )
+        readiness_profile = {
+            "id": readiness_profile_entity,
+            "finding_id": finding_id,
+            "component_id": component_id,
+            "source_status": str(item.get("source_status", "active")),
+            "finding_disposition": disposition,
+            "lifecycle_state": lifecycle_state,
+            "next_action_id": next_action_id,
+            "blockers": blockers,
+            "evidence_posture": evidence_posture,
+            "evidence_signals": evidence_signals,
+            "readiness_gaps": sorted(readiness_gaps),
+            "test_candidate_entity_ids": test_candidate_entity_ids,
+            "coverage_entity_ids": coverage_entity_ids,
+            "implemented_test_entity_ids": implemented_test_entity_ids,
+            "assignment_entity_ids": sorted(assignment_entity_ids),
+            "obligation_ids": obligation_ids,
+            "execution_ids": sorted(execution_ids),
+            "evidence_artifact_ids": sorted(evidence_ids),
+            "relationship_ids": sorted(readiness_relationship_ids),
+            "latest_execution_id": str(latest_execution.get("id", "")),
+            "latest_execution_status": str(latest_execution.get("status", "")),
+            "notice": (
+                "Test references and coverage are candidate or observed-execution signals only. "
+                "Only governed, current, reviewed evidence can support verification; execution "
+                "evidence requires independent review. This profile does not approve work or "
+                "accept risk."
+            ),
+        }
+        verification_readiness_profiles.append(readiness_profile)
         dimensions["cascade_analysis"] = bool(upstream_paths)
         dimensions["timing_and_resilience"] = bool(
             resilience_entity_ids or timing_relation_ids
@@ -1227,9 +1763,7 @@ def build_cross_reference_index(
                 "requirement_ids": requirements,
                 "hazard_ids": hazards,
                 "citation_ids": citation_ids,
-                "obligation_ids": sorted(
-                    str(value.get("id", "")) for value in finding_obligations
-                ),
+                "obligation_ids": obligation_ids,
                 "evidence_artifact_ids": sorted(evidence_ids),
                 "execution_ids": sorted(execution_ids),
                 "sfta_event_ids": sorted(
@@ -1244,6 +1778,16 @@ def build_cross_reference_index(
                 ),
                 "resilience_entity_ids": resilience_entity_ids,
                 "timing_relationship_ids": timing_relation_ids,
+                "verification_readiness_profile_id": readiness_profile_entity,
+                "test_candidate_entity_ids": test_candidate_entity_ids,
+                "coverage_entity_ids": coverage_entity_ids,
+                "implemented_test_entity_ids": implemented_test_entity_ids,
+                "assignment_entity_ids": sorted(assignment_entity_ids),
+                "readiness_relationship_ids": sorted(readiness_relationship_ids),
+                "verification_lifecycle_state": lifecycle_state,
+                "verification_evidence_posture": evidence_posture,
+                "verification_next_action_id": next_action_id,
+                "verification_readiness_gaps": sorted(readiness_gaps),
                 "dimensions": dimensions,
                 "linkage_completeness_percent": round(
                     100 * sum(dimensions.values()) / len(dimensions), 1
@@ -1443,6 +1987,7 @@ def build_cross_reference_index(
         "cascade_analysis": "low",
         "timing_and_resilience": "low",
         "semantic_exposure": "low",
+        "verification_readiness": "low",
     }
     for dimension, priority in dimension_priorities.items():
         affected = [
@@ -1497,6 +2042,30 @@ def build_cross_reference_index(
                 ),
             }
         )
+    readiness_gap_profiles: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for profile in verification_readiness_profiles:
+        for gap in _text_values(profile.get("readiness_gaps")):
+            readiness_gap_profiles[gap].append(profile)
+    for gap, affected in sorted(readiness_gap_profiles.items()):
+        review_leads.append(
+            {
+                "id": stable_id("XLEAD", "verification_readiness_gap", gap),
+                "kind": f"verification_readiness_gap_{gap}",
+                "priority": READINESS_GAP_PRIORITIES.get(gap, "medium"),
+                "subject_ids": [
+                    _entity_id("finding", profile["finding_id"])
+                    for profile in affected[:25]
+                ],
+                "affected_count": len(affected),
+                "subject_ids_omitted": max(0, len(affected) - 25),
+                "description": (
+                    f"{len(affected)} accepted finding(s) have the verification-readiness "
+                    f"gap {gap.replace('_', ' ')}. Follow the profile's exact lifecycle "
+                    "state and next action; candidate tests or coverage do not constitute "
+                    "verification evidence."
+                ),
+            }
+        )
     sfta_reconciliation = sfta.get("reconciliation", {})
     for key, priority in (
         ("top_down_uncovered_events", "high"),
@@ -1547,6 +2116,7 @@ def build_cross_reference_index(
     entities_list = sorted(entities.values(), key=lambda value: value["id"])
     relationships_list = sorted(relationships.values(), key=lambda value: value["id"])
     finding_chains.sort(key=lambda value: value["finding_id"])
+    verification_readiness_profiles.sort(key=lambda value: value["finding_id"])
     classification_counts = Counter(value["classification"] for value in fusions)
     result = {
         "format": CROSS_REFERENCE_FORMAT,
@@ -1563,6 +2133,24 @@ def build_cross_reference_index(
             "semantic_profiles": len(semantic_profiles),
             "semantic_profiles_with_records": sum(
                 value["populated_dimension_count"] > 0 for value in semantic_profiles
+            ),
+            "verification_readiness_profiles": len(
+                verification_readiness_profiles
+            ),
+            "verification_profiles_with_signals": sum(
+                any(
+                    value["evidence_signals"][field]
+                    for field in (
+                        "assigned_owner",
+                        "named_reviewer",
+                        "candidate_test_links",
+                        "coverage_observation",
+                        "implementation_registered",
+                        "execution_recorded",
+                        "evidence_artifact_recorded",
+                    )
+                )
+                for value in verification_readiness_profiles
             ),
             "compound_exposure_chains": sum(
                 bool(value.get("compound_exposure_kinds"))
@@ -1607,12 +2195,38 @@ def build_cross_reference_index(
                     ).items()
                 )
             ),
+            "verification_lifecycle_states": dict(
+                sorted(
+                    Counter(
+                        value["lifecycle_state"]
+                        for value in verification_readiness_profiles
+                    ).items()
+                )
+            ),
+            "verification_evidence_postures": dict(
+                sorted(
+                    Counter(
+                        value["evidence_posture"]
+                        for value in verification_readiness_profiles
+                    ).items()
+                )
+            ),
+            "verification_readiness_gaps": dict(
+                sorted(
+                    Counter(
+                        gap
+                        for value in verification_readiness_profiles
+                        for gap in value["readiness_gaps"]
+                    ).items()
+                )
+            ),
             "omitted_by_bound": dict(sorted(omitted.items())),
         },
         "entities": entities_list,
         "relationships": relationships_list,
         "component_relationship_fusions": fusions,
         "semantic_profiles": semantic_profiles,
+        "verification_readiness_profiles": verification_readiness_profiles,
         "finding_chains": finding_chains,
         "review_leads": review_leads,
         "limitations": [
@@ -1622,6 +2236,7 @@ def build_cross_reference_index(
             "Configured hazards, requirements, interfaces, and SFTA logic retain project-supplied authority.",
             "Cascade paths, retry amplification, literal timing budgets, and circuit-breaker models are bounded static candidates, not runtime causality, latency, or control-effectiveness proof.",
             "Semantic profiles join independently bounded static models by stable component identity; compound exposure leads are intersections for review, not proof of reachability, causality, vulnerability, or failure.",
+            "Verification-readiness profiles keep textual test candidates, coverage observations, registered implementations, executions, evidence review, assignments, and lifecycle decisions distinct; no lower-authority signal is promoted to verification evidence.",
             "Linkage completeness is an accounting measure, not verification success or risk acceptance.",
         ],
     }
@@ -1650,6 +2265,8 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         "component_relationship_fusions",
         "semantic_profiles",
         "semantic_profiles_with_records",
+        "verification_readiness_profiles",
+        "verification_profiles_with_signals",
         "compound_exposure_chains",
         "finding_chains",
         "multi_source_fusions",
@@ -1690,6 +2307,36 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
     )
     for key, value in summary.get("compound_exposures_by_kind", {}).items():
         lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "## Verification readiness",
+            "",
+            "### Lifecycle states",
+            "",
+            "| State | Finding profiles |",
+            "|---|---:|",
+        ]
+    )
+    for key, value in summary.get("verification_lifecycle_states", {}).items():
+        lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "### Evidence postures",
+            "",
+            "| Posture | Finding profiles |",
+            "|---|---:|",
+        ]
+    )
+    for key, value in summary.get("verification_evidence_postures", {}).items():
+        lines.append(f"| {key.replace('_', ' ')} | {value} |")
+    lines.extend(
+        [
+            "",
+            "Textual test links and coverage observations remain candidate or observed-execution signals; they are not verification evidence.",
+        ]
+    )
     lines.extend(["", "## Prioritized review leads", ""])
     leads = index.get("review_leads", [])[:100]
     if not leads:
@@ -1981,12 +2628,339 @@ def verify_cross_reference_file(
             if isinstance(profile, dict) and profile.get("id")
         }
 
-        chains = value.get("finding_chains")
+        readiness_profiles = value.get("verification_readiness_profiles")
+        readiness_profile_ids = (
+            [
+                str(profile.get("id", ""))
+                for profile in readiness_profiles
+                if isinstance(profile, dict)
+            ]
+            if isinstance(readiness_profiles, list)
+            else []
+        )
+        readiness_profile_entity_ids = {
+            str(entity.get("id", ""))
+            for entity in entities or []
+            if isinstance(entity, dict)
+            and entity.get("kind") == "verification_readiness_profile"
+        }
         finding_entity_ids = {
             str(entity.get("raw_id", ""))
             for entity in entities or []
             if isinstance(entity, dict) and entity.get("kind") == "finding"
         }
+        entities_by_id = {
+            str(entity.get("id", "")): entity
+            for entity in entities or []
+            if isinstance(entity, dict) and entity.get("id")
+        }
+        readiness_profiles_by_id = {
+            str(profile.get("id", "")): profile
+            for profile in readiness_profiles or []
+            if isinstance(profile, dict) and profile.get("id")
+        }
+
+        def readiness_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            signals = profile.get("evidence_signals")
+            if not (
+                profile.get("id") in readiness_profile_entity_ids
+                and profile.get("finding_id") in finding_entity_ids
+                and profile.get("component_id") in component_ids
+                and isinstance(signals, dict)
+                and set(signals) == set(VERIFICATION_EVIDENCE_SIGNAL_NAMES)
+                and all(isinstance(signals[name], bool) for name in signals)
+                and profile.get("evidence_posture")
+                in VERIFICATION_EVIDENCE_POSTURES
+                and profile.get("lifecycle_state")
+                in VERIFICATION_READINESS_STATE_ACTIONS
+                and profile.get("next_action_id")
+                == VERIFICATION_READINESS_STATE_ACTIONS[
+                    str(profile.get("lifecycle_state", ""))
+                ]
+                and set(_text_values(profile.get("readiness_gaps")))
+                <= set(READINESS_GAP_PRIORITIES)
+            ):
+                return False
+            entity_fields = (
+                "test_candidate_entity_ids",
+                "coverage_entity_ids",
+                "implemented_test_entity_ids",
+                "assignment_entity_ids",
+            )
+            reference_fields = (
+                "obligation_ids",
+                "execution_ids",
+                "evidence_artifact_ids",
+                "relationship_ids",
+            )
+            if not all(
+                isinstance(profile.get(field), list)
+                for field in (*entity_fields, *reference_fields)
+            ):
+                return False
+            expected_kinds = {
+                "test_candidate_entity_ids": {"test_candidate"},
+                "coverage_entity_ids": {"coverage_observation"},
+                "implemented_test_entity_ids": {"implemented_test"},
+                "assignment_entity_ids": {
+                    "finding_owner",
+                    "finding_reviewer",
+                    "assurance_owner",
+                    "assurance_reviewer",
+                },
+            }
+            if any(
+                any(
+                    entity_id not in entities_by_id
+                    or entities_by_id[entity_id].get("kind")
+                    not in expected_kinds[field]
+                    for entity_id in _text_values(profile.get(field))
+                )
+                for field in entity_fields
+            ):
+                return False
+            obligation_ids = _text_values(profile.get("obligation_ids"))
+            execution_ids = _text_values(profile.get("execution_ids"))
+            evidence_ids = _text_values(profile.get("evidence_artifact_ids"))
+            if not (
+                set(obligation_ids) <= entity_raw_ids_by_kind["obligation"]
+                and set(execution_ids) <= entity_raw_ids_by_kind["execution"]
+                and set(evidence_ids) <= entity_raw_ids_by_kind["evidence"]
+                and set(_text_values(profile.get("relationship_ids")))
+                <= relationship_id_set
+            ):
+                return False
+            latest_execution_id = str(profile.get("latest_execution_id", ""))
+            if latest_execution_id and latest_execution_id not in execution_ids:
+                return False
+            execution_records = [
+                entities_by_id[_entity_id("execution", execution_id)].get(
+                    "metadata", {}
+                )
+                for execution_id in execution_ids
+                if _entity_id("execution", execution_id) in entities_by_id
+            ]
+            if latest_execution_id:
+                latest_metadata = entities_by_id[
+                    _entity_id("execution", latest_execution_id)
+                ].get("metadata", {})
+                execution_records = [
+                    value for value in execution_records if value is not latest_metadata
+                ] + [latest_metadata]
+            assurance_statuses = {
+                str(
+                    entities_by_id[_entity_id("obligation", obligation_id)]
+                    .get("metadata", {})
+                    .get("status", "")
+                )
+                for obligation_id in obligation_ids
+                if _entity_id("obligation", obligation_id) in entities_by_id
+            }
+            evidence_statuses = {
+                str(
+                    entities_by_id[_entity_id("obligation", obligation_id)]
+                    .get("metadata", {})
+                    .get("evidence_status", "")
+                )
+                for obligation_id in obligation_ids
+                if _entity_id("obligation", obligation_id) in entities_by_id
+            }
+            expected_posture = _verification_evidence_posture(
+                assurance_statuses=assurance_statuses,
+                evidence_statuses=evidence_statuses,
+                implementation_registered=bool(
+                    _text_values(profile.get("implemented_test_entity_ids"))
+                ),
+                candidate_tests=bool(
+                    _text_values(profile.get("test_candidate_entity_ids"))
+                ),
+                coverage_observed=bool(
+                    _text_values(profile.get("coverage_entity_ids"))
+                ),
+                executions=execution_records,
+            )
+            assigned_kinds = {
+                str(entities_by_id[entity_id].get("kind", ""))
+                for entity_id in _text_values(profile.get("assignment_entity_ids"))
+                if entity_id in entities_by_id
+            }
+            expected_signals = {
+                "finding_accepted": profile.get("finding_disposition") == "accepted",
+                "source_current": bool(
+                    profile.get("source_status", "active") == "active"
+                    and profile.get("lifecycle_state") != "revalidation_required"
+                ),
+                "assigned_owner": bool(
+                    assigned_kinds & {"finding_owner", "assurance_owner"}
+                ),
+                "named_reviewer": bool(
+                    assigned_kinds & {"finding_reviewer", "assurance_reviewer"}
+                ),
+                "candidate_test_links": bool(
+                    _text_values(profile.get("test_candidate_entity_ids"))
+                ),
+                "coverage_observation": bool(
+                    _text_values(profile.get("coverage_entity_ids"))
+                ),
+                "implementation_registered": bool(
+                    _text_values(profile.get("implemented_test_entity_ids"))
+                ),
+                "execution_recorded": bool(execution_ids),
+                "passing_execution_recorded": bool(
+                    execution_records
+                    and execution_records[-1].get("status") == "passed"
+                ),
+                "independent_execution_review": bool(
+                    execution_records
+                    and execution_records[-1].get("independently_reviewed")
+                ),
+                "evidence_artifact_recorded": bool(evidence_ids),
+                "evidence_sufficient": "sufficient" in evidence_statuses,
+                "terminal_verification": bool(
+                    assurance_statuses & {"verified", "closed"}
+                ),
+            }
+            expected_gaps: set[str] = set()
+            if (
+                profile.get("finding_disposition") == "accepted"
+                and profile.get("source_status", "active") == "active"
+                and profile.get("lifecycle_state") != "resolved"
+            ):
+                if not expected_signals["assigned_owner"]:
+                    expected_gaps.add("accepted_finding_without_owner")
+                if not expected_signals["named_reviewer"]:
+                    expected_gaps.add("accepted_finding_without_reviewer")
+                if profile.get("lifecycle_state") == "revalidation_required":
+                    expected_gaps.add("accepted_finding_requires_revalidation")
+                if not (
+                    expected_signals["candidate_test_links"]
+                    or expected_signals["implementation_registered"]
+                ):
+                    expected_gaps.add("accepted_finding_without_test_candidate")
+                if not expected_signals["implementation_registered"]:
+                    expected_gaps.add(
+                        "accepted_finding_without_registered_implementation"
+                    )
+                if (
+                    expected_signals["implementation_registered"]
+                    and not expected_signals["execution_recorded"]
+                ):
+                    expected_gaps.add("implemented_test_without_execution")
+                if execution_records and execution_records[-1].get("status") in {
+                    "failed",
+                    "timeout",
+                    "error",
+                }:
+                    expected_gaps.add("failed_or_incomplete_execution")
+                if (
+                    expected_signals["passing_execution_recorded"]
+                    and not expected_signals["independent_execution_review"]
+                ):
+                    expected_gaps.add(
+                        "passing_execution_without_independent_review"
+                    )
+                if (
+                    expected_signals["evidence_sufficient"]
+                    and not expected_signals["terminal_verification"]
+                ):
+                    expected_gaps.add(
+                        "sufficient_evidence_without_terminal_verification"
+                    )
+                if (
+                    expected_signals["coverage_observation"]
+                    and not expected_signals["candidate_test_links"]
+                    and not expected_signals["implementation_registered"]
+                    and not expected_signals["execution_recorded"]
+                ):
+                    expected_gaps.add(
+                        "coverage_without_test_or_execution_evidence"
+                    )
+            profile_relation = _relation_id(
+                _entity_id("finding", profile.get("finding_id", "")),
+                str(profile.get("id", "")),
+                "has_verification_readiness_profile",
+                "cross_reference",
+            )
+            component_finding_relation = _relation_id(
+                _entity_id("component", profile.get("component_id", "")),
+                _entity_id("finding", profile.get("finding_id", "")),
+                "has_failure_mode",
+                "sfmea",
+            )
+            readiness_target_entity_ids = {
+                *(
+                    entity_id
+                    for field in entity_fields
+                    for entity_id in _text_values(profile.get(field))
+                ),
+                *(_entity_id("obligation", value) for value in obligation_ids),
+                *(_entity_id("execution", value) for value in execution_ids),
+                *(_entity_id("evidence", value) for value in evidence_ids),
+            }
+            readiness_evidence_relations = {
+                _relation_id(
+                    str(profile.get("id", "")),
+                    target_entity_id,
+                    "considers_readiness_evidence",
+                    "verification_readiness",
+                )
+                for target_entity_id in readiness_target_entity_ids
+            }
+            finding_obligation_relations = {
+                _relation_id(
+                    _entity_id("finding", profile.get("finding_id", "")),
+                    _entity_id("obligation", obligation_id),
+                    "generates_obligation",
+                    "assurance_planner",
+                )
+                for obligation_id in obligation_ids
+            }
+            profile_relationship_ids = set(
+                _text_values(profile.get("relationship_ids"))
+            )
+            return bool(
+                signals == expected_signals
+                and profile.get("readiness_gaps") == sorted(expected_gaps)
+                and profile.get("evidence_posture") == expected_posture
+                and profile.get("latest_execution_status", "")
+                == (
+                    str(execution_records[-1].get("status", ""))
+                    if execution_records
+                    else ""
+                )
+                and profile_relation
+                in profile_relationship_ids
+                and profile_relation in relationship_id_set
+                and component_finding_relation in relationship_id_set
+                and readiness_evidence_relations <= profile_relationship_ids
+                and readiness_evidence_relations <= relationship_id_set
+                and finding_obligation_relations <= relationship_id_set
+            )
+
+        checks["verification_readiness_integrity"] = bool(
+            isinstance(readiness_profiles, list)
+            and len(readiness_profile_ids) == len(readiness_profiles)
+            and all(readiness_profile_ids)
+            and len(readiness_profile_ids) == len(set(readiness_profile_ids))
+            and set(readiness_profile_ids) == readiness_profile_entity_ids
+            and {
+                str(profile.get("finding_id", ""))
+                for profile in readiness_profiles
+                if isinstance(profile, dict)
+            }
+            == finding_entity_ids
+            and all(readiness_profile_valid(profile) for profile in readiness_profiles)
+        )
+        if not checks["verification_readiness_integrity"]:
+            fail(
+                "cross_reference.verification_readiness_integrity_invalid",
+                "Verification-readiness profiles must resolve their findings, lifecycle evidence, typed entities, and deterministic posture without promoting candidate signals.",
+            )
+        readiness_profile_id_set = set(readiness_profile_ids)
+
+        chains = value.get("finding_chains")
         chain_ids = (
             [
                 str(chain.get("finding_id", ""))
@@ -2022,6 +2996,12 @@ def verify_cross_reference_file(
                         "semantic_entity_ids",
                         "semantic_relationship_ids",
                         "compound_exposure_kinds",
+                        "test_candidate_entity_ids",
+                        "coverage_entity_ids",
+                        "implemented_test_entity_ids",
+                        "assignment_entity_ids",
+                        "readiness_relationship_ids",
+                        "verification_readiness_gaps",
                         "interface_entity_ids",
                         "inbound_fusion_ids",
                         "outbound_fusion_ids",
@@ -2109,6 +3089,71 @@ def verify_cross_reference_file(
                 == _compound_exposure_kinds(
                     chain["semantic_dimensions"], chain["dimensions"]
                 )
+                and chain.get("verification_readiness_profile_id")
+                in readiness_profile_id_set
+                and (
+                    chain.get("test_candidate_entity_ids")
+                    == readiness_profiles_by_id[
+                        str(chain.get("verification_readiness_profile_id", ""))
+                    ].get("test_candidate_entity_ids")
+                    and chain.get("coverage_entity_ids")
+                    == readiness_profiles_by_id[
+                        str(chain.get("verification_readiness_profile_id", ""))
+                    ].get("coverage_entity_ids")
+                    and chain.get("implemented_test_entity_ids")
+                    == readiness_profiles_by_id[
+                        str(chain.get("verification_readiness_profile_id", ""))
+                    ].get("implemented_test_entity_ids")
+                    and chain.get("assignment_entity_ids")
+                    == readiness_profiles_by_id[
+                        str(chain.get("verification_readiness_profile_id", ""))
+                    ].get("assignment_entity_ids")
+                    and chain.get("readiness_relationship_ids")
+                    == readiness_profiles_by_id[
+                        str(chain.get("verification_readiness_profile_id", ""))
+                    ].get("relationship_ids")
+                    and chain.get("verification_lifecycle_state")
+                    == readiness_profiles_by_id[
+                        str(chain.get("verification_readiness_profile_id", ""))
+                    ].get("lifecycle_state")
+                    and chain.get("verification_evidence_posture")
+                    == readiness_profiles_by_id[
+                        str(chain.get("verification_readiness_profile_id", ""))
+                    ].get("evidence_posture")
+                    and chain.get("verification_next_action_id")
+                    == readiness_profiles_by_id[
+                        str(chain.get("verification_readiness_profile_id", ""))
+                    ].get("next_action_id")
+                    and chain.get("verification_readiness_gaps")
+                    == readiness_profiles_by_id[
+                        str(chain.get("verification_readiness_profile_id", ""))
+                    ].get("readiness_gaps")
+                    and chain["dimensions"].get("verification_readiness")
+                    == any(
+                        readiness_profiles_by_id[
+                            str(chain.get("verification_readiness_profile_id", ""))
+                        ]["evidence_signals"][field]
+                        for field in (
+                            "assigned_owner",
+                            "named_reviewer",
+                            "candidate_test_links",
+                            "coverage_observation",
+                            "implementation_registered",
+                            "execution_recorded",
+                            "evidence_artifact_recorded",
+                        )
+                    )
+                )
+                and set(_text_values(chain.get("test_candidate_entity_ids")))
+                <= entity_id_set
+                and set(_text_values(chain.get("coverage_entity_ids")))
+                <= entity_id_set
+                and set(_text_values(chain.get("implemented_test_entity_ids")))
+                <= entity_id_set
+                and set(_text_values(chain.get("assignment_entity_ids")))
+                <= entity_id_set
+                and set(_text_values(chain.get("readiness_relationship_ids")))
+                <= relationship_id_set
                 and set(_text_values(chain.get("requirement_ids")))
                 <= entity_raw_ids_by_kind["requirement"]
                 and set(_text_values(chain.get("hazard_ids")))
@@ -2198,6 +3243,34 @@ def verify_cross_reference_file(
                 ).items()
             )
         )
+        verification_lifecycle_counts = dict(
+            sorted(
+                Counter(
+                    str(profile.get("lifecycle_state", ""))
+                    for profile in (readiness_profiles or [])
+                    if isinstance(profile, dict)
+                ).items()
+            )
+        )
+        verification_posture_counts = dict(
+            sorted(
+                Counter(
+                    str(profile.get("evidence_posture", ""))
+                    for profile in (readiness_profiles or [])
+                    if isinstance(profile, dict)
+                ).items()
+            )
+        )
+        verification_gap_counts = dict(
+            sorted(
+                Counter(
+                    gap
+                    for profile in (readiness_profiles or [])
+                    if isinstance(profile, dict)
+                    for gap in _text_values(profile.get("readiness_gaps"))
+                ).items()
+            )
+        )
         checks["summary_reconciliation"] = bool(
             isinstance(summary, dict)
             and isinstance(leads, list)
@@ -2209,6 +3282,25 @@ def verify_cross_reference_file(
             == sum(
                 _safe_int(profile.get("populated_dimension_count", 0)) > 0
                 for profile in (semantic_profiles or [])
+                if isinstance(profile, dict)
+            )
+            and summary.get("verification_readiness_profiles")
+            == len(readiness_profiles or [])
+            and summary.get("verification_profiles_with_signals")
+            == sum(
+                any(
+                    profile.get("evidence_signals", {}).get(field) is True
+                    for field in (
+                        "assigned_owner",
+                        "named_reviewer",
+                        "candidate_test_links",
+                        "coverage_observation",
+                        "implementation_registered",
+                        "execution_recorded",
+                        "evidence_artifact_recorded",
+                    )
+                )
+                for profile in (readiness_profiles or [])
                 if isinstance(profile, dict)
             )
             and summary.get("compound_exposure_chains")
@@ -2248,6 +3340,12 @@ def verify_cross_reference_file(
             and summary.get("semantic_dimensions") == semantic_dimension_counts
             and summary.get("compound_exposures_by_kind")
             == compound_exposure_counts
+            and summary.get("verification_lifecycle_states")
+            == verification_lifecycle_counts
+            and summary.get("verification_evidence_postures")
+            == verification_posture_counts
+            and summary.get("verification_readiness_gaps")
+            == verification_gap_counts
         )
         if not checks["summary_reconciliation"]:
             fail(
@@ -2331,6 +3429,13 @@ def verify_cross_reference_file(
         ),
         "semantic_profile_count": (
             _safe_int(value.get("summary", {}).get("semantic_profiles", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "verification_readiness_profile_count": (
+            _safe_int(
+                value.get("summary", {}).get("verification_readiness_profiles", 0)
+            )
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0
         ),

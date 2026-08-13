@@ -136,6 +136,177 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertTrue(chain["outbound_fusion_ids"])
         self.assertTrue(chain["dimensions"]["component_relationships"])
 
+    def test_projects_test_candidates_and_coverage_without_promoting_evidence(self) -> None:
+        (self.root / "test_app.py").write_text(
+            "from app import caller\n\n\ndef test_caller():\n    assert caller() == 1\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        caller = next(
+            value for value in analysis["components"] if value["qualname"] == "caller"
+        )
+        caller["coverage"] = {
+            "line_percent": 100.0,
+            "covered_lines": 2,
+            "missing_lines": 0,
+            "branch_percent": None,
+            "covered_branches": 0,
+            "missing_branches": 0,
+        }
+        finding = next(
+            value
+            for value in analysis["items"]
+            if value["component_id"] == caller["id"]
+        )
+
+        index = build_cross_reference_index(analysis)
+        profile = next(
+            value
+            for value in index["verification_readiness_profiles"]
+            if value["finding_id"] == finding["id"]
+        )
+        chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == finding["id"]
+        )
+
+        self.assertEqual(profile["evidence_posture"], "candidate_tests_and_coverage")
+        self.assertTrue(profile["evidence_signals"]["candidate_test_links"])
+        self.assertTrue(profile["evidence_signals"]["coverage_observation"])
+        self.assertFalse(profile["evidence_signals"]["execution_recorded"])
+        self.assertFalse(profile["evidence_signals"]["terminal_verification"])
+        self.assertTrue(profile["test_candidate_entity_ids"])
+        self.assertTrue(profile["coverage_entity_ids"])
+        self.assertEqual(
+            chain["verification_readiness_profile_id"], profile["id"]
+        )
+        self.assertTrue(chain["dimensions"]["verification_readiness"])
+        self.assertEqual(
+            chain["verification_evidence_posture"],
+            "candidate_tests_and_coverage",
+        )
+        self.assertTrue(
+            any(
+                value["kind"] == "test_candidate"
+                for value in index["entities"]
+                if value["id"] in profile["test_candidate_entity_ids"]
+            )
+        )
+        diagram = build_diagram_models(analysis, kind="cross_reference")[0]
+        diagram_kinds = {value["kind"] for value in diagram["nodes"]}
+        self.assertIn("verification_readiness_profile", diagram_kinds)
+        self.assertIn("test_candidate", diagram_kinds)
+        self.assertIn("coverage_observation", diagram_kinds)
+
+        from jsonschema import Draft202012Validator
+
+        Draft202012Validator(schema_document("cross-reference")).validate(index)
+
+    def test_accepted_finding_readiness_gaps_are_prioritized(self) -> None:
+        finding = self.analysis["items"][0]
+        finding["review"]["disposition"] = "accepted"
+
+        index = build_cross_reference_index(self.analysis)
+        profile = next(
+            value
+            for value in index["verification_readiness_profiles"]
+            if value["finding_id"] == finding["id"]
+        )
+
+        self.assertEqual(profile["lifecycle_state"], "definition_required")
+        self.assertEqual(profile["next_action_id"], "define_assurance_contract")
+        self.assertIn("accepted_finding_without_owner", profile["readiness_gaps"])
+        self.assertIn("accepted_finding_without_reviewer", profile["readiness_gaps"])
+        self.assertIn(
+            "accepted_finding_without_registered_implementation",
+            profile["readiness_gaps"],
+        )
+        lead_kinds = {value["kind"] for value in index["review_leads"]}
+        self.assertIn(
+            "verification_readiness_gap_accepted_finding_without_owner",
+            lead_kinds,
+        )
+        self.assertGreater(index["summary"]["verification_readiness_gaps"]["accepted_finding_without_owner"], 0)
+
+    def test_verified_posture_requires_registered_execution_and_evidence(self) -> None:
+        finding = self.analysis["items"][0]
+        finding["review"].update(
+            {
+                "disposition": "accepted",
+                "owner": "Verification Owner",
+                "reviewer": "Finding Reviewer",
+            }
+        )
+        obligation = next(
+            value
+            for value in self.analysis["assurance"]["obligations"]
+            if value["finding_id"] == finding["id"]
+        )
+        obligation["assurance_status"] = "verified"
+        obligation["evidence_status"] = "sufficient"
+        obligation["evidence_artifact_ids"] = ["EVIDENCE-1"]
+        obligation["automation"].update(
+            {
+                "implementation_status": "implemented",
+                "implemented_test_path": "tests/test_app.py",
+                "test_sha256": "a" * 64,
+                "implementation_origin": "reviewed_manual_test",
+            }
+        )
+        self.analysis["assurance"]["evidence_artifacts"].append(
+            {"id": "EVIDENCE-1", "path": "evidence/junit.xml", "kind": "junit"}
+        )
+        self.analysis["assurance"]["executions"].append(
+            {
+                "id": "EXEC-1",
+                "obligation_id": obligation["id"],
+                "status": "passed",
+                "reviews": [{"reviewer": "Independent Reviewer"}],
+            }
+        )
+
+        index = build_cross_reference_index(self.analysis)
+        profile = next(
+            value
+            for value in index["verification_readiness_profiles"]
+            if value["finding_id"] == finding["id"]
+        )
+
+        self.assertEqual(profile["lifecycle_state"], "resolved")
+        self.assertEqual(profile["next_action_id"], "none")
+        self.assertEqual(
+            profile["evidence_posture"], "verified_with_sufficient_evidence"
+        )
+        self.assertTrue(profile["implemented_test_entity_ids"])
+        self.assertEqual(profile["execution_ids"], ["EXEC-1"])
+        self.assertEqual(profile["evidence_artifact_ids"], ["EVIDENCE-1"])
+        self.assertTrue(profile["evidence_signals"]["independent_execution_review"])
+        self.assertTrue(profile["evidence_signals"]["terminal_verification"])
+        self.assertFalse(profile["readiness_gaps"])
+        self.assertTrue(verify_cross_reference_file(
+            export_cross_reference_index(self.analysis, self.root / "verified.json"),
+            analysis=self.analysis,
+        )["valid"])
+
+    def test_verifier_rejects_verification_readiness_tampering(self) -> None:
+        output = self.root / "fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        tampered = json.loads(output.read_text(encoding="utf-8"))
+        tampered["verification_readiness_profiles"][0]["evidence_posture"] = (
+            "verified_with_sufficient_evidence"
+        )
+        content = dict(tampered)
+        content.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(tampered), encoding="utf-8")
+
+        rejected = verify_cross_reference_file(output, analysis=self.analysis)
+
+        self.assertFalse(rejected["valid"])
+        self.assertFalse(rejected["checks"]["verification_readiness_integrity"])
+        self.assertFalse(rejected["checks"]["exact_regeneration"])
+
     def test_cross_links_cascades_timing_retries_and_breaker_models(self) -> None:
         (self.root / "resilience.py").write_text(
             "def downstream():\n"

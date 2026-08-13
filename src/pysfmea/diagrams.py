@@ -509,6 +509,11 @@ def cross_reference_diagram(
                 ),
                 *chain.get("resilience_entity_ids", []),
                 *chain.get("semantic_entity_ids", []),
+                chain.get("verification_readiness_profile_id", ""),
+                *chain.get("test_candidate_entity_ids", []),
+                *chain.get("coverage_entity_ids", []),
+                *chain.get("implemented_test_entity_ids", []),
+                *chain.get("assignment_entity_ids", []),
             )
             if entity_id in entity_by_id
         )
@@ -558,6 +563,14 @@ def cross_reference_diagram(
         "shared_fate_region": 1,
         "architecture_node": 1,
         "finding": 2,
+        "verification_readiness_profile": 3,
+        "test_candidate": 3,
+        "coverage_observation": 3,
+        "implemented_test": 3,
+        "finding_owner": 3,
+        "finding_reviewer": 3,
+        "assurance_owner": 3,
+        "assurance_reviewer": 3,
         "obligation": 3,
         "execution": 4,
         "evidence": 4,
@@ -611,6 +624,12 @@ def cross_reference_diagram(
                 "finding_limit": finding_limit,
                 "total_finding_chains": summary["finding_chains"],
                 "semantic_profiles": summary["semantic_profiles"],
+                "verification_readiness_profiles": summary[
+                    "verification_readiness_profiles"
+                ],
+                "verification_profiles_with_signals": summary[
+                    "verification_profiles_with_signals"
+                ],
                 "compound_exposure_chains": summary["compound_exposure_chains"],
                 "review_leads": summary["review_leads"],
             },

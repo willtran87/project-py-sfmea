@@ -65,7 +65,8 @@ and one or more `pysfmea-diagram-1` diagrams. Supported generated categories are
 
 The `cross_reference` projection joins the highest-priority finding chains across guidance,
 requirements, hazards, SFTA events, components, semantic-exposure profiles, findings,
-verification obligations, executions, and evidence artifacts. Semantic nodes retain exact links
+verification-readiness profiles, test candidates, coverage observations, registered tests,
+assignments, verification obligations, executions, and evidence artifacts. Semantic nodes retain exact links
 to bounded data/alias-flow, concurrency, exception, state, authorization, contract, deployment,
 shared-fate, and hierarchy records. Its metadata binds the exact analysis and complete cross-reference
 projection digests. The view is bounded to 40 finding chains and 500 entities; use
