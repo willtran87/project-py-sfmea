@@ -65,6 +65,15 @@ package; public artifact and schema identifiers carry their own explicit compati
   citation → finding lineage instead of leaving the document identifier as opaque citation
   metadata; unresolved source identities become review leads, and report/diagram/CLI/schema
   projections expose the same authority-preserving chain.
+  Add a self-auditing analysis-output projection ledger. Every top-level scanner section now has a
+  digest-bound entity and declared entity-kind/relationship-channel surface, with separate
+  semantic, provenance-only, empty, registered-without-projection, and unmapped states. Unknown or
+  disconnected outputs become prioritized leads; standalone verification reconciles projection
+  identity sets and exact verification binds source digests. Markdown, CLI, schema, diagram, and
+  self-contained HTML views expose the same coverage contract.
+  Separate declared and material projection percentages, and ignore structural deployment
+  placement shells whose node lists are empty, so sparse models produce actionable gaps rather
+  than false missing-projection alerts.
 
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,

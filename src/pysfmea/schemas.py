@@ -35,6 +35,7 @@ from .browser_quality import (
     BROWSER_QUALITY_VERIFICATION_FORMAT,
 )
 from .cross_reference import (
+    ANALYSIS_PROJECTION_STATUSES,
     CROSS_REFERENCE_FORMAT,
     CROSS_REFERENCE_VERIFICATION_CHECKS,
     CROSS_REFERENCE_VERIFICATION_FORMAT,
@@ -1286,8 +1287,7 @@ def _cross_reference_schema() -> dict[str, Any]:
         "type": "object",
         "required": list(VERIFICATION_EVIDENCE_SIGNAL_NAMES),
         "properties": {
-            name: {"type": "boolean"}
-            for name in VERIFICATION_EVIDENCE_SIGNAL_NAMES
+            name: {"type": "boolean"} for name in VERIFICATION_EVIDENCE_SIGNAL_NAMES
         },
         "additionalProperties": False,
     }
@@ -1401,6 +1401,61 @@ def _cross_reference_schema() -> dict[str, Any]:
         "configured_finding_ids": string_list,
         "relationship_ids": string_list,
         "inventory_truncated": {"type": "boolean"},
+        "notice": text,
+    }
+    analysis_projection_profile_properties = {
+        "section": identifier,
+        "section_entity_id": identifier,
+        "section_relationship_id": identifier,
+        "source_sha256": digest,
+        "source_type": identifier,
+        "source_record_count": {"type": "integer", "minimum": 0},
+        "registered": {"type": "boolean"},
+        "projection_mode": {"enum": ["semantic", "provenance_only", "unmapped"]},
+        "coverage_status": {"enum": list(ANALYSIS_PROJECTION_STATUSES)},
+        "entity_kinds": string_list,
+        "relationship_channels": string_list,
+        "projected_entity_count": {"type": "integer", "minimum": 0},
+        "projected_entity_ids_sha256": digest,
+        "projected_entity_id_sample": {
+            "type": "array",
+            "maxItems": 25,
+            "items": text,
+        },
+        "projected_relationship_count": {"type": "integer", "minimum": 0},
+        "projected_relationship_ids_sha256": digest,
+        "projected_relationship_id_sample": {
+            "type": "array",
+            "maxItems": 25,
+            "items": text,
+        },
+        "rationale": text,
+    }
+    analysis_projection_coverage_properties = {
+        "analysis_scope_entity_id": identifier,
+        "section_profiles": {
+            "type": "array",
+            "maxItems": 1_000,
+            "items": {
+                "type": "object",
+                "required": list(analysis_projection_profile_properties),
+                "properties": analysis_projection_profile_properties,
+                "additionalProperties": False,
+            },
+        },
+        "registered_section_names": string_list,
+        "semantically_projected_section_names": string_list,
+        "registered_without_projection_section_names": string_list,
+        "provenance_only_section_names": string_list,
+        "empty_section_names": string_list,
+        "unmapped_section_names": string_list,
+        "relationship_ids": string_list,
+        "coverage_percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "material_coverage_percent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+        },
         "notice": text,
     }
     machine_suggestion_profile_properties = {
@@ -1719,9 +1774,7 @@ def _cross_reference_schema() -> dict[str, Any]:
         "assignment_entity_ids": string_list,
         "readiness_relationship_ids": string_list,
         "verification_lifecycle_state": identifier,
-        "verification_evidence_posture": {
-            "enum": list(VERIFICATION_EVIDENCE_POSTURES)
-        },
+        "verification_evidence_posture": {"enum": list(VERIFICATION_EVIDENCE_POSTURES)},
         "verification_next_action_id": identifier,
         "verification_readiness_gaps": string_list,
         "review_governance_profile_id": identifier,
@@ -1781,6 +1834,36 @@ def _cross_reference_schema() -> dict[str, Any]:
             "minimum": 0,
         },
         "review_governance_profiles": {"type": "integer", "minimum": 0},
+        "analysis_sections": {"type": "integer", "minimum": 0},
+        "populated_analysis_sections": {"type": "integer", "minimum": 0},
+        "semantically_projected_analysis_sections": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "registered_without_projection_analysis_sections": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "provenance_only_analysis_sections": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "empty_analysis_sections": {"type": "integer", "minimum": 0},
+        "unmapped_analysis_sections": {"type": "integer", "minimum": 0},
+        "analysis_projection_relationships": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "analysis_projection_coverage_percent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+        },
+        "analysis_material_projection_coverage_percent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+        },
         "quality_gate_diagnostics": {"type": "integer", "minimum": 0},
         "global_quality_gate_diagnostics": {"type": "integer", "minimum": 0},
         "profiles_with_blocking_quality_diagnostics": {
@@ -1976,6 +2059,12 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "properties": governance_profile_properties,
                 "additionalProperties": False,
             },
+        },
+        "analysis_projection_coverage": {
+            "type": "object",
+            "required": list(analysis_projection_coverage_properties),
+            "properties": analysis_projection_coverage_properties,
+            "additionalProperties": False,
         },
         "adapter_provenance": {
             "type": "object",

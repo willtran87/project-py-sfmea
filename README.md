@@ -98,6 +98,12 @@ flowchart LR
   citation locators are also first-class digest-bound entities. Finding chains expose complete or
   unresolved document-to-citation lineage, while source presence remains traceability rather than
   proof of applicability, authenticity, compliance, or approval.
+  An analysis-output projection ledger then binds every top-level scanner section by SHA-256 and
+  classifies it as semantically projected, provenance-only, empty, registered without a material
+  projection, or unmapped. Declared entity-kind and relationship-channel sets are independently
+  reconciled; newly introduced or disconnected outputs become review leads instead of silently
+  disappearing from the evidence fabric. The HTML report, Markdown, CLI verifier, public schema,
+  and canonical diagram expose the same coverage state.
   Source-provenance links then connect components and findings to content-addressed inventory
   entries, dependency/contract declarations, the run-manifest-bound configuration input, and
   excluded regions. Opaque artifacts and missing

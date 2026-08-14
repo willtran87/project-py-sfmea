@@ -851,9 +851,12 @@ def build_html_report_data(
                 "verification_readiness_profiles"
             ][:500],
             "quality_gate_projection": cross_reference["quality_gate_projection"],
-            "review_governance_profiles": cross_reference[
-                "review_governance_profiles"
-            ][:500],
+            "analysis_projection_coverage": cross_reference[
+                "analysis_projection_coverage"
+            ],
+            "review_governance_profiles": cross_reference["review_governance_profiles"][
+                :500
+            ],
             "adapter_provenance": {
                 "run_manifest_entity_id": cross_reference["adapter_provenance"][
                     "run_manifest_entity_id"
@@ -897,44 +900,40 @@ def build_html_report_data(
                     ]
                 ),
                 "dependency_entity_count": len(
-                    cross_reference["repository_provenance"][
-                        "dependency_entity_ids"
-                    ]
+                    cross_reference["repository_provenance"]["dependency_entity_ids"]
                 ),
                 "contract_entity_count": len(
-                    cross_reference["repository_provenance"][
-                        "contract_entity_ids"
-                    ]
+                    cross_reference["repository_provenance"]["contract_entity_ids"]
                 ),
                 "opaque_repository_artifact_count": len(
                     cross_reference["repository_provenance"][
                         "opaque_repository_artifact_entity_ids"
                     ]
                 ),
-                "unaccounted_component_ids": cross_reference[
-                    "repository_provenance"
-                ]["unaccounted_component_ids"],
-                "unaccounted_finding_ids": cross_reference[
-                    "repository_provenance"
-                ]["unaccounted_finding_ids"],
-                "configured_component_ids": cross_reference[
-                    "repository_provenance"
-                ]["configured_component_ids"],
-                "configured_finding_ids": cross_reference[
-                    "repository_provenance"
-                ]["configured_finding_ids"],
+                "unaccounted_component_ids": cross_reference["repository_provenance"][
+                    "unaccounted_component_ids"
+                ],
+                "unaccounted_finding_ids": cross_reference["repository_provenance"][
+                    "unaccounted_finding_ids"
+                ],
+                "configured_component_ids": cross_reference["repository_provenance"][
+                    "configured_component_ids"
+                ],
+                "configured_finding_ids": cross_reference["repository_provenance"][
+                    "configured_finding_ids"
+                ],
                 "inventory_truncated": cross_reference["repository_provenance"][
                     "inventory_truncated"
                 ],
                 "notice": cross_reference["repository_provenance"]["notice"],
             },
             "machine_assistance_provenance": {
-                "suggestion_profiles": cross_reference[
-                    "machine_assistance_provenance"
-                ]["suggestion_profiles"][:500],
-                "summary_profiles": cross_reference[
-                    "machine_assistance_provenance"
-                ]["summary_profiles"][:500],
+                "suggestion_profiles": cross_reference["machine_assistance_provenance"][
+                    "suggestion_profiles"
+                ][:500],
+                "summary_profiles": cross_reference["machine_assistance_provenance"][
+                    "summary_profiles"
+                ][:500],
                 "claim_relationship_count": len(
                     cross_reference["machine_assistance_provenance"][
                         "claim_relationship_ids"
@@ -949,12 +948,10 @@ def build_html_report_data(
                 "stale_summary_entity_ids": cross_reference[
                     "machine_assistance_provenance"
                 ]["stale_summary_entity_ids"][:500],
-                "lexical_analysis": cross_reference[
-                    "machine_assistance_provenance"
-                ]["lexical_analysis"],
-                "notice": cross_reference["machine_assistance_provenance"][
-                    "notice"
+                "lexical_analysis": cross_reference["machine_assistance_provenance"][
+                    "lexical_analysis"
                 ],
+                "notice": cross_reference["machine_assistance_provenance"]["notice"],
             },
             "guidance_provenance": {
                 "methodology_entity_id": cross_reference["guidance_provenance"][
@@ -988,15 +985,15 @@ def build_html_report_data(
                     "system_context_provenance"
                 ]["system_context_entity_id"],
                 "status": cross_reference["system_context_provenance"]["status"],
-                "completeness_percent": cross_reference[
-                    "system_context_provenance"
-                ]["completeness_percent"],
+                "completeness_percent": cross_reference["system_context_provenance"][
+                    "completeness_percent"
+                ],
                 "field_profiles": cross_reference["system_context_provenance"][
                     "field_profiles"
                 ],
-                "finding_claim_profiles": cross_reference[
-                    "system_context_provenance"
-                ]["finding_claim_profiles"][:500],
+                "finding_claim_profiles": cross_reference["system_context_provenance"][
+                    "finding_claim_profiles"
+                ][:500],
                 "outside_catalog_claim_entity_ids": cross_reference[
                     "system_context_provenance"
                 ]["outside_catalog_claim_entity_ids"][:500],
@@ -1009,15 +1006,15 @@ def build_html_report_data(
                 "notice": cross_reference["system_context_provenance"]["notice"],
             },
             "lifecycle_provenance": {
-                "analysis_event_profiles": cross_reference[
-                    "lifecycle_provenance"
-                ]["analysis_event_profiles"][:500],
+                "analysis_event_profiles": cross_reference["lifecycle_provenance"][
+                    "analysis_event_profiles"
+                ][:500],
                 "finding_review_event_profiles": cross_reference[
                     "lifecycle_provenance"
                 ]["finding_review_event_profiles"][:500],
-                "subject_event_profiles": cross_reference[
-                    "lifecycle_provenance"
-                ]["subject_event_profiles"][:500],
+                "subject_event_profiles": cross_reference["lifecycle_provenance"][
+                    "subject_event_profiles"
+                ][:500],
                 "unresolved_subject_references": cross_reference[
                     "lifecycle_provenance"
                 ]["unresolved_subject_references"][:500],
@@ -1674,6 +1671,11 @@ function renderCrossReference(){
     metric(fmt(s.semantic_profiles),"semantic profiles","info"),
     metric(fmt(s.verification_readiness_profiles),"readiness profiles","info"),
     metric(fmt(s.review_governance_profiles),"review governance profiles","info"),
+    metric(pct(s.analysis_projection_coverage_percent),"declared analysis-output coverage",s.unmapped_analysis_sections?"danger":"good"),
+    metric(pct(s.analysis_material_projection_coverage_percent),"material analysis-output coverage",(s.unmapped_analysis_sections||s.registered_without_projection_analysis_sections)?"warning":"good"),
+    metric(fmt(s.analysis_sections),"bound analysis sections","info"),
+    metric(fmt(s.unmapped_analysis_sections),"unmapped analysis sections",s.unmapped_analysis_sections?"danger":"good"),
+    metric(fmt(s.registered_without_projection_analysis_sections),"registered outputs without material projection",s.registered_without_projection_analysis_sections?"warning":"good"),
     metric(fmt(s.quality_gate_diagnostics),"quality diagnostics",s.quality_gate_diagnostics?"warning":"good"),
     metric(fmt(s.global_quality_gate_diagnostics),"analysis-scope diagnostics",s.global_quality_gate_diagnostics?"warning":"good"),
     metric(fmt(s.adapter_runs),"adapter runs","info"),
@@ -1715,6 +1717,14 @@ function renderCrossReference(){
   renderBars("crossReferenceVerificationLifecycle",s.verification_lifecycle_states||{});
   renderBars("crossReferenceEvidencePosture",s.verification_evidence_postures||{});
   renderBars("crossReferenceReadinessGaps",s.verification_readiness_gaps||{});
+  const projection=x.analysis_projection_coverage||{};
+  (projection.section_profiles||[]).forEach(value=>{
+    const entry=document.createElement("article");entry.className="citation-entry";
+    entry.append(text("h3",`Output coverage: ${value.section}`),text("p",value.rationale||"Projection rationale not recorded."));
+    const meta=document.createElement("div");meta.className="citation-meta";
+    meta.append(tag((value.coverage_status||"unknown").replaceAll("_"," "),value.coverage_status==="unmapped"?"error":value.coverage_status==="registered_without_projection"?"warning":value.coverage_status==="empty"?"info":"accepted"),tag(`${fmt(value.source_record_count)} source records`,"info"),tag(`${fmt(value.projected_entity_count)} entities`,"info"),tag(`${fmt(value.projected_relationship_count)} relationships`,"info"));
+    entry.append(meta,text("p",`Section SHA-256 ${value.source_sha256||"not recorded"}`,"small mono"));leads.append(entry)
+  });
   (x.review_leads||[]).slice(0,100).forEach(value=>{
     const entry=document.createElement("article");entry.className="citation-entry";
     entry.append(text("h3",value.kind.replaceAll("_"," ")),text("p",value.description||"Review required."));

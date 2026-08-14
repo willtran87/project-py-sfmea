@@ -169,18 +169,14 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertEqual(diagnostic["kind"], "quality_gate_diagnostic")
         self.assertEqual(diagnostic["metadata"]["rule_id"], "review.unreviewed")
         self.assertEqual(diagnostic["metadata"]["scope"], "finding")
-        self.assertEqual(
-            chain["review_governance_profile_id"], profile["id"]
-        )
+        self.assertEqual(chain["review_governance_profile_id"], profile["id"])
         self.assertEqual(chain["review_governance_state"], profile["state"])
         self.assertEqual(
             chain["quality_diagnostic_entity_ids"],
             profile["diagnostic_entity_ids"],
         )
         self.assertTrue(chain["dimensions"]["quality_governance"])
-        global_ids = index["quality_gate_projection"][
-            "global_diagnostic_entity_ids"
-        ]
+        global_ids = index["quality_gate_projection"]["global_diagnostic_entity_ids"]
         self.assertTrue(global_ids)
         self.assertTrue(set(global_ids).isdisjoint(profile["diagnostic_entity_ids"]))
         self.assertEqual(
@@ -214,9 +210,7 @@ class CrossReferenceTests(unittest.TestCase):
         )
 
         self.assertEqual(profile["state"], "blocked_by_validation")
-        self.assertEqual(
-            profile["next_action_id"], "resolve_quality_gate_diagnostics"
-        )
+        self.assertEqual(profile["next_action_id"], "resolve_quality_gate_diagnostics")
         self.assertTrue(profile["blocking_diagnostic_entity_ids"])
         self.assertGreater(profile["diagnostic_counts"]["error"], 0)
         self.assertTrue(
@@ -243,7 +237,9 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertFalse(rejected["checks"]["review_governance_integrity"])
         self.assertFalse(rejected["checks"]["exact_regeneration"])
 
-    def test_duplicate_quality_diagnostics_keep_distinct_verified_identity(self) -> None:
+    def test_duplicate_quality_diagnostics_keep_distinct_verified_identity(
+        self,
+    ) -> None:
         diagnostic = {
             "rule_id": "synthetic.repeated",
             "level": "warning",
@@ -302,9 +298,7 @@ class CrossReferenceTests(unittest.TestCase):
                 for value in provenance["adapter_run_profiles"]
             )
         )
-        entity_kinds = {
-            value["id"]: value["kind"] for value in index["entities"]
-        }
+        entity_kinds = {value["id"]: value["kind"] for value in index["entities"]}
         self.assertEqual(
             entity_kinds[provenance["run_manifest_entity_id"]], "run_manifest"
         )
@@ -748,6 +742,91 @@ class CrossReferenceTests(unittest.TestCase):
         rejected_chain = verify_cross_reference_file(output)
         self.assertFalse(rejected_chain["checks"]["finding_chain_integrity"])
 
+    def test_cross_references_every_analysis_output_and_surfaces_unknowns(self) -> None:
+        index = build_cross_reference_index(self.analysis)
+        coverage = index["analysis_projection_coverage"]
+        profiles = {value["section"]: value for value in coverage["section_profiles"]}
+
+        self.assertEqual(set(profiles), set(self.analysis))
+        self.assertEqual(coverage["coverage_percent"], 100.0)
+        self.assertEqual(coverage["material_coverage_percent"], 100.0)
+        self.assertEqual(coverage["unmapped_section_names"], [])
+        self.assertEqual(coverage["registered_without_projection_section_names"], [])
+        self.assertEqual(
+            profiles["schema_version"]["coverage_status"], "provenance_only"
+        )
+        self.assertEqual(
+            profiles["runtime_evidence"]["coverage_status"],
+            "semantically_projected",
+        )
+        self.assertEqual(
+            profiles["graphify_reconciliation"]["coverage_status"],
+            "semantically_projected",
+        )
+        self.assertEqual(profiles["suggestions"]["coverage_status"], "empty")
+        self.assertEqual(len(coverage["relationship_ids"]), len(self.analysis))
+        self.assertEqual(
+            index["summary"]["analysis_projection_relationships"],
+            len(self.analysis),
+        )
+        self.assertFalse(
+            any(
+                value["kind"] == "unmapped_analysis_outputs"
+                for value in index["review_leads"]
+            )
+        )
+
+        diagram = build_diagram_models(
+            self.analysis, kind="cross_reference", cross_reference_index=index
+        )[0]
+        diagram_kinds = {value["kind"] for value in diagram["nodes"]}
+        self.assertIn("analysis_scope", diagram_kinds)
+        self.assertIn("analysis_section", diagram_kinds)
+
+        from jsonschema import Draft202012Validator
+
+        Draft202012Validator(schema_document("cross-reference")).validate(index)
+
+        extended = json.loads(json.dumps(self.analysis))
+        extended["experimental_scanner_output"] = {
+            "records": [{"id": "EXPERIMENTAL-1"}]
+        }
+        extended_index = build_cross_reference_index(extended)
+        extended_coverage = extended_index["analysis_projection_coverage"]
+        self.assertEqual(
+            extended_coverage["unmapped_section_names"],
+            ["experimental_scanner_output"],
+        )
+        self.assertLess(extended_coverage["coverage_percent"], 100.0)
+        self.assertLess(extended_coverage["material_coverage_percent"], 100.0)
+        self.assertIn(
+            "unmapped_analysis_outputs",
+            {value["kind"] for value in extended_index["review_leads"]},
+        )
+
+    def test_verifier_rejects_rehashed_analysis_projection_tampering(self) -> None:
+        output = self.root / "projection-fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        valid = verify_cross_reference_file(output, analysis=self.analysis)
+        self.assertTrue(valid["checks"]["analysis_projection_integrity"])
+
+        tampered = json.loads(output.read_text(encoding="utf-8"))
+        profile = next(
+            value
+            for value in tampered["analysis_projection_coverage"]["section_profiles"]
+            if value["section"] == "components"
+        )
+        profile["projected_entity_count"] += 1
+        content = dict(tampered)
+        content.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(tampered), encoding="utf-8")
+
+        rejected = verify_cross_reference_file(output)
+        self.assertFalse(rejected["valid"])
+        self.assertTrue(rejected["checks"]["content_integrity"])
+        self.assertFalse(rejected["checks"]["analysis_projection_integrity"])
+
     def test_cross_references_system_context_and_lifecycle_history(self) -> None:
         self.analysis["system_context"] = build_system_context(
             {
@@ -778,9 +857,7 @@ class CrossReferenceTests(unittest.TestCase):
                 "event": "review_update",
                 "at": "2026-08-13T12:00:00Z",
                 "reviewer": "Jordan",
-                "changes": {
-                    "operational_mode": {"before": "", "after": "  NORMAL  "}
-                },
+                "changes": {"operational_mode": {"before": "", "after": "  NORMAL  "}},
             }
         ]
         unmatched["review"]["operational_mode"] = "Emergency"
@@ -846,9 +923,7 @@ class CrossReferenceTests(unittest.TestCase):
             "SUG-MISSING",
         )
         lead_kinds = {value["kind"] for value in index["review_leads"]}
-        self.assertIn(
-            "finding_context_claims_outside_resolved_catalog", lead_kinds
-        )
+        self.assertIn("finding_context_claims_outside_resolved_catalog", lead_kinds)
         self.assertIn("finding_context_claims_without_catalog_field", lead_kinds)
         self.assertIn("unresolved_lifecycle_subject_references", lead_kinds)
 
@@ -883,9 +958,7 @@ class CrossReferenceTests(unittest.TestCase):
                 "event": "review_update",
                 "at": "2026-08-13T12:00:00Z",
                 "reviewer": "Jordan",
-                "changes": {
-                    "operational_mode": {"before": "", "after": "Normal"}
-                },
+                "changes": {"operational_mode": {"before": "", "after": "Normal"}},
             }
         ]
         output = self.root / "fabric.json"
@@ -902,28 +975,24 @@ class CrossReferenceTests(unittest.TestCase):
         content.pop("content_sha256")
         context_tampered["content_sha256"] = canonical_json_sha256(content)
         output.write_text(json.dumps(context_tampered), encoding="utf-8")
-        rejected_context = verify_cross_reference_file(
-            output, analysis=self.analysis
-        )
+        rejected_context = verify_cross_reference_file(output, analysis=self.analysis)
         self.assertFalse(rejected_context["checks"]["system_context_integrity"])
 
         export_cross_reference_index(self.analysis, output)
         lifecycle_tampered = json.loads(output.read_text(encoding="utf-8"))
-        lifecycle_tampered["lifecycle_provenance"][
-            "finding_review_event_profiles"
-        ][0]["event_sha256"] = "0" * 64
+        lifecycle_tampered["lifecycle_provenance"]["finding_review_event_profiles"][0][
+            "event_sha256"
+        ] = "0" * 64
         content = dict(lifecycle_tampered)
         content.pop("content_sha256")
         lifecycle_tampered["content_sha256"] = canonical_json_sha256(content)
         output.write_text(json.dumps(lifecycle_tampered), encoding="utf-8")
-        rejected_lifecycle = verify_cross_reference_file(
-            output, analysis=self.analysis
-        )
-        self.assertFalse(
-            rejected_lifecycle["checks"]["lifecycle_provenance_integrity"]
-        )
+        rejected_lifecycle = verify_cross_reference_file(output, analysis=self.analysis)
+        self.assertFalse(rejected_lifecycle["checks"]["lifecycle_provenance_integrity"])
 
-    def test_projects_test_candidates_and_coverage_without_promoting_evidence(self) -> None:
+    def test_projects_test_candidates_and_coverage_without_promoting_evidence(
+        self,
+    ) -> None:
         (self.root / "test_app.py").write_text(
             "from app import caller\n\n\ndef test_caller():\n    assert caller() == 1\n",
             encoding="utf-8",
@@ -965,9 +1034,7 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertFalse(profile["evidence_signals"]["terminal_verification"])
         self.assertTrue(profile["test_candidate_entity_ids"])
         self.assertTrue(profile["coverage_entity_ids"])
-        self.assertEqual(
-            chain["verification_readiness_profile_id"], profile["id"]
-        )
+        self.assertEqual(chain["verification_readiness_profile_id"], profile["id"])
         self.assertTrue(chain["dimensions"]["verification_readiness"])
         self.assertEqual(
             chain["verification_evidence_posture"],
@@ -1014,7 +1081,12 @@ class CrossReferenceTests(unittest.TestCase):
             "verification_readiness_gap_accepted_finding_without_owner",
             lead_kinds,
         )
-        self.assertGreater(index["summary"]["verification_readiness_gaps"]["accepted_finding_without_owner"], 0)
+        self.assertGreater(
+            index["summary"]["verification_readiness_gaps"][
+                "accepted_finding_without_owner"
+            ],
+            0,
+        )
 
     def test_verified_posture_requires_registered_execution_and_evidence(self) -> None:
         finding = self.analysis["items"][0]
@@ -1071,10 +1143,14 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertTrue(profile["evidence_signals"]["independent_execution_review"])
         self.assertTrue(profile["evidence_signals"]["terminal_verification"])
         self.assertFalse(profile["readiness_gaps"])
-        self.assertTrue(verify_cross_reference_file(
-            export_cross_reference_index(self.analysis, self.root / "verified.json"),
-            analysis=self.analysis,
-        )["valid"])
+        self.assertTrue(
+            verify_cross_reference_file(
+                export_cross_reference_index(
+                    self.analysis, self.root / "verified.json"
+                ),
+                analysis=self.analysis,
+            )["valid"]
+        )
 
     def test_verifier_rejects_verification_readiness_tampering(self) -> None:
         output = self.root / "fabric.json"

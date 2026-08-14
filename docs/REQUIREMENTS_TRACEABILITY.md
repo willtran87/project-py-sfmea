@@ -41,6 +41,13 @@ schema files and the publication catalog: bounded binary consumption, regular no
 inspected/opened/final identity reconciliation, strict UTF-8, duplicate-key and non-finite-number
 rejection, iterative depth/node ceilings, and structured verifier failures before canonical hashing.
 
+Cross-output integration traceability includes a closed declaration registry plus one digest-bound
+entity for every top-level analysis section. Standalone verification reconciles section identity,
+projection mode/status, declared entity kinds, declared relationship channels, sampled identities,
+complete identity-set digests, and summary accounting. Unknown populated outputs and registered
+semantic outputs without material links remain distinct review leads; exact verification binds the
+ledger back to the governed analysis without claiming nested-record completeness.
+
 This matrix traces the workbench acceptance criteria to executable implementation and
 verification evidence. “Implemented” means a bounded capability exists and is tested;
 it does not claim analysis completeness, certification qualification, or engineering

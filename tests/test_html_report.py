@@ -160,6 +160,26 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn("citations with source lineage", document)
         self.assertIn("Guidance source lineage", document)
 
+    def test_report_projects_analysis_output_coverage(self) -> None:
+        report = build_html_report_data(self.analysis)
+        cross_reference = report["cross_reference"]
+        coverage = cross_reference["analysis_projection_coverage"]
+        profiles = {value["section"]: value for value in coverage["section_profiles"]}
+
+        self.assertEqual(set(profiles), set(self.analysis))
+        self.assertEqual(coverage["coverage_percent"], 100.0)
+        self.assertEqual(coverage["material_coverage_percent"], 100.0)
+        self.assertEqual(coverage["unmapped_section_names"], [])
+        self.assertEqual(cross_reference["summary"]["unmapped_analysis_sections"], 0)
+
+        output = export_html_report(self.analysis, self.root / "coverage-report.html")
+        document = output.read_text(encoding="utf-8")
+        self.assertIn('"analysis_projection_coverage":', document)
+        self.assertIn("declared analysis-output coverage", document)
+        self.assertIn("material analysis-output coverage", document)
+        self.assertIn("Output coverage:", document)
+        self.assertIn("unmapped analysis sections", document)
+
     def test_report_projects_context_alignment_and_lifecycle_provenance(self) -> None:
         finding = self.analysis["items"][0]
         self.analysis["system_context"] = build_system_context(
@@ -178,9 +198,7 @@ class HtmlReportTests(unittest.TestCase):
                 "event": "review_update",
                 "at": "2026-08-13T12:00:00Z",
                 "reviewer": "Jordan",
-                "changes": {
-                    "operational_mode": {"before": "", "after": "normal"}
-                },
+                "changes": {"operational_mode": {"before": "", "after": "normal"}},
             }
         ]
 

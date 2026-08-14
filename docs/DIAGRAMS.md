@@ -77,7 +77,10 @@ context values, digest-bound review events, and recorded lifecycle actors appear
 findings when present. Context equality does not imply operational adequacy, and actor labels do
 not imply authenticated approval. Versioned guidance-source nodes now connect to exact citation
 nodes and selected findings, making document lineage traversable without treating it as
-applicability or compliance evidence. Its metadata binds the exact analysis and complete cross-reference
+applicability or compliance evidence. The analysis-scope node also connects to one digest-bound
+node per top-level analysis output, exposing semantic, provenance-only, empty,
+registered-without-projection, and unmapped coverage alongside the selected evidence chains. Its
+metadata reports coverage and gap counts and binds the exact analysis and complete cross-reference
 projection digests. The view is bounded to 40 finding chains and 500 entities; use
 `sfmea cross-reference ANALYSIS --format json` for the complete machine-readable relationship
 and discrepancy registers. Static agreement is corroboration, runtime presence is a bounded

@@ -489,6 +489,18 @@ def cross_reference_diagram(
         ),
     )[:finding_limit]
     selected: set[str] = set()
+    projection_coverage = index.get("analysis_projection_coverage", {})
+    analysis_scope_entity_id = str(
+        projection_coverage.get("analysis_scope_entity_id", "")
+    )
+    if analysis_scope_entity_id in entity_by_id:
+        selected.add(analysis_scope_entity_id)
+    selected.update(
+        str(profile.get("section_entity_id", ""))
+        for profile in projection_coverage.get("section_profiles", [])
+        if isinstance(profile, dict)
+        and str(profile.get("section_entity_id", "")) in entity_by_id
+    )
     for chain in chains:
         selected.update(
             entity_id
@@ -547,6 +559,7 @@ def cross_reference_diagram(
             "guidance_catalog",
             "methodology_basis",
             "methodology",
+            "analysis_projection",
             "system_context",
             "lifecycle_history",
         }:
@@ -568,6 +581,8 @@ def cross_reference_diagram(
         for entity_id in selected
     }
     layer_by_kind = {
+        "analysis_scope": 0,
+        "analysis_section": 1,
         "methodology": 0,
         "guidance_source": 0,
         "methodology_review_check": 1,
@@ -667,6 +682,8 @@ def cross_reference_diagram(
                 "summaries remain explicitly non-authoritative review aids."
                 " Versioned guidance sources and exact citation locators remain traversable"
                 " rather than relying on opaque citation metadata."
+                " Digest-bound analysis-section nodes expose which scanner outputs are"
+                " semantically projected, provenance-only, empty, or unmapped."
                 " Resolved context values, exact finding-context matches, and digest-bound "
                 "lifecycle events expose configuration and review history without implying "
                 "semantic equivalence or authenticated approval."
@@ -691,8 +708,17 @@ def cross_reference_diagram(
                 "verification_profiles_with_signals": summary[
                     "verification_profiles_with_signals"
                 ],
-                "review_governance_profiles": summary[
-                    "review_governance_profiles"
+                "review_governance_profiles": summary["review_governance_profiles"],
+                "analysis_sections": summary["analysis_sections"],
+                "analysis_projection_coverage_percent": summary[
+                    "analysis_projection_coverage_percent"
+                ],
+                "analysis_material_projection_coverage_percent": summary[
+                    "analysis_material_projection_coverage_percent"
+                ],
+                "unmapped_analysis_sections": summary["unmapped_analysis_sections"],
+                "registered_without_projection_analysis_sections": summary[
+                    "registered_without_projection_analysis_sections"
                 ],
                 "quality_gate_diagnostics": summary["quality_gate_diagnostics"],
                 "adapter_runs": summary["adapter_runs"],
@@ -703,18 +729,14 @@ def cross_reference_diagram(
                 "findings_with_repository_provenance": summary[
                     "findings_with_repository_provenance"
                 ],
-                "opaque_repository_artifacts": summary[
-                    "opaque_repository_artifacts"
-                ],
+                "opaque_repository_artifacts": summary["opaque_repository_artifacts"],
                 "configured_source_findings": summary["configured_source_findings"],
                 "findings_with_source_provenance": summary[
                     "findings_with_source_provenance"
                 ],
                 "machine_suggestions": summary["machine_suggestions"],
                 "machine_summaries": summary["machine_summaries"],
-                "machine_claim_relationships": summary[
-                    "machine_claim_relationships"
-                ],
+                "machine_claim_relationships": summary["machine_claim_relationships"],
                 "findings_with_machine_assistance": summary[
                     "findings_with_machine_assistance"
                 ],

@@ -63,8 +63,8 @@ Available names:
 | `configuration-authoring-apply-receipt` | Validated TOML publication and addition-count receipt |
 | `configuration-authoring-draft` | Editable guidance, architecture, and interface proposal workspace |
 | `configuration-authoring-verification` | Integrity, semantics, and optional exact-binding verdict |
-| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure, verification-readiness, review-governance, adapter-run, repository-source, non-authoritative machine-assistance, resolved system-context, and lifecycle-history provenance, finding chains, quality diagnostics, compound-model/claim intersections, and prioritized review leads |
-| `cross-reference-verification` | Fabric integrity, semantic/readiness/governance/repository/machine/context/lifecycle provenance and chain referential consistency, diagnostic scope/identity, accounting, and optional exact-analysis regeneration verdict |
+| `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure, verification-readiness, review-governance, adapter-run, repository-source, non-authoritative machine-assistance, guidance/context/lifecycle provenance, analysis-output projection coverage, finding chains, quality diagnostics, compound-model/claim intersections, and prioritized review leads |
+| `cross-reference-verification` | Fabric integrity, semantic/readiness/governance/repository/machine/guidance/context/lifecycle/output-projection consistency, diagnostic scope/identity, accounting, and optional exact-analysis regeneration verdict |
 | `sfta-authoring` | Sealed exact-analysis-bound fault-tree definitions with named engineering approvals |
 | `sfta-authoring-apply-receipt` | Applied hazard replacements and source/result analysis bindings |
 | `sfta-authoring-draft` | Editable one-entry-per-hazard fault-tree engineering workspace |
@@ -133,6 +133,16 @@ relationships across ten closed dimensions. Finding chains copy that profile bin
 deterministically derived `compound_exposure_kinds`. The verifier reconciles profile identity,
 dimension booleans, record references, compound rules, and all summary counts even when the source
 analysis is not supplied; `--analysis` additionally requires exact regeneration.
+
+`analysis_projection_coverage` makes output integration inspectable rather than implicit. Every
+top-level source section has a stable `analysis_section` entity, canonical source digest, source
+record count, declaration mode, coverage status, and sampled/digested projection identity sets.
+The complete entity and relationship sets are recomputed from declared kinds and channels during
+standalone verification. Unknown populated sections are `unmapped`; registered semantic sections
+with source records but no material link are `registered_without_projection`. Supplying
+`--analysis` additionally proves each source digest through exact regeneration. Section-level
+declared and material coverage percentages remain separate; neither claims that every nested
+source record was modeled.
 
 `repository_provenance` binds the analysis scope to its integrity-declaring inventory, every
 inventoried artifact and excluded region, dependency and contract declarations, the resolved

@@ -40,6 +40,7 @@ CROSS_REFERENCE_VERIFICATION_CHECKS = (
     "review_governance_integrity",
     "adapter_provenance_integrity",
     "repository_provenance_integrity",
+    "analysis_projection_integrity",
     "machine_assistance_integrity",
     "guidance_provenance_integrity",
     "system_context_integrity",
@@ -58,6 +59,352 @@ MAX_RELATIONSHIPS = 500_000
 MAX_FUSIONS = 100_000
 MAX_CHAINS = 100_000
 MAX_REVIEW_LEADS = 100_000
+
+ANALYSIS_PROJECTION_STATUSES = (
+    "empty",
+    "semantically_projected",
+    "registered_without_projection",
+    "provenance_only",
+    "unmapped",
+)
+
+# This registry is deliberately explicit. A newly introduced top-level analysis output is
+# therefore visible as an unmapped review lead until its projection authority is designed,
+# documented, and added here. ``record_paths`` identify the collections that can produce
+# semantic records; declarations without record paths treat the whole non-empty section as
+# one projectable record.
+ANALYSIS_SECTION_PROJECTION_DECLARATIONS: dict[str, dict[str, Any]] = {
+    "schema_version": {
+        "mode": "provenance_only",
+        "rationale": "The schema identifier is bound by the section digest and analysis digest.",
+    },
+    "generator": {
+        "mode": "provenance_only",
+        "rationale": "Generator identity is retained as provenance rather than domain evidence.",
+    },
+    "summary": {
+        "mode": "provenance_only",
+        "rationale": "Aggregate counts are reconciled from first-class records elsewhere.",
+    },
+    "project": {
+        "mode": "semantic",
+        "entity_kinds": ("analysis_scope", "configuration_input", "run_manifest"),
+        "relationship_channels": ("analysis_input", "run_manifest"),
+        "rationale": "Project identity, baseline, settings, and resolved inputs bind the analysis scope.",
+    },
+    "context": {
+        "mode": "semantic",
+        "entity_kinds": (
+            "configuration_input",
+            "contract",
+            "dependency",
+            "hazard",
+            "requirement",
+            "subsystem",
+        ),
+        "relationship_channels": (
+            "analysis_input",
+            "contract_inventory",
+            "dependency_inventory",
+            "project_mapping",
+        ),
+        "rationale": "Configured requirements, hazards, mappings, dependencies, and contracts are linked to findings and source inputs.",
+    },
+    "system_context": {
+        "mode": "semantic",
+        "entity_kinds": (
+            "finding_context_claim",
+            "system_context",
+            "system_context_field",
+            "system_context_value",
+        ),
+        "relationship_channels": ("system_context",),
+        "rationale": "Resolved context fields and exact finding claims are first-class traceability records.",
+    },
+    "repository_inventory": {
+        "mode": "semantic",
+        "entity_kinds": (
+            "repository_artifact",
+            "repository_inventory",
+            "repository_region",
+        ),
+        "relationship_channels": ("repository_inventory",),
+        "record_paths": (("entries",), ("regions",)),
+        "rationale": "Inventoried, excluded, opaque, and analyzed repository material is explicitly accounted for.",
+    },
+    "interface_reconciliation": {
+        "mode": "semantic",
+        "entity_kinds": ("client_endpoint", "server_route"),
+        "relationship_channels": ("interface_reconciliation",),
+        "record_paths": (
+            ("server_routes",),
+            ("client_endpoints",),
+            ("matches",),
+            ("unmatched_clients",),
+            ("unmatched_routes",),
+        ),
+        "rationale": "Cross-stack routes, client endpoints, exact matches, and reconciliation gaps are linked.",
+    },
+    "methodology": {
+        "mode": "semantic",
+        "entity_kinds": ("guidance_source", "methodology", "methodology_review_check"),
+        "relationship_channels": ("methodology", "methodology_basis"),
+        "rationale": "The method, its source basis, and review checks are independently traversable.",
+    },
+    "guidance": {
+        "mode": "semantic",
+        "entity_kinds": ("citation", "guidance_source"),
+        "relationship_channels": ("guidance_catalog", "guidance_mapping"),
+        "record_paths": (("sources",), ("citations",), ("rules",)),
+        "rationale": "Versioned guidance sources and exact citations connect to citing findings.",
+    },
+    "components": {
+        "mode": "semantic",
+        "entity_kinds": ("component", "semantic_profile"),
+        "relationship_channels": ("native_ast",),
+        "record_paths": ((),),
+        "rationale": "Discovered Python components anchor architecture, semantic, and failure-mode relationships.",
+    },
+    "interprocedural_data_flow": {
+        "mode": "semantic",
+        "entity_kinds": ("data_flow_edge",),
+        "relationship_channels": ("data_flow",),
+        "record_paths": (("edges",),),
+        "rationale": "Bounded caller/callee value-flow edges are linked to participating components.",
+    },
+    "alias_object_flow": {
+        "mode": "semantic",
+        "entity_kinds": ("alias_object_binding",),
+        "relationship_channels": ("alias_object_flow",),
+        "record_paths": (("records",),),
+        "rationale": "Alias and object-flow bindings are linked to their components.",
+    },
+    "concurrency_model": {
+        "mode": "semantic",
+        "entity_kinds": ("concurrency_operation", "concurrency_relation"),
+        "relationship_channels": ("concurrency",),
+        "record_paths": (("operations",), ("relations",)),
+        "rationale": "Concurrency operations and relations are linked without claiming runtime scheduling proof.",
+    },
+    "exception_propagation": {
+        "mode": "semantic",
+        "entity_kinds": (
+            "exception_handler",
+            "exception_propagation_edge",
+            "exception_raise",
+        ),
+        "relationship_channels": ("exception_propagation",),
+        "record_paths": (("raises",), ("handlers",), ("edges",)),
+        "rationale": "Raises, handlers, and bounded propagation edges are linked to components.",
+    },
+    "state_machine_model": {
+        "mode": "semantic",
+        "entity_kinds": ("state_candidate", "state_guard", "state_transition"),
+        "relationship_channels": ("state_machine",),
+        "record_paths": (("states",), ("guards",), ("transitions",)),
+        "rationale": "State candidates, guards, and transitions are linked as static semantics.",
+    },
+    "resilience_semantics": {
+        "mode": "semantic",
+        "entity_kinds": (
+            "circuit_breaker_model",
+            "resilience_effect_summary",
+            "resilience_operation",
+            "resource_summary",
+            "retry_path",
+            "transaction_summary",
+        ),
+        "relationship_channels": ("resilience_semantics",),
+        "record_paths": (
+            ("operations",),
+            ("effects",),
+            ("transactions",),
+            ("resources",),
+            ("timing_relations",),
+            ("retry_paths",),
+            ("circuit_breakers",),
+        ),
+        "record_presence_rules": {
+            ("operations",): {"required_fields": ("id",)},
+            ("effects",): {
+                "any_fields": (
+                    "direct_effects",
+                    "transitive_effects",
+                    "unprotected_retry_side_effect",
+                ),
+                "greater_than": {"retry_factor": 1},
+            },
+            ("transactions",): {"any_fields": ("operation_ids", "consistency_risks")},
+            ("resources",): {
+                "any_fields": (
+                    "bounded_resources",
+                    "unbounded_growth_candidates",
+                    "recursive_call_candidate",
+                )
+            },
+            ("timing_relations",): {
+                "required_fields": ("caller_reference", "callee_reference")
+            },
+            ("circuit_breakers",): {"required_fields": ("id",)},
+        },
+        "rationale": "Timing, retry, circuit-breaker, side-effect, transaction, and resource semantics are cross-linked.",
+    },
+    "authorization_scope_flow": {
+        "mode": "semantic",
+        "entity_kinds": ("authorization_context", "authorization_scope_edge"),
+        "relationship_channels": ("authorization_scope",),
+        "record_paths": (("components",), ("edges",)),
+        "record_presence_rules": {
+            ("components",): {
+                "any_fields": (
+                    "context_dimensions",
+                    "controls",
+                    "risks",
+                    "boundary",
+                )
+            },
+            ("edges",): {"required_fields": ("id",)},
+        },
+        "rationale": "Authorization context and scope-flow candidates are linked to components.",
+    },
+    "contract_semantics": {
+        "mode": "semantic",
+        "entity_kinds": ("contract_compatibility", "contract_operation"),
+        "relationship_channels": ("contract_semantics",),
+        "record_paths": (("operations",), ("compatibility",)),
+        "rationale": "Local contract operations and compatibility records are linked to components.",
+    },
+    "deployment_topology": {
+        "mode": "semantic",
+        "entity_kinds": ("deployment_node",),
+        "relationship_channels": ("deployment_topology",),
+        "record_paths": (("nodes",), ("placements",)),
+        "record_presence_rules": {
+            ("nodes",): {"required_fields": ("id",)},
+            ("placements",): {"any_fields": ("node_ids",)},
+        },
+        "rationale": "Declared deployment nodes and candidate placements are linked.",
+    },
+    "shared_fate_analysis": {
+        "mode": "semantic",
+        "entity_kinds": ("shared_fate_region",),
+        "relationship_channels": ("shared_fate",),
+        "record_paths": (("regions",),),
+        "rationale": "Shared-fate regions are linked to every affected component.",
+    },
+    "architecture_hierarchy": {
+        "mode": "semantic",
+        "entity_kinds": ("architecture_node",),
+        "relationship_channels": ("architecture_hierarchy",),
+        "record_paths": (("nodes",), ("memberships",)),
+        "rationale": "Architecture hierarchy nodes and memberships are linked to components.",
+    },
+    "items": {
+        "mode": "semantic",
+        "entity_kinds": (
+            "finding",
+            "review_governance_profile",
+            "verification_readiness_profile",
+        ),
+        "relationship_channels": (
+            "engineering_review",
+            "sfmea",
+            "verification_readiness",
+        ),
+        "record_paths": ((),),
+        "rationale": "Every retained failure-mode finding anchors review, traceability, and verification-readiness chains.",
+    },
+    "warnings": {
+        "mode": "semantic",
+        "entity_kinds": ("quality_gate_diagnostic",),
+        "relationship_channels": ("validation",),
+        "record_paths": ((),),
+        "rationale": "Scanner and validation diagnostics remain distinct workflow-quality evidence.",
+    },
+    "suggestions": {
+        "mode": "semantic",
+        "entity_kinds": ("machine_suggestion",),
+        "relationship_channels": ("machine_assistance",),
+        "record_paths": ((),),
+        "rationale": "Machine suggestions retain non-authoritative claim provenance and review links.",
+    },
+    "generated_summaries": {
+        "mode": "semantic",
+        "entity_kinds": ("machine_summary",),
+        "relationship_channels": ("machine_assistance",),
+        "record_paths": ((),),
+        "rationale": "Generated summaries retain source-digest, staleness, and claim-comparison links.",
+    },
+    "runtime_evidence": {
+        "mode": "semantic",
+        "entity_kinds": (),
+        "relationship_channels": ("runtime_observed",),
+        "record_paths": (("imports",), ("spans",), ("edges",)),
+        "rationale": "Observed runtime edges remain a distinct relationship channel and do not prove coverage.",
+    },
+    "assurance": {
+        "mode": "semantic",
+        "entity_kinds": (
+            "assurance_owner",
+            "assurance_reviewer",
+            "evidence",
+            "execution",
+            "implemented_test",
+            "obligation",
+        ),
+        "relationship_channels": ("assurance_planner", "engineering_review"),
+        "record_paths": (("obligations",), ("evidence_artifacts",), ("executions",)),
+        "rationale": "Assurance obligations, implementations, executions, artifacts, ownership, and review remain authority-separated.",
+    },
+    "sfta": {
+        "mode": "semantic",
+        "entity_kinds": ("sfta_event", "sfta_tree"),
+        "relationship_channels": ("sfta",),
+        "record_paths": (("trees",),),
+        "rationale": "Fault-tree events and finding correlations are linked bidirectionally.",
+    },
+    "adapter_runs": {
+        "mode": "semantic",
+        "entity_kinds": ("adapter_ledger", "adapter_run"),
+        "relationship_channels": ("adapter_ledger",),
+        "record_paths": (("runs",),),
+        "rationale": "Adapter executions and normalized contribution identities are integrity-bound.",
+    },
+    "run_manifest": {
+        "mode": "semantic",
+        "entity_kinds": ("configuration_input", "run_manifest"),
+        "relationship_channels": ("analysis_input", "run_manifest"),
+        "rationale": "Resolved inputs and reproducibility metadata bind the exact analysis state.",
+    },
+    "history": {
+        "mode": "semantic",
+        "entity_kinds": ("lifecycle_actor", "lifecycle_event"),
+        "relationship_channels": ("lifecycle_history",),
+        "record_paths": ((),),
+        "rationale": "Digest-bound analysis lifecycle events retain subject and actor relationships.",
+    },
+    "sfta_authoring": {
+        "mode": "semantic",
+        "entity_kinds": ("lifecycle_actor", "lifecycle_event"),
+        "relationship_channels": ("lifecycle_history",),
+        "record_paths": (("history",),),
+        "rationale": "Applied SFTA authoring history is retained as lifecycle provenance.",
+    },
+    "activation": {
+        "mode": "semantic",
+        "entity_kinds": ("lifecycle_actor", "lifecycle_event"),
+        "relationship_channels": ("lifecycle_history",),
+        "record_paths": (("decision_history",),),
+        "rationale": "Governed activation decisions are retained as lifecycle provenance.",
+    },
+    "graphify_reconciliation": {
+        "mode": "semantic",
+        "entity_kinds": (),
+        "relationship_channels": ("graphify_static",),
+        "record_paths": (("edges",),),
+        "rationale": "Supplementary Graphify relationships remain a distinct static evidence channel.",
+    },
+}
 
 SEMANTIC_EXPOSURE_DIMENSIONS = (
     "data_flow",
@@ -187,9 +534,7 @@ LIFECYCLE_SCOPE_PARENT_RELATIONS = {
 }
 
 
-def _quality_diagnostic_raw_id(
-    value: dict[str, Any], *, occurrence: int = 1
-) -> str:
+def _quality_diagnostic_raw_id(value: dict[str, Any], *, occurrence: int = 1) -> str:
     return stable_id(
         "QUALITY-DIAGNOSTIC",
         str(value.get("rule_id", "")),
@@ -242,6 +587,70 @@ def _safe_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _analysis_section_value_at_path(value: object, path: tuple[str, ...]) -> object:
+    current = value
+    for field in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(field)
+    return current
+
+
+def _analysis_section_record_count(
+    value: object, declaration: dict[str, Any] | None
+) -> int:
+    """Count projectable records without treating structural summaries as evidence."""
+
+    if not declaration or "record_paths" not in declaration:
+        return 0 if value in (None, "", [], {}) else 1
+    count = 0
+    presence_rules_by_path = (
+        declaration.get("record_presence_rules", {})
+        if isinstance(declaration.get("record_presence_rules"), dict)
+        else {}
+    )
+    for path in declaration.get("record_paths", ()):
+        normalized_path = tuple(path)
+        selected = _analysis_section_value_at_path(value, normalized_path)
+        presence_rule = presence_rules_by_path.get(normalized_path)
+        if isinstance(presence_rule, dict) and isinstance(selected, list):
+            required_fields = tuple(presence_rule.get("required_fields", ()))
+            any_fields = tuple(presence_rule.get("any_fields", ()))
+            greater_than = presence_rule.get("greater_than", {})
+            greater_than = greater_than if isinstance(greater_than, dict) else {}
+
+            def record_is_projectable(record: dict[str, Any]) -> bool:
+                if required_fields and not all(
+                    bool(record.get(field)) for field in required_fields
+                ):
+                    return False
+                signal_rule_present = bool(any_fields or greater_than)
+                signal_present = any(bool(record.get(field)) for field in any_fields)
+                for field, threshold in greater_than.items():
+                    candidate = record.get(field)
+                    if isinstance(candidate, (int, float)) and isinstance(
+                        threshold, (int, float)
+                    ):
+                        signal_present = signal_present or candidate > threshold
+                return not signal_rule_present or signal_present
+
+            count += sum(
+                record_is_projectable(record)
+                for record in selected
+                if isinstance(record, dict)
+            )
+            continue
+        if isinstance(selected, (list, dict, str)):
+            count += len(selected)
+        elif selected is not None:
+            count += 1
+    return count
+
+
+def _identifier_set_sha256(values: set[str]) -> str:
+    return canonical_json_sha256(sorted(values))
+
+
 def _entity_id(kind: str, raw_id: object) -> str:
     return f"{kind}:{raw_id}"
 
@@ -253,16 +662,16 @@ def _canonical_context_value(value: object) -> str:
         return ""
     if isinstance(value, (dict, list, tuple, set)):
         normalized = sorted(value, key=str) if isinstance(value, set) else value
-        return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return json.dumps(
+            normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
     return str(value)
 
 
 def _context_values(value: object) -> list[str]:
     values = value if isinstance(value, (list, tuple, set)) else [value]
     return [
-        canonical
-        for entry in values
-        if (canonical := _canonical_context_value(entry))
+        canonical for entry in values if (canonical := _canonical_context_value(entry))
     ]
 
 
@@ -292,8 +701,7 @@ def _lifecycle_subject_references(
             references.append((field, entity_kind, raw_id))
     for field, entity_kind in LIFECYCLE_SUBJECT_LIST_FIELDS.items():
         references.extend(
-            (field, entity_kind, raw_id)
-            for raw_id in _text_values(event.get(field))
+            (field, entity_kind, raw_id) for raw_id in _text_values(event.get(field))
         )
     subject_kind = str(event.get("kind", ""))
     if event.get("subject_id") and subject_kind in {
@@ -412,7 +820,10 @@ def _verification_evidence_posture(
     latest = executions[-1] if executions else {}
     latest_status = str(latest.get("status", ""))
     independently_reviewed = bool(latest.get("reviews"))
-    if assurance_statuses & {"verified", "closed"} and "sufficient" in evidence_statuses:
+    if (
+        assurance_statuses & {"verified", "closed"}
+        and "sufficient" in evidence_statuses
+    ):
         return "verified_with_sufficient_evidence"
     if "accepted_risk" in assurance_statuses:
         return "risk_accepted_not_verification_evidence"
@@ -608,7 +1019,8 @@ def build_cross_reference_index(
     if configuration_digest or configuration_path:
         configuration_input_entity = add_entity(
             "configuration_input",
-            configuration_digest or stable_id("CONFIGURATION-INPUT", configuration_path),
+            configuration_digest
+            or stable_id("CONFIGURATION-INPUT", configuration_path),
             configuration_path or "resolved project configuration",
             authority="run_manifest_bound_resolved_configuration_input",
             metadata={
@@ -723,14 +1135,10 @@ def build_cross_reference_index(
     context_field_profiles: list[dict[str, Any]] = []
     context_field_entity_by_name: dict[str, str] = {}
     context_value_entity_ids: set[str] = set()
-    context_value_entities_by_field_and_normalized: dict[
-        tuple[str, str], str
-    ] = {}
+    context_value_entities_by_field_and_normalized: dict[tuple[str, str], str] = {}
     for field_name in context_field_names:
         supplied_record = supplied_context_fields.get(field_name, {})
-        label = str(
-            supplied_record.get("label", field_name.replace("_", " ").title())
-        )
+        label = str(supplied_record.get("label", field_name.replace("_", " ").title()))
         values = _context_values(resolved_system_context.get(field_name))
         field_entity = add_entity(
             "system_context_field",
@@ -741,7 +1149,9 @@ def build_cross_reference_index(
                 "field": field_name,
                 "required": bool(supplied_record.get("required", False)),
                 "status": str(
-                    supplied_record.get("status", "provided" if values else "unresolved")
+                    supplied_record.get(
+                        "status", "provided" if values else "unresolved"
+                    )
                 ),
                 "provenance": str(
                     supplied_record.get(
@@ -808,7 +1218,9 @@ def build_cross_reference_index(
                 "label": label,
                 "required": bool(supplied_record.get("required", False)),
                 "status": str(
-                    supplied_record.get("status", "provided" if values else "unresolved")
+                    supplied_record.get(
+                        "status", "provided" if values else "unresolved"
+                    )
                 ),
                 "provenance": str(
                     supplied_record.get(
@@ -870,9 +1282,7 @@ def build_cross_reference_index(
         "repository inventory",
         authority="integrity_bound_repository_inventory",
         metadata={
-            "inventory_sha256": str(
-                repository_inventory.get("inventory_sha256", "")
-            ),
+            "inventory_sha256": str(repository_inventory.get("inventory_sha256", "")),
             "schema_version": str(repository_inventory.get("schema_version", "")),
             "truncated": bool(repository_inventory.get("truncated")),
             "artifact_count": len(inventory_entries),
@@ -965,9 +1375,7 @@ def build_cross_reference_index(
     ]
     dependency_source_artifact_entities = {
         repository_artifact_entities_by_path[source]
-        for source in {
-            str(value.get("source", "")) for value in context_dependencies
-        }
+        for source in {str(value.get("source", "")) for value in context_dependencies}
         if source in repository_artifact_entities_by_path
     }
     component_source_relationship_ids: dict[str, set[str]] = defaultdict(set)
@@ -977,9 +1385,11 @@ def build_cross_reference_index(
     unaccounted_component_ids: list[str] = []
     for component_id, component in components.items():
         source_path = str(component.get("source", {}).get("path", ""))
-        artifact_entities = {
-            repository_artifact_entities_by_path[source_path]
-        } if source_path in repository_artifact_entities_by_path else set()
+        artifact_entities = (
+            {repository_artifact_entities_by_path[source_path]}
+            if source_path in repository_artifact_entities_by_path
+            else set()
+        )
         if (
             not artifact_entities
             and component.get("kind") == "environment"
@@ -1223,9 +1633,7 @@ def build_cross_reference_index(
                 "version": str(guidance_source_record.get("version", "")),
                 "status": str(guidance_source_record.get("status", "")),
                 "url": str(guidance_source_record.get("url", "")),
-                "record_sha256": str(
-                    guidance_source_record.get("record_sha256", "")
-                ),
+                "record_sha256": str(guidance_source_record.get("record_sha256", "")),
                 "source_record_sha256": source_record_sha256,
             },
         )
@@ -1246,9 +1654,9 @@ def build_cross_reference_index(
         if not source_entity:
             unresolved_methodology_source_ids.add(source_id)
             continue
-        if canonical_json_sha256(methodology_basis_record_by_id[source_id]) != canonical_json_sha256(
-            guidance_source_by_id[source_id]
-        ):
+        if canonical_json_sha256(
+            methodology_basis_record_by_id[source_id]
+        ) != canonical_json_sha256(guidance_source_by_id[source_id]):
             mismatched_methodology_source_ids.add(source_id)
             continue
         matched_methodology_basis_source_ids.add(source_id)
@@ -1750,9 +2158,7 @@ def build_cross_reference_index(
                 continue
             if isinstance(value, list):
                 scalar_values = [
-                    item
-                    for item in value
-                    if isinstance(item, (str, int, float, bool))
+                    item for item in value if isinstance(item, (str, int, float, bool))
                 ]
                 metadata[field] = scalar_values[:100]
                 if len(scalar_values) > 100:
@@ -1989,9 +2395,7 @@ def build_cross_reference_index(
                     record_id,
                     record,
                     role=role,
-                    label=record.get("operation")
-                    or record.get("kind")
-                    or record_id,
+                    label=record.get("operation") or record.get("kind") or record_id,
                     authority="governed_local_contract_semantics",
                 )
 
@@ -2071,7 +2475,9 @@ def build_cross_reference_index(
             authority="deterministic_cross_analyzer_semantic_profile",
             metadata={
                 "populated_dimensions": [
-                    dimension for dimension, populated in dimensions.items() if populated
+                    dimension
+                    for dimension, populated in dimensions.items()
+                    if populated
                 ]
             },
         )
@@ -2193,7 +2599,9 @@ def build_cross_reference_index(
     readiness_relationships_by_obligation: dict[str, set[str]] = defaultdict(set)
     for obligation_id, obligation in obligations.items():
         component_id = str(obligation.get("component_id", ""))
-        for test_path in _candidate_test_paths(obligation.get("existing_test_candidates")):
+        for test_path in _candidate_test_paths(
+            obligation.get("existing_test_candidates")
+        ):
             test_entity = add_entity(
                 "test_candidate",
                 stable_id("TEST-CANDIDATE", test_path),
@@ -2345,9 +2753,11 @@ def build_cross_reference_index(
             )
 
         source_path = str(item.get("source", {}).get("path", ""))
-        source_artifact_entities = {
-            repository_artifact_entities_by_path[source_path]
-        } if source_path in repository_artifact_entities_by_path else set()
+        source_artifact_entities = (
+            {repository_artifact_entities_by_path[source_path]}
+            if source_path in repository_artifact_entities_by_path
+            else set()
+        )
         if not source_artifact_entities:
             source_artifact_entities = set(
                 component_source_artifact_entities.get(component_id, set())
@@ -2458,9 +2868,7 @@ def build_cross_reference_index(
             if relation_id in relationships:
                 guidance_provenance_relationship_ids.add(relation_id)
                 guidance_citation_relationship_ids_by_id[citation_id].add(relation_id)
-                guidance_finding_entity_ids_by_citation[citation_id].add(
-                    finding_entity
-                )
+                guidance_finding_entity_ids_by_citation[citation_id].add(finding_entity)
                 guidance_relationships_by_finding[finding_id].add(relation_id)
             source_id = guidance_citation_source_id_by_id.get(citation_id, "")
             source_entity = guidance_source_entity_by_id.get(source_id, "")
@@ -2682,9 +3090,7 @@ def build_cross_reference_index(
             if not test_candidate_entity_ids and not implementation_registered:
                 readiness_gaps.add("accepted_finding_without_test_candidate")
             if not implementation_registered:
-                readiness_gaps.add(
-                    "accepted_finding_without_registered_implementation"
-                )
+                readiness_gaps.add("accepted_finding_without_registered_implementation")
             if implementation_registered and not finding_executions:
                 readiness_gaps.add("implemented_test_without_execution")
             if str(latest_execution.get("status", "")) in {
@@ -2694,28 +3100,20 @@ def build_cross_reference_index(
             }:
                 readiness_gaps.add("failed_or_incomplete_execution")
             if passing_execution and not independently_reviewed_execution:
-                readiness_gaps.add(
-                    "passing_execution_without_independent_review"
-                )
-            if (
-                "sufficient" in evidence_statuses
-                and not assurance_statuses & {"verified", "closed"}
-            ):
-                readiness_gaps.add(
-                    "sufficient_evidence_without_terminal_verification"
-                )
+                readiness_gaps.add("passing_execution_without_independent_review")
+            if "sufficient" in evidence_statuses and not assurance_statuses & {
+                "verified",
+                "closed",
+            }:
+                readiness_gaps.add("sufficient_evidence_without_terminal_verification")
             if (
                 coverage_entity_ids
                 and not test_candidate_entity_ids
                 and not implementation_registered
                 and not finding_executions
             ):
-                readiness_gaps.add(
-                    "coverage_without_test_or_execution_evidence"
-                )
-        readiness_profile_raw_id = stable_id(
-            "VERIFICATION-READINESS", finding_id
-        )
+                readiness_gaps.add("coverage_without_test_or_execution_evidence")
+        readiness_profile_raw_id = stable_id("VERIFICATION-READINESS", finding_id)
         readiness_profile_entity = add_entity(
             "verification_readiness_profile",
             readiness_profile_raw_id,
@@ -2775,9 +3173,7 @@ def build_cross_reference_index(
             "independent_execution_review": independently_reviewed_execution,
             "evidence_artifact_recorded": bool(evidence_ids),
             "evidence_sufficient": "sufficient" in evidence_statuses,
-            "terminal_verification": bool(
-                assurance_statuses & {"verified", "closed"}
-            ),
+            "terminal_verification": bool(assurance_statuses & {"verified", "closed"}),
         }
         dimensions["verification_readiness"] = any(
             evidence_signals[field]
@@ -2828,8 +3224,7 @@ def build_cross_reference_index(
         diagnostic_counts = dict(
             sorted(
                 Counter(
-                    str(value.get("level", "unknown"))
-                    for value in diagnostic_records
+                    str(value.get("level", "unknown")) for value in diagnostic_records
                 ).items()
             )
         )
@@ -3041,9 +3436,7 @@ def build_cross_reference_index(
                 guidance_source_relationship_ids_by_id.get(source_id, set())
             ),
         }
-        for source_id, guidance_source_record in sorted(
-            guidance_source_by_id.items()
-        )
+        for source_id, guidance_source_record in sorted(guidance_source_by_id.items())
     ]
     guidance_citation_profiles = [
         {
@@ -3336,9 +3729,7 @@ def build_cross_reference_index(
         )
         chain["semantic_dimensions"] = semantic_dimensions
         chain["semantic_entity_ids"] = sorted(set(semantic_entity_ids))
-        chain["semantic_relationship_ids"] = sorted(
-            set(semantic_relationship_ids)
-        )
+        chain["semantic_relationship_ids"] = sorted(set(semantic_relationship_ids))
         chain["compound_exposure_kinds"] = _compound_exposure_kinds(
             semantic_dimensions, chain["dimensions"]
         )
@@ -3463,9 +3854,7 @@ def build_cross_reference_index(
         materialized_finding_id = str(suggestion.get("materialized_item_id", ""))
         materialized_finding_entity = ""
         if materialized_finding_id in finding_ids:
-            materialized_finding_entity = _entity_id(
-                "finding", materialized_finding_id
-            )
+            materialized_finding_entity = _entity_id("finding", materialized_finding_id)
             relation_id = add_relation(
                 suggestion_entity,
                 materialized_finding_entity,
@@ -3553,14 +3942,14 @@ def build_cross_reference_index(
                 if raw_id in suggestion_entity_by_raw_id:
                     claim_relationships_by_suggestion[raw_id].add(relation_id)
                 if raw_id in finding_ids:
-                    other_entity = right_entity if raw_id == left_raw_id else left_entity
+                    other_entity = (
+                        right_entity if raw_id == left_raw_id else left_entity
+                    )
                     machine_entities_by_finding[raw_id].add(other_entity)
                     machine_relationships_by_finding[raw_id].add(relation_id)
     for profile in machine_suggestion_profiles:
         suggestion_id = str(profile["suggestion_id"])
-        claim_relation_ids = claim_relationships_by_suggestion.get(
-            suggestion_id, set()
-        )
+        claim_relation_ids = claim_relationships_by_suggestion.get(suggestion_id, set())
         profile["claim_relationship_ids"] = sorted(claim_relation_ids)
         profile["relationship_ids"] = sorted(
             {*_text_values(profile.get("relationship_ids")), *claim_relation_ids}
@@ -3600,7 +3989,9 @@ def build_cross_reference_index(
         if group_by == "project":
             scope_entity = analysis_scope_entity
         elif group_by == "component":
-            component_id = key if key in components else component_id_by_qualname.get(key, "")
+            component_id = (
+                key if key in components else component_id_by_qualname.get(key, "")
+            )
             if component_id:
                 scope_entity = _entity_id("component", component_id)
         elif group_by == "hazard" and _entity_id("hazard", key) in entities:
@@ -3658,9 +4049,7 @@ def build_cross_reference_index(
                 "stale": bool(summary_record.get("stale")),
                 "scope_entity_id": scope_entity,
                 "evidence_entity_ids": sorted(summary_evidence_entity_ids),
-                "unresolved_evidence_ids": sorted(
-                    set(summary_unresolved_evidence_ids)
-                ),
+                "unresolved_evidence_ids": sorted(set(summary_unresolved_evidence_ids)),
                 "relationship_ids": sorted(summary_relationship_id_set),
                 "notice": (
                     "This narrative is machine generated from bounded evidence references. "
@@ -3808,7 +4197,9 @@ def build_cross_reference_index(
         changed_fields = sorted(changes) if isinstance(changes, dict) else []
         if finding_id and isinstance(changes, dict):
             for field, change in changes.items():
-                if field not in FINDING_CONTEXT_FIELD_MAP or not isinstance(change, dict):
+                if field not in FINDING_CONTEXT_FIELD_MAP or not isinstance(
+                    change, dict
+                ):
                     continue
                 after = _normalized_context_value(change.get("after"))
                 claim_entity = context_claim_by_current_value.get(
@@ -4091,9 +4482,7 @@ def build_cross_reference_index(
                 "priority": "high",
                 "subject_ids": unresolved_guidance_subjects[:25],
                 "affected_count": len(unresolved_guidance_chains),
-                "subject_ids_omitted": max(
-                    0, len(unresolved_guidance_subjects) - 25
-                ),
+                "subject_ids_omitted": max(0, len(unresolved_guidance_subjects) - 25),
                 "description": (
                     f"{len(unresolved_guidance_chains)} finding chain(s) cite a locator that "
                     "does not resolve through the current versioned guidance-source catalog. "
@@ -4120,9 +4509,7 @@ def build_cross_reference_index(
                 "priority": "high",
                 "subject_ids": sorted(unresolved_catalog_subjects)[:25],
                 "affected_count": len(unresolved_guidance_catalog_references),
-                "subject_ids_omitted": max(
-                    0, len(unresolved_catalog_subjects) - 25
-                ),
+                "subject_ids_omitted": max(0, len(unresolved_catalog_subjects) - 25),
                 "description": (
                     f"{len(unresolved_guidance_catalog_references)} methodology or citation "
                     "source identifier(s) do not resolve to a current guidance-source record."
@@ -4214,9 +4601,9 @@ def build_cross_reference_index(
             }
         )
     unresolved_machine_entities = sorted(unresolved_machine_entity_ids)
-    unresolved_machine_reference_count = len(unresolved_machine_evidence_references) + len(
-        unresolved_machine_citation_references
-    )
+    unresolved_machine_reference_count = len(
+        unresolved_machine_evidence_references
+    ) + len(unresolved_machine_citation_references)
     if unresolved_machine_reference_count:
         review_leads.append(
             {
@@ -4508,17 +4895,6 @@ def build_cross_reference_index(
                 ),
             }
         )
-    review_leads.sort(
-        key=lambda value: (
-            {"high": 0, "medium": 1, "low": 2}.get(value["priority"], 3),
-            value["kind"],
-            value["id"],
-        )
-    )
-    if len(review_leads) > MAX_REVIEW_LEADS:
-        omitted["review_leads"] += len(review_leads) - MAX_REVIEW_LEADS
-        review_leads = review_leads[:MAX_REVIEW_LEADS]
-
     entity_ids_by_raw_id: dict[str, list[str]] = defaultdict(list)
     for entity_id, entity in entities.items():
         entity_ids_by_raw_id[str(entity.get("raw_id", ""))].append(entity_id)
@@ -4530,9 +4906,7 @@ def build_cross_reference_index(
     for run in adapter_runs:
         adapter_id = str(run.get("adapter_id", ""))
         adapter_entity = adapter_run_entities_by_id.get(adapter_id, "")
-        contribution_ids = sorted(
-            set(_text_values(run.get("contribution_entity_ids")))
-        )
+        contribution_ids = sorted(set(_text_values(run.get("contribution_entity_ids"))))
         linked_relationship_ids: set[str] = set()
         linked_contribution_ids: set[str] = set()
         for contribution_id in contribution_ids:
@@ -4590,12 +4964,203 @@ def build_cross_reference_index(
         chain["adapter_statuses"] = dict(
             sorted(adapter_statuses_by_finding.get(finding_id, {}).items())
         )
-        chain["dimensions"]["tool_provenance"] = bool(
-            chain["adapter_run_entity_ids"]
-        )
+        chain["dimensions"]["tool_provenance"] = bool(chain["adapter_run_entity_ids"])
         chain["linkage_completeness_percent"] = round(
             100 * sum(chain["dimensions"].values()) / len(chain["dimensions"]), 1
         )
+
+    projection_entity_ids_by_kind: dict[str, set[str]] = defaultdict(set)
+    for entity_id, entity in entities.items():
+        projection_entity_ids_by_kind[str(entity.get("kind", ""))].add(entity_id)
+    projection_relationship_ids_by_channel: dict[str, set[str]] = defaultdict(set)
+    for relation_id, relation in relationships.items():
+        projection_relationship_ids_by_channel[str(relation.get("channel", ""))].add(
+            relation_id
+        )
+
+    analysis_projection_profiles: list[dict[str, Any]] = []
+    analysis_projection_relationship_ids: set[str] = set()
+    for section_name in sorted(analysis):
+        section_value = analysis[section_name]
+        declaration = ANALYSIS_SECTION_PROJECTION_DECLARATIONS.get(section_name)
+        projection_mode = (
+            str(declaration.get("mode", "unmapped"))
+            if declaration is not None
+            else "unmapped"
+        )
+        declared_entity_kinds = set(
+            _text_values(
+                list(declaration.get("entity_kinds", ())) if declaration else []
+            )
+        )
+        declared_relationship_channels = set(
+            _text_values(
+                list(declaration.get("relationship_channels", ()))
+                if declaration
+                else []
+            )
+        )
+        source_sha256 = canonical_json_sha256(section_value)
+        source_record_count = _analysis_section_record_count(section_value, declaration)
+        projected_entity_ids = set().union(
+            *(projection_entity_ids_by_kind[kind] for kind in declared_entity_kinds)
+        )
+        projected_relationship_ids = set().union(
+            *(
+                projection_relationship_ids_by_channel[channel]
+                for channel in declared_relationship_channels
+            )
+        )
+        if source_record_count == 0:
+            coverage_status = "empty"
+        elif projection_mode == "provenance_only":
+            coverage_status = "provenance_only"
+        elif projected_entity_ids or projected_relationship_ids:
+            coverage_status = "semantically_projected"
+        elif declaration is not None:
+            coverage_status = "registered_without_projection"
+        else:
+            coverage_status = "unmapped"
+        section_raw_id = stable_id("ANALYSIS-SECTION", analysis_sha256, section_name)
+        section_entity_id = add_entity(
+            "analysis_section",
+            section_raw_id,
+            section_name,
+            authority="exact_analysis_section_projection_coverage_binding",
+            metadata={
+                "section": section_name,
+                "source_sha256": source_sha256,
+                "source_type": type(section_value).__name__,
+                "source_record_count": source_record_count,
+                "projection_mode": projection_mode,
+                "coverage_status": coverage_status,
+            },
+        )
+        section_relationship_id = add_relation(
+            analysis_scope_entity,
+            section_entity_id,
+            "contains_analysis_section",
+            "analysis_projection",
+            authority="exact_analysis_section_digest_binding",
+            metadata={
+                "section": section_name,
+                "source_sha256": source_sha256,
+            },
+        )
+        if section_relationship_id in relationships:
+            analysis_projection_relationship_ids.add(section_relationship_id)
+        analysis_projection_profiles.append(
+            {
+                "section": section_name,
+                "section_entity_id": section_entity_id,
+                "section_relationship_id": section_relationship_id,
+                "source_sha256": source_sha256,
+                "source_type": type(section_value).__name__,
+                "source_record_count": source_record_count,
+                "registered": declaration is not None,
+                "projection_mode": projection_mode,
+                "coverage_status": coverage_status,
+                "entity_kinds": sorted(declared_entity_kinds),
+                "relationship_channels": sorted(declared_relationship_channels),
+                "projected_entity_count": len(projected_entity_ids),
+                "projected_entity_ids_sha256": _identifier_set_sha256(
+                    projected_entity_ids
+                ),
+                "projected_entity_id_sample": sorted(projected_entity_ids)[:25],
+                "projected_relationship_count": len(projected_relationship_ids),
+                "projected_relationship_ids_sha256": _identifier_set_sha256(
+                    projected_relationship_ids
+                ),
+                "projected_relationship_id_sample": sorted(projected_relationship_ids)[
+                    :25
+                ],
+                "rationale": str(
+                    declaration.get("rationale", "") if declaration else ""
+                )
+                or (
+                    "No projection declaration exists for this populated analysis output."
+                ),
+            }
+        )
+
+    populated_unmapped_section_profiles = [
+        profile
+        for profile in analysis_projection_profiles
+        if profile["coverage_status"] == "unmapped"
+    ]
+    registered_without_projection_profiles = [
+        profile
+        for profile in analysis_projection_profiles
+        if profile["coverage_status"] == "registered_without_projection"
+    ]
+    if populated_unmapped_section_profiles:
+        subject_ids = sorted(
+            str(profile["section_entity_id"])
+            for profile in populated_unmapped_section_profiles
+        )
+        review_leads.append(
+            {
+                "id": stable_id(
+                    "XLEAD",
+                    "analysis_projection",
+                    *(
+                        str(profile["section"])
+                        for profile in populated_unmapped_section_profiles
+                    ),
+                ),
+                "kind": "unmapped_analysis_outputs",
+                "priority": "high",
+                "subject_ids": subject_ids[:25],
+                "affected_count": len(populated_unmapped_section_profiles),
+                "subject_ids_omitted": max(0, len(subject_ids) - 25),
+                "description": (
+                    f"{len(populated_unmapped_section_profiles)} populated top-level analysis "
+                    "output(s) have no demonstrated semantic projection. Register and verify "
+                    "their entity kinds or relationship channels before treating the evidence "
+                    "fabric as output-complete."
+                ),
+            }
+        )
+    if registered_without_projection_profiles:
+        subject_ids = sorted(
+            str(profile["section_entity_id"])
+            for profile in registered_without_projection_profiles
+        )
+        review_leads.append(
+            {
+                "id": stable_id(
+                    "XLEAD",
+                    "analysis_projection",
+                    "registered_without_projection",
+                    *(
+                        str(profile["section"])
+                        for profile in registered_without_projection_profiles
+                    ),
+                ),
+                "kind": "registered_analysis_outputs_without_projection",
+                "priority": "medium",
+                "subject_ids": subject_ids[:25],
+                "affected_count": len(registered_without_projection_profiles),
+                "subject_ids_omitted": max(0, len(subject_ids) - 25),
+                "description": (
+                    f"{len(registered_without_projection_profiles)} registered semantic "
+                    "analysis output(s) contain candidate records but produced no linked entity "
+                    "or relationship. Confirm that filtering was intentional or extend the "
+                    "projection declaration and model."
+                ),
+            }
+        )
+
+    review_leads.sort(
+        key=lambda value: (
+            {"high": 0, "medium": 1, "low": 2}.get(value["priority"], 3),
+            value["kind"],
+            value["id"],
+        )
+    )
+    if len(review_leads) > MAX_REVIEW_LEADS:
+        omitted["review_leads"] += len(review_leads) - MAX_REVIEW_LEADS
+        review_leads = review_leads[:MAX_REVIEW_LEADS]
 
     entities_list = sorted(entities.values(), key=lambda value: value["id"])
     relationships_list = sorted(relationships.values(), key=lambda value: value["id"])
@@ -4650,9 +5215,7 @@ def build_cross_reference_index(
             "semantic_profiles_with_records": sum(
                 value["populated_dimension_count"] > 0 for value in semantic_profiles
             ),
-            "verification_readiness_profiles": len(
-                verification_readiness_profiles
-            ),
+            "verification_readiness_profiles": len(verification_readiness_profiles),
             "verification_profiles_with_signals": sum(
                 any(
                     value["evidence_signals"][field]
@@ -4669,6 +5232,49 @@ def build_cross_reference_index(
                 for value in verification_readiness_profiles
             ),
             "review_governance_profiles": len(review_governance_profiles),
+            "analysis_sections": len(analysis_projection_profiles),
+            "populated_analysis_sections": sum(
+                value["source_record_count"] > 0
+                for value in analysis_projection_profiles
+            ),
+            "semantically_projected_analysis_sections": sum(
+                value["coverage_status"] == "semantically_projected"
+                for value in analysis_projection_profiles
+            ),
+            "registered_without_projection_analysis_sections": len(
+                registered_without_projection_profiles
+            ),
+            "provenance_only_analysis_sections": sum(
+                value["coverage_status"] == "provenance_only"
+                for value in analysis_projection_profiles
+            ),
+            "empty_analysis_sections": sum(
+                value["coverage_status"] == "empty"
+                for value in analysis_projection_profiles
+            ),
+            "unmapped_analysis_sections": len(populated_unmapped_section_profiles),
+            "analysis_projection_relationships": len(
+                analysis_projection_relationship_ids
+            ),
+            "analysis_projection_coverage_percent": round(
+                100
+                * (
+                    len(analysis_projection_profiles)
+                    - len(populated_unmapped_section_profiles)
+                )
+                / max(1, len(analysis_projection_profiles)),
+                1,
+            ),
+            "analysis_material_projection_coverage_percent": round(
+                100
+                * (
+                    len(analysis_projection_profiles)
+                    - len(populated_unmapped_section_profiles)
+                    - len(registered_without_projection_profiles)
+                )
+                / max(1, len(analysis_projection_profiles)),
+                1,
+            ),
             "quality_gate_diagnostics": len(validation_findings),
             "global_quality_gate_diagnostics": len(global_validation_findings),
             "profiles_with_blocking_quality_diagnostics": sum(
@@ -4680,8 +5286,7 @@ def build_cross_reference_index(
                 bool(value.get("adapter_run_entity_ids")) for value in finding_chains
             ),
             "adapter_contribution_relationships": sum(
-                len(value["relationship_ids"])
-                for value in adapter_provenance_profiles
+                len(value["relationship_ids"]) for value in adapter_provenance_profiles
             ),
             "unlinked_adapter_contributions": sum(
                 len(value["unlinked_contribution_entity_ids"])
@@ -4692,9 +5297,7 @@ def build_cross_reference_index(
                 value.get("status") == "analyzed"
                 for value in repository_artifact_records_by_path.values()
             ),
-            "opaque_repository_artifacts": len(
-                opaque_repository_artifact_entity_ids
-            ),
+            "opaque_repository_artifacts": len(opaque_repository_artifact_entity_ids),
             "excluded_repository_regions": len(repository_region_entity_ids),
             "dependency_entities": len(dependency_entity_ids),
             "contract_entities": len(contract_entity_ids),
@@ -4796,8 +5399,7 @@ def build_cross_reference_index(
                 for value in finding_chains
             ),
             "compound_exposure_chains": sum(
-                bool(value.get("compound_exposure_kinds"))
-                for value in finding_chains
+                bool(value.get("compound_exposure_kinds")) for value in finding_chains
             ),
             "finding_chains": len(finding_chains),
             "active_finding_chains": sum(
@@ -4952,12 +5554,8 @@ def build_cross_reference_index(
         "verification_readiness_profiles": verification_readiness_profiles,
         "quality_gate_projection": {
             "analysis_scope_entity_id": analysis_scope_entity,
-            "global_diagnostic_entity_ids": sorted(
-                set(global_diagnostic_entity_ids)
-            ),
-            "global_relationship_ids": sorted(
-                set(global_diagnostic_relationship_ids)
-            ),
+            "global_diagnostic_entity_ids": sorted(set(global_diagnostic_entity_ids)),
+            "global_relationship_ids": sorted(set(global_diagnostic_relationship_ids)),
             "global_diagnostic_counts": dict(
                 sorted(
                     Counter(
@@ -4970,9 +5568,7 @@ def build_cross_reference_index(
                 "blocked"
                 if any(value.get("level") == "error" for value in validation_findings)
                 else "review_required"
-                if any(
-                    value.get("level") == "warning" for value in validation_findings
-                )
+                if any(value.get("level") == "warning" for value in validation_findings)
                 else "clear"
             ),
             "notice": (
@@ -4982,6 +5578,62 @@ def build_cross_reference_index(
             ),
         },
         "review_governance_profiles": review_governance_profiles,
+        "analysis_projection_coverage": {
+            "analysis_scope_entity_id": analysis_scope_entity,
+            "section_profiles": analysis_projection_profiles,
+            "registered_section_names": sorted(
+                value["section"]
+                for value in analysis_projection_profiles
+                if value["registered"]
+            ),
+            "semantically_projected_section_names": sorted(
+                value["section"]
+                for value in analysis_projection_profiles
+                if value["coverage_status"] == "semantically_projected"
+            ),
+            "registered_without_projection_section_names": sorted(
+                value["section"] for value in registered_without_projection_profiles
+            ),
+            "provenance_only_section_names": sorted(
+                value["section"]
+                for value in analysis_projection_profiles
+                if value["coverage_status"] == "provenance_only"
+            ),
+            "empty_section_names": sorted(
+                value["section"]
+                for value in analysis_projection_profiles
+                if value["coverage_status"] == "empty"
+            ),
+            "unmapped_section_names": sorted(
+                value["section"] for value in populated_unmapped_section_profiles
+            ),
+            "relationship_ids": sorted(analysis_projection_relationship_ids),
+            "coverage_percent": round(
+                100
+                * (
+                    len(analysis_projection_profiles)
+                    - len(populated_unmapped_section_profiles)
+                )
+                / max(1, len(analysis_projection_profiles)),
+                1,
+            ),
+            "material_coverage_percent": round(
+                100
+                * (
+                    len(analysis_projection_profiles)
+                    - len(populated_unmapped_section_profiles)
+                    - len(registered_without_projection_profiles)
+                )
+                / max(1, len(analysis_projection_profiles)),
+                1,
+            ),
+            "notice": (
+                "Coverage status proves only that each top-level analysis output is digest-bound "
+                "and has a declared projection surface. Matching entity kinds or relationship "
+                "channels does not prove record-level completeness, analytical correctness, "
+                "runtime reachability, compliance, or risk acceptance."
+            ),
+        },
         "adapter_provenance": {
             "run_manifest_entity_id": run_manifest_entity,
             "adapter_ledger_entity_id": adapter_ledger_entity,
@@ -5059,9 +5711,7 @@ def build_cross_reference_index(
             "mismatched_methodology_source_ids": sorted(
                 mismatched_methodology_source_ids
             ),
-            "unresolved_citation_source_ids": sorted(
-                unresolved_citation_source_ids
-            ),
+            "unresolved_citation_source_ids": sorted(unresolved_citation_source_ids),
             "relationship_ids": sorted(guidance_provenance_relationship_ids),
             "notice": (
                 "Guidance lineage preserves exact catalog source and citation identifiers, "
@@ -5128,6 +5778,7 @@ def build_cross_reference_index(
             "Review-governance profiles cross-reference deterministic quality diagnostics, source change, revalidation, disposition, and assurance next actions; diagnostics are workflow conditions, not software-failure evidence.",
             "Adapter provenance links normalized contribution identities to integrity-bound adapter runs and the run manifest; tool attribution does not establish correctness, completeness, qualification, or independence.",
             "Repository provenance links source paths, inventory snapshots, dependencies, contracts, components, and findings without promoting indexed or opaque artifacts to semantic-analysis evidence.",
+            "Analysis-output projection coverage binds every top-level section and detects undeclared outputs; a declared entity kind or relationship channel is a section-level integration signal, not proof that every nested record was projected.",
             "Machine-assistance provenance preserves bounded suggestion, summary, evidence, citation, materialization, and lexical-comparison links; generated text and deterministic text similarity remain review aids, not authoritative engineering conclusions.",
             "Guidance provenance links recorded methodology, versioned source records, exact citation locators, and candidate findings without asserting applicability, compliance, source authenticity, or approval.",
             "System-context provenance preserves configured fields and values and uses exact normalized matches only; a match does not establish operational adequacy, and a mismatch does not establish an error.",
@@ -5163,6 +5814,16 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         "verification_readiness_profiles",
         "verification_profiles_with_signals",
         "review_governance_profiles",
+        "analysis_sections",
+        "populated_analysis_sections",
+        "semantically_projected_analysis_sections",
+        "registered_without_projection_analysis_sections",
+        "provenance_only_analysis_sections",
+        "empty_analysis_sections",
+        "unmapped_analysis_sections",
+        "analysis_projection_relationships",
+        "analysis_projection_coverage_percent",
+        "analysis_material_projection_coverage_percent",
         "quality_gate_diagnostics",
         "global_quality_gate_diagnostics",
         "profiles_with_blocking_quality_diagnostics",
@@ -5324,6 +5985,31 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
     )
     lines.extend(
         [
+            "",
+            "## Analysis-output projection coverage",
+            "",
+            "| Section | Status | Records | Entities | Relationships |",
+            "|---|---|---:|---:|---:|",
+        ]
+    )
+    for profile in index.get("analysis_projection_coverage", {}).get(
+        "section_profiles", []
+    ):
+        lines.append(
+            f"| {profile.get('section', '')} | "
+            f"{str(profile.get('coverage_status', '')).replace('_', ' ')} | "
+            f"{profile.get('source_record_count', 0)} | "
+            f"{profile.get('projected_entity_count', 0)} | "
+            f"{profile.get('projected_relationship_count', 0)} |"
+        )
+    lines.extend(
+        [
+            "",
+            str(
+                index.get("analysis_projection_coverage", {}).get(
+                    "notice", "Projection coverage was not reported."
+                )
+            ),
             "",
             "## Tool provenance",
             "",
@@ -5712,9 +6398,7 @@ def verify_cross_reference_file(
 
         repository_provenance = value.get("repository_provenance")
         repository_provenance_data = (
-            repository_provenance
-            if isinstance(repository_provenance, dict)
-            else {}
+            repository_provenance if isinstance(repository_provenance, dict) else {}
         )
         repository_inventory_entity_ids = {
             entity_id
@@ -5765,8 +6449,7 @@ def verify_cross_reference_file(
         opaque_entity_ids = {
             entity_id
             for entity_id in repository_artifact_entity_ids
-            if entities_by_id[entity_id].get("metadata", {}).get("status")
-            == "opaque"
+            if entities_by_id[entity_id].get("metadata", {}).get("status") == "opaque"
         }
         inventory_entity_id = (
             str(repository_provenance.get("repository_inventory_entity_id", ""))
@@ -5891,11 +6574,13 @@ def verify_cross_reference_file(
             and len(repository_inventory_entity_ids) == 1
             and inventory_entity_id in repository_inventory_entity_ids
             and (
-                (not configuration_input_entity_ids and not configuration_input_entity_id)
+                (
+                    not configuration_input_entity_ids
+                    and not configuration_input_entity_id
+                )
                 or (
                     len(configuration_input_entity_ids) == 1
-                    and configuration_input_entity_id
-                    in configuration_input_entity_ids
+                    and configuration_input_entity_id in configuration_input_entity_ids
                 )
             )
             and set(
@@ -5905,9 +6590,7 @@ def verify_cross_reference_file(
             )
             == repository_artifact_entity_ids
             and set(
-                _text_values(
-                    repository_provenance.get("repository_region_entity_ids")
-                )
+                _text_values(repository_provenance.get("repository_region_entity_ids"))
             )
             == repository_region_entity_ids
             and set(_text_values(repository_provenance.get("dependency_entity_ids")))
@@ -5916,9 +6599,7 @@ def verify_cross_reference_file(
             == contract_entity_id_set
             and set(
                 _text_values(
-                    repository_provenance.get(
-                        "opaque_repository_artifact_entity_ids"
-                    )
+                    repository_provenance.get("opaque_repository_artifact_entity_ids")
                 )
             )
             == opaque_entity_ids
@@ -5928,17 +6609,11 @@ def verify_cross_reference_file(
                 _text_values(repository_provenance.get("unaccounted_component_ids"))
             )
             <= component_ids
-            and set(
-                _text_values(repository_provenance.get("unaccounted_finding_ids"))
-            )
+            and set(_text_values(repository_provenance.get("unaccounted_finding_ids")))
             <= finding_entity_ids
-            and set(
-                _text_values(repository_provenance.get("configured_component_ids"))
-            )
+            and set(_text_values(repository_provenance.get("configured_component_ids")))
             == relationship_configured_component_ids
-            and set(
-                _text_values(repository_provenance.get("configured_finding_ids"))
-            )
+            and set(_text_values(repository_provenance.get("configured_finding_ids")))
             == relationship_configured_finding_ids
             and set(
                 _text_values(repository_provenance.get("configured_component_ids"))
@@ -5961,6 +6636,227 @@ def verify_cross_reference_file(
                 "Repository provenance must reconcile the inventory, artifact, source, dependency, contract, and exclusion relationships.",
             )
 
+        analysis_projection = value.get("analysis_projection_coverage")
+        analysis_projection_data = (
+            analysis_projection if isinstance(analysis_projection, dict) else {}
+        )
+        analysis_projection_profiles = analysis_projection_data.get("section_profiles")
+        analysis_section_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "analysis_section"
+        }
+        analysis_scope_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "analysis_scope"
+        }
+        analysis_projection_channel_relationship_ids = {
+            relation_id
+            for relation_id, relation in relationships_by_id.items()
+            if relation.get("channel") == "analysis_projection"
+        }
+        declared_analysis_projection_relationship_ids = set(
+            _text_values(analysis_projection_data.get("relationship_ids"))
+        )
+        analysis_projection_profile_sections = [
+            str(profile.get("section", ""))
+            for profile in analysis_projection_profiles or []
+            if isinstance(profile, dict)
+        ]
+        verification_entity_ids_by_kind: dict[str, set[str]] = defaultdict(set)
+        for entity_id, entity in entities_by_id.items():
+            verification_entity_ids_by_kind[str(entity.get("kind", ""))].add(entity_id)
+        verification_relationship_ids_by_channel: dict[str, set[str]] = defaultdict(set)
+        for relation_id, relation in relationships_by_id.items():
+            verification_relationship_ids_by_channel[
+                str(relation.get("channel", ""))
+            ].add(relation_id)
+
+        def analysis_projection_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            section = str(profile.get("section", ""))
+            section_entity_id = str(profile.get("section_entity_id", ""))
+            section_relationship_id = str(profile.get("section_relationship_id", ""))
+            declaration = ANALYSIS_SECTION_PROJECTION_DECLARATIONS.get(section)
+            expected_registered = declaration is not None
+            expected_mode = (
+                str(declaration.get("mode", "unmapped"))
+                if declaration is not None
+                else "unmapped"
+            )
+            expected_entity_kinds = set(
+                _text_values(
+                    list(declaration.get("entity_kinds", ())) if declaration else []
+                )
+            )
+            expected_relationship_channels = set(
+                _text_values(
+                    list(declaration.get("relationship_channels", ()))
+                    if declaration
+                    else []
+                )
+            )
+            expected_projected_entity_ids = set().union(
+                *(
+                    verification_entity_ids_by_kind[kind]
+                    for kind in expected_entity_kinds
+                )
+            )
+            expected_projected_relationship_ids = set().union(
+                *(
+                    verification_relationship_ids_by_channel[channel]
+                    for channel in expected_relationship_channels
+                )
+            )
+            source_record_count = _safe_int(profile.get("source_record_count", -1), -1)
+            if source_record_count == 0:
+                expected_status = "empty"
+            elif expected_mode == "provenance_only":
+                expected_status = "provenance_only"
+            elif expected_projected_entity_ids or expected_projected_relationship_ids:
+                expected_status = "semantically_projected"
+            elif declaration is not None:
+                expected_status = "registered_without_projection"
+            else:
+                expected_status = "unmapped"
+            entity = entities_by_id.get(section_entity_id, {})
+            entity_metadata = entity.get("metadata", {})
+            relation = relationships_by_id.get(section_relationship_id, {})
+            return bool(
+                section
+                and section_entity_id in analysis_section_entity_ids
+                and entity.get("raw_id")
+                == stable_id(
+                    "ANALYSIS-SECTION",
+                    str(value.get("analysis_state_sha256", "")),
+                    section,
+                )
+                and entity.get("label") == section
+                and entity_metadata.get("section") == section
+                and entity_metadata.get("source_sha256") == profile.get("source_sha256")
+                and entity_metadata.get("source_type") == profile.get("source_type")
+                and entity_metadata.get("source_record_count") == source_record_count
+                and entity_metadata.get("projection_mode") == expected_mode
+                and entity_metadata.get("coverage_status") == expected_status
+                and re.fullmatch(r"[0-9a-f]{64}", str(profile.get("source_sha256", "")))
+                is not None
+                and isinstance(profile.get("source_type"), str)
+                and bool(profile.get("source_type"))
+                and source_record_count >= 0
+                and profile.get("registered") is expected_registered
+                and profile.get("projection_mode") == expected_mode
+                and profile.get("coverage_status") == expected_status
+                and expected_status in ANALYSIS_PROJECTION_STATUSES
+                and set(_text_values(profile.get("entity_kinds")))
+                == expected_entity_kinds
+                and set(_text_values(profile.get("relationship_channels")))
+                == expected_relationship_channels
+                and profile.get("projected_entity_count")
+                == len(expected_projected_entity_ids)
+                and profile.get("projected_entity_ids_sha256")
+                == _identifier_set_sha256(expected_projected_entity_ids)
+                and _text_values(profile.get("projected_entity_id_sample"))
+                == sorted(expected_projected_entity_ids)[:25]
+                and profile.get("projected_relationship_count")
+                == len(expected_projected_relationship_ids)
+                and profile.get("projected_relationship_ids_sha256")
+                == _identifier_set_sha256(expected_projected_relationship_ids)
+                and _text_values(profile.get("projected_relationship_id_sample"))
+                == sorted(expected_projected_relationship_ids)[:25]
+                and section_relationship_id
+                in analysis_projection_channel_relationship_ids
+                and relation.get("source")
+                == analysis_projection_data.get("analysis_scope_entity_id")
+                and relation.get("target") == section_entity_id
+                and relation.get("kind") == "contains_analysis_section"
+                and relation.get("metadata", {}).get("section") == section
+                and relation.get("metadata", {}).get("source_sha256")
+                == profile.get("source_sha256")
+                and isinstance(profile.get("rationale"), str)
+                and bool(profile.get("rationale"))
+            )
+
+        expected_registered_section_names = sorted(
+            profile["section"]
+            for profile in analysis_projection_profiles or []
+            if isinstance(profile, dict) and profile.get("registered") is True
+        )
+        expected_status_section_names = {
+            status: sorted(
+                str(profile.get("section", ""))
+                for profile in analysis_projection_profiles or []
+                if isinstance(profile, dict)
+                and profile.get("coverage_status") == status
+            )
+            for status in ANALYSIS_PROJECTION_STATUSES
+        }
+        expected_analysis_projection_coverage_percent = round(
+            100
+            * (
+                len(analysis_projection_profiles or [])
+                - len(expected_status_section_names["unmapped"])
+            )
+            / max(1, len(analysis_projection_profiles or [])),
+            1,
+        )
+        expected_analysis_material_projection_coverage_percent = round(
+            100
+            * (
+                len(analysis_projection_profiles or [])
+                - len(expected_status_section_names["unmapped"])
+                - len(expected_status_section_names["registered_without_projection"])
+            )
+            / max(1, len(analysis_projection_profiles or [])),
+            1,
+        )
+        checks["analysis_projection_integrity"] = bool(
+            isinstance(analysis_projection, dict)
+            and isinstance(analysis_projection_profiles, list)
+            and len(analysis_scope_entity_ids) == 1
+            and analysis_projection.get("analysis_scope_entity_id")
+            in analysis_scope_entity_ids
+            and len(analysis_projection_profile_sections)
+            == len(analysis_projection_profiles)
+            and all(analysis_projection_profile_sections)
+            and len(analysis_projection_profile_sections)
+            == len(set(analysis_projection_profile_sections))
+            and {
+                str(profile.get("section_entity_id", ""))
+                for profile in analysis_projection_profiles
+                if isinstance(profile, dict)
+            }
+            == analysis_section_entity_ids
+            and all(
+                analysis_projection_profile_valid(profile)
+                for profile in analysis_projection_profiles
+            )
+            and declared_analysis_projection_relationship_ids
+            == analysis_projection_channel_relationship_ids
+            and analysis_projection.get("registered_section_names")
+            == expected_registered_section_names
+            and analysis_projection.get("semantically_projected_section_names")
+            == expected_status_section_names["semantically_projected"]
+            and analysis_projection.get("registered_without_projection_section_names")
+            == expected_status_section_names["registered_without_projection"]
+            and analysis_projection.get("provenance_only_section_names")
+            == expected_status_section_names["provenance_only"]
+            and analysis_projection.get("empty_section_names")
+            == expected_status_section_names["empty"]
+            and analysis_projection.get("unmapped_section_names")
+            == expected_status_section_names["unmapped"]
+            and analysis_projection.get("coverage_percent")
+            == expected_analysis_projection_coverage_percent
+            and analysis_projection.get("material_coverage_percent")
+            == expected_analysis_material_projection_coverage_percent
+        )
+        if not checks["analysis_projection_integrity"]:
+            fail(
+                "cross_reference.analysis_projection_integrity_invalid",
+                "Analysis-output coverage must bind every section digest and reconcile each declared projection surface.",
+            )
+
         machine_assistance = value.get("machine_assistance_provenance")
         machine_assistance_data = (
             machine_assistance if isinstance(machine_assistance, dict) else {}
@@ -5981,9 +6877,7 @@ def verify_cross_reference_file(
             relation_id
             for relation_id, relation in relationships_by_id.items()
             if relation.get("channel") == "machine_assistance"
-            or str(relation.get("channel", "")).startswith(
-                "machine_claim_comparison:"
-            )
+            or str(relation.get("channel", "")).startswith("machine_claim_comparison:")
         }
         machine_claim_relation_ids = {
             relation_id
@@ -6225,32 +7119,41 @@ def verify_cross_reference_file(
             isinstance(machine_assistance, dict)
             and isinstance(suggestion_profiles, list)
             and isinstance(summary_profiles, list)
-            and {str(profile.get("id", "")) for profile in suggestion_profiles if isinstance(profile, dict)}
+            and {
+                str(profile.get("id", ""))
+                for profile in suggestion_profiles
+                if isinstance(profile, dict)
+            }
             == machine_suggestion_entity_ids
-            and {str(profile.get("id", "")) for profile in summary_profiles if isinstance(profile, dict)}
+            and {
+                str(profile.get("id", ""))
+                for profile in summary_profiles
+                if isinstance(profile, dict)
+            }
             == machine_summary_entity_ids
-            and all(machine_suggestion_profile_valid(profile) for profile in suggestion_profiles)
-            and all(machine_summary_profile_valid(profile) for profile in summary_profiles)
+            and all(
+                machine_suggestion_profile_valid(profile)
+                for profile in suggestion_profiles
+            )
+            and all(
+                machine_summary_profile_valid(profile) for profile in summary_profiles
+            )
             and declared_machine_relationship_ids == machine_channel_relationship_ids
             and declared_claim_relationship_ids == machine_claim_relation_ids
-            and set(
-                machine_assistance_data.get("unresolved_evidence_references", [])
-            )
+            and set(machine_assistance_data.get("unresolved_evidence_references", []))
             == expected_unresolved_evidence_references
-            and set(
-                machine_assistance_data.get("unresolved_citation_references", [])
-            )
+            and set(machine_assistance_data.get("unresolved_citation_references", []))
             == expected_unresolved_citation_references
-            and set(_text_values(machine_assistance_data.get("stale_summary_entity_ids")))
+            and set(
+                _text_values(machine_assistance_data.get("stale_summary_entity_ids"))
+            )
             == expected_stale_summary_ids
             and isinstance(lexical_analysis, dict)
-            and lexical_analysis.get("format")
-            == "pysfmea-suggestion-relationships-1"
+            and lexical_analysis.get("format") == "pysfmea-suggestion-relationships-1"
             and isinstance(lexical_summary, dict)
             and lexical_summary.get("claims")
             == sum(
-                entity.get("metadata", {}).get("source_status", "active")
-                == "active"
+                entity.get("metadata", {}).get("source_status", "active") == "active"
                 for entity in finding_entities_by_raw_id.values()
             )
             + sum(
@@ -6259,9 +7162,7 @@ def verify_cross_reference_file(
                 if isinstance(profile, dict)
             )
             and all(
-                isinstance(count, int)
-                and not isinstance(count, bool)
-                and count >= 0
+                isinstance(count, int) and not isinstance(count, bool) and count >= 0
                 for count in (
                     lexical_summary.get(name)
                     for name in ("duplicates", "contradictions", "divergences")
@@ -6282,9 +7183,7 @@ def verify_cross_reference_file(
         )
         guidance_source_profiles = guidance_data.get("source_profiles")
         guidance_citation_profiles = guidance_data.get("citation_profiles")
-        methodology_review_check_profiles = guidance_data.get(
-            "review_check_profiles"
-        )
+        methodology_review_check_profiles = guidance_data.get("review_check_profiles")
         methodology_record = guidance_data.get("methodology_record")
         methodology_entity_ids = {
             entity_id
@@ -6391,9 +7290,7 @@ def verify_cross_reference_file(
                 and profile.get("methodology_basis")
                 == (
                     source_id in methodology_basis_record_by_id
-                    and canonical_json_sha256(
-                        methodology_basis_record_by_id[source_id]
-                    )
+                    and canonical_json_sha256(methodology_basis_record_by_id[source_id])
                     == record_sha256
                 )
                 == any(
@@ -6405,10 +7302,8 @@ def verify_cross_reference_file(
                 == expected_citation_ids
                 and set(_text_values(profile.get("relationship_ids")))
                 == expected_relationship_ids
-                and metadata.get("publisher")
-                == str(source_record.get("publisher", ""))
-                and metadata.get("version")
-                == str(source_record.get("version", ""))
+                and metadata.get("publisher") == str(source_record.get("publisher", ""))
+                and metadata.get("version") == str(source_record.get("version", ""))
                 and metadata.get("status") == str(source_record.get("status", ""))
                 and metadata.get("url") == str(source_record.get("url", ""))
                 and metadata.get("record_sha256")
@@ -6637,8 +7532,7 @@ def verify_cross_reference_file(
             and isinstance(guidance_citation_profiles, list)
             and isinstance(methodology_review_check_profiles, list)
             and methodology_sha256 == guidance_data.get("methodology_sha256")
-            and methodology_entity_id
-            == _entity_id("methodology", methodology_sha256)
+            and methodology_entity_id == _entity_id("methodology", methodology_sha256)
             and methodology_entity_ids == {methodology_entity_id}
             and methodology_entity.get("metadata", {}).get("methodology_sha256")
             == methodology_sha256
@@ -6647,19 +7541,31 @@ def verify_cross_reference_file(
             and methodology_entity.get("metadata", {}).get("review_check_count")
             == len(methodology_record.get("review_checklist", []))
             and len(methodology_declaration_relationships) == 1
-            and {str(profile.get("id", "")) for profile in guidance_source_profiles if isinstance(profile, dict)}
+            and {
+                str(profile.get("id", ""))
+                for profile in guidance_source_profiles
+                if isinstance(profile, dict)
+            }
             == guidance_source_entity_ids
-            and {str(profile.get("id", "")) for profile in guidance_citation_profiles if isinstance(profile, dict)}
+            and {
+                str(profile.get("id", ""))
+                for profile in guidance_citation_profiles
+                if isinstance(profile, dict)
+            }
             == catalog_citation_entity_ids
-            and {str(profile.get("id", "")) for profile in methodology_review_check_profiles if isinstance(profile, dict)}
+            and {
+                str(profile.get("id", ""))
+                for profile in methodology_review_check_profiles
+                if isinstance(profile, dict)
+            }
             == methodology_review_check_entity_ids
             and [
                 str(profile.get("text", ""))
                 for profile in sorted(
                     methodology_review_check_profiles,
-                    key=lambda profile: profile.get("sequence", 0)
-                    if isinstance(profile, dict)
-                    else 0,
+                    key=lambda profile: (
+                        profile.get("sequence", 0) if isinstance(profile, dict) else 0
+                    ),
                 )
                 if isinstance(profile, dict)
             ]
@@ -6678,13 +7584,9 @@ def verify_cross_reference_file(
             )
             and set(_text_values(guidance_data.get("relationship_ids")))
             == guidance_channel_relationship_ids
-            and set(
-                guidance_data.get("unresolved_methodology_source_ids", [])
-            )
+            and set(guidance_data.get("unresolved_methodology_source_ids", []))
             == expected_unresolved_methodology_source_ids
-            and set(
-                guidance_data.get("mismatched_methodology_source_ids", [])
-            )
+            and set(guidance_data.get("mismatched_methodology_source_ids", []))
             == expected_mismatched_methodology_source_ids
             and set(guidance_data.get("unresolved_citation_source_ids", []))
             == expected_unresolved_citation_source_ids
@@ -6700,12 +7602,10 @@ def verify_cross_reference_file(
             for profile in guidance_citation_profiles or []
             if isinstance(profile, dict) and profile.get("citation_id")
         }
-        verified_guidance_sources_by_finding: dict[str, set[str]] = defaultdict(
+        verified_guidance_sources_by_finding: dict[str, set[str]] = defaultdict(set)
+        verified_guidance_relationships_by_finding: dict[str, set[str]] = defaultdict(
             set
         )
-        verified_guidance_relationships_by_finding: dict[
-            str, set[str]
-        ] = defaultdict(set)
         for profile in guidance_citation_profiles or []:
             if not isinstance(profile, dict):
                 continue
@@ -6721,9 +7621,7 @@ def verify_cross_reference_file(
                 if source_entity_id
                 else ""
             )
-            for finding_entity_id in _text_values(
-                profile.get("finding_entity_ids")
-            ):
+            for finding_entity_id in _text_values(profile.get("finding_entity_ids")):
                 finding_id = str(
                     entities_by_id.get(finding_entity_id, {}).get("raw_id", "")
                 )
@@ -6862,7 +7760,11 @@ def verify_cross_reference_file(
                 == "exactly_matches_resolved_system_context_value"
             }
             expected_finding_ids = {
-                str(entities_by_id.get(str(relationships_by_id[relation_id].get("source")), {}).get("raw_id", ""))
+                str(
+                    entities_by_id.get(
+                        str(relationships_by_id[relation_id].get("source")), {}
+                    ).get("raw_id", "")
+                )
                 for relation_id in expected_relationship_ids
                 if relationships_by_id[relation_id].get("kind")
                 == "declares_finding_context_claim"
@@ -6878,17 +7780,15 @@ def verify_cross_reference_file(
                 and metadata.get("review_field") == profile.get("review_field")
                 and metadata.get("context_field") == profile.get("context_field")
                 and metadata.get("value") == profile.get("value")
-                and metadata.get("normalized_value")
-                == profile.get("normalized_value")
+                and metadata.get("normalized_value") == profile.get("normalized_value")
                 and metadata.get("alignment_status") == alignment_status
                 and set(_text_values(profile.get("relationship_ids")))
                 == expected_relationship_ids
-                and expected_field_ids == ({field_entity_id} if field_entity_id else set())
-                and expected_value_ids == ({matched_value_id} if matched_value_id else set())
-                and (
-                    not field_entity_id
-                    or field_entity_id in context_field_entity_ids
-                )
+                and expected_field_ids
+                == ({field_entity_id} if field_entity_id else set())
+                and expected_value_ids
+                == ({matched_value_id} if matched_value_id else set())
+                and (not field_entity_id or field_entity_id in context_field_entity_ids)
                 and (
                     not matched_value_id
                     or (
@@ -6944,8 +7844,7 @@ def verify_cross_reference_file(
                 and relation.get("target") in context_field_entity_ids
             )
             or (
-                relation.get("kind")
-                == "exactly_matches_resolved_system_context_value"
+                relation.get("kind") == "exactly_matches_resolved_system_context_value"
                 and relation.get("source") in context_claim_entity_id_set
                 and relation.get("target") in context_value_entity_id_set
             )
@@ -6979,21 +7878,45 @@ def verify_cross_reference_file(
             and isinstance(context_claim_profiles, list)
             and len(system_context_entity_ids) == 1
             and system_context_entity_id in system_context_entity_ids
-            and {str(profile.get("id", "")) for profile in context_field_profiles if isinstance(profile, dict)}
+            and {
+                str(profile.get("id", ""))
+                for profile in context_field_profiles
+                if isinstance(profile, dict)
+            }
             == context_field_entity_ids
-            and {str(profile.get("id", "")) for profile in context_claim_profiles if isinstance(profile, dict)}
+            and {
+                str(profile.get("id", ""))
+                for profile in context_claim_profiles
+                if isinstance(profile, dict)
+            }
             == context_claim_entity_id_set
             and set(_text_values(system_context_data.get("value_entity_ids")))
             == context_value_entity_id_set
-            and all(context_field_profile_valid(profile) for profile in context_field_profiles)
-            and all(context_claim_profile_valid(profile) for profile in context_claim_profiles)
+            and all(
+                context_field_profile_valid(profile)
+                for profile in context_field_profiles
+            )
+            and all(
+                context_claim_profile_valid(profile)
+                for profile in context_claim_profiles
+            )
             and declared_system_context_relationship_ids
             == system_context_channel_relationship_ids
-            and set(_text_values(system_context_data.get("outside_catalog_claim_entity_ids")))
+            and set(
+                _text_values(
+                    system_context_data.get("outside_catalog_claim_entity_ids")
+                )
+            )
             == expected_outside_context_claim_ids
-            and set(_text_values(system_context_data.get("unresolved_catalog_claim_entity_ids")))
+            and set(
+                _text_values(
+                    system_context_data.get("unresolved_catalog_claim_entity_ids")
+                )
+            )
             == expected_unresolved_catalog_claim_ids
-            and set(_text_values(system_context_data.get("uncataloged_claim_entity_ids")))
+            and set(
+                _text_values(system_context_data.get("uncataloged_claim_entity_ids"))
+            )
             == expected_uncataloged_claim_ids
             and context_metadata.get("status") == system_context_data.get("status")
             and context_metadata.get("completeness_percent")
@@ -7035,8 +7958,16 @@ def verify_cross_reference_file(
                 if isinstance(analysis_event_profiles, list)
                 else []
             ),
-            *(finding_event_profiles if isinstance(finding_event_profiles, list) else []),
-            *(subject_event_profiles if isinstance(subject_event_profiles, list) else []),
+            *(
+                finding_event_profiles
+                if isinstance(finding_event_profiles, list)
+                else []
+            ),
+            *(
+                subject_event_profiles
+                if isinstance(subject_event_profiles, list)
+                else []
+            ),
         ]
 
         def lifecycle_profile_valid(profile: object) -> bool:
@@ -7081,16 +8012,13 @@ def verify_cross_reference_file(
                 else set()
             )
             expected_actor_entity_ids = {
-                _entity_id(
-                    "lifecycle_actor", stable_id("LIFECYCLE-ACTOR", actor_label)
-                )
+                _entity_id("lifecycle_actor", stable_id("LIFECYCLE-ACTOR", actor_label))
                 for actor_label in expected_actor_labels
             }
             linked_actor_entity_ids = {
                 str(relationships_by_id[relation_id].get("target", ""))
                 for relation_id in expected_relationship_ids
-                if relationships_by_id[relation_id].get("kind")
-                == "recorded_by_actor"
+                if relationships_by_id[relation_id].get("kind") == "recorded_by_actor"
             }
             resolved_subject_entity_ids: set[str] = set()
             expected_unresolved_references: set[str] = set()
@@ -7134,13 +8062,13 @@ def verify_cross_reference_file(
                 and metadata.get("reviewer") == profile.get("reviewer")
                 and metadata.get("event_sha256") == profile.get("event_sha256")
                 and isinstance(event_record, dict)
-                and canonical_json_sha256(event_record)
-                == profile.get("event_sha256")
+                and canonical_json_sha256(event_record) == profile.get("event_sha256")
                 and len(parent_relationships) == 1
                 and profile.get("parent_entity_id") == parent_entity_id
-                and parent_relationships[0].get("kind")
-                == expected_parent_relation_kind
-                and entities_by_id.get(str(parent_relationships[0].get("source")), {}).get("kind")
+                and parent_relationships[0].get("kind") == expected_parent_relation_kind
+                and entities_by_id.get(
+                    str(parent_relationships[0].get("source")), {}
+                ).get("kind")
                 == expected_parent_kind
                 and parent_relationships[0].get("target") == entity_id
                 and entity_id
@@ -7158,7 +8086,9 @@ def verify_cross_reference_file(
                 and (
                     scope != "finding_review"
                     or not finding_id
-                    or entities_by_id.get(str(parent_relationships[0].get("source")), {}).get("raw_id")
+                    or entities_by_id.get(
+                        str(parent_relationships[0].get("source")), {}
+                    ).get("raw_id")
                     == finding_id
                 )
                 and set(_text_values(profile.get("subject_entity_ids")))
@@ -7167,7 +8097,8 @@ def verify_cross_reference_file(
                 and expected_subject_ids <= entity_id_set
                 and linked_actor_entity_ids == expected_actor_entity_ids
                 and all(
-                    entities_by_id.get(actor_id, {}).get("label") in expected_actor_labels
+                    entities_by_id.get(actor_id, {}).get("label")
+                    in expected_actor_labels
                     for actor_id in linked_actor_entity_ids
                 )
                 and isinstance(profile.get("changed_fields"), list)
@@ -7247,7 +8178,9 @@ def verify_cross_reference_file(
             and set(lifecycle_profile_ids) == lifecycle_event_entity_ids
             and len(lifecycle_profile_ids) == len(set(lifecycle_profile_ids))
             and len(lifecycle_sequence_keys) == len(set(lifecycle_sequence_keys))
-            and all(lifecycle_profile_valid(profile) for profile in all_lifecycle_profiles)
+            and all(
+                lifecycle_profile_valid(profile) for profile in all_lifecycle_profiles
+            )
             and set(_text_values(lifecycle_data.get("relationship_ids")))
             == lifecycle_channel_relationship_ids
             and set(lifecycle_data.get("unresolved_subject_references", []))
@@ -7262,13 +8195,17 @@ def verify_cross_reference_file(
 
         verified_context_claims_by_finding: dict[str, set[str]] = defaultdict(set)
         verified_context_values_by_finding: dict[str, set[str]] = defaultdict(set)
-        verified_context_relationships_by_finding: dict[str, set[str]] = defaultdict(set)
+        verified_context_relationships_by_finding: dict[str, set[str]] = defaultdict(
+            set
+        )
         verified_context_statuses_by_finding: dict[str, set[str]] = defaultdict(set)
         for profile in context_claim_profiles or []:
             if not isinstance(profile, dict):
                 continue
             finding_id = str(profile.get("finding_id", ""))
-            verified_context_claims_by_finding[finding_id].add(str(profile.get("id", "")))
+            verified_context_claims_by_finding[finding_id].add(
+                str(profile.get("id", ""))
+            )
             matched_value_id = str(profile.get("matched_value_entity_id", ""))
             if matched_value_id:
                 verified_context_values_by_finding[finding_id].add(matched_value_id)
@@ -7280,7 +8217,9 @@ def verify_cross_reference_file(
             )
 
         verified_lifecycle_events_by_finding: dict[str, set[str]] = defaultdict(set)
-        verified_lifecycle_relationships_by_finding: dict[str, set[str]] = defaultdict(set)
+        verified_lifecycle_relationships_by_finding: dict[str, set[str]] = defaultdict(
+            set
+        )
         for profile in [
             *(finding_event_profiles or []),
             *(subject_event_profiles or []),
@@ -7288,7 +8227,9 @@ def verify_cross_reference_file(
             if not isinstance(profile, dict):
                 continue
             finding_id = str(profile.get("finding_id", ""))
-            verified_lifecycle_events_by_finding[finding_id].add(str(profile.get("id", "")))
+            verified_lifecycle_events_by_finding[finding_id].add(
+                str(profile.get("id", ""))
+            )
             verified_lifecycle_relationships_by_finding[finding_id].update(
                 _text_values(profile.get("relationship_ids"))
             )
@@ -7308,18 +8249,14 @@ def verify_cross_reference_file(
             }:
                 finding_id = str(entities_by_id[source].get("raw_id", ""))
                 verified_machine_entities_by_finding[finding_id].add(target)
-                verified_machine_relationships_by_finding[finding_id].add(
-                    relation_id
-                )
+                verified_machine_relationships_by_finding[finding_id].add(relation_id)
             elif target_kind == "finding" and source_kind in {
                 "machine_suggestion",
                 "machine_summary",
             }:
                 finding_id = str(entities_by_id[target].get("raw_id", ""))
                 verified_machine_entities_by_finding[finding_id].add(source)
-                verified_machine_relationships_by_finding[finding_id].add(
-                    relation_id
-                )
+                verified_machine_relationships_by_finding[finding_id].add(relation_id)
 
         def readiness_profile_valid(profile: object) -> bool:
             if not isinstance(profile, dict):
@@ -7335,8 +8272,7 @@ def verify_cross_reference_file(
                 and isinstance(signals, dict)
                 and set(signals) == set(VERIFICATION_EVIDENCE_SIGNAL_NAMES)
                 and all(isinstance(signals[name], bool) for name in signals)
-                and profile.get("evidence_posture")
-                in VERIFICATION_EVIDENCE_POSTURES
+                and profile.get("evidence_posture") in VERIFICATION_EVIDENCE_POSTURES
                 and profile.get("lifecycle_state")
                 in VERIFICATION_READINESS_STATE_ACTIONS
                 and profile.get("next_action_id")
@@ -7526,9 +8462,7 @@ def verify_cross_reference_file(
                     expected_signals["passing_execution_recorded"]
                     and not expected_signals["independent_execution_review"]
                 ):
-                    expected_gaps.add(
-                        "passing_execution_without_independent_review"
-                    )
+                    expected_gaps.add("passing_execution_without_independent_review")
                 if (
                     expected_signals["evidence_sufficient"]
                     and not expected_signals["terminal_verification"]
@@ -7542,9 +8476,7 @@ def verify_cross_reference_file(
                     and not expected_signals["implementation_registered"]
                     and not expected_signals["execution_recorded"]
                 ):
-                    expected_gaps.add(
-                        "coverage_without_test_or_execution_evidence"
-                    )
+                    expected_gaps.add("coverage_without_test_or_execution_evidence")
             profile_relation = _relation_id(
                 _entity_id("finding", profile.get("finding_id", "")),
                 str(profile.get("id", "")),
@@ -7598,8 +8530,7 @@ def verify_cross_reference_file(
                     if execution_records
                     else ""
                 )
-                and profile_relation
-                in profile_relationship_ids
+                and profile_relation in profile_relationship_ids
                 and profile_relation in relationship_id_set
                 and component_finding_relation in relationship_id_set
                 and readiness_evidence_relations <= profile_relationship_ids
@@ -7698,9 +8629,7 @@ def verify_cross_reference_file(
             profile_id = str(profile.get("id", ""))
             finding_id = str(profile.get("finding_id", ""))
             diagnostic_ids = _text_values(profile.get("diagnostic_entity_ids"))
-            blocking_ids = _text_values(
-                profile.get("blocking_diagnostic_entity_ids")
-            )
+            blocking_ids = _text_values(profile.get("blocking_diagnostic_entity_ids"))
             relationship_ids_for_profile = set(
                 _text_values(profile.get("relationship_ids"))
             )
@@ -7763,9 +8692,7 @@ def verify_cross_reference_file(
                 for diagnostic_id in diagnostic_ids
                 if entities_by_id[diagnostic_id].get("metadata", {}).get("level")
                 == "error"
-                and entities_by_id[diagnostic_id]
-                .get("metadata", {})
-                .get("rule_id")
+                and entities_by_id[diagnostic_id].get("metadata", {}).get("rule_id")
                 != "review.unreviewed"
             )
             expected_state, expected_next_action = _review_governance_state(
@@ -7838,8 +8765,7 @@ def verify_cross_reference_file(
         expected_analysis_gate_state = (
             "blocked"
             if any(
-                metadata.get("level") == "error"
-                for metadata in all_diagnostic_metadata
+                metadata.get("level") == "error" for metadata in all_diagnostic_metadata
             )
             else "review_required"
             if any(
@@ -7877,10 +8803,11 @@ def verify_cross_reference_file(
                 if isinstance(profile, dict)
             }
             == finding_entity_ids
-            and all(governance_profile_valid(profile) for profile in governance_profiles)
+            and all(
+                governance_profile_valid(profile) for profile in governance_profiles
+            )
             and analysis_scope_entity_id in entities_by_id
-            and entities_by_id[analysis_scope_entity_id].get("kind")
-            == "analysis_scope"
+            and entities_by_id[analysis_scope_entity_id].get("kind") == "analysis_scope"
             and set(global_diagnostic_ids) <= quality_diagnostic_entity_ids
             and all(metadata.get("scope") == "analysis" for metadata in global_metadata)
             and set(global_relationship_ids) == expected_global_relations
@@ -7938,9 +8865,7 @@ def verify_cross_reference_file(
         raw_entity_index: dict[str, set[str]] = defaultdict(set)
         for entity in entities or []:
             if isinstance(entity, dict) and entity.get("id"):
-                raw_entity_index[str(entity.get("raw_id", ""))].add(
-                    str(entity["id"])
-                )
+                raw_entity_index[str(entity.get("raw_id", ""))].add(str(entity["id"]))
         expected_adapter_relationship_ids: set[str] = set()
         if len(analysis_scope_entity_ids) == 1:
             analysis_scope_id = next(iter(analysis_scope_entity_ids))
@@ -7983,12 +8908,8 @@ def verify_cross_reference_file(
             adapter_id = str(profile.get("adapter_id", ""))
             entity = entities_by_id.get(profile_id, {})
             contribution_ids = _text_values(profile.get("contribution_entity_ids"))
-            linked_ids = _text_values(
-                profile.get("linked_contribution_entity_ids")
-            )
-            unlinked_ids = _text_values(
-                profile.get("unlinked_contribution_entity_ids")
-            )
+            linked_ids = _text_values(profile.get("linked_contribution_entity_ids"))
+            unlinked_ids = _text_values(profile.get("unlinked_contribution_entity_ids"))
             supplied_relationship_ids = set(
                 _text_values(profile.get("relationship_ids"))
             )
@@ -7996,8 +8917,7 @@ def verify_cross_reference_file(
                 profile_id in adapter_run_entity_ids
                 and entity.get("raw_id") == adapter_id
                 and entity.get("metadata", {}).get("adapter_id") == adapter_id
-                and entity.get("metadata", {}).get("status")
-                == profile.get("status")
+                and entity.get("metadata", {}).get("status") == profile.get("status")
                 and isinstance(profile.get("contribution_entity_ids"), list)
                 and isinstance(profile.get("linked_contribution_entity_ids"), list)
                 and isinstance(profile.get("unlinked_contribution_entity_ids"), list)
@@ -8028,9 +8948,9 @@ def verify_cross_reference_file(
                 if target_entity_id != profile_id
             }
             if not all(
-                relationships_by_id.get(relation_id, {}).get("metadata", {}).get(
-                    "contribution_entity_id"
-                )
+                relationships_by_id.get(relation_id, {})
+                .get("metadata", {})
+                .get("contribution_entity_id")
                 in contribution_ids
                 for relation_id in expected_relationship_ids
             ):
@@ -8062,16 +8982,14 @@ def verify_cross_reference_file(
             and run_manifest_entity_id in entities_by_id
             and entities_by_id[run_manifest_entity_id].get("kind") == "run_manifest"
             and adapter_ledger_entity_id in entities_by_id
-            and entities_by_id[adapter_ledger_entity_id].get("kind")
-            == "adapter_ledger"
+            and entities_by_id[adapter_ledger_entity_id].get("kind") == "adapter_ledger"
             and entities_by_id[run_manifest_entity_id]
             .get("metadata", {})
             .get("adapter_run_ledger_sha256")
             == entities_by_id[adapter_ledger_entity_id]
             .get("metadata", {})
             .get("ledger_sha256")
-            and supplied_adapter_relationship_ids
-            == expected_adapter_relationship_ids
+            and supplied_adapter_relationship_ids == expected_adapter_relationship_ids
             and expected_adapter_relationship_ids <= relationship_id_set
         )
         if not checks["adapter_provenance_integrity"]:
@@ -8161,36 +9079,44 @@ def verify_cross_reference_file(
                 )
             ):
                 return False
-            expected_relationship_ids = ({
-                _relation_id(
-                    _entity_id("finding", chain.get("finding_id", "")),
-                    source_artifact_id,
-                    "originates_from_repository_artifact",
-                    "repository_inventory",
+            expected_relationship_ids = (
+                {
+                    _relation_id(
+                        _entity_id("finding", chain.get("finding_id", "")),
+                        source_artifact_id,
+                        "originates_from_repository_artifact",
+                        "repository_inventory",
+                    )
+                    for source_artifact_id in artifact_id_set
+                }
+                | {
+                    _relation_id(
+                        _entity_id("component", chain.get("component_id", "")),
+                        source_artifact_id,
+                        "defined_in_repository_artifact",
+                        "repository_inventory",
+                    )
+                    for source_artifact_id in artifact_id_set
+                }
+                | (
+                    {
+                        _relation_id(
+                            _entity_id("component", chain.get("component_id", "")),
+                            configuration_source_id,
+                            "configured_by_analysis_input",
+                            "analysis_input",
+                        ),
+                        _relation_id(
+                            _entity_id("finding", chain.get("finding_id", "")),
+                            configuration_source_id,
+                            "originates_from_analysis_input",
+                            "analysis_input",
+                        ),
+                    }
+                    if configuration_source_id
+                    else set()
                 )
-                for source_artifact_id in artifact_id_set
-            } | {
-                _relation_id(
-                    _entity_id("component", chain.get("component_id", "")),
-                    source_artifact_id,
-                    "defined_in_repository_artifact",
-                    "repository_inventory",
-                )
-                for source_artifact_id in artifact_id_set
-            } | ({
-                _relation_id(
-                    _entity_id("component", chain.get("component_id", "")),
-                    configuration_source_id,
-                    "configured_by_analysis_input",
-                    "analysis_input",
-                ),
-                _relation_id(
-                    _entity_id("finding", chain.get("finding_id", "")),
-                    configuration_source_id,
-                    "originates_from_analysis_input",
-                    "analysis_input",
-                ),
-            } if configuration_source_id else set())) & relationship_id_set
+            ) & relationship_id_set
             expected_adapter_ids = sorted(
                 {
                     adapter_id
@@ -8203,9 +9129,7 @@ def verify_cross_reference_file(
                 }
             )
             primary_metadata = (
-                entities_by_id[artifact_id].get("metadata", {})
-                if artifact_id
-                else {}
+                entities_by_id[artifact_id].get("metadata", {}) if artifact_id else {}
             )
             configuration_metadata = (
                 entities_by_id[configuration_source_id].get("metadata", {})
@@ -8353,9 +9277,7 @@ def verify_cross_reference_file(
                                 ].get("entity_ids")
                             ),
                         }
-                        and set(
-                            _text_values(chain.get("semantic_relationship_ids"))
-                        )
+                        and set(_text_values(chain.get("semantic_relationship_ids")))
                         == set(
                             _text_values(
                                 semantic_profiles_by_id[
@@ -8381,8 +9303,7 @@ def verify_cross_reference_file(
                         and not chain["dimensions"].get("semantic_exposure")
                     )
                 )
-                and set(_text_values(chain.get("semantic_entity_ids")))
-                <= entity_id_set
+                and set(_text_values(chain.get("semantic_entity_ids"))) <= entity_id_set
                 and set(_text_values(chain.get("semantic_relationship_ids")))
                 <= relationship_id_set
                 and set(_text_values(chain.get("compound_exposure_kinds")))
@@ -8448,8 +9369,7 @@ def verify_cross_reference_file(
                 )
                 and set(_text_values(chain.get("test_candidate_entity_ids")))
                 <= entity_id_set
-                and set(_text_values(chain.get("coverage_entity_ids")))
-                <= entity_id_set
+                and set(_text_values(chain.get("coverage_entity_ids"))) <= entity_id_set
                 and set(_text_values(chain.get("implemented_test_entity_ids")))
                 <= entity_id_set
                 and set(_text_values(chain.get("assignment_entity_ids")))
@@ -8514,9 +9434,7 @@ def verify_cross_reference_file(
                     _text_values(chain.get("blocking_quality_diagnostic_entity_ids"))
                 )
                 <= quality_diagnostic_entity_ids
-                and set(
-                    _text_values(chain.get("review_governance_relationship_ids"))
-                )
+                and set(_text_values(chain.get("review_governance_relationship_ids")))
                 <= relationship_id_set
                 and isinstance(chain.get("adapter_statuses"), dict)
                 and (
@@ -8549,11 +9467,7 @@ def verify_cross_reference_file(
                 )
                 and (
                     lambda expected_entity_ids, expected_relation_ids: (
-                        set(
-                            _text_values(
-                                chain.get("machine_assistance_entity_ids")
-                            )
-                        )
+                        set(_text_values(chain.get("machine_assistance_entity_ids")))
                         == expected_entity_ids
                         and set(
                             _text_values(
@@ -8589,9 +9503,9 @@ def verify_cross_reference_file(
                             else "complete"
                             if all(
                                 citation_id in guidance_citation_profiles_by_raw_id
-                                and guidance_citation_profiles_by_raw_id[citation_id].get(
-                                    "source_entity_id"
-                                )
+                                and guidance_citation_profiles_by_raw_id[
+                                    citation_id
+                                ].get("source_entity_id")
                                 for citation_id in citation_ids
                             )
                             else "unresolved"
@@ -8621,11 +9535,17 @@ def verify_cross_reference_file(
                     lambda expected_claim_ids, expected_value_ids, expected_relation_ids, expected_statuses: (
                         set(_text_values(chain.get("system_context_claim_entity_ids")))
                         == expected_claim_ids
-                        and set(_text_values(chain.get("system_context_value_entity_ids")))
+                        and set(
+                            _text_values(chain.get("system_context_value_entity_ids"))
+                        )
                         == expected_value_ids
-                        and set(_text_values(chain.get("system_context_relationship_ids")))
+                        and set(
+                            _text_values(chain.get("system_context_relationship_ids"))
+                        )
                         == expected_relation_ids
-                        and set(_text_values(chain.get("system_context_alignment_statuses")))
+                        and set(
+                            _text_values(chain.get("system_context_alignment_statuses"))
+                        )
                         == expected_statuses
                         and chain["dimensions"].get("system_context")
                         == bool(expected_claim_ids)
@@ -8816,7 +9736,11 @@ def verify_cross_reference_file(
         repository_artifact_status_counts = dict(
             sorted(
                 Counter(
-                    str(entities_by_id[entity_id].get("metadata", {}).get("status", "unknown"))
+                    str(
+                        entities_by_id[entity_id]
+                        .get("metadata", {})
+                        .get("status", "unknown")
+                    )
                     for entity_id in repository_artifact_entity_ids
                 ).items()
             )
@@ -8864,9 +9788,7 @@ def verify_cross_reference_file(
             and str(relation.get("source")) in entities_by_id
         }
         configured_component_id_set = set(
-            _text_values(
-                repository_provenance_data.get("configured_component_ids", [])
-            )
+            _text_values(repository_provenance_data.get("configured_component_ids", []))
         )
         configured_finding_id_set = set(
             _text_values(repository_provenance_data.get("configured_finding_ids", []))
@@ -8905,6 +9827,30 @@ def verify_cross_reference_file(
             )
             and summary.get("review_governance_profiles")
             == len(governance_profiles or [])
+            and summary.get("analysis_sections")
+            == len(analysis_projection_profiles or [])
+            and summary.get("populated_analysis_sections")
+            == sum(
+                _safe_int(profile.get("source_record_count", 0)) > 0
+                for profile in (analysis_projection_profiles or [])
+                if isinstance(profile, dict)
+            )
+            and summary.get("semantically_projected_analysis_sections")
+            == len(expected_status_section_names["semantically_projected"])
+            and summary.get("registered_without_projection_analysis_sections")
+            == len(expected_status_section_names["registered_without_projection"])
+            and summary.get("provenance_only_analysis_sections")
+            == len(expected_status_section_names["provenance_only"])
+            and summary.get("empty_analysis_sections")
+            == len(expected_status_section_names["empty"])
+            and summary.get("unmapped_analysis_sections")
+            == len(expected_status_section_names["unmapped"])
+            and summary.get("analysis_projection_relationships")
+            == len(analysis_projection_channel_relationship_ids)
+            and summary.get("analysis_projection_coverage_percent")
+            == expected_analysis_projection_coverage_percent
+            and summary.get("analysis_material_projection_coverage_percent")
+            == expected_analysis_material_projection_coverage_percent
             and summary.get("quality_gate_diagnostics")
             == len(quality_diagnostic_entity_ids)
             and summary.get("global_quality_gate_diagnostics")
@@ -8942,8 +9888,7 @@ def verify_cross_reference_file(
                 == "analyzed"
                 for entity_id in repository_artifact_entity_ids
             )
-            and summary.get("opaque_repository_artifacts")
-            == len(opaque_entity_ids)
+            and summary.get("opaque_repository_artifacts") == len(opaque_entity_ids)
             and summary.get("excluded_repository_regions")
             == len(repository_region_entity_ids)
             and summary.get("dependency_entities") == len(dependency_entity_id_set)
@@ -8965,9 +9910,7 @@ def verify_cross_reference_file(
             - len(
                 set(
                     _text_values(
-                        repository_provenance_data.get(
-                            "unaccounted_component_ids", []
-                        )
+                        repository_provenance_data.get("unaccounted_component_ids", [])
                     )
                 )
             )
@@ -8979,8 +9922,7 @@ def verify_cross_reference_file(
             )
             and summary.get("repository_provenance_relationships")
             == len(repository_channel_relationship_ids)
-            and summary.get("machine_suggestions")
-            == len(suggestion_profiles or [])
+            and summary.get("machine_suggestions") == len(suggestion_profiles or [])
             and summary.get("proposed_machine_suggestions")
             == sum(
                 profile.get("status") == "proposed"
@@ -8994,13 +9936,9 @@ def verify_cross_reference_file(
             == len(machine_claim_relation_ids)
             and summary.get("machine_assistance_relationships")
             == len(machine_channel_relationship_ids)
-            and summary.get(
-                "machine_assistance_unresolved_evidence_references"
-            )
+            and summary.get("machine_assistance_unresolved_evidence_references")
             == len(expected_unresolved_evidence_references)
-            and summary.get(
-                "machine_assistance_unresolved_citation_references"
-            )
+            and summary.get("machine_assistance_unresolved_citation_references")
             == len(expected_unresolved_citation_references)
             and summary.get("findings_with_machine_assistance")
             == sum(
@@ -9008,8 +9946,7 @@ def verify_cross_reference_file(
                 for chain in (chains or [])
                 if isinstance(chain, dict)
             )
-            and summary.get("guidance_sources")
-            == len(guidance_source_profiles or [])
+            and summary.get("guidance_sources") == len(guidance_source_profiles or [])
             and summary.get("methodology_basis_sources")
             == sum(
                 bool(profile.get("methodology_basis"))
@@ -9048,8 +9985,7 @@ def verify_cross_reference_file(
             )
             and summary.get("system_context_fields")
             == len(context_field_profiles or [])
-            and summary.get("system_context_values")
-            == len(context_value_entity_id_set)
+            and summary.get("system_context_values") == len(context_value_entity_id_set)
             and summary.get("finding_context_claims")
             == len(context_claim_profiles or [])
             and summary.get("matched_finding_context_claims")
@@ -9116,20 +10052,16 @@ def verify_cross_reference_file(
             and summary.get("classifications") == classification_counts
             and summary.get("review_leads_by_kind") == lead_counts
             and summary.get("semantic_dimensions") == semantic_dimension_counts
-            and summary.get("compound_exposures_by_kind")
-            == compound_exposure_counts
+            and summary.get("compound_exposures_by_kind") == compound_exposure_counts
             and summary.get("verification_lifecycle_states")
             == verification_lifecycle_counts
             and summary.get("verification_evidence_postures")
             == verification_posture_counts
-            and summary.get("verification_readiness_gaps")
-            == verification_gap_counts
-            and summary.get("quality_diagnostics_by_level")
-            == quality_diagnostic_counts
+            and summary.get("verification_readiness_gaps") == verification_gap_counts
+            and summary.get("quality_diagnostics_by_level") == quality_diagnostic_counts
             and summary.get("global_quality_diagnostics_by_level")
             == expected_global_counts
-            and summary.get("review_governance_states")
-            == governance_state_counts
+            and summary.get("review_governance_states") == governance_state_counts
             and summary.get("source_change_states") == source_change_counts
             and summary.get("adapter_run_statuses") == adapter_status_counts
             and summary.get("repository_artifact_statuses")
@@ -9140,8 +10072,7 @@ def verify_cross_reference_file(
             == machine_claim_relationship_type_counts
             and summary.get("finding_context_alignment_statuses")
             == context_alignment_status_counts
-            and summary.get("lifecycle_event_types")
-            == lifecycle_event_type_counts
+            and summary.get("lifecycle_event_types") == lifecycle_event_type_counts
         )
         if not checks["summary_reconciliation"]:
             fail(
@@ -9240,6 +10171,37 @@ def verify_cross_reference_file(
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0
         ),
+        "analysis_section_count": (
+            _safe_int(value.get("summary", {}).get("analysis_sections", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "unmapped_analysis_section_count": (
+            _safe_int(value.get("summary", {}).get("unmapped_analysis_sections", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "registered_without_projection_analysis_section_count": (
+            _safe_int(
+                value.get("summary", {}).get(
+                    "registered_without_projection_analysis_sections", 0
+                )
+            )
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "analysis_projection_coverage_percent": (
+            value.get("summary", {}).get("analysis_projection_coverage_percent", 0)
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "analysis_material_projection_coverage_percent": (
+            value.get("summary", {}).get(
+                "analysis_material_projection_coverage_percent", 0
+            )
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
         "quality_gate_diagnostic_count": (
             _safe_int(value.get("summary", {}).get("quality_gate_diagnostics", 0))
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
@@ -9266,9 +10228,7 @@ def verify_cross_reference_file(
             else 0
         ),
         "machine_claim_relationship_count": (
-            _safe_int(
-                value.get("summary", {}).get("machine_claim_relationships", 0)
-            )
+            _safe_int(value.get("summary", {}).get("machine_claim_relationships", 0))
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0
         ),

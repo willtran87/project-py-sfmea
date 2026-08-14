@@ -434,6 +434,23 @@ records, and each locator to citing findings. Review `guidance_lineage_status` a
 `unresolved_guidance_source_references` before relying on source traceability. A complete chain is
 not a determination that the source applies or that a finding is noncompliant.
 
+`analysis_projection_coverage` is the fabric's self-audit. It creates one digest-bound
+`analysis_section` entity and one analysis-scope relationship for every top-level analysis field,
+then reconciles the declared entity kinds and relationship channels for that output. Review these
+states before treating the fabric as integrated:
+
+- `semantically_projected`: at least one declared entity or relationship is present.
+- `provenance_only`: the section is intentionally identity-bound rather than domain-modeled.
+- `empty`: no projectable source records were present.
+- `registered_without_projection`: candidate source records exist, but the declared semantic
+  surface produced no material link; confirm intentional filtering or extend the model.
+- `unmapped`: no declaration exists; this is a high-priority integration lead.
+
+The declared coverage percentage excludes unknown outputs; the material coverage percentage also
+excludes registered outputs that produced no usable link. Neither measures nested record completeness.
+Use exact `cross-reference-verify --analysis` regeneration to bind section digests back to the
+governed analysis.
+
 The same fabric exposes two previously separate review surfaces:
 
 - `system_context_provenance` models the resolved context, its fields and values, and each explicit
