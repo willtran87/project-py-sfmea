@@ -160,13 +160,14 @@ flowchart LR
 - Safe static control-flow pruning evaluates only non-executing literal truth/comparisons,
   boolean composition/short-circuiting, resolved `TYPE_CHECKING` guards, empty literal iteration,
   bounded literal/singleton/OR/sequence/capture `match` patterns and static case guards, direct
-  exits, selected terminal blocks, and exhaustive `if/else` or `match` alternatives that all terminate. It
+  exits, constant-true loop reachability, selected terminal blocks, terminal `finally` blocks, and
+  exhaustive `if/else`, `match`, or `try` alternatives that all terminate. It
   removes provably unreachable calls, raises, sequences, exception cascades, and failure-mode
   evidence before downstream analysis, including function, class, and module-initialization
   statement tails. Every decision is retained in the bounded, count-reconciled
   `static_control_flow_model`, linked to its component and source coordinates, validated, cached,
   and navigable in the evidence fabric and HTML report. Class, mapping, dynamic value, and other
-  unsupported patterns—as well as dynamic predicates and loops—remain
+  unsupported patterns—as well as dynamic predicates, complex `try`/`except*` flows, and loops—remain
   conservative; evaluated predicate/iterator effects remain scanned, and the model does not claim
   runtime reachability, termination, or general symbolic execution
 - A bounded guarded-state model that turns assignments to state/status/phase/mode variables into

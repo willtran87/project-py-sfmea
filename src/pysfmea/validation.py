@@ -1047,6 +1047,7 @@ def validate_analysis(
                 "empty_for_loop",
                 "match_case_pattern",
                 "match_case_guard",
+                "try_else_clause",
                 "statement_sequence_termination",
             }
             allowed_bases = {
@@ -1066,6 +1067,10 @@ def validate_analysis(
                 "irrefutable_pattern",
                 "statically_selected_match_case_terminal",
                 "exhaustive_match_cases_terminal",
+                "static_true_loop_without_break",
+                "try_body_cannot_fall_through",
+                "terminal_finally_block",
+                "all_try_paths_terminal",
             }
             for decision in decisions:
                 if not isinstance(decision, dict):

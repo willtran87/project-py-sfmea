@@ -134,7 +134,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-9"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-10"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -817,6 +817,31 @@ def _static_empty_iteration(node: ast.AST) -> tuple[bool, str]:
     return False, "dynamic_or_nonempty_iterable"
 
 
+def _block_contains_current_loop_break(statements: list[ast.stmt]) -> bool:
+    """Find a break owned by the surrounding loop, excluding nested scopes/loops."""
+
+    pending: list[ast.AST] = list(reversed(statements))
+    while pending:
+        value = pending.pop()
+        if isinstance(value, ast.Break):
+            return True
+        if isinstance(
+            value,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+                ast.Lambda,
+                ast.For,
+                ast.AsyncFor,
+                ast.While,
+            ),
+        ):
+            continue
+        pending.extend(reversed(list(ast.iter_child_nodes(value))))
+    return False
+
+
 def _static_match_pattern(
     subject: Any,
     pattern: ast.pattern,
@@ -1002,6 +1027,8 @@ def _static_statement_termination(
                 if terminal
                 else "false_loop_may_fall_through"
             )
+        if decision is True and not _block_contains_current_loop_break(statement.body):
+            return True, "static_true_loop_without_break"
     if isinstance(statement, ast.Match):
         selected_case_index, decidable, _selection_basis = _static_match_selection(
             statement, aliases
@@ -1033,6 +1060,29 @@ def _static_statement_termination(
             if _static_irrefutable_pattern(case.pattern) and guard is True:
                 return True, "exhaustive_match_cases_terminal"
         return False, "match_may_fall_through"
+    if isinstance(statement, ast.Try):
+        final_terminal, _final_basis = _static_block_termination(
+            statement.finalbody, aliases, depth=depth + 1
+        )
+        if final_terminal:
+            return True, "terminal_finally_block"
+        body_terminal, _body_basis = _static_block_termination(
+            statement.body, aliases, depth=depth + 1
+        )
+        normal_terminal = body_terminal
+        if not body_terminal and statement.orelse:
+            normal_terminal, _else_basis = _static_block_termination(
+                statement.orelse, aliases, depth=depth + 1
+            )
+        if not normal_terminal:
+            return False, "try_normal_path_may_fall_through"
+        for handler in statement.handlers:
+            handler_terminal, _handler_basis = _static_block_termination(
+                handler.body, aliases, depth=depth + 1
+            )
+            if not handler_terminal:
+                return False, "try_handler_may_fall_through"
+        return True, "all_try_paths_terminal"
     return False, "unsupported_or_fallthrough_statement"
 
 
@@ -1154,6 +1204,22 @@ def _handler_statement_outcomes(
                 return _handler_block_outcomes(
                     statement.orelse, exception_type_of, aliases, depth=depth + 1
                 )
+            if decision is True:
+                body, body_truncated = _handler_block_outcomes(
+                    statement.body, exception_type_of, aliases, depth=depth + 1
+                )
+                outcomes = {
+                    value
+                    for value in body
+                    if value[0] not in {"fallthrough", "break", "continue"}
+                }
+                if _block_contains_current_loop_break(statement.body):
+                    outcomes.add(("fallthrough", "", 0))
+                elif any(
+                    value[0] in {"fallthrough", "continue"} for value in body
+                ):
+                    outcomes.add(("indeterminate", "", line))
+                return _bounded_handler_outcomes(outcomes, body_truncated)
         body, body_truncated = _handler_block_outcomes(
             statement.body, exception_type_of, aliases, depth=depth + 1
         )
@@ -1677,6 +1743,18 @@ class _FactVisitor(ast.NodeVisitor):
             )
             self._visit_block(node.orelse, f"while@{node.lineno}:else")
             return
+        if decision is True:
+            self._record_control_flow_decision(
+                node.test,
+                kind="while_statement",
+                decision=True,
+                basis=basis,
+                selected_branch="body",
+                pruned_branch="else",
+                pruned_statement_count=len(node.orelse),
+            )
+            self._visit_block(node.body, f"while@{node.lineno}:body")
+            return
         self._visit_block(node.body, f"while@{node.lineno}:body")
         self._visit_block(node.orelse, f"while@{node.lineno}:else")
 
@@ -1927,6 +2005,11 @@ class _FactVisitor(ast.NodeVisitor):
                 outcomes_truncated,
             )
         self._record_exception_finalizer(node)
+        body_terminal = False
+        if isinstance(node, ast.Try) and node.orelse:
+            body_terminal, _body_basis = _static_block_termination(
+                node.body, self.aliases, depth=0
+            )
         self._visit_block(node.body, f"try@{node.lineno}:body")
         for index, handler in enumerate(node.handlers):
             if handler.type is not None:
@@ -1935,7 +2018,18 @@ class _FactVisitor(ast.NodeVisitor):
                 handler.body,
                 f"try@{node.lineno}:handler-{index + 1}",
             )
-        self._visit_block(node.orelse, f"try@{node.lineno}:else")
+        if body_terminal:
+            self._record_control_flow_decision(
+                node,
+                kind="try_else_clause",
+                decision=False,
+                basis="try_body_cannot_fall_through",
+                selected_branch="handlers_or_finally",
+                pruned_branch="else",
+                pruned_statement_count=len(node.orelse),
+            )
+        else:
+            self._visit_block(node.orelse, f"try@{node.lineno}:else")
         self._visit_block(node.finalbody, f"try@{node.lineno}:finally")
 
     def visit_TryStar(self, node: ast.TryStar) -> None:
@@ -6729,7 +6823,7 @@ def _exception_propagation_model(
         },
         "limitations": [
             "Handler selection resolves built-in inheritance and statically declared project exception bases, then respects nearest-try and first-handler order; dynamic aliases and ambiguous same-named project classes remain explicit indeterminate matches.",
-            "Handler outcomes preserve sequential reachability, select safely decidable literal structural-match cases, and merge remaining bounded if, match, loop, with, and nested-try branches; implicit exceptions, predicate feasibility, loop counts, and dynamic control flow remain conservative.",
+            "Handler outcomes preserve sequential reachability, select safely decidable literal structural-match and constant-loop paths, and merge remaining bounded if, match, loop, with, and nested-try branches; implicit exceptions, predicate feasibility, loop counts, and dynamic control flow remain conservative.",
             "Bare or literal-return, explicit-raise, break, and continue statements at the end of a finally block are modeled as bounded terminal candidates; evaluated returns, competing prior exits, conditional and nested path feasibility, ExceptionGroup splitting, callbacks, generators, native extensions, and dynamic dispatch remain incomplete.",
             "A propagation edge is a conservative review candidate, not proof that the call or exception is runtime reachable.",
         ],
@@ -6784,9 +6878,9 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
             "decisions": MAX_CONTROL_FLOW_DECISION_RECORDS,
         },
         "limitations": [
-            "Only direct terminal statements, statically empty literal iteration, literal truth, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/capture match patterns and guards are decided; all unsupported or dynamic predicates and patterns retain conservative alternatives.",
+            "Only direct terminal statements, statically empty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/capture match patterns and guards are decided; all unsupported or dynamic predicates and patterns retain conservative alternatives.",
             "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
-            "Loop iteration counts, break feasibility, class and mapping patterns, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
+            "Loop iteration counts and dynamic break feasibility beyond lexical ownership, except-star and complex exception feasibility, class and mapping patterns, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
         ],
         "authority": "bounded_safe_non_executing_static_control_flow_pruning_not_runtime_path_or_termination_proof",
     }

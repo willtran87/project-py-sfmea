@@ -4850,6 +4850,25 @@ def loop():
     else:
         live()
 
+def true_loop_with_break():
+    while True:
+        live()
+        break
+    else:
+        dead()
+    live()
+
+def true_loop_without_break():
+    while True:
+        live()
+    dead()
+
+def nested_loop_break():
+    while True:
+        for item in (1,):
+            break
+    dead()
+
 def literal_match():
     match 2:
         case 1:
@@ -4952,6 +4971,49 @@ def handler_match():
                 raise
             case _:
                 return None
+
+def handler_true_loop():
+    try:
+        live()
+    except ValueError:
+        while True:
+            raise
+        else:
+            return None
+
+def terminal_try_else():
+    try:
+        return live()
+    except ValueError:
+        raise
+    else:
+        dead()
+    dead()
+
+def terminal_finally(flag):
+    try:
+        if flag:
+            live()
+    finally:
+        raise ValueError('closed')
+    dead()
+
+def try_else_terminal(flag):
+    try:
+        if flag:
+            live()
+    except ValueError:
+        raise
+    else:
+        return live()
+    dead()
+
+def try_handler_fallthrough():
+    try:
+        return live()
+    except ValueError:
+        pass
+    dead()
 """,
             encoding="utf-8",
         )
@@ -4980,6 +5042,9 @@ def handler_match():
             "boolean_or",
             "repeated_short_circuit",
             "loop",
+            "true_loop_with_break",
+            "true_loop_without_break",
+            "nested_loop_break",
             "literal_match",
             "sequence_match",
             "starred_or_match",
@@ -4999,6 +5064,10 @@ def handler_match():
             set(components["unsupported_mapping_match"]["calls"]),
             {"dead", "live"},
         )
+        self.assertEqual(
+            set(components["try_handler_fallthrough"]["calls"]),
+            {"dead", "live"},
+        )
         self.assertEqual(components["boolean_and"]["calls"], [])
         self.assertEqual(components["boolean_or"]["calls"], [])
         handler_record = components["handler"]["exception_handlers"][0]
@@ -5010,10 +5079,13 @@ def handler_match():
         match_handler = components["handler_match"]["exception_handlers"][0]
         self.assertEqual(match_handler["outcome_certainty"], "uniform")
         self.assertEqual(match_handler["outcome_kinds"], ["reraise"])
+        true_loop_handler = components["handler_true_loop"]["exception_handlers"][0]
+        self.assertEqual(true_loop_handler["outcome_certainty"], "uniform")
+        self.assertEqual(true_loop_handler["outcome_kinds"], ["reraise"])
 
         model = analysis["static_control_flow_model"]
         self.assertEqual(model["format"], "pysfmea-static-control-flow-model-1")
-        self.assertGreaterEqual(model["summary"]["decisions_discovered"], 22)
+        self.assertGreaterEqual(model["summary"]["decisions_discovered"], 31)
         self.assertEqual(
             model["summary"]["decisions_discovered"],
             model["summary"]["decisions_embedded"],
@@ -5029,6 +5101,9 @@ def handler_match():
         self.assertGreaterEqual(
             model["summary"]["decision_kinds"]["match_case_guard"], 1
         )
+        self.assertGreaterEqual(
+            model["summary"]["decision_kinds"]["try_else_clause"], 1
+        )
         repeated = [
             value for value in model["decisions"]
             if value["component_reference"] == "branches.py:repeated_short_circuit"
@@ -5041,6 +5116,9 @@ def handler_match():
             "after_selected_terminal",
             "after_all_terminal",
             "terminal_match",
+            "terminal_try_else",
+            "terminal_finally",
+            "try_else_terminal",
         ):
             self.assertNotIn("dead", components[name]["calls"], name)
             self.assertNotIn("dead", components[name]["ordered_calls"], name)
@@ -5057,6 +5135,9 @@ def handler_match():
         self.assertIn("statically_selected_terminal_block", termination_bases)
         self.assertIn("all_conditional_branches_terminal", termination_bases)
         self.assertIn("exhaustive_match_cases_terminal", termination_bases)
+        self.assertIn("static_true_loop_without_break", termination_bases)
+        self.assertIn("all_try_paths_terminal", termination_bases)
+        self.assertIn("terminal_finally_block", termination_bases)
         startup = next(
             value
             for value in analysis["components"]
@@ -5088,6 +5169,9 @@ def handler_match():
                 "boolean_or",
                 "repeated_short_circuit",
                 "loop",
+                "true_loop_with_break",
+                "true_loop_without_break",
+                "nested_loop_break",
                 "after_return",
                 "after_selected_terminal",
                 "after_all_terminal",
@@ -5099,6 +5183,9 @@ def handler_match():
                 "capture_match",
                 "guarded_match",
                 "terminal_match",
+                "terminal_try_else",
+                "terminal_finally",
+                "try_else_terminal",
             )
         }
         self.assertFalse(

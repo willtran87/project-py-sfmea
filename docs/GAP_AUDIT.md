@@ -35,9 +35,12 @@ literal iteration, direct exits, selected terminal blocks, and `if/else` alterna
 terminate before composing calls, exceptions, sequences, and failure-mode candidates. Literal,
 singleton, OR, sequence, capture, and wildcard `match` cases plus static guards use the same safe
 selection model, including exhaustive terminal matches. Every prune is retained as validated
-component-linked evidence with omission counts. Conditional declarations, class/mapping/dynamic
-value patterns, nonempty/dynamic loop feasibility, complex `try` termination, and general symbolic
-execution remain explicit boundaries rather than inferred behavior.
+component-linked evidence with omission counts. Constant-true loops exclude impossible `else`
+clauses and become terminal only without a break owned by that loop. Bounded `try` analysis removes
+an `else` when its body cannot fall through and proves termination only for a terminal `finally` or
+when every normal and handler path exits. Conditional declarations, class/mapping/dynamic value
+patterns, dynamic loop feasibility, `except*` and complex exception/path feasibility, and general
+symbolic execution remain explicit boundaries rather than inferred behavior.
 
 The schema-backed enhancement workbench now accounts for the complete 56-item follow-on backlog,
 including evidence recipes, root-cause clusters, verification portfolios, disposition queues, and

@@ -513,8 +513,9 @@ third-party inheritance remain review boundaries.
 failure-mode candidates are composed. Decisions cover safe literal truth/comparisons, boolean
 short-circuiting, `while False`, conditional expressions, imported `TYPE_CHECKING` guards, empty
 literal `for` loops, bounded literal/singleton/OR/sequence/capture `match` patterns and static case
-guards, direct exits, statically selected terminal blocks, and exhaustive `if/else` or `match`
-constructs whose alternatives all terminate. Function, class-construction, and module-initialization tails
+guards, constant-true loop reachability, direct exits, statically selected terminal blocks,
+impossible `try` `else` clauses, terminal `finally` blocks, and exhaustive `if/else`, `match`, or
+`try` constructs whose alternatives all terminate. Function, class-construction, and module-initialization tails
 use the same block traversal. Each record retains component, exact source coordinates, expression,
 selected/pruned region, omitted statement/operand counts, basis, and authority. Dynamic and
 unsupported predicates retain conservative alternatives. Predicate and iterator expressions are
