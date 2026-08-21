@@ -12,6 +12,8 @@ package; public artifact and schema identifiers carry their own explicit compati
   expressions, exact built-in indexing and slicing, operand-valued boolean expressions, and
   statically selected conditional-expression values. Safely construct bounded tuple/list/set/dict
   displays with deterministic literal unpacking, dictionary union, and exact set algebra,
+  plus a non-mutating exact-built-in method allowlist for ASCII string/bytes normalization and
+  predicates, sequence queries, set relations, and dictionary lookup;
   resolved `TYPE_CHECKING` guards, literal/singleton/OR/sequence/mapping/capture `match` patterns
   and statically decidable case guards, direct terminal statements, statically selected terminal
   blocks, exhaustive terminal `if/else` or `match` constructs, impossible `try` `else` clauses,
@@ -20,7 +22,7 @@ package; public artifact and schema identifiers carry their own explicit compati
   calls, raises, sequences, and downstream failure paths are excluded while unsupported paths
   remain conservative. Publish every decision in count-reconciled
   `pysfmea-static-control-flow-model-2`, validate exact source/component backlinks and evaluator
-  limits, preserve it through fact-cache format 16, and expose it through the evidence fabric, canonical diagram, and
+  limits, preserve it through fact-cache format 17, and expose it through the evidence fabric, canonical diagram, and
   HTML report. Handler outcomes use the same predicate, pattern, empty-loop, and constant-loop
   evaluators, avoiding impossible loop-`else` rethrow, return, or translation dispositions. Reject call-shaped expressions
   from literal evaluation—including `set()` accepted by `ast.literal_eval`—because repository code
@@ -31,9 +33,11 @@ package; public artifact and schema identifiers carry their own explicit compati
   Constant folding admits only exact built-in numeric operations, bounded tuple/list/string/byte
   concatenation or repetition, safe literal indexing/slicing, Python-compatible `and`/`or` value
   selection, statically decidable conditional expressions, bounded collection unpacking, dictionary
-  union, and set algebra. It fails closed at depth 20, 4,096 integer bits or collection/sequence items,
-  exponent 64, and shift 1,024; calls, exceptional operations, oversized results, and unsupported
-  types retain all alternatives. Publish these mandatory limits in format 2 rather than silently
+  union, and set algebra. It fails closed at depth 20, 4,096 integer bits or collection/sequence
+  items, exponent 64, and shift 1,024; exact built-in method results share the same ceilings.
+  Dynamic receivers or arguments, non-ASCII string method data, starred calls, other or mutating
+  methods, exceptional operations, oversized results, and unsupported types retain all alternatives. Publish these
+  mandatory limits in format 2 rather than silently
   redefining static-control-flow format 1.
 - Deepen typed exception analysis with Python-compatible nearest-`try` and first-handler
   selection, exact built-in inheritance (including the `Exception`/`BaseException` boundary),

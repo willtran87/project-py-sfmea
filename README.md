@@ -162,7 +162,8 @@ flowchart LR
 - Safe static control-flow pruning evaluates only non-executing literal truth/comparisons,
   bounded exact-built-in arithmetic, sequence composition, literal indexing/slicing, boolean
   operand values, selected conditional-expression values, deterministic collection unpacking,
-  dictionary union, and set algebra,
+  dictionary union, set algebra, and non-mutating exact-built-in ASCII string/bytes normalization and
+  predicates, sequence queries, set relations, and dictionary lookup,
   boolean composition/short-circuiting, resolved `TYPE_CHECKING` guards, empty literal iteration,
   guaranteed-nonempty literal iteration with a terminal first-iteration body,
   bounded literal/singleton/OR/sequence/mapping/capture `match` patterns and static case guards, direct
@@ -174,8 +175,10 @@ flowchart LR
   `static_control_flow_model`, linked to its component and source coordinates, validated, cached,
   and navigable in the evidence fabric and HTML report. Class patterns, dynamic mapping keys,
   user-defined mappings, dynamic indices or unpacking, unordered set-to-sequence expansion,
-  missing keys, invalid slices, dynamic values, oversized or exceptional constant expressions, and other
-  unsupported patterns—as well as dynamic predicates,
+  missing keys, invalid slices, dynamic values, oversized or exceptional constant expressions,
+  dynamic method receivers/arguments, non-ASCII string method data, starred method calls,
+  unsupported or mutating methods, and
+  other unsupported patterns—as well as dynamic predicates,
   complex `try`/`except*` flows, and loops—remain
   conservative; evaluated predicate/iterator effects remain scanned, and the model does not claim
   runtime reachability, termination, or general symbolic execution

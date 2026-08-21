@@ -515,7 +515,9 @@ third-party inheritance remain review boundaries.
 failure-mode candidates are composed. Decisions cover safe literal truth/comparisons, boolean
 short-circuiting, bounded exact-built-in arithmetic and sequence expressions, safe literal
 indexing/slicing, operand-valued boolean expressions, selected conditional-expression values,
-bounded deterministic collection unpacking, dictionary union, and exact set algebra,
+bounded deterministic collection unpacking, dictionary union, exact set algebra, and
+non-mutating exact-built-in ASCII string/bytes normalization and predicates, sequence queries, set
+relations, and dictionary lookup;
 `while False`, conditional expressions, imported `TYPE_CHECKING` guards, empty
 literal `for` loops, guaranteed-nonempty literal loops whose first-iteration body cannot fall
 through, bounded literal/singleton/OR/sequence/mapping/capture `match` patterns and
@@ -530,7 +532,9 @@ pruning, not proof that a selected path runs, completes, or satisfies its contra
 publishes and validates its expression depth, integer-bit, sequence-length, exponent, and shift
 ceilings; dynamic or unordered sequence unpacking, dynamic indices, missing keys, invalid slices,
 exceptional operations, or over-limit
-expressions retain conservative alternatives.
+expressions retain conservative alternatives. Dynamic method receivers or arguments, non-ASCII
+string method data, starred calls, mutating or unlisted methods, and exceptional method outcomes
+are likewise not decided.
 `state_machine_model` projects assignments to conventional state/status/phase/mode variables into
 stable state and guarded-transition records. Treat missing transitions and invariants as review
 questions: the static projection does not prove reachability, liveness, or completeness.

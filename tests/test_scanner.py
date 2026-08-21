@@ -4973,6 +4973,67 @@ def computed_set_algebra():
         return live()
     return dead()
 
+def computed_string_methods():
+    if ' READY '.strip().lower() == 'ready' and 'worker'.startswith('work'):
+        return live()
+    return dead()
+
+def computed_bytes_methods():
+    if b' READY '.strip().lower() == b'ready' and b'worker'.endswith(b'er'):
+        return live()
+    return dead()
+
+def computed_mapping_get():
+    if {'mode': 'safe'}.get('mode') == 'safe':
+        return live()
+    return dead()
+
+def computed_sequence_queries():
+    if (1, 2, 2).count(2) == 2 and ['idle', 'ready'].index('ready') == 1:
+        return live()
+    return dead()
+
+def computed_set_queries():
+    if {1, 2}.issubset({1, 2, 3}) and {1, 2}.isdisjoint({3, 4}):
+        return live()
+    return dead()
+
+def dynamic_method_receiver(value):
+    if value.lower() == 'ready':
+        dead()
+    else:
+        live()
+
+def dynamic_method_argument(prefix):
+    if 'ready'.startswith(prefix):
+        dead()
+    else:
+        live()
+
+def unsupported_builtin_method():
+    if '{}'.format('ready') == 'ready':
+        dead()
+    else:
+        live()
+
+def exceptional_builtin_method():
+    if 'ready'.index('missing'):
+        dead()
+    else:
+        live()
+
+def starred_builtin_method_argument():
+    if 'ready'.startswith(*('r',)):
+        dead()
+    else:
+        live()
+
+def unicode_sensitive_builtin_method():
+    if 'ß'.upper() == 'SS':
+        dead()
+    else:
+        live()
+
 def dynamic_unpack(values):
     if [*values]:
         dead()
@@ -5130,6 +5191,13 @@ def computed_unpack_for():
         dead()
     dead()
 
+def computed_method_for():
+    for item in ' RUN '.strip().lower():
+        return live()
+    else:
+        dead()
+    dead()
+
 def loop():
     while False:
         dead()
@@ -5181,6 +5249,13 @@ def computed_subscript_match_subject():
 def computed_unpack_match_subject():
     match {**{'state': 'ready'}, 'payload': (*('a', 'b'),)}:
         case {'state': 'ready', 'payload': ('a', 'b')}:
+            live()
+        case _:
+            dead()
+
+def computed_method_match_subject():
+    match ' READY '.strip().lower():
+        case 'ready':
             live()
         case _:
             dead()
@@ -5344,6 +5419,14 @@ def handler_unpack_condition():
             raise
         return None
 
+def handler_method_condition():
+    try:
+        live()
+    except ValueError:
+        if {'retry': True}.get('retry'):
+            raise
+        return None
+
 def handler_match():
     try:
         live()
@@ -5438,6 +5521,11 @@ def try_handler_fallthrough():
             "computed_mapping_unpack",
             "computed_mapping_union",
             "computed_set_algebra",
+            "computed_string_methods",
+            "computed_bytes_methods",
+            "computed_mapping_get",
+            "computed_sequence_queries",
+            "computed_set_queries",
             "type_guard",
             "expression",
             "boolean_and",
@@ -5451,6 +5539,7 @@ def try_handler_fallthrough():
             "computed_match_subject",
             "computed_subscript_match_subject",
             "computed_unpack_match_subject",
+            "computed_method_match_subject",
             "sequence_match",
             "starred_or_match",
             "singleton_match",
@@ -5483,6 +5572,16 @@ def try_handler_fallthrough():
             "oversized_direct_literal",
         ):
             self.assertEqual(set(components[name]["calls"]), {"dead", "live"})
+        for name in (
+            "dynamic_method_receiver",
+            "dynamic_method_argument",
+            "unsupported_builtin_method",
+            "exceptional_builtin_method",
+            "starred_builtin_method_argument",
+            "unicode_sensitive_builtin_method",
+        ):
+            self.assertIn("dead", components[name]["calls"], name)
+            self.assertIn("live", components[name]["calls"], name)
         for name in ("dynamic_mapping_key", "conservative_class_pattern"):
             self.assertEqual(set(components[name]["calls"]), {"dead", "live"})
         self.assertEqual(
@@ -5515,6 +5614,11 @@ def try_handler_fallthrough():
         ][0]
         self.assertEqual(unpack_handler["outcome_certainty"], "uniform")
         self.assertEqual(unpack_handler["outcome_kinds"], ["reraise"])
+        method_handler = components["handler_method_condition"][
+            "exception_handlers"
+        ][0]
+        self.assertEqual(method_handler["outcome_certainty"], "uniform")
+        self.assertEqual(method_handler["outcome_kinds"], ["reraise"])
         match_handler = components["handler_match"]["exception_handlers"][0]
         self.assertEqual(match_handler["outcome_certainty"], "uniform")
         self.assertEqual(match_handler["outcome_kinds"], ["reraise"])
@@ -5548,8 +5652,10 @@ def try_handler_fallthrough():
             "computed_list_unpack",
             "computed_mapping_unpack",
             "computed_mapping_union",
+            "computed_mapping_get",
             "handler_subscript_condition",
             "handler_unpack_condition",
+            "handler_method_condition",
         ):
             self.assertTrue(
                 any(
@@ -5562,6 +5668,10 @@ def try_handler_fallthrough():
         expected_composed_bases = {
             "computed_boolean_value": "static_boolean_expression",
             "computed_set_algebra": "static_boolean_expression",
+            "computed_string_methods": "static_boolean_expression",
+            "computed_bytes_methods": "static_boolean_expression",
+            "computed_sequence_queries": "static_boolean_expression",
+            "computed_set_queries": "static_boolean_expression",
             "computed_subscript_match_subject": "static_pattern_match",
             "computed_unpack_match_subject": "static_pattern_match",
         }
@@ -5615,6 +5725,7 @@ def try_handler_fallthrough():
         self.assertNotIn("dead", components["computed_empty_for"]["calls"])
         self.assertNotIn("dead", components["computed_slice_for"]["calls"])
         self.assertNotIn("dead", components["computed_unpack_for"]["calls"])
+        self.assertNotIn("dead", components["computed_method_for"]["calls"])
         after_return_raises = components["after_return"]["exception_raises"]
         self.assertEqual(after_return_raises, [])
         termination_bases = {
@@ -5668,6 +5779,11 @@ def try_handler_fallthrough():
                 "computed_mapping_unpack",
                 "computed_mapping_union",
                 "computed_set_algebra",
+                "computed_string_methods",
+                "computed_bytes_methods",
+                "computed_mapping_get",
+                "computed_sequence_queries",
+                "computed_set_queries",
                 "type_guard",
                 "expression",
                 "boolean_and",
@@ -5685,12 +5801,14 @@ def try_handler_fallthrough():
                 "computed_nonempty_for",
                 "computed_slice_for",
                 "computed_unpack_for",
+                "computed_method_for",
                 "terminal_nonempty_for",
                 "terminal_nonempty_for_branches",
                 "literal_match",
                 "computed_match_subject",
                 "computed_subscript_match_subject",
                 "computed_unpack_match_subject",
+                "computed_method_match_subject",
                 "sequence_match",
                 "starred_or_match",
                 "singleton_match",

@@ -139,7 +139,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-16"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-17"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -848,6 +848,147 @@ def _static_collection_expression_value(
         return False, None, "exceptional_literal_expression"
 
 
+_STATIC_STRING_METHODS = frozenset(
+    {
+        "capitalize",
+        "casefold",
+        "count",
+        "endswith",
+        "find",
+        "index",
+        "isalnum",
+        "isalpha",
+        "isascii",
+        "isdecimal",
+        "isdigit",
+        "isidentifier",
+        "islower",
+        "isnumeric",
+        "isprintable",
+        "isspace",
+        "istitle",
+        "isupper",
+        "lower",
+        "lstrip",
+        "removeprefix",
+        "removesuffix",
+        "rfind",
+        "rstrip",
+        "startswith",
+        "strip",
+        "swapcase",
+        "title",
+        "upper",
+    }
+)
+_STATIC_BYTES_METHODS = frozenset(
+    {
+        "capitalize",
+        "count",
+        "endswith",
+        "find",
+        "index",
+        "isalnum",
+        "isalpha",
+        "isascii",
+        "isdigit",
+        "islower",
+        "isspace",
+        "istitle",
+        "isupper",
+        "lower",
+        "lstrip",
+        "removeprefix",
+        "removesuffix",
+        "rfind",
+        "rstrip",
+        "startswith",
+        "strip",
+        "swapcase",
+        "title",
+        "upper",
+    }
+)
+_STATIC_SEQUENCE_QUERY_METHODS = frozenset({"count", "index"})
+_STATIC_SET_QUERY_METHODS = frozenset({"isdisjoint", "issubset", "issuperset"})
+
+
+def _static_builtin_method_allowed(receiver: Any, method_name: str) -> bool:
+    receiver_type = type(receiver)
+    if receiver_type is str:
+        return method_name in _STATIC_STRING_METHODS
+    if receiver_type is bytes:
+        return method_name in _STATIC_BYTES_METHODS
+    if receiver_type in (tuple, list):
+        return method_name in _STATIC_SEQUENCE_QUERY_METHODS
+    if receiver_type in (set, frozenset):
+        return method_name in _STATIC_SET_QUERY_METHODS
+    if receiver_type is dict:
+        return method_name == "get"
+    return False
+
+
+def _static_ascii_string_data(value: Any) -> bool:
+    if type(value) is str:
+        return value.isascii()
+    if type(value) is tuple:
+        return all(_static_ascii_string_data(item) for item in value)
+    return True
+
+
+def _static_builtin_method_call_value(
+    node: ast.Call,
+    *,
+    depth: int,
+) -> tuple[bool, Any, str]:
+    """Evaluate a narrow exact-built-in method call without project dispatch."""
+
+    if not isinstance(node.func, ast.Attribute):
+        return False, None, "dynamic_or_unsupported_expression"
+    if any(isinstance(argument, ast.Starred) for argument in node.args) or any(
+        keyword.arg is None for keyword in node.keywords
+    ):
+        return False, None, "dynamic_or_unsupported_expression"
+    receiver_known, receiver, _receiver_basis = _static_expression_value(
+        node.func.value,
+        depth=depth + 1,
+    )
+    if not receiver_known or not _static_builtin_method_allowed(
+        receiver,
+        node.func.attr,
+    ):
+        return False, None, "dynamic_or_unsupported_expression"
+    arguments: list[Any] = []
+    keywords: dict[str, Any] = {}
+    for argument_node in node.args:
+        known, value, _basis = _static_expression_value(
+            argument_node,
+            depth=depth + 1,
+        )
+        if not known:
+            return False, None, "dynamic_or_unsupported_expression"
+        arguments.append(value)
+    for keyword in node.keywords:
+        known, value, _basis = _static_expression_value(
+            keyword.value,
+            depth=depth + 1,
+        )
+        if not known or keyword.arg is None:
+            return False, None, "dynamic_or_unsupported_expression"
+        keywords[keyword.arg] = value
+    if type(receiver) is str and (
+        not _static_ascii_string_data(receiver)
+        or not all(_static_ascii_string_data(value) for value in arguments)
+        or not all(_static_ascii_string_data(value) for value in keywords.values())
+    ):
+        return False, None, "dynamic_or_unsupported_expression"
+    try:
+        method = getattr(receiver, node.func.attr)
+        return _bounded_static_expression_result(method(*arguments, **keywords))
+    except (ArithmeticError, AttributeError, LookupError, TypeError, ValueError):
+        return False, None, "exceptional_literal_expression"
+
+
 def _static_expression_value(
     node: ast.AST,
     *,
@@ -865,6 +1006,8 @@ def _static_expression_value(
         return False, None, "bounded_expression_depth_limit"
     if isinstance(node, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
         return _static_collection_expression_value(node, depth=depth)
+    if isinstance(node, ast.Call):
+        return _static_builtin_method_call_value(node, depth=depth)
     if isinstance(node, ast.UnaryOp) and isinstance(
         node.op, (ast.UAdd, ast.USub, ast.Invert)
     ):
@@ -7330,7 +7473,7 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
             "shift": MAX_STATIC_SHIFT,
         },
         "limitations": [
-            "Only direct terminal statements, statically bounded empty/nonempty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, size-limited exact-built-in arithmetic, sequence, indexing/slicing, boolean-value, selected conditional-value, deterministic collection-unpacking, mapping-union, and set-algebra expressions, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; exceptional, oversized, unsupported, unordered sequence unpacking, or dynamic expressions, indices, predicates, and patterns retain conservative alternatives.",
+            "Only direct terminal statements, statically bounded empty/nonempty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, size-limited exact-built-in arithmetic, sequence, indexing/slicing, boolean-value, selected conditional-value, deterministic collection-unpacking, mapping-union, set-algebra, and allowlisted non-mutating ASCII-string/bytes method expressions, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; exceptional, oversized, unsupported, mutating, non-ASCII string method data, unordered sequence unpacking, starred method calls, or dynamic expressions, receivers, arguments, indices, predicates, and patterns retain conservative alternatives.",
             "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
             "Loop iteration counts and dynamic break feasibility beyond lexical ownership, except-star and complex exception feasibility, class patterns, dynamic mapping keys or user-defined mapping semantics, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
         ],
