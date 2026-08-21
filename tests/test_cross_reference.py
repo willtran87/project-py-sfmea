@@ -1315,6 +1315,12 @@ class CrossReferenceTests(unittest.TestCase):
         )
         self.assertEqual(finalizer_entity["metadata"]["terminal_kind"], "return")
         self.assertTrue(finalizer_entity["metadata"]["unconditional_terminal"])
+        handler_entity = next(
+            value for value in index["entities"] if value["kind"] == "exception_handler"
+        )
+        self.assertEqual(handler_entity["metadata"]["outcome_kinds"], ["fallthrough"])
+        self.assertEqual(handler_entity["metadata"]["outcome_certainty"], "uniform")
+        self.assertFalse(handler_entity["metadata"]["may_reraise_original"])
         component_links = {
             (value["source"], value["kind"])
             for value in index["relationships"]

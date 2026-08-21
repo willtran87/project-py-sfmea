@@ -19,6 +19,9 @@ class ScanCacheTests(unittest.TestCase):
                 "def run(value):\n"
                 "    try:\n"
                 "        raise ValueError('failed')\n"
+                "    except ValueError:\n"
+                "        if value:\n"
+                "            raise\n"
                 "    finally:\n"
                 "        return None\n",
                 encoding="utf-8",
@@ -33,6 +36,10 @@ class ScanCacheTests(unittest.TestCase):
                     "terminal_kind"
                 ],
                 "return",
+            )
+            self.assertEqual(
+                cold_analysis["exception_propagation"]["handlers"][0]["outcome_kinds"],
+                ["fallthrough", "reraise"],
             )
 
             cache_path = root / ".artifacts" / "facts.json"

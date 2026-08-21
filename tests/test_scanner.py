@@ -2565,7 +2565,7 @@ class ScannerTests(unittest.TestCase):
 
         analysis = scan_repository(self.root)
         model = analysis["exception_propagation"]
-        self.assertEqual(model["format"], "pysfmea-exception-propagation-1")
+        self.assertEqual(model["format"], "pysfmea-exception-propagation-2")
         handled_edge = next(
             value
             for value in model["edges"]
@@ -2991,6 +2991,236 @@ class ScannerTests(unittest.TestCase):
         tampered["exception_propagation"]["edges"][0]["finalizer_id"] = (
             "EXCEPTION-FINALIZER-TAMPERED"
         )
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_exception_propagation"
+                for value in validate_analysis(tampered)["findings"]
+            )
+        )
+
+    def test_exception_model_distinguishes_conditional_and_new_handler_raises(
+        self,
+    ) -> None:
+        (self.root / "handler_paths.py").write_text(
+            "def record():\n"
+            "    return None\n\n"
+            "def leaf():\n"
+            "    raise ValueError('original')\n\n"
+            "def explicit_bound_reraise():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    except ValueError as exc:\n"
+            "        raise exc\n\n"
+            "def conditional_reraise(flag):\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    except ValueError:\n"
+            "        if flag:\n"
+            "            raise\n"
+            "        record()\n\n"
+            "def conditional_translation(flag):\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    except ValueError:\n"
+            "        if flag:\n"
+            "            raise RuntimeError('translated')\n"
+            "        record()\n\n"
+            "def conditional_new_same_type(flag):\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    except ValueError:\n"
+            "        if flag:\n"
+            "            raise ValueError('replacement')\n"
+            "        record()\n\n"
+            "def always_new_same_type():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    except ValueError:\n"
+            "        raise ValueError('replacement')\n\n"
+            "def conditional_return(flag):\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    except ValueError:\n"
+            "        if flag:\n"
+            "            return None\n"
+            "        record()\n\n"
+            "def unreachable_raise():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    except ValueError:\n"
+            "        return None\n"
+            "        raise RuntimeError('unreachable')\n\n"
+            "def observe_reraise():\n"
+            "    conditional_reraise(True)\n\n"
+            "def observe_translation():\n"
+            "    conditional_translation(True)\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["exception_propagation"]
+        edges = {
+            (
+                value["caller_reference"],
+                value["callee_reference"],
+                value["exception_type"],
+            ): value
+            for value in model["edges"]
+        }
+
+        bound_reraise = edges[
+            (
+                "handler_paths.py:explicit_bound_reraise",
+                "handler_paths.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(bound_reraise["disposition"], "caught_and_reraised")
+        self.assertTrue(bound_reraise["propagates_original"])
+        self.assertEqual(
+            {value["kind"] for value in bound_reraise["handler_outcomes"]},
+            {"reraise"},
+        )
+        bound_raise_record = next(
+            value
+            for value in model["raises"]
+            if value["component_reference"] == "handler_paths.py:explicit_bound_reraise"
+            and value["line"] > 0
+        )
+        self.assertFalse(bound_raise_record["bare_reraise"])
+        self.assertTrue(bound_raise_record["reraises_active_handler"])
+        self.assertEqual(
+            bound_raise_record["exception_type"], "active_handler_exception"
+        )
+
+        conditional_reraise = edges[
+            (
+                "handler_paths.py:conditional_reraise",
+                "handler_paths.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(
+            conditional_reraise["disposition"], "caught_with_conditional_reraise"
+        )
+        self.assertTrue(conditional_reraise["propagates_original"])
+        self.assertTrue(conditional_reraise["handler_may_reraise_original"])
+        self.assertEqual(
+            conditional_reraise["handler_outcome_certainty"], "conditional"
+        )
+        self.assertEqual(
+            {value["kind"] for value in conditional_reraise["handler_outcomes"]},
+            {"fallthrough", "reraise"},
+        )
+
+        translated = edges[
+            (
+                "handler_paths.py:conditional_translation",
+                "handler_paths.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(
+            translated["disposition"], "caught_with_conditional_translation"
+        )
+        self.assertFalse(translated["propagates_original"])
+        self.assertFalse(translated["handler_may_reraise_original"])
+        self.assertIn(
+            (
+                "handler_paths.py:observe_translation",
+                "handler_paths.py:conditional_translation",
+                "RuntimeError",
+            ),
+            edges,
+        )
+        self.assertNotIn(
+            (
+                "handler_paths.py:observe_translation",
+                "handler_paths.py:conditional_translation",
+                "ValueError",
+            ),
+            edges,
+        )
+
+        conditional_same = edges[
+            (
+                "handler_paths.py:conditional_new_same_type",
+                "handler_paths.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(
+            conditional_same["disposition"],
+            "caught_with_conditional_explicit_raise",
+        )
+        self.assertFalse(conditional_same["propagates_original"])
+
+        always_same = edges[
+            (
+                "handler_paths.py:always_new_same_type",
+                "handler_paths.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(always_same["disposition"], "caught_and_raises_explicitly")
+        self.assertFalse(always_same["propagates_original"])
+
+        conditional_exit = edges[
+            (
+                "handler_paths.py:conditional_return",
+                "handler_paths.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(
+            conditional_exit["disposition"],
+            "caught_with_conditional_control_flow_exit",
+        )
+        self.assertFalse(conditional_exit["propagates_original"])
+
+        unreachable = edges[
+            (
+                "handler_paths.py:unreachable_raise",
+                "handler_paths.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(unreachable["disposition"], "caught_and_exits_control_flow")
+        self.assertNotIn("raises_explicitly", unreachable["handler_actions"])
+        self.assertNotIn(
+            "RuntimeError",
+            {
+                value["exception_type"]
+                for value in model["raises"]
+                if value["component_reference"] == "handler_paths.py:unreachable_raise"
+            },
+        )
+
+        self.assertIn(
+            (
+                "handler_paths.py:observe_reraise",
+                "handler_paths.py:conditional_reraise",
+                "ValueError",
+            ),
+            edges,
+        )
+        self.assertGreaterEqual(
+            model["summary"]["handler_outcome_certainties"]["conditional"], 4
+        )
+        self.assertFalse(
+            any(
+                value["rule_id"] == "analysis.invalid_exception_propagation"
+                for value in validate_analysis(analysis)["findings"]
+            )
+        )
+
+        tampered = json.loads(json.dumps(analysis))
+        selected_edge = next(
+            value
+            for value in tampered["exception_propagation"]["edges"]
+            if value["selected_handler_id"]
+        )
+        selected_edge["handler_outcomes"] = []
         self.assertTrue(
             any(
                 value["rule_id"] == "analysis.invalid_exception_propagation"

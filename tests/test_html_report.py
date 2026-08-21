@@ -130,12 +130,18 @@ class HtmlReportTests(unittest.TestCase):
             exception_analysis["summary"]["unconditional_terminal_finalizers"], 1
         )
         self.assertEqual(exception_analysis["finalizers"][0]["terminal_kind"], "return")
+        self.assertEqual(
+            exception_analysis["summary"]["handler_outcome_certainties"]["uniform"],
+            1,
+        )
         report_path = export_html_report(analysis, self.root / "exception-report.html")
         report_html = report_path.read_text(encoding="utf-8")
         self.assertIn("translated exception edges", report_html)
         self.assertIn("indeterminate exception matches", report_html)
         self.assertIn("terminal finally overrides", report_html)
         self.assertIn("exceptions suppressed by finally", report_html)
+        self.assertIn("conditional handler outcomes", report_html)
+        self.assertIn("conditional rethrow edges", report_html)
 
     def tearDown(self) -> None:
         self.temp.cleanup()

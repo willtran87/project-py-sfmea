@@ -1023,7 +1023,7 @@ def validate_analysis(
         summary = exception_model.get("summary", {}) if exception_valid else {}
         exception_valid = (
             exception_valid
-            and exception_model.get("format") == "pysfmea-exception-propagation-1"
+            and exception_model.get("format") == "pysfmea-exception-propagation-2"
             and isinstance(raises, list)
             and isinstance(handlers, list)
             and isinstance(finalizers, list)
@@ -1077,6 +1077,11 @@ def validate_analysis(
             "caught_and_suppresses",
             "caught_and_continues",
             "caught_with_mixed_handler_outcome",
+            "caught_with_conditional_reraise",
+            "caught_with_conditional_translation",
+            "caught_with_conditional_explicit_raise",
+            "caught_with_conditional_control_flow_exit",
+            "caught_with_indeterminate_handler_outcome",
             "suppressed_by_finally_control_flow",
             "replaced_by_finally_exception",
         }
@@ -1084,7 +1089,8 @@ def validate_analysis(
             "may_propagate",
             "indeterminate_handler_match",
             "caught_and_reraised",
-            "caught_and_raises_explicitly",
+            "caught_with_conditional_reraise",
+            "caught_with_indeterminate_handler_outcome",
             "caught_with_mixed_handler_outcome",
         }
         allowed_match_kinds = {
@@ -1102,6 +1108,15 @@ def validate_analysis(
             "project_subclass",
             "base_exception_catch_all",
         }
+        allowed_handler_outcome_kinds = {
+            "fallthrough",
+            "reraise",
+            "raise",
+            "return",
+            "break",
+            "continue",
+            "indeterminate",
+        }
         if exception_valid:
             for record in raises:
                 if not isinstance(record, dict):
@@ -1117,6 +1132,11 @@ def validate_analysis(
                     or component_id not in component_ids
                     or not str(record.get("exception_type", ""))
                     or not isinstance(record.get("bare_reraise"), bool)
+                    or not isinstance(record.get("reraises_active_handler"), bool)
+                    or record.get("bare_reraise")
+                    and record.get("reraises_active_handler") is not True
+                    or record.get("reraises_active_handler") is True
+                    and record.get("exception_type") != "active_handler_exception"
                     or not isinstance(record.get("control_context"), list)
                 ):
                     exception_valid = False
@@ -1128,6 +1148,29 @@ def validate_analysis(
                 component_id = str(record.get("component_id", ""))
                 exception_types = record.get("exception_types", [])
                 actions = record.get("actions", [])
+                outcomes = record.get("outcomes", [])
+                outcome_kinds = record.get("outcome_kinds", [])
+                normalized_outcomes = {
+                    (
+                        str(value.get("kind", "")),
+                        str(value.get("exception_type", "")),
+                    )
+                    for value in outcomes
+                    if isinstance(value, dict)
+                }
+                expected_outcome_kinds = sorted(
+                    value[0] for value in normalized_outcomes
+                )
+                expected_outcome_kinds = sorted(set(expected_outcome_kinds))
+                outcomes_truncated = record.get("outcomes_truncated")
+                expected_certainty = (
+                    "indeterminate"
+                    if outcomes_truncated is True
+                    or "indeterminate" in expected_outcome_kinds
+                    else "uniform"
+                    if len(normalized_outcomes) == 1
+                    else "conditional"
+                )
                 handler_ids.append(identifier)
                 if component_id in handlers_by_component:
                     handlers_by_component[component_id].append(identifier)
@@ -1142,6 +1185,51 @@ def validate_analysis(
                     or not isinstance(actions, list)
                     or not actions
                     or any(value not in allowed_actions for value in actions)
+                    or not isinstance(outcomes, list)
+                    or not outcomes
+                    or len(outcomes) > 250
+                    or len(outcomes)
+                    != len(
+                        {
+                            (
+                                value.get("kind"),
+                                value.get("exception_type"),
+                                value.get("line"),
+                            )
+                            for value in outcomes
+                            if isinstance(value, dict)
+                        }
+                    )
+                    or any(
+                        not isinstance(value, dict)
+                        or value.get("kind") not in allowed_handler_outcome_kinds
+                        or not isinstance(value.get("exception_type"), str)
+                        or bool(value.get("exception_type"))
+                        != (value.get("kind") in {"raise", "reraise"})
+                        or value.get("kind") == "reraise"
+                        and value.get("exception_type") != "active_handler_exception"
+                        or not isinstance(value.get("line"), int)
+                        or isinstance(value.get("line"), bool)
+                        or int(value.get("line", -1)) < 0
+                        or value.get("kind") != "fallthrough"
+                        and int(value.get("line", 0)) <= 0
+                        for value in outcomes
+                    )
+                    or outcome_kinds != expected_outcome_kinds
+                    or not isinstance(outcomes_truncated, bool)
+                    or record.get("outcome_certainty") != expected_certainty
+                    or not isinstance(record.get("may_reraise_original"), bool)
+                    or record.get("may_reraise_original")
+                    != ("reraise" in expected_outcome_kinds)
+                    or ("reraises" in actions) != ("reraise" in expected_outcome_kinds)
+                    or ("raises_explicitly" in actions)
+                    != ("raise" in expected_outcome_kinds)
+                    or ("control_flow_exit" in actions)
+                    != bool(
+                        set(expected_outcome_kinds) & {"return", "break", "continue"}
+                    )
+                    or ("translates" in actions)
+                    != bool(record.get("translated_exception_types", []))
                     or record.get("handler_kind") not in {"standard", "exception_group"}
                     or not isinstance(record.get("handler_index"), int)
                     or isinstance(record.get("handler_index"), bool)
@@ -1226,6 +1314,11 @@ def validate_analysis(
                 disposition = edge.get("disposition")
                 selected_handler_id = str(edge.get("selected_handler_id", ""))
                 handler_actions = edge.get("handler_actions", [])
+                handler_outcomes = edge.get("handler_outcomes", [])
+                handler_outcome_certainty = str(
+                    edge.get("handler_outcome_certainty", "")
+                )
+                handler_may_reraise_original = edge.get("handler_may_reraise_original")
                 finalizer_id = str(edge.get("finalizer_id", ""))
                 finalizer_terminal_kind = str(edge.get("finalizer_terminal_kind", ""))
                 finalizer_exception_type = str(edge.get("finalizer_exception_type", ""))
@@ -1257,6 +1350,26 @@ def validate_analysis(
                     or bool(selected_handler_id)
                     and handler_actions
                     != handlers_by_id.get(selected_handler_id, {}).get("actions", [])
+                    or not isinstance(handler_outcomes, list)
+                    or bool(selected_handler_id)
+                    and handler_outcomes
+                    != handlers_by_id.get(selected_handler_id, {}).get("outcomes", [])
+                    or not selected_handler_id
+                    and handler_outcomes
+                    or bool(selected_handler_id) != bool(handler_outcome_certainty)
+                    or bool(selected_handler_id)
+                    and handler_outcome_certainty
+                    != handlers_by_id.get(selected_handler_id, {}).get(
+                        "outcome_certainty", ""
+                    )
+                    or not isinstance(handler_may_reraise_original, bool)
+                    or bool(selected_handler_id)
+                    and handler_may_reraise_original
+                    != handlers_by_id.get(selected_handler_id, {}).get(
+                        "may_reraise_original", False
+                    )
+                    or not selected_handler_id
+                    and handler_may_reraise_original
                     or finalizer_id
                     and finalizer_id not in known_finalizer_ids
                     or bool(finalizer_id) != bool(finalizer_terminal_kind)
@@ -1332,6 +1445,7 @@ def validate_analysis(
                 summary.get("raise_records_embedded"),
                 summary.get("handler_records_discovered"),
                 summary.get("handler_records_embedded"),
+                summary.get("handlers_may_reraise_original"),
                 summary.get("finalizer_records_discovered"),
                 summary.get("finalizer_records_embedded"),
                 summary.get("unconditional_terminal_finalizers"),
@@ -1347,6 +1461,7 @@ def validate_analysis(
             )
             disposition_counts = summary.get("edge_dispositions", {})
             match_kind_counts = summary.get("handler_match_kinds", {})
+            outcome_certainty_counts = summary.get("handler_outcome_certainties", {})
             expected_source_omitted = (
                 per_component_omitted
                 + source_raise_count
@@ -1371,6 +1486,25 @@ def validate_analysis(
                 or summary.get("raise_records_embedded") != len(raises)
                 or summary.get("handler_records_discovered") != source_handler_count
                 or summary.get("handler_records_embedded") != len(handlers)
+                or summary.get("handlers_may_reraise_original")
+                != sum(
+                    value.get("may_reraise_original") is True
+                    for value in handlers
+                    if isinstance(value, dict)
+                )
+                or not isinstance(outcome_certainty_counts, dict)
+                or set(outcome_certainty_counts)
+                - {"uniform", "conditional", "indeterminate"}
+                or outcome_certainty_counts
+                != dict(
+                    sorted(
+                        Counter(
+                            str(value.get("outcome_certainty", "indeterminate"))
+                            for value in handlers
+                            if isinstance(value, dict)
+                        ).items()
+                    )
+                )
                 or summary.get("finalizer_records_discovered") != source_finalizer_count
                 or summary.get("finalizer_records_embedded") != len(finalizers)
                 or summary.get("unconditional_terminal_finalizers")

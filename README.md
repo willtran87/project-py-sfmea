@@ -145,7 +145,12 @@ flowchart LR
   resolved internal calls. Handler
   selection follows nearest-`try` and first-match order, resolves built-in and statically declared
   project inheritance, preserves the `Exception`/`BaseException` boundary, and emits explicit
-  indeterminate matches instead of silently crediting dynamic types. Findings inherit exact typed
+  indeterminate matches instead of silently crediting dynamic types. Handler analysis preserves
+  sequential reachability and merges bounded `if`, `match`, loop, `with`, and nested-`try` outcomes,
+  distinguishing unconditional and conditional rethrow, translation, replacement, fallthrough,
+  and control exit. Bare `raise` and `raise <active catch binding>` retain the original exception;
+  explicit new exceptions propagate independently rather than being credited as the original.
+  Findings inherit exact typed
   exposure and injection-test guidance. Bare/literal top-level `return`, explicit `raise`, `break`,
   and `continue` statements ending a `finally` block suppress or replace propagated exceptions
   with explicit provenance, while a bare terminal `raise` preserves the original exception.

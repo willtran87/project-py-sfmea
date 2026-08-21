@@ -256,7 +256,7 @@ The governed analysis carries three additive, versioned top-level architecture o
 | `shared_fate_analysis` | `pysfmea-shared-fate-analysis-1` | Multi-component deployment, subsystem, and external-dependency common-cause review leads |
 | `architecture_hierarchy` | `pysfmea-architecture-hierarchy-1` | Repository/subsystem/source-package nesting, memberships, and upward trace aggregation |
 | `graphify_reconciliation` | `pysfmea-graphify-reconciliation-1` | Optional bounded Graphify provenance plus component-mapped typed static edges, native-call comparison, and explicit Graphify-only review leads |
-| `exception_propagation` | `pysfmea-exception-propagation-1` | Ordered, inheritance-aware raise/handler/finalizer records and resolved-call propagation edges with explicit handler/finalizer provenance, suppression/replacement disposition, uncertainty, and component/finding exposure |
+| `exception_propagation` | `pysfmea-exception-propagation-2` | Ordered, inheritance-aware raise/handler/finalizer records and resolved-call propagation edges with bounded branch outcomes, outcome certainty, active-binding rethrow identity, explicit handler/finalizer provenance, suppression/replacement disposition, uncertainty, and component/finding exposure. Format 2 makes the outcome and rethrow-identity fields part of the validated contract |
 
 These are programmatic analysis outputs rather than separately cataloged `sfmea schema` names.
 Consumers should require the exact `format`, validate the full analysis, reconcile each summary to

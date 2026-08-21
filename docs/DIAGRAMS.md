@@ -146,7 +146,8 @@ control-flow, reachability, schedule, receiver-type, or causal proofs.
 
 The cross-reference diagram projects each typed exception edge as a shared record node linked to
 its callee and caller. The record preserves exception type, selected-handler disposition, match
-provenance, terminal-finalizer override provenance, and whether the original type can continue
+provenance, bounded handler-outcome certainty, active-binding rethrow identity,
+terminal-finalizer override provenance, and whether the original type can continue
 propagating. Finalizers are also first-class component-linked semantic nodes. A
 suppressed or translated static edge is still a test-selection lead, not evidence that the handler
 ran or that its response is safe.

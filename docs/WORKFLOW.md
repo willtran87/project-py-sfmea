@@ -491,14 +491,20 @@ facts, then projects
 named exception types through resolved internal calls. Selection follows Python's nearest-`try`,
 first-compatible-handler order. Match provenance distinguishes exact types, built-in subclasses,
 statically declared project subclasses, the `BaseException` catch-all, and indeterminate dynamic
-types. Dispositions distinguish `may_propagate`, indeterminate matches, suppression, continuation,
-control-flow exits, rethrow, explicit raise, translation, mixed handler outcomes, suppression by a
+types. Handler outcomes preserve sequential reachability and merge bounded `if`, `match`, loop,
+`with`, and nested-`try` alternatives. Their certainty is `uniform`, `conditional`, or
+`indeterminate`; statements after a direct terminal exit are excluded. Dispositions distinguish
+`may_propagate`, indeterminate matches, suppression, continuation, conditional/unconditional
+control-flow exits, conditional/unconditional rethrow, explicit new raise, translation, mixed
+handler outcomes, suppression by a
 terminal `finally` control exit, and replacement by a terminal `finally` raise. The bounded
 finalizer rule applies only when the last top-level statement is a bare/literal `return`, explicit
 or bare `raise`, `break`, or `continue`, with no earlier explicit competing exit; outer terminal
 finalizers take precedence because they execute last. Every
 affected edge retains the finalizer ID, terminal kind, and replacement type; a bare terminal
-`raise` is recorded as a rethrow rather than a replacement. Component and
+`raise` is recorded as a rethrow rather than a replacement. Within a handler, both bare `raise` and
+`raise <active catch binding>` propagate the original object; other explicit raises are separate
+outgoing exceptions and do not falsely credit the original as propagating. Component and
 finding projections retain exact edge IDs, type/disposition counts, and bounded exception-injection
 test guidance. These records do not prove path feasibility; evaluated returns, conditional or
 nested finalizer outcomes, dynamic aliases, `ExceptionGroup` splitting, callbacks, native behavior, and undeclared

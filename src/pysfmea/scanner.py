@@ -17,7 +17,7 @@ import time
 import tokenize
 import tomllib
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -121,6 +121,8 @@ MAX_EXCEPTION_RAISE_RECORDS = 100_000
 MAX_EXCEPTION_HANDLER_RECORDS = 100_000
 MAX_EXCEPTION_FINALIZER_RECORDS = 100_000
 MAX_EXCEPTION_PROPAGATION_EDGES = 200_000
+MAX_HANDLER_OUTCOMES_PER_HANDLER = 250
+MAX_HANDLER_OUTCOME_DEPTH = 100
 MAX_STATE_RECORDS_PER_COMPONENT = 10_000
 MAX_STATE_TRANSITIONS = 100_000
 MAX_RESILIENCE_SEMANTIC_OPERATIONS = 200_000
@@ -130,7 +132,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-5"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-6"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -696,6 +698,156 @@ def _walk_executable_nodes(statements: list[ast.stmt]) -> Iterable[ast.AST]:
         pending.extend(reversed(list(ast.iter_child_nodes(value))))
 
 
+HandlerOutcome = tuple[str, str, int]
+
+
+def _bounded_handler_outcomes(
+    outcomes: set[HandlerOutcome],
+    truncated: bool,
+) -> tuple[set[HandlerOutcome], bool]:
+    if len(outcomes) <= MAX_HANDLER_OUTCOMES_PER_HANDLER:
+        return outcomes, truncated
+    return (
+        set(sorted(outcomes)[:MAX_HANDLER_OUTCOMES_PER_HANDLER]),
+        True,
+    )
+
+
+def _handler_statement_outcomes(
+    statement: ast.stmt,
+    exception_type_of: Callable[[ast.AST | None], str | None],
+    *,
+    depth: int,
+) -> tuple[set[HandlerOutcome], bool]:
+    line = int(getattr(statement, "lineno", 0) or 0)
+    if depth > MAX_HANDLER_OUTCOME_DEPTH:
+        return {("indeterminate", "", line)}, True
+    if isinstance(statement, ast.Raise):
+        if statement.exc is None:
+            return {("reraise", "active_handler_exception", line)}, False
+        exception_type = exception_type_of(statement.exc) or (
+            "unknown_exception_expression"
+        )
+        if exception_type == "active_handler_exception":
+            return {("reraise", exception_type, line)}, False
+        return {
+            (
+                "raise",
+                exception_type,
+                line,
+            )
+        }, False
+    if isinstance(statement, ast.Return):
+        return {("return", "", line)}, False
+    if isinstance(statement, ast.Break):
+        return {("break", "", line)}, False
+    if isinstance(statement, ast.Continue):
+        return {("continue", "", line)}, False
+    if isinstance(statement, ast.If):
+        body, body_truncated = _handler_block_outcomes(
+            statement.body, exception_type_of, depth=depth + 1
+        )
+        if statement.orelse:
+            alternate, alternate_truncated = _handler_block_outcomes(
+                statement.orelse, exception_type_of, depth=depth + 1
+            )
+        else:
+            alternate, alternate_truncated = {("fallthrough", "", 0)}, False
+        return _bounded_handler_outcomes(
+            body | alternate, body_truncated or alternate_truncated
+        )
+    if isinstance(statement, ast.Match):
+        outcomes: set[HandlerOutcome] = set()
+        truncated = False
+        exhaustive = False
+        for case in statement.cases:
+            case_outcomes, case_truncated = _handler_block_outcomes(
+                case.body, exception_type_of, depth=depth + 1
+            )
+            outcomes.update(case_outcomes)
+            truncated = truncated or case_truncated
+            exhaustive = exhaustive or (
+                isinstance(case.pattern, ast.MatchAs)
+                and case.pattern.pattern is None
+                and case.pattern.name is None
+                and case.guard is None
+            )
+        if not exhaustive:
+            outcomes.add(("fallthrough", "", 0))
+        return _bounded_handler_outcomes(outcomes, truncated)
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        return _handler_block_outcomes(
+            statement.body, exception_type_of, depth=depth + 1
+        )
+    if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+        body, body_truncated = _handler_block_outcomes(
+            statement.body, exception_type_of, depth=depth + 1
+        )
+        alternate, alternate_truncated = _handler_block_outcomes(
+            statement.orelse, exception_type_of, depth=depth + 1
+        )
+        outcomes = {
+            value
+            for value in body | alternate
+            if value[0] not in {"fallthrough", "break", "continue"}
+        }
+        outcomes.add(("fallthrough", "", 0))
+        return _bounded_handler_outcomes(
+            outcomes, body_truncated or alternate_truncated
+        )
+    if isinstance(statement, (ast.Try, ast.TryStar)):
+        body, body_truncated = _handler_block_outcomes(
+            statement.body, exception_type_of, depth=depth + 1
+        )
+        outcomes = {value for value in body if value[0] != "fallthrough"}
+        truncated = body_truncated
+        if any(value[0] == "fallthrough" for value in body):
+            normal, normal_truncated = _handler_block_outcomes(
+                statement.orelse, exception_type_of, depth=depth + 1
+            )
+            outcomes.update(normal)
+            truncated = truncated or normal_truncated
+        for handler in statement.handlers:
+            handled, handled_truncated = _handler_block_outcomes(
+                handler.body, exception_type_of, depth=depth + 1
+            )
+            outcomes.update(handled)
+            truncated = truncated or handled_truncated
+        if statement.finalbody:
+            final, final_truncated = _handler_block_outcomes(
+                statement.finalbody, exception_type_of, depth=depth + 1
+            )
+            terminal_final = {value for value in final if value[0] != "fallthrough"}
+            if any(value[0] == "fallthrough" for value in final):
+                terminal_final.update(outcomes)
+            outcomes = terminal_final
+            truncated = truncated or final_truncated
+        return _bounded_handler_outcomes(outcomes, truncated)
+    return {("fallthrough", "", 0)}, False
+
+
+def _handler_block_outcomes(
+    statements: list[ast.stmt],
+    exception_type_of: Callable[[ast.AST | None], str | None],
+    *,
+    depth: int = 0,
+) -> tuple[set[HandlerOutcome], bool]:
+    outcomes: set[HandlerOutcome] = {("fallthrough", "", 0)}
+    truncated = False
+    for statement in statements:
+        terminal = {value for value in outcomes if value[0] != "fallthrough"}
+        if not any(value[0] == "fallthrough" for value in outcomes):
+            break
+        current, current_truncated = _handler_statement_outcomes(
+            statement, exception_type_of, depth=depth
+        )
+        outcomes, truncated = _bounded_handler_outcomes(
+            terminal | current,
+            truncated or current_truncated,
+        )
+    return outcomes, truncated
+
+
 class _FactVisitor(ast.NodeVisitor):
     def __init__(self, facts: FunctionFacts, aliases: dict[str, str]) -> None:
         self.facts = facts
@@ -715,6 +867,8 @@ class _FactVisitor(ast.NodeVisitor):
     def _visit_block(self, values: list[ast.stmt], context: str) -> None:
         for value in values:
             self._visit_with_context(value, context)
+            if isinstance(value, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+                break
 
     def _visit_as_value(self, value: ast.AST, context: dict[str, Any]) -> None:
         self.value_context.append(context)
@@ -1058,15 +1212,47 @@ class _FactVisitor(ast.NodeVisitor):
             ):
                 self.facts.silent_handlers += 1
             executable_nodes = list(_walk_executable_nodes(handler.body))
+
+            def handler_exception_type(value: ast.AST | None) -> str | None:
+                if (
+                    isinstance(value, ast.Name)
+                    and handler.name
+                    and value.id == handler.name
+                ):
+                    return "active_handler_exception"
+                return self._exception_raise_type(value)
+
+            handler_outcomes, outcomes_truncated = _handler_block_outcomes(
+                handler.body, handler_exception_type
+            )
+            outcomes: list[dict[str, Any]] = [
+                {
+                    "kind": kind,
+                    "exception_type": exception_type,
+                    "line": line,
+                }
+                for kind, exception_type, line in sorted(handler_outcomes)
+            ]
+            outcome_kinds = sorted({str(value["kind"]) for value in outcomes})
+            normalized_outcomes = {
+                (value["kind"], value["exception_type"]) for value in outcomes
+            }
+            outcome_certainty = (
+                "indeterminate"
+                if outcomes_truncated or "indeterminate" in outcome_kinds
+                else "uniform"
+                if len(normalized_outcomes) == 1
+                else "conditional"
+            )
             raised_types = [
-                self._exception_raise_type(value.exc)
-                for value in executable_nodes
-                if isinstance(value, ast.Raise)
+                str(value["exception_type"])
+                for value in outcomes
+                if value["kind"] == "raise"
             ]
             actions = []
-            if any(value is None for value in raised_types):
+            if "reraise" in outcome_kinds:
                 actions.append("reraises")
-            if any(value is not None for value in raised_types):
+            if raised_types:
                 actions.append("raises_explicitly")
             translated_types = sorted(
                 {
@@ -1082,10 +1268,7 @@ class _FactVisitor(ast.NodeVisitor):
             )
             if translated_types:
                 actions.append("translates")
-            if any(
-                isinstance(value, (ast.Return, ast.Break, ast.Continue))
-                for value in executable_nodes
-            ):
+            if set(outcome_kinds) & {"return", "break", "continue"}:
                 actions.append("control_flow_exit")
             if not actions and (
                 not handler.body
@@ -1109,6 +1292,10 @@ class _FactVisitor(ast.NodeVisitor):
                 sorted(set(actions)) or ["continues_after_handler"],
                 translated_types,
                 "exception_group" if isinstance(node, ast.TryStar) else "standard",
+                outcomes,
+                outcome_kinds,
+                outcome_certainty,
+                outcomes_truncated,
             )
         self._record_exception_finalizer(node)
         self._visit_block(node.body, f"try@{node.lineno}:body")
@@ -1155,7 +1342,14 @@ class _FactVisitor(ast.NodeVisitor):
     def visit_Raise(self, node: ast.Raise) -> None:
         self.facts.raises += 1
         self.facts.signals.add("exception")
-        exception_type = self._exception_raise_type(node.exc)
+        reraises_active_handler = (
+            node.exc is None or self._raises_active_handler_binding(node.exc)
+        )
+        exception_type = (
+            "active_handler_exception"
+            if reraises_active_handler
+            else self._exception_raise_type(node.exc)
+        )
         if len(self.facts.exception_raises) >= MAX_EXCEPTION_RECORDS_PER_COMPONENT:
             self.facts.exception_records_omitted += 1
         else:
@@ -1172,6 +1366,7 @@ class _FactVisitor(ast.NodeVisitor):
                     "exception_type": exception_type or "active_handler_exception",
                     "expression": ast.unparse(node.exc)[:1_000] if node.exc else "",
                     "bare_reraise": node.exc is None,
+                    "reraises_active_handler": reraises_active_handler,
                     "cause_expression": ast.unparse(node.cause)[:1_000]
                     if node.cause
                     else "",
@@ -1183,6 +1378,23 @@ class _FactVisitor(ast.NodeVisitor):
             self._visit_with_context(node.exc, f"raise@{node.lineno}:exception")
         if node.cause is not None:
             self._visit_with_context(node.cause, f"raise@{node.lineno}:cause")
+
+    def _raises_active_handler_binding(self, node: ast.AST | None) -> bool:
+        if not isinstance(node, ast.Name):
+            return False
+        for raw in reversed(self.control_context):
+            match = re.fullmatch(r"try@(\d+):handler-(\d+)", raw)
+            if not match:
+                continue
+            try_line = int(match.group(1))
+            handler_index = int(match.group(2)) - 1
+            return any(
+                int(value.get("try_line", 0)) == try_line
+                and int(value.get("handler_index", -1)) == handler_index
+                and value.get("binding_name") == node.id
+                for value in self.facts.exception_handlers
+            )
+        return False
 
     def _exception_raise_type(self, node: ast.AST | None) -> str | None:
         if node is None:
@@ -1212,6 +1424,10 @@ class _FactVisitor(ast.NodeVisitor):
         actions: list[str],
         translated_types: list[str],
         handler_kind: str,
+        outcomes: list[dict[str, Any]],
+        outcome_kinds: list[str],
+        outcome_certainty: str,
+        outcomes_truncated: bool,
     ) -> None:
         if len(self.facts.exception_handlers) >= MAX_EXCEPTION_RECORDS_PER_COMPONENT:
             self.facts.exception_records_omitted += 1
@@ -1234,7 +1450,12 @@ class _FactVisitor(ast.NodeVisitor):
                 "binding_name": handler.name or "",
                 "actions": actions,
                 "translated_exception_types": translated_types,
-                "authority": "lexically_scoped_static_exception_handler_candidate",
+                "outcomes": outcomes,
+                "outcome_kinds": outcome_kinds,
+                "outcome_certainty": outcome_certainty,
+                "outcomes_truncated": outcomes_truncated,
+                "may_reraise_original": "reraise" in outcome_kinds,
+                "authority": "bounded_branch_aware_static_exception_handler_candidate",
             }
         )
 
@@ -5409,11 +5630,43 @@ def _handler_disposition(selection: dict[str, Any] | None) -> str:
     if not isinstance(handler, dict):
         return "indeterminate_handler_match"
     actions = set(str(value) for value in handler.get("actions", []))
-    raises_again = bool(actions & {"reraises", "raises_explicitly"})
-    if {"reraises", "raises_explicitly"}.issubset(actions) or (
-        raises_again and "control_flow_exit" in actions
-    ):
-        return "caught_with_mixed_handler_outcome"
+    outcomes = {
+        (str(value.get("kind", "")), str(value.get("exception_type", "")))
+        for value in handler.get("outcomes", [])
+        if isinstance(value, dict)
+    }
+    outcome_kinds = {value[0] for value in outcomes}
+    if "indeterminate" in outcome_kinds or handler.get("outcomes_truncated") is True:
+        return "caught_with_indeterminate_handler_outcome"
+    if "reraise" in outcome_kinds:
+        if outcome_kinds == {"reraise"}:
+            return "caught_and_reraised"
+        return "caught_with_conditional_reraise"
+    has_explicit_raise = "raise" in outcome_kinds
+    non_raise_outcomes = outcome_kinds - {"raise"}
+    if has_explicit_raise and non_raise_outcomes:
+        if handler.get("translated_exception_types"):
+            return "caught_with_conditional_translation"
+        return "caught_with_conditional_explicit_raise"
+    if has_explicit_raise:
+        if handler.get("translated_exception_types"):
+            return "caught_and_translates"
+        return "caught_and_raises_explicitly"
+    control_flow_outcomes = outcome_kinds & {"return", "break", "continue"}
+    if control_flow_outcomes and "fallthrough" in outcome_kinds:
+        return "caught_with_conditional_control_flow_exit"
+    if control_flow_outcomes:
+        return "caught_and_exits_control_flow"
+    if not outcomes:
+        # Compatibility fallback for externally supplied legacy records.
+        if "reraises" in actions:
+            return "caught_and_reraised"
+        if "translates" in actions:
+            return "caught_and_translates"
+        if "raises_explicitly" in actions:
+            return "caught_and_raises_explicitly"
+        if "control_flow_exit" in actions:
+            return "caught_and_exits_control_flow"
     if "reraises" in actions:
         return "caught_and_reraised"
     if "translates" in actions:
@@ -5432,7 +5685,8 @@ def _disposition_propagates_original(disposition: str) -> bool:
         "may_propagate",
         "indeterminate_handler_match",
         "caught_and_reraised",
-        "caught_and_raises_explicitly",
+        "caught_with_conditional_reraise",
+        "caught_with_indeterminate_handler_outcome",
         "caught_with_mixed_handler_outcome",
     }
 
@@ -5548,7 +5802,7 @@ def _exception_propagation_model(
             exception_types = [
                 str(raised.get("exception_type", "unknown_exception_expression"))
             ]
-            if raised.get("bare_reraise"):
+            if raised.get("reraises_active_handler", raised.get("bare_reraise")):
                 active_handler = _active_exception_handler(control_context, by_try_line)
                 if active_handler is not None:
                     exception_types = [
@@ -5712,6 +5966,21 @@ def _exception_propagation_model(
                                 ]
                                 if isinstance(selected_handler, dict)
                                 else [],
+                                "handler_outcomes": copy.deepcopy(
+                                    selected_handler.get("outcomes", [])
+                                )
+                                if isinstance(selected_handler, dict)
+                                else [],
+                                "handler_outcome_certainty": str(
+                                    selected_handler.get("outcome_certainty", "")
+                                )
+                                if isinstance(selected_handler, dict)
+                                else "",
+                                "handler_may_reraise_original": bool(
+                                    selected_handler.get("may_reraise_original", False)
+                                )
+                                if isinstance(selected_handler, dict)
+                                else False,
                                 "finalizer_id": str(finalizer.get("id", ""))
                                 if isinstance(finalizer, dict)
                                 else "",
@@ -5782,12 +6051,23 @@ def _exception_propagation_model(
     source_omitted += handlers_discovered - len(handlers)
     source_omitted += finalizers_discovered - len(finalizers)
     return {
-        "format": "pysfmea-exception-propagation-1",
+        "format": "pysfmea-exception-propagation-2",
         "summary": {
             "raise_records_discovered": raises_discovered,
             "raise_records_embedded": len(raises),
             "handler_records_discovered": handlers_discovered,
             "handler_records_embedded": len(handlers),
+            "handler_outcome_certainties": dict(
+                sorted(
+                    Counter(
+                        str(value.get("outcome_certainty", "indeterminate"))
+                        for value in handlers
+                    ).items()
+                )
+            ),
+            "handlers_may_reraise_original": sum(
+                value.get("may_reraise_original") is True for value in handlers
+            ),
             "finalizer_records_discovered": finalizers_discovered,
             "finalizer_records_embedded": len(finalizers),
             "unconditional_terminal_finalizers": sum(
@@ -5816,15 +6096,18 @@ def _exception_propagation_model(
             "records_per_component": MAX_EXCEPTION_RECORDS_PER_COMPONENT,
             "raise_records": MAX_EXCEPTION_RAISE_RECORDS,
             "handler_records": MAX_EXCEPTION_HANDLER_RECORDS,
+            "handler_outcomes_per_handler": MAX_HANDLER_OUTCOMES_PER_HANDLER,
+            "handler_outcome_depth": MAX_HANDLER_OUTCOME_DEPTH,
             "finalizer_records": MAX_EXCEPTION_FINALIZER_RECORDS,
             "propagation_edges": MAX_EXCEPTION_PROPAGATION_EDGES,
         },
         "limitations": [
             "Handler selection resolves built-in inheritance and statically declared project exception bases, then respects nearest-try and first-handler order; dynamic aliases and ambiguous same-named project classes remain explicit indeterminate matches.",
+            "Handler outcomes preserve sequential reachability and merge bounded if, match, loop, with, and nested-try branches; implicit exceptions, predicate feasibility, loop counts, and dynamic control flow remain conservative.",
             "Bare or literal-return, explicit-raise, break, and continue statements at the end of a finally block are modeled as bounded terminal candidates; evaluated returns, competing prior exits, conditional and nested path feasibility, ExceptionGroup splitting, callbacks, generators, native extensions, and dynamic dispatch remain incomplete.",
             "A propagation edge is a conservative review candidate, not proof that the call or exception is runtime reachable.",
         ],
-        "authority": "bounded_inheritance_handler_order_and_finalizer_aware_static_exception_model_not_runtime_or_path_proof",
+        "authority": "bounded_inheritance_handler_order_branch_outcome_and_finalizer_aware_static_exception_model_not_runtime_or_path_proof",
     }
 
 

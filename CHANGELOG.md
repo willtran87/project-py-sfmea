@@ -22,6 +22,16 @@ package; public artifact and schema identifiers carry their own explicit compati
   unaffected findings do not consume the governed analysis-node budget. Correct dependency finding
   provenance chains to use the resolved content-addressed artifact path rather than a synthetic
   aggregate display label, keeping exact cross-reference verification valid on real repositories.
+- Replace candidate-only handler action classification with a bounded branch-aware outcome model.
+  Sequential reachability and `if`/`match`/loop/`with`/nested-`try` branch merging now distinguish
+  uniform, conditional, and indeterminate handler outcomes; conditional rethrow, translation,
+  explicit replacement, and control exit receive separate dispositions. `raise exc` is recognized
+  as an original-exception rethrow when `exc` is the active catch binding, while explicit new
+  exceptions no longer falsely propagate the original. Handler outcomes and certainty are retained
+  in cache, validation, cross-reference entities, report metrics, and tamper-checked propagation
+  edges. Statements after a direct terminal exit within analyzed handler/control blocks are
+  excluded as syntactically unreachable. Publish the strengthened contract as
+  `pysfmea-exception-propagation-2` rather than silently changing the meaning of format 1.
 - Add a deterministic `pysfmea-cross-reference-index-1` evidence fabric and
   `sfmea cross-reference` JSON/Markdown exporter. It fuses native AST, Graphify static, and
   imported runtime component relations; projects finding-to-guidance/requirement/hazard/SFTA/
