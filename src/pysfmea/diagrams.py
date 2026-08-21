@@ -622,6 +622,7 @@ def cross_reference_diagram(
         "exception_handler": 1,
         "exception_finalizer": 1,
         "exception_propagation_edge": 1,
+        "static_branch_decision": 1,
         "state_candidate": 1,
         "state_guard": 1,
         "state_transition": 1,

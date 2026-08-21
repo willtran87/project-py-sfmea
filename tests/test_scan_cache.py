@@ -23,7 +23,11 @@ class ScanCacheTests(unittest.TestCase):
                 "        if value:\n"
                 "            raise\n"
                 "    finally:\n"
-                "        return None\n",
+                "        return None\n\n"
+                "def choose():\n"
+                "    if False:\n"
+                "        return missing()\n"
+                "    return 1\n",
                 encoding="utf-8",
             )
             cache: dict[str, Any] = {}
@@ -41,6 +45,12 @@ class ScanCacheTests(unittest.TestCase):
                 cold_analysis["exception_propagation"]["handlers"][0]["outcome_kinds"],
                 ["fallthrough", "reraise"],
             )
+            self.assertEqual(
+                cold_analysis["static_branch_model"]["summary"][
+                    "decisions_discovered"
+                ],
+                1,
+            )
 
             cache_path = root / ".artifacts" / "facts.json"
             _path, published = save_fact_cache(cache_path, cache)
@@ -55,6 +65,10 @@ class ScanCacheTests(unittest.TestCase):
             self.assertEqual(
                 warm_analysis["exception_propagation"],
                 cold_analysis["exception_propagation"],
+            )
+            self.assertEqual(
+                warm_analysis["static_branch_model"],
+                cold_analysis["static_branch_model"],
             )
 
             source.write_text(

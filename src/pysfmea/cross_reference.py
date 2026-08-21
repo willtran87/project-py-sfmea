@@ -227,6 +227,13 @@ ANALYSIS_SECTION_PROJECTION_DECLARATIONS: dict[str, dict[str, Any]] = {
         "record_paths": (("raises",), ("handlers",), ("finalizers",), ("edges",)),
         "rationale": "Raises, handlers, finalizers, and bounded propagation edges are linked to components.",
     },
+    "static_branch_model": {
+        "mode": "semantic",
+        "entity_kinds": ("static_branch_decision",),
+        "relationship_channels": ("static_control_flow",),
+        "record_paths": (("decisions",),),
+        "rationale": "Safe non-executing branch decisions expose why impossible calls and failure paths were pruned.",
+    },
     "state_machine_model": {
         "mode": "semantic",
         "entity_kinds": ("state_candidate", "state_guard", "state_transition"),
@@ -441,6 +448,7 @@ SEMANTIC_EXPOSURE_DIMENSIONS = (
     "alias_object_flow",
     "concurrency",
     "exception_propagation",
+    "static_control_flow",
     "state_machine",
     "authorization_scope",
     "contract_semantics",
@@ -2654,6 +2662,21 @@ def build_cross_reference_index(
             role="outgoing_edge",
             label=label,
         )
+    branch_model = analysis.get("static_branch_model", {})
+    for record in branch_model.get("decisions", []):
+        if isinstance(record, dict) and record.get("id"):
+            link_semantic_record(
+                str(record.get("component_id", "")),
+                "static_control_flow",
+                "static_branch_decision",
+                record["id"],
+                record,
+                role="pruned_branch",
+                label=(
+                    f"{record.get('kind', 'branch')} · "
+                    f"{record.get('selected_branch', 'selected')}"
+                ),
+            )
     state_model = analysis.get("state_machine_model", {})
     for collection, record_kind, role in (
         ("states", "state_candidate", "state"),

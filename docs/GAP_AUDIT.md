@@ -29,6 +29,13 @@ path-level HTTP-method reconciliation, reviewer-disposition calibration, review-
 mapping proposals, repository-relative cache outputs, and an embedded HTML diagnostic scorecard.
 Dynamic wiring and every proposed mapping remain explicit review gaps.
 
+2026-08-21 refinement: callable-body analysis now prunes only safely decidable literal,
+comparison, boolean-short-circuit, conditional-expression, `while False`, and imported
+`TYPE_CHECKING` alternatives before composing calls, exceptions, sequences, and failure-mode
+candidates. Every prune is retained as validated component-linked evidence. Dynamic predicates,
+module-level conditional declarations, loop feasibility, match selection, and general symbolic
+execution remain explicit boundaries rather than inferred behavior.
+
 The schema-backed enhancement workbench now accounts for the complete 56-item follow-on backlog,
 including evidence recipes, root-cause clusters, verification portfolios, disposition queues, and
 bounded system-surface candidates. Project evidence and named authority remain open by design.

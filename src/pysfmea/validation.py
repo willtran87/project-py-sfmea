@@ -1013,6 +1013,170 @@ def validate_analysis(
                 "Concurrency operations, relations, counts, or component indexes are inconsistent.",
                 field="concurrency_model",
             )
+    branch_model = analysis.get("static_branch_model")
+    if branch_model is not None:
+        branch_valid = isinstance(branch_model, dict)
+        decisions = branch_model.get("decisions", []) if branch_valid else []
+        branch_summary = branch_model.get("summary", {}) if branch_valid else {}
+        branch_valid = (
+            branch_valid
+            and branch_model.get("format") == "pysfmea-static-branch-model-1"
+            and isinstance(decisions, list)
+            and isinstance(branch_summary, dict)
+        )
+        decision_ids: list[str] = []
+        decisions_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        components_by_id = {
+            str(value.get("id", "")): value
+            for value in analysis.get("components", [])
+            if isinstance(value, dict)
+        }
+        if branch_valid:
+            allowed_kinds = {
+                "if_statement",
+                "if_expression",
+                "while_statement",
+                "boolean_short_circuit",
+            }
+            allowed_bases = {
+                "literal_truth",
+                "literal_comparison",
+                "static_boolean_expression",
+                "type_checking_guard",
+            }
+            for decision in decisions:
+                if not isinstance(decision, dict):
+                    branch_valid = False
+                    continue
+                identifier = str(decision.get("id", ""))
+                component_id = str(decision.get("component_id", ""))
+                component = components_by_id.get(component_id, {})
+                source = component.get("source", {})
+                decision_ids.append(identifier)
+                if component_id in decisions_by_component:
+                    decisions_by_component[component_id].append(identifier)
+                raw_records = component.get("branch_decisions", [])
+                raw_match = next(
+                    (
+                        value
+                        for value in raw_records
+                        if isinstance(value, dict)
+                        and str(value.get("id", "")) == identifier
+                    ),
+                    None,
+                )
+                raw_projection = {
+                    key: value
+                    for key, value in decision.items()
+                    if key not in {"component_id", "component_reference"}
+                }
+                if (
+                    not identifier
+                    or component_id not in component_ids
+                    or not isinstance(decision.get("decision"), bool)
+                    or decision.get("kind") not in allowed_kinds
+                    or decision.get("basis") not in allowed_bases
+                    or not isinstance(decision.get("line"), int)
+                    or isinstance(decision.get("line"), bool)
+                    or int(decision.get("line", 0)) <= 0
+                    or not isinstance(decision.get("column"), int)
+                    or isinstance(decision.get("column"), bool)
+                    or int(decision.get("column", 0)) < 0
+                    or not isinstance(decision.get("end_column"), int)
+                    or isinstance(decision.get("end_column"), bool)
+                    or int(decision.get("end_column", 0)) < int(
+                        decision.get("column", 0)
+                    )
+                    or not isinstance(decision.get("pruned_operand_count"), int)
+                    or isinstance(decision.get("pruned_operand_count"), bool)
+                    or int(decision.get("pruned_operand_count", 0)) < 0
+                    or not isinstance(decision.get("decisive_operand_index"), int)
+                    or isinstance(decision.get("decisive_operand_index"), bool)
+                    or int(decision.get("decisive_operand_index", 0)) < 0
+                    or raw_match != raw_projection
+                    or identifier
+                    != stable_id(
+                        "STATIC-BRANCH",
+                        str(source.get("path", "")),
+                        str(component.get("qualname", "")),
+                        str(decision.get("kind", "")),
+                        str(decision.get("line", 0)),
+                        str(decision.get("column", 0)),
+                        str(decision.get("end_column", 0)),
+                        str(decision.get("expression", "")),
+                        str(decision.get("decision")),
+                        str(decision.get("selected_branch", "")),
+                    )
+                ):
+                    branch_valid = False
+            source_records = sum(
+                len(value.get("branch_decisions", []))
+                for value in components_by_id.values()
+                if isinstance(value.get("branch_decisions", []), list)
+            )
+            source_omitted = sum(
+                int(value.get("branch_decisions_omitted", 0))
+                for value in components_by_id.values()
+                if isinstance(value.get("branch_decisions_omitted", 0), int)
+                and not isinstance(value.get("branch_decisions_omitted", 0), bool)
+                and int(value.get("branch_decisions_omitted", 0)) >= 0
+            )
+            expected_omitted = source_omitted + source_records - len(decisions)
+            expected_kinds = dict(
+                sorted(Counter(str(value.get("kind", "")) for value in decisions).items())
+            )
+            expected_bases = dict(
+                sorted(Counter(str(value.get("basis", "")) for value in decisions).items())
+            )
+            summary_integers = (
+                branch_summary.get("decisions_discovered"),
+                branch_summary.get("decisions_embedded"),
+                branch_summary.get("decisions_omitted"),
+                branch_summary.get("true_decisions"),
+                branch_summary.get("false_decisions"),
+                branch_summary.get("pruned_operands"),
+            )
+            if (
+                len(decision_ids) != len(set(decision_ids))
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in summary_integers
+                )
+                or branch_summary.get("decisions_discovered") != source_records
+                or branch_summary.get("decisions_embedded") != len(decisions)
+                or branch_summary.get("decisions_omitted") != expected_omitted
+                or branch_summary.get("true_decisions")
+                != sum(value.get("decision") is True for value in decisions)
+                or branch_summary.get("false_decisions")
+                != sum(value.get("decision") is False for value in decisions)
+                or branch_summary.get("pruned_operands")
+                != sum(int(value.get("pruned_operand_count", 0)) for value in decisions)
+                or branch_summary.get("decision_kinds") != expected_kinds
+                or branch_summary.get("decision_bases") != expected_bases
+                or branch_summary.get("truncated") != bool(expected_omitted)
+            ):
+                branch_valid = False
+            for component_id, component in components_by_id.items():
+                expected = decisions_by_component.get(component_id, [])
+                index = component.get("static_control_flow", {})
+                if (
+                    not isinstance(index, dict)
+                    or index.get("decision_ids") != expected[:1_000]
+                    or index.get("decisions_omitted")
+                    != max(0, len(expected) - 1_000)
+                ):
+                    branch_valid = False
+        if not branch_valid:
+            add(
+                "analysis.invalid_static_branch_model",
+                "error",
+                "Static branch decisions, counts, source projections, or component indexes are inconsistent.",
+                field="static_branch_model",
+            )
     exception_model = analysis.get("exception_propagation")
     if exception_model is not None:
         exception_valid = isinstance(exception_model, dict)

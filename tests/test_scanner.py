@@ -4765,6 +4765,149 @@ class ScannerTests(unittest.TestCase):
             },
         )
 
+    def test_static_branch_pruning_removes_impossible_runtime_evidence(self) -> None:
+        (self.root / "branches.py").write_text(
+            """from typing import TYPE_CHECKING
+
+def live():
+    raise ValueError('live')
+
+def dead():
+    raise RuntimeError('dead')
+
+def literal_true():
+    if True:
+        return live()
+    else:
+        return dead()
+
+def literal_comparison():
+    if 3 < 2:
+        return dead()
+    return live()
+
+def type_guard():
+    if TYPE_CHECKING:
+        dead()
+    return live()
+
+def expression():
+    return live() if 1 == 1 else dead()
+
+def boolean_and():
+    return False and dead()
+
+def boolean_or():
+    return True or dead()
+
+def repeated_short_circuit():
+    return (False and dead(), False and dead())
+
+def loop():
+    while False:
+        dead()
+    else:
+        live()
+
+def dynamic(flag):
+    if flag:
+        live()
+    else:
+        dead()
+
+def handler():
+    try:
+        live()
+    except ValueError:
+        if True:
+            raise
+        return None
+""",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        components = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value["source"]["path"] == "branches.py"
+        }
+        for name in (
+            "literal_true",
+            "literal_comparison",
+            "type_guard",
+            "expression",
+            "boolean_and",
+            "boolean_or",
+            "repeated_short_circuit",
+            "loop",
+        ):
+            self.assertNotIn("dead", components[name]["calls"], name)
+        self.assertEqual(set(components["dynamic"]["calls"]), {"dead", "live"})
+        self.assertEqual(components["boolean_and"]["calls"], [])
+        self.assertEqual(components["boolean_or"]["calls"], [])
+        handler_record = components["handler"]["exception_handlers"][0]
+        self.assertEqual(handler_record["outcome_certainty"], "uniform")
+        self.assertEqual(handler_record["outcome_kinds"], ["reraise"])
+
+        model = analysis["static_branch_model"]
+        self.assertEqual(model["format"], "pysfmea-static-branch-model-1")
+        self.assertGreaterEqual(model["summary"]["decisions_discovered"], 10)
+        self.assertEqual(
+            model["summary"]["decisions_discovered"],
+            model["summary"]["decisions_embedded"],
+        )
+        bases = model["summary"]["decision_bases"]
+        self.assertIn("type_checking_guard", bases)
+        self.assertIn("literal_comparison", bases)
+        self.assertGreaterEqual(model["summary"]["pruned_operands"], 4)
+        repeated = [
+            value for value in model["decisions"]
+            if value["component_reference"] == "branches.py:repeated_short_circuit"
+        ]
+        self.assertEqual(len(repeated), 2)
+        self.assertEqual(len({value["id"] for value in repeated}), 2)
+        self.assertNotEqual(repeated[0]["column"], repeated[1]["column"])
+        decision_ids = {value["id"] for value in model["decisions"]}
+        for component in components.values():
+            self.assertTrue(
+                set(component["static_control_flow"]["decision_ids"])
+                <= decision_ids
+            )
+
+        dead_id = components["dead"]["id"]
+        pruned_callers = {
+            components[name]["id"]
+            for name in (
+                "literal_true",
+                "literal_comparison",
+                "type_guard",
+                "expression",
+                "boolean_and",
+                "boolean_or",
+                "repeated_short_circuit",
+                "loop",
+            )
+        }
+        self.assertFalse(
+            any(
+                edge["caller_component_id"] in pruned_callers
+                and edge["callee_component_id"] == dead_id
+                for edge in analysis["exception_propagation"]["edges"]
+            )
+        )
+        self.assertNotIn(
+            "analysis.invalid_static_branch_model",
+            {value["rule_id"] for value in validate_analysis(analysis)["findings"]},
+        )
+        tampered = json.loads(json.dumps(analysis))
+        tampered["static_branch_model"]["decisions"][0]["decision"] = not tampered[
+            "static_branch_model"
+        ]["decisions"][0]["decision"]
+        self.assertIn(
+            "analysis.invalid_static_branch_model",
+            {value["rule_id"] for value in validate_analysis(tampered)["findings"]},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

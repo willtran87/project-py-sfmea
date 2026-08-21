@@ -123,6 +123,8 @@ MAX_EXCEPTION_FINALIZER_RECORDS = 100_000
 MAX_EXCEPTION_PROPAGATION_EDGES = 200_000
 MAX_HANDLER_OUTCOMES_PER_HANDLER = 250
 MAX_HANDLER_OUTCOME_DEPTH = 100
+MAX_BRANCH_DECISIONS_PER_COMPONENT = 10_000
+MAX_BRANCH_DECISION_RECORDS = 100_000
 MAX_STATE_RECORDS_PER_COMPONENT = 10_000
 MAX_STATE_TRANSITIONS = 100_000
 MAX_RESILIENCE_SEMANTIC_OPERATIONS = 200_000
@@ -132,7 +134,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-6"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-7"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -316,6 +318,8 @@ class FunctionFacts:
     exception_handlers: list[dict[str, Any]] = field(default_factory=list)
     exception_finalizers: list[dict[str, Any]] = field(default_factory=list)
     exception_records_omitted: int = 0
+    branch_decisions: list[dict[str, Any]] = field(default_factory=list)
+    branch_decisions_omitted: int = 0
     state_guards: list[dict[str, Any]] = field(default_factory=list)
     state_transitions: list[dict[str, Any]] = field(default_factory=list)
     state_records_omitted: int = 0
@@ -698,6 +702,105 @@ def _walk_executable_nodes(statements: list[ast.stmt]) -> Iterable[ast.AST]:
         pending.extend(reversed(list(ast.iter_child_nodes(value))))
 
 
+_STATIC_LITERAL_SCALARS = (type(None), bool, int, float, complex, str, bytes)
+
+
+def _is_safe_static_literal(value: Any) -> bool:
+    """Return whether comparisons/truth checks cannot invoke repository code."""
+
+    if type(value) in _STATIC_LITERAL_SCALARS or value is Ellipsis:
+        return True
+    if type(value) in (tuple, list, set, frozenset):
+        return all(_is_safe_static_literal(item) for item in value)
+    if type(value) is dict:
+        return all(
+            _is_safe_static_literal(key) and _is_safe_static_literal(item)
+            for key, item in value.items()
+        )
+    return False
+
+
+def _static_literal_value(node: ast.AST) -> tuple[bool, Any]:
+    try:
+        value = ast.literal_eval(node)
+    except (SyntaxError, ValueError, TypeError):
+        return False, None
+    return (_is_safe_static_literal(value), value)
+
+
+def _static_truth_value(
+    node: ast.AST,
+    aliases: dict[str, str] | None = None,
+) -> tuple[bool | None, str]:
+    """Resolve only truth values that are safe without executing project code."""
+
+    aliases = aliases or {}
+    reference = _resolve_alias_reference(_dotted_name(node), aliases)
+    if reference in {"typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"}:
+        return False, "type_checking_guard"
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        value, _basis = _static_truth_value(node.operand, aliases)
+        if value is not None:
+            return not value, "static_boolean_expression"
+        return None, "dynamic_or_unsupported_expression"
+    if isinstance(node, ast.BoolOp):
+        decisions = [_static_truth_value(value, aliases)[0] for value in node.values]
+        if isinstance(node.op, ast.And):
+            if False in decisions:
+                return False, "static_boolean_expression"
+            if decisions and all(value is True for value in decisions):
+                return True, "static_boolean_expression"
+        elif isinstance(node.op, ast.Or):
+            if True in decisions:
+                return True, "static_boolean_expression"
+            if decisions and all(value is False for value in decisions):
+                return False, "static_boolean_expression"
+        return None, "dynamic_or_unsupported_expression"
+    if isinstance(node, ast.Compare):
+        operands = [node.left, *node.comparators]
+        resolved = [_static_literal_value(value) for value in operands]
+        if not all(known for known, _value in resolved):
+            return None, "dynamic_or_unsupported_expression"
+        values = [value for _known, value in resolved]
+        try:
+            outcomes: list[bool] = []
+            for left, operator, right in zip(
+                values[:-1], node.ops, values[1:], strict=True
+            ):
+                if isinstance(operator, ast.Eq):
+                    outcomes.append(left == right)
+                elif isinstance(operator, ast.NotEq):
+                    outcomes.append(left != right)
+                elif isinstance(operator, ast.Lt):
+                    outcomes.append(left < right)
+                elif isinstance(operator, ast.LtE):
+                    outcomes.append(left <= right)
+                elif isinstance(operator, ast.Gt):
+                    outcomes.append(left > right)
+                elif isinstance(operator, ast.GtE):
+                    outcomes.append(left >= right)
+                elif isinstance(operator, ast.In):
+                    outcomes.append(left in right)
+                elif isinstance(operator, ast.NotIn):
+                    outcomes.append(left not in right)
+                elif isinstance(operator, (ast.Is, ast.IsNot)) and any(
+                    left is value for value in (None, True, False, Ellipsis)
+                ) and any(right is value for value in (None, True, False, Ellipsis)):
+                    identical = left is right
+                    outcomes.append(
+                        not identical if isinstance(operator, ast.IsNot) else identical
+                    )
+                else:
+                    return None, "dynamic_or_unsupported_expression"
+        except (TypeError, ValueError):
+            return None, "dynamic_or_unsupported_expression"
+        return all(outcomes), "literal_comparison"
+    known, literal = _static_literal_value(node)
+    if known:
+        return bool(literal), "literal_truth"
+    return None, "dynamic_or_unsupported_expression"
+
+
 HandlerOutcome = tuple[str, str, int]
 
 
@@ -716,6 +819,7 @@ def _bounded_handler_outcomes(
 def _handler_statement_outcomes(
     statement: ast.stmt,
     exception_type_of: Callable[[ast.AST | None], str | None],
+    aliases: dict[str, str],
     *,
     depth: int,
 ) -> tuple[set[HandlerOutcome], bool]:
@@ -744,12 +848,21 @@ def _handler_statement_outcomes(
     if isinstance(statement, ast.Continue):
         return {("continue", "", line)}, False
     if isinstance(statement, ast.If):
+        decision, _basis = _static_truth_value(statement.test, aliases)
+        if decision is True:
+            return _handler_block_outcomes(
+                statement.body, exception_type_of, aliases, depth=depth + 1
+            )
+        if decision is False:
+            return _handler_block_outcomes(
+                statement.orelse, exception_type_of, aliases, depth=depth + 1
+            )
         body, body_truncated = _handler_block_outcomes(
-            statement.body, exception_type_of, depth=depth + 1
+            statement.body, exception_type_of, aliases, depth=depth + 1
         )
         if statement.orelse:
             alternate, alternate_truncated = _handler_block_outcomes(
-                statement.orelse, exception_type_of, depth=depth + 1
+                statement.orelse, exception_type_of, aliases, depth=depth + 1
             )
         else:
             alternate, alternate_truncated = {("fallthrough", "", 0)}, False
@@ -762,7 +875,7 @@ def _handler_statement_outcomes(
         exhaustive = False
         for case in statement.cases:
             case_outcomes, case_truncated = _handler_block_outcomes(
-                case.body, exception_type_of, depth=depth + 1
+                case.body, exception_type_of, aliases, depth=depth + 1
             )
             outcomes.update(case_outcomes)
             truncated = truncated or case_truncated
@@ -777,14 +890,20 @@ def _handler_statement_outcomes(
         return _bounded_handler_outcomes(outcomes, truncated)
     if isinstance(statement, (ast.With, ast.AsyncWith)):
         return _handler_block_outcomes(
-            statement.body, exception_type_of, depth=depth + 1
+            statement.body, exception_type_of, aliases, depth=depth + 1
         )
     if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+        if isinstance(statement, ast.While):
+            decision, _basis = _static_truth_value(statement.test, aliases)
+            if decision is False:
+                return _handler_block_outcomes(
+                    statement.orelse, exception_type_of, aliases, depth=depth + 1
+                )
         body, body_truncated = _handler_block_outcomes(
-            statement.body, exception_type_of, depth=depth + 1
+            statement.body, exception_type_of, aliases, depth=depth + 1
         )
         alternate, alternate_truncated = _handler_block_outcomes(
-            statement.orelse, exception_type_of, depth=depth + 1
+            statement.orelse, exception_type_of, aliases, depth=depth + 1
         )
         outcomes = {
             value
@@ -797,25 +916,25 @@ def _handler_statement_outcomes(
         )
     if isinstance(statement, (ast.Try, ast.TryStar)):
         body, body_truncated = _handler_block_outcomes(
-            statement.body, exception_type_of, depth=depth + 1
+            statement.body, exception_type_of, aliases, depth=depth + 1
         )
         outcomes = {value for value in body if value[0] != "fallthrough"}
         truncated = body_truncated
         if any(value[0] == "fallthrough" for value in body):
             normal, normal_truncated = _handler_block_outcomes(
-                statement.orelse, exception_type_of, depth=depth + 1
+                statement.orelse, exception_type_of, aliases, depth=depth + 1
             )
             outcomes.update(normal)
             truncated = truncated or normal_truncated
         for handler in statement.handlers:
             handled, handled_truncated = _handler_block_outcomes(
-                handler.body, exception_type_of, depth=depth + 1
+                handler.body, exception_type_of, aliases, depth=depth + 1
             )
             outcomes.update(handled)
             truncated = truncated or handled_truncated
         if statement.finalbody:
             final, final_truncated = _handler_block_outcomes(
-                statement.finalbody, exception_type_of, depth=depth + 1
+                statement.finalbody, exception_type_of, aliases, depth=depth + 1
             )
             terminal_final = {value for value in final if value[0] != "fallthrough"}
             if any(value[0] == "fallthrough" for value in final):
@@ -829,6 +948,7 @@ def _handler_statement_outcomes(
 def _handler_block_outcomes(
     statements: list[ast.stmt],
     exception_type_of: Callable[[ast.AST | None], str | None],
+    aliases: dict[str, str],
     *,
     depth: int = 0,
 ) -> tuple[set[HandlerOutcome], bool]:
@@ -839,7 +959,7 @@ def _handler_block_outcomes(
         if not any(value[0] == "fallthrough" for value in outcomes):
             break
         current, current_truncated = _handler_statement_outcomes(
-            statement, exception_type_of, depth=depth
+            statement, exception_type_of, aliases, depth=depth
         )
         outcomes, truncated = _bounded_handler_outcomes(
             terminal | current,
@@ -876,6 +996,60 @@ class _FactVisitor(ast.NodeVisitor):
             self.visit(value)
         finally:
             self.value_context.pop()
+
+    def _record_branch_decision(
+        self,
+        node: ast.AST,
+        *,
+        kind: str,
+        decision: bool,
+        basis: str,
+        selected_branch: str,
+        pruned_branch: str,
+        pruned_operand_count: int = 0,
+        decisive_expression: str = "",
+        decisive_operand_index: int = 0,
+    ) -> None:
+        line = int(getattr(node, "lineno", 0) or 0)
+        column = int(getattr(node, "col_offset", 0) or 0)
+        end_column = int(getattr(node, "end_col_offset", column) or column)
+        expression = ast.unparse(node)[:1_000]
+        if len(self.facts.branch_decisions) >= MAX_BRANCH_DECISIONS_PER_COMPONENT:
+            self.facts.branch_decisions_omitted += 1
+            return
+        self.facts.branch_decisions.append(
+            {
+                "id": stable_id(
+                    "STATIC-BRANCH",
+                    self.facts.path,
+                    self.facts.qualname,
+                    kind,
+                    str(line),
+                    str(column),
+                    str(end_column),
+                    expression,
+                    str(decision),
+                    selected_branch,
+                ),
+                "line": line,
+                "column": column,
+                "end_column": end_column,
+                "kind": kind,
+                "expression": expression,
+                "decision": decision,
+                "basis": basis,
+                "selected_branch": selected_branch,
+                "pruned_branch": pruned_branch,
+                "pruned_operand_count": pruned_operand_count,
+                "decisive_expression": decisive_expression[:1_000],
+                "decisive_operand_index": decisive_operand_index,
+                "control_context": list(self.control_context),
+                "authority": (
+                    "safe_non_executing_static_truth_decision_not_runtime_"
+                    "reachability_or_termination_proof"
+                ),
+            }
+        )
 
     def _flow_value(self, node: ast.AST) -> dict[str, Any]:
         value = _flow_value(node)
@@ -1133,6 +1307,21 @@ class _FactVisitor(ast.NodeVisitor):
         self.facts.signals.add("control_logic")
         self._record_state_guard(node.test, node.lineno, "if")
         self._visit_with_context(node.test, f"if@{node.lineno}:condition")
+        decision, basis = _static_truth_value(node.test, self.aliases)
+        if decision is not None:
+            self._record_branch_decision(
+                node.test,
+                kind="if_statement",
+                decision=decision,
+                basis=basis,
+                selected_branch="body" if decision else "else",
+                pruned_branch="else" if decision else "body",
+            )
+            selected = node.body if decision else node.orelse
+            self._visit_block(
+                selected, f"if@{node.lineno}:{'body' if decision else 'else'}"
+            )
+            return
         self._visit_block(node.body, f"if@{node.lineno}:body")
         self._visit_block(node.orelse, f"if@{node.lineno}:else")
 
@@ -1140,6 +1329,21 @@ class _FactVisitor(ast.NodeVisitor):
         self.facts.complexity += 1
         self.facts.signals.add("control_logic")
         self._visit_with_context(node.test, f"ifexp@{node.lineno}:condition")
+        decision, basis = _static_truth_value(node.test, self.aliases)
+        if decision is not None:
+            self._record_branch_decision(
+                node.test,
+                kind="if_expression",
+                decision=decision,
+                basis=basis,
+                selected_branch="body" if decision else "else",
+                pruned_branch="else" if decision else "body",
+            )
+            self._visit_with_context(
+                node.body if decision else node.orelse,
+                f"ifexp@{node.lineno}:{'body' if decision else 'else'}",
+            )
+            return
         self._visit_with_context(node.body, f"ifexp@{node.lineno}:body")
         self._visit_with_context(node.orelse, f"ifexp@{node.lineno}:else")
 
@@ -1167,13 +1371,45 @@ class _FactVisitor(ast.NodeVisitor):
         self.facts.signals.add("control_logic")
         self._record_state_guard(node.test, node.lineno, "while")
         self._visit_with_context(node.test, f"while@{node.lineno}:condition")
+        decision, basis = _static_truth_value(node.test, self.aliases)
+        if decision is False:
+            self._record_branch_decision(
+                node.test,
+                kind="while_statement",
+                decision=False,
+                basis=basis,
+                selected_branch="else",
+                pruned_branch="body",
+            )
+            self._visit_block(node.orelse, f"while@{node.lineno}:else")
+            return
         self._visit_block(node.body, f"while@{node.lineno}:body")
         self._visit_block(node.orelse, f"while@{node.lineno}:else")
 
     def visit_BoolOp(self, node: ast.BoolOp) -> None:
         self.facts.complexity += max(1, len(node.values) - 1)
         self.facts.signals.add("control_logic")
-        self.generic_visit(node)
+        for index, value in enumerate(node.values):
+            self.visit(value)
+            decision, basis = _static_truth_value(value, self.aliases)
+            stops_and = isinstance(node.op, ast.And) and decision is False
+            stops_or = isinstance(node.op, ast.Or) and decision is True
+            if not (stops_and or stops_or):
+                continue
+            omitted = len(node.values) - index - 1
+            if omitted:
+                self._record_branch_decision(
+                    node,
+                    kind="boolean_short_circuit",
+                    decision=bool(decision),
+                    basis=basis,
+                    selected_branch=f"short_circuit_after_operand_{index + 1}",
+                    pruned_branch="remaining_operands",
+                    pruned_operand_count=omitted,
+                    decisive_expression=ast.unparse(value),
+                    decisive_operand_index=index + 1,
+                )
+            break
 
     def visit_Match(self, node: ast.Match) -> None:
         self.facts.complexity += max(1, len(node.cases) - 1)
@@ -1223,7 +1459,7 @@ class _FactVisitor(ast.NodeVisitor):
                 return self._exception_raise_type(value)
 
             handler_outcomes, outcomes_truncated = _handler_block_outcomes(
-                handler.body, handler_exception_type
+                handler.body, handler_exception_type, self.aliases
             )
             outcomes: list[dict[str, Any]] = [
                 {
@@ -6111,6 +6347,58 @@ def _exception_propagation_model(
     }
 
 
+def _static_branch_model(facts_list: list[FunctionFacts]) -> dict[str, Any]:
+    decisions: list[dict[str, Any]] = []
+    discovered = 0
+    source_omitted = 0
+    for facts in sorted(facts_list, key=_component_ref):
+        component_id = stable_id("CMP", facts.path, facts.qualname, facts.kind)
+        component_reference = _component_ref(facts)
+        source_omitted += facts.branch_decisions_omitted
+        for decision in facts.branch_decisions:
+            discovered += 1
+            if len(decisions) < MAX_BRANCH_DECISION_RECORDS:
+                decisions.append(
+                    {
+                        **copy.deepcopy(decision),
+                        "component_id": component_id,
+                        "component_reference": component_reference,
+                    }
+                )
+    source_omitted += discovered - len(decisions)
+    return {
+        "format": "pysfmea-static-branch-model-1",
+        "summary": {
+            "decisions_discovered": discovered,
+            "decisions_embedded": len(decisions),
+            "decisions_omitted": source_omitted,
+            "true_decisions": sum(value["decision"] is True for value in decisions),
+            "false_decisions": sum(value["decision"] is False for value in decisions),
+            "pruned_operands": sum(
+                int(value.get("pruned_operand_count", 0)) for value in decisions
+            ),
+            "decision_kinds": dict(
+                sorted(Counter(str(value["kind"]) for value in decisions).items())
+            ),
+            "decision_bases": dict(
+                sorted(Counter(str(value["basis"]) for value in decisions).items())
+            ),
+            "truncated": bool(source_omitted),
+        },
+        "decisions": decisions,
+        "limits": {
+            "records_per_component": MAX_BRANCH_DECISIONS_PER_COMPONENT,
+            "decisions": MAX_BRANCH_DECISION_RECORDS,
+        },
+        "limitations": [
+            "Only literal truth, safe literal comparisons, static boolean composition, short-circuit operands, and resolved typing.TYPE_CHECKING guards are decided; all unsupported or dynamic predicates retain both branches.",
+            "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
+            "Loop iteration counts, break feasibility, match-pattern selection, dynamic imports, descriptors, and runtime value refinements are not inferred.",
+        ],
+        "authority": "bounded_safe_non_executing_static_branch_pruning_not_runtime_path_or_termination_proof",
+    }
+
+
 def _state_machine_model(facts_list: list[FunctionFacts]) -> dict[str, Any]:
     guards: list[dict[str, Any]] = []
     transitions: list[dict[str, Any]] = []
@@ -8627,6 +8915,8 @@ def _component_dict(
         "exception_handlers": copy.deepcopy(facts.exception_handlers),
         "exception_finalizers": copy.deepcopy(facts.exception_finalizers),
         "exception_records_omitted": facts.exception_records_omitted,
+        "branch_decisions": copy.deepcopy(facts.branch_decisions),
+        "branch_decisions_omitted": facts.branch_decisions_omitted,
         "state_guards": copy.deepcopy(facts.state_guards),
         "state_transitions": copy.deepcopy(facts.state_transitions),
         "state_records_omitted": facts.state_records_omitted,
@@ -9204,6 +9494,7 @@ def scan_repository(
     alias_object_flow = _alias_object_flow(facts_list)
     concurrency_model = _concurrency_model(facts_list)
     exception_propagation = _exception_propagation_model(facts_list, class_declarations)
+    static_branch_model = _static_branch_model(facts_list)
     state_machine_model = _state_machine_model(facts_list)
     resilience_semantics = _resilience_semantics_model(facts_list)
     authorization_scope_flow = _authorization_scope_flow(
@@ -9336,6 +9627,11 @@ def scan_repository(
         state_transition_ids[str(transition.get("component_id", ""))].append(
             str(transition["id"])
         )
+    branch_decision_ids: dict[str, list[str]] = defaultdict(list)
+    for decision in static_branch_model["decisions"]:
+        branch_decision_ids[str(decision.get("component_id", ""))].append(
+            str(decision["id"])
+        )
     resilience_operation_ids: dict[str, list[str]] = defaultdict(list)
     for operation in resilience_semantics["operations"]:
         resilience_operation_ids[str(operation.get("component_id", ""))].append(
@@ -9453,6 +9749,12 @@ def scan_repository(
             value.get("disposition") == "indeterminate_handler_match"
             for value in incoming_exception_records
         )
+        decision_ids = branch_decision_ids.get(component_id, [])
+        component["static_control_flow"] = {
+            "decision_ids": decision_ids[:1_000],
+            "decisions_omitted": max(0, len(decision_ids) - 1_000),
+            "authority": "references_to_complete_top_level_static_branch_model",
+        }
         guard_ids = state_guard_ids.get(component_id, [])
         transition_ids = state_transition_ids.get(component_id, [])
         component["state_machine"] = {
@@ -9661,6 +9963,9 @@ def scan_repository(
             "exception_propagation_edges": exception_propagation["summary"][
                 "propagation_edges_discovered"
             ],
+            "static_branch_decisions": static_branch_model["summary"][
+                "decisions_discovered"
+            ],
             "state_transitions": state_machine_model["summary"][
                 "transitions_discovered"
             ],
@@ -9692,6 +9997,7 @@ def scan_repository(
         "alias_object_flow": alias_object_flow,
         "concurrency_model": concurrency_model,
         "exception_propagation": exception_propagation,
+        "static_branch_model": static_branch_model,
         "state_machine_model": state_machine_model,
         "resilience_semantics": resilience_semantics,
         "authorization_scope_flow": authorization_scope_flow,

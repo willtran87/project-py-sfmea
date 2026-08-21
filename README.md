@@ -157,6 +157,14 @@ flowchart LR
   Evaluated returns, competing prior exits, conditional/nested `finally` path feasibility, dynamic aliases,
   `ExceptionGroup` splitting, runtime reachability, and complete path feasibility remain explicit
   limitations
+- Safe static branch pruning for callable bodies evaluates only non-executing literal truth,
+  literal comparisons, boolean composition/short-circuiting, and resolved `TYPE_CHECKING` guards.
+  It removes provably unselected calls, raises, sequences, exception cascades, and resulting
+  failure-mode evidence before downstream analysis. Every decision is retained in the bounded,
+  count-reconciled `static_branch_model`, linked back to its component, validated against its
+  source projection, cached, and navigable in the evidence fabric and HTML report. Unsupported or
+  dynamic predicates keep both paths; predicate side effects and exceptions are still scanned, and
+  the model does not claim runtime reachability, termination, or general symbolic execution
 - A bounded guarded-state model that turns assignments to state/status/phase/mode variables into
   component-linked transition candidates, connects lexical `if`/`while` predicates, and retains
   stable target-state nodes. It supports review and test design without claiming formal
