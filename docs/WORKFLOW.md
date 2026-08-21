@@ -512,8 +512,8 @@ third-party inheritance remain review boundaries.
 `static_control_flow_model` explains paths excluded before calls, exceptions, sequences, and
 failure-mode candidates are composed. Decisions cover safe literal truth/comparisons, boolean
 short-circuiting, `while False`, conditional expressions, imported `TYPE_CHECKING` guards, empty
-literal `for` loops, bounded literal/singleton/OR/sequence/capture `match` patterns and static case
-guards, constant-true loop reachability, direct exits, statically selected terminal blocks,
+literal `for` loops, bounded literal/singleton/OR/sequence/mapping/capture `match` patterns and
+static case guards, constant-true loop reachability, direct exits, statically selected terminal blocks,
 impossible `try` `else` clauses, terminal `finally` blocks, and exhaustive `if/else`, `match`, or
 `try` constructs whose alternatives all terminate. Function, class-construction, and module-initialization tails
 use the same block traversal. Each record retains component, exact source coordinates, expression,

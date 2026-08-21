@@ -4908,9 +4908,51 @@ def capture_match():
         case captured:
             live()
 
-def unsupported_mapping_match():
+def literal_mapping_match():
     match {'kind': 'ready'}:
         case {'kind': 'ready'}:
+            live()
+        case _:
+            dead()
+
+def nested_mapping_match():
+    match {'state': 'ready', 'payload': (1, 2, 3), 'extra': True}:
+        case {'state': 'idle'}:
+            dead()
+        case {'state': 'ready', 'payload': (1, *middle, 3), **remaining}:
+            live()
+        case _:
+            dead()
+
+def missing_mapping_key():
+    match {'state': 'ready'}:
+        case {'missing': captured}:
+            dead()
+        case {'state': 'ready'}:
+            live()
+        case _:
+            dead()
+
+def scalar_sequence_mismatch():
+    match 1:
+        case []:
+            dead()
+        case 1:
+            live()
+
+class Keys:
+    STATE = 'state'
+
+def dynamic_mapping_key():
+    match {'state': 'ready'}:
+        case {Keys.STATE: 'ready'}:
+            live()
+        case _:
+            dead()
+
+def conservative_class_pattern():
+    match 1:
+        case int():
             live()
         case _:
             dead()
@@ -5050,6 +5092,10 @@ def try_handler_fallthrough():
             "starred_or_match",
             "singleton_match",
             "capture_match",
+            "literal_mapping_match",
+            "nested_mapping_match",
+            "missing_mapping_key",
+            "scalar_sequence_mismatch",
             "guarded_match",
         ):
             self.assertNotIn("dead", components[name]["calls"], name)
@@ -5060,10 +5106,8 @@ def try_handler_fallthrough():
         self.assertEqual(
             set(components["dynamic_match"]["calls"]), {"dead", "live"}
         )
-        self.assertEqual(
-            set(components["unsupported_mapping_match"]["calls"]),
-            {"dead", "live"},
-        )
+        for name in ("dynamic_mapping_key", "conservative_class_pattern"):
+            self.assertEqual(set(components[name]["calls"]), {"dead", "live"})
         self.assertEqual(
             set(components["try_handler_fallthrough"]["calls"]),
             {"dead", "live"},
@@ -5085,7 +5129,7 @@ def try_handler_fallthrough():
 
         model = analysis["static_control_flow_model"]
         self.assertEqual(model["format"], "pysfmea-static-control-flow-model-1")
-        self.assertGreaterEqual(model["summary"]["decisions_discovered"], 31)
+        self.assertGreaterEqual(model["summary"]["decisions_discovered"], 40)
         self.assertEqual(
             model["summary"]["decisions_discovered"],
             model["summary"]["decisions_embedded"],
@@ -5181,6 +5225,10 @@ def try_handler_fallthrough():
                 "starred_or_match",
                 "singleton_match",
                 "capture_match",
+                "literal_mapping_match",
+                "nested_mapping_match",
+                "missing_mapping_key",
+                "scalar_sequence_mismatch",
                 "guarded_match",
                 "terminal_match",
                 "terminal_try_else",

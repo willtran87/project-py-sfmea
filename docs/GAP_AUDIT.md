@@ -33,13 +33,15 @@ Dynamic wiring and every proposed mapping remain explicit review gaps.
 only safely decidable literal/comparison/boolean/conditional/`TYPE_CHECKING` alternatives, empty
 literal iteration, direct exits, selected terminal blocks, and `if/else` alternatives that all
 terminate before composing calls, exceptions, sequences, and failure-mode candidates. Literal,
-singleton, OR, sequence, capture, and wildcard `match` cases plus static guards use the same safe
-selection model, including exhaustive terminal matches. Every prune is retained as validated
+singleton, OR, sequence, exact built-in-dictionary mapping, capture, and wildcard `match` cases
+plus static guards use the same safe selection model, including nested patterns, required-key
+checks, `**rest`, and exhaustive terminal matches. Every prune is retained as validated
 component-linked evidence with omission counts. Constant-true loops exclude impossible `else`
 clauses and become terminal only without a break owned by that loop. Bounded `try` analysis removes
 an `else` when its body cannot fall through and proves termination only for a terminal `finally` or
-when every normal and handler path exits. Conditional declarations, class/mapping/dynamic value
-patterns, dynamic loop feasibility, `except*` and complex exception/path feasibility, and general
+when every normal and handler path exits. Conditional declarations, class patterns, dynamic
+mapping keys, user-defined mappings, dynamic value patterns, dynamic loop feasibility, `except*`
+and complex exception/path feasibility, and general
 symbolic execution remain explicit boundaries rather than inferred behavior.
 
 The schema-backed enhancement workbench now accounts for the complete 56-item follow-on backlog,

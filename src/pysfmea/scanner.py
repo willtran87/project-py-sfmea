@@ -134,7 +134,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-10"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-11"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -877,7 +877,9 @@ def _static_match_pattern(
         if outcomes and all(value is False for value in outcomes):
             return False, "static_pattern_mismatch"
         return None, "dynamic_or_unsupported_pattern"
-    if isinstance(pattern, ast.MatchSequence) and type(subject) in (tuple, list):
+    if isinstance(pattern, ast.MatchSequence):
+        if type(subject) not in (tuple, list):
+            return False, "static_pattern_mismatch"
         stars = [
             index
             for index, value in enumerate(pattern.patterns)
@@ -905,6 +907,28 @@ def _static_match_pattern(
         if any(value is False for value, _basis in sequence_outcomes):
             return False, "static_pattern_mismatch"
         if all(value is True for value, _basis in sequence_outcomes):
+            return True, "static_pattern_match"
+        return None, "dynamic_or_unsupported_pattern"
+    if isinstance(pattern, ast.MatchMapping):
+        if type(subject) is not dict:
+            return False, "static_pattern_mismatch"
+        mapping_outcomes: list[tuple[bool | None, str]] = []
+        for key_node, value_pattern in zip(
+            pattern.keys, pattern.patterns, strict=True
+        ):
+            known, key = _static_literal_value(key_node)
+            if not known:
+                return None, "dynamic_or_unsupported_pattern"
+            try:
+                if key not in subject:
+                    return False, "static_pattern_mismatch"
+                value = subject[key]
+            except (KeyError, TypeError, ValueError):
+                return None, "dynamic_or_unsupported_pattern"
+            mapping_outcomes.append(_static_match_pattern(value, value_pattern))
+        if any(value is False for value, _basis in mapping_outcomes):
+            return False, "static_pattern_mismatch"
+        if all(value is True for value, _basis in mapping_outcomes):
             return True, "static_pattern_match"
         return None, "dynamic_or_unsupported_pattern"
     return None, "dynamic_or_unsupported_pattern"
@@ -6878,9 +6902,9 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
             "decisions": MAX_CONTROL_FLOW_DECISION_RECORDS,
         },
         "limitations": [
-            "Only direct terminal statements, statically empty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/capture match patterns and guards are decided; all unsupported or dynamic predicates and patterns retain conservative alternatives.",
+            "Only direct terminal statements, statically empty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; all unsupported or dynamic predicates and patterns retain conservative alternatives.",
             "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
-            "Loop iteration counts and dynamic break feasibility beyond lexical ownership, except-star and complex exception feasibility, class and mapping patterns, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
+            "Loop iteration counts and dynamic break feasibility beyond lexical ownership, except-star and complex exception feasibility, class patterns, dynamic mapping keys or user-defined mapping semantics, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
         ],
         "authority": "bounded_safe_non_executing_static_control_flow_pruning_not_runtime_path_or_termination_proof",
     }
