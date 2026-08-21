@@ -2838,6 +2838,14 @@ class ScannerTests(unittest.TestCase):
             "                return 'matched'\n"
             "            case _:\n"
             "                pass\n\n"
+            "def nonempty_loop_suppressed():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        for item in [1]:\n"
+            "            return 'first iteration'\n"
+            "        else:\n"
+            "            raise RuntimeError('unreachable replacement')\n\n"
             "def outer_terminal_wins():\n"
             "    try:\n"
             "        try:\n"
@@ -2918,6 +2926,7 @@ class ScannerTests(unittest.TestCase):
             "finalizers.py:static_conditional",
             "finalizers.py:uniform_conditional",
             "finalizers.py:static_mapping_match",
+            "finalizers.py:nonempty_loop_suppressed",
         ):
             edge = edges[(reference, "finalizers.py:leaf", "ValueError")]
             self.assertEqual(
@@ -3036,10 +3045,10 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(competing_finalizer["actions"], ["raises", "returns"])
         self.assertEqual(competing_finalizer["outcome_certainty"], "conditional")
 
-        self.assertEqual(model["summary"]["unconditional_terminal_finalizers"], 9)
+        self.assertEqual(model["summary"]["unconditional_terminal_finalizers"], 10)
         self.assertEqual(
             model["summary"]["edge_dispositions"]["suppressed_by_finally_control_flow"],
-            5,
+            6,
         )
         replaced_component = next(
             value for value in analysis["components"] if value["qualname"] == "replaced"
@@ -4923,6 +4932,29 @@ def nonempty_for():
     else:
         live()
 
+def terminal_nonempty_for():
+    for item in (1, 2):
+        return live()
+    else:
+        dead()
+    dead()
+
+def terminal_nonempty_for_branches(flag):
+    for item in {'first': 1}:
+        if flag:
+            return live()
+        raise ValueError('alternate')
+    else:
+        dead()
+    dead()
+
+def nonempty_for_continue():
+    for item in ['only']:
+        continue
+    else:
+        live()
+    dead()
+
 def loop():
     while False:
         dead()
@@ -5083,6 +5115,15 @@ def handler_empty_for():
         else:
             raise
 
+def handler_nonempty_for():
+    try:
+        live()
+    except ValueError:
+        for item in {'only'}:
+            raise
+        else:
+            return None
+
 def handler_match():
     try:
         live()
@@ -5199,6 +5240,9 @@ def try_handler_fallthrough():
         empty_handler = components["handler_empty_for"]["exception_handlers"][0]
         self.assertEqual(empty_handler["outcome_certainty"], "uniform")
         self.assertEqual(empty_handler["outcome_kinds"], ["reraise"])
+        nonempty_handler = components["handler_nonempty_for"]["exception_handlers"][0]
+        self.assertEqual(nonempty_handler["outcome_certainty"], "uniform")
+        self.assertEqual(nonempty_handler["outcome_kinds"], ["reraise"])
         match_handler = components["handler_match"]["exception_handlers"][0]
         self.assertEqual(match_handler["outcome_certainty"], "uniform")
         self.assertEqual(match_handler["outcome_kinds"], ["reraise"])
@@ -5247,6 +5291,12 @@ def try_handler_fallthrough():
             self.assertNotIn("dead", components[name]["ordered_calls"], name)
         self.assertNotIn("dead", components["empty_for"]["calls"])
         self.assertEqual(set(components["nonempty_for"]["calls"]), {"dead", "live"})
+        for name in ("terminal_nonempty_for", "terminal_nonempty_for_branches"):
+            self.assertNotIn("dead", components[name]["calls"], name)
+            self.assertNotIn("dead", components[name]["ordered_calls"], name)
+        self.assertEqual(
+            set(components["nonempty_for_continue"]["calls"]), {"dead", "live"}
+        )
         after_return_raises = components["after_return"]["exception_raises"]
         self.assertEqual(after_return_raises, [])
         termination_bases = {
@@ -5261,6 +5311,7 @@ def try_handler_fallthrough():
         self.assertIn("static_true_loop_without_break", termination_bases)
         self.assertIn("all_try_paths_terminal", termination_bases)
         self.assertIn("terminal_finally_block", termination_bases)
+        self.assertIn("nonempty_iteration_terminal_body", termination_bases)
         startup = next(
             value
             for value in analysis["components"]
@@ -5299,6 +5350,8 @@ def try_handler_fallthrough():
                 "after_selected_terminal",
                 "after_all_terminal",
                 "empty_for",
+                "terminal_nonempty_for",
+                "terminal_nonempty_for_branches",
                 "literal_match",
                 "sequence_match",
                 "starred_or_match",

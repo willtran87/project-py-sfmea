@@ -7,7 +7,8 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 - Add safe, non-executing control-flow pruning for literal `if`/conditional expressions,
   `while False`, constant-true loop `else` clauses and unbreakable tails, empty literal `for`
-  loops, boolean short-circuiting, literal comparisons,
+  loops, guaranteed-nonempty literal `for` loops whose first-iteration body cannot fall through,
+  boolean short-circuiting, literal comparisons,
   resolved `TYPE_CHECKING` guards, literal/singleton/OR/sequence/mapping/capture `match` patterns
   and statically decidable case guards, direct terminal statements, statically selected terminal
   blocks, exhaustive terminal `if/else` or `match` constructs, impossible `try` `else` clauses,
@@ -16,11 +17,14 @@ package; public artifact and schema identifiers carry their own explicit compati
   calls, raises, sequences, and downstream failure paths are excluded while unsupported paths
   remain conservative. Publish every decision in count-reconciled
   `pysfmea-static-control-flow-model-1`, validate exact source/component backlinks, preserve it
-  through fact-cache format 11, and expose it through the evidence fabric, canonical diagram, and
+  through fact-cache format 13, and expose it through the evidence fabric, canonical diagram, and
   HTML report. Handler outcomes use the same predicate, pattern, empty-loop, and constant-loop
   evaluators, avoiding impossible loop-`else` rethrow, return, or translation dispositions. Reject call-shaped expressions
   from literal evaluation—including `set()` accepted by `ast.literal_eval`—because repository code
   can shadow the apparent constructor.
+  Feed nonempty literal iteration into handler and `finally` outcome merging so a guaranteed first
+  iteration with only explicit terminal outcomes excludes an unreachable loop `else`; owned
+  `break`/`continue`, dynamic iterables, and bodies that may fall through remain conservative.
 - Deepen typed exception analysis with Python-compatible nearest-`try` and first-handler
   selection, exact built-in inheritance (including the `Exception`/`BaseException` boundary),
   statically declared project exception inheritance, and explicit indeterminate outcomes for

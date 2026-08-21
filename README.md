@@ -161,8 +161,9 @@ flowchart LR
   limitations
 - Safe static control-flow pruning evaluates only non-executing literal truth/comparisons,
   boolean composition/short-circuiting, resolved `TYPE_CHECKING` guards, empty literal iteration,
+  guaranteed-nonempty literal iteration with a terminal first-iteration body,
   bounded literal/singleton/OR/sequence/mapping/capture `match` patterns and static case guards, direct
-  exits, constant-true loop reachability, selected terminal blocks, terminal `finally` blocks, and
+  exits, constant-true and nonempty-literal loop reachability, selected terminal blocks, terminal `finally` blocks, and
   exhaustive `if/else`, `match`, or `try` alternatives that all terminate. It
   removes provably unreachable calls, raises, sequences, exception cascades, and failure-mode
   evidence before downstream analysis, including function, class, and module-initialization

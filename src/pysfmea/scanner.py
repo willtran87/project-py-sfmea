@@ -134,7 +134,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-12"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-13"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -805,25 +805,27 @@ def _static_truth_value(
     return None, "dynamic_or_unsupported_expression"
 
 
-def _static_empty_iteration(node: ast.AST) -> tuple[bool, str]:
-    """Identify only literal iterables that cannot yield a value."""
+def _static_literal_iteration_presence(node: ast.AST) -> tuple[bool | None, str]:
+    """Identify whether a safe built-in literal yields at least one value."""
 
-    if isinstance(node, (ast.Tuple, ast.List, ast.Set)) and not node.elts:
-        return True, "empty_literal_iterable"
-    if isinstance(node, ast.Dict) and not node.keys:
-        return True, "empty_literal_iterable"
-    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
-        return not node.value, "empty_literal_iterable"
-    return False, "dynamic_or_nonempty_iterable"
+    known, value = _static_literal_value(node)
+    if not known or type(value) not in (tuple, list, set, dict, str, bytes):
+        return None, "dynamic_or_unsupported_iterable"
+    if value:
+        return True, "nonempty_literal_iterable"
+    return False, "empty_literal_iterable"
 
 
-def _block_contains_current_loop_break(statements: list[ast.stmt]) -> bool:
-    """Find a break owned by the surrounding loop, excluding nested scopes/loops."""
+def _block_contains_current_loop_control(
+    statements: list[ast.stmt],
+    control_type: type[ast.Break] | type[ast.Continue],
+) -> bool:
+    """Find loop control owned by the surrounding loop, excluding nested loops."""
 
     pending: list[ast.AST] = list(reversed(statements))
     while pending:
         value = pending.pop()
-        if isinstance(value, ast.Break):
+        if isinstance(value, control_type):
             return True
         if isinstance(
             value,
@@ -840,6 +842,14 @@ def _block_contains_current_loop_break(statements: list[ast.stmt]) -> bool:
             continue
         pending.extend(reversed(list(ast.iter_child_nodes(value))))
     return False
+
+
+def _block_contains_current_loop_break(statements: list[ast.stmt]) -> bool:
+    return _block_contains_current_loop_control(statements, ast.Break)
+
+
+def _block_contains_current_loop_continue(statements: list[ast.stmt]) -> bool:
+    return _block_contains_current_loop_control(statements, ast.Continue)
 
 
 def _static_match_pattern(
@@ -1030,8 +1040,8 @@ def _static_statement_termination(
             "context_block_terminal" if terminal else "context_block_may_fall_through"
         )
     if isinstance(statement, ast.For):
-        empty, _basis = _static_empty_iteration(statement.iter)
-        if empty:
+        present, _basis = _static_literal_iteration_presence(statement.iter)
+        if present is False:
             terminal, _alternate_basis = _static_block_termination(
                 statement.orelse, aliases, depth=depth + 1
             )
@@ -1039,6 +1049,19 @@ def _static_statement_termination(
                 "empty_iteration_else_terminal"
                 if terminal
                 else "empty_iteration_may_fall_through"
+            )
+        if (
+            present is True
+            and not _block_contains_current_loop_break(statement.body)
+            and not _block_contains_current_loop_continue(statement.body)
+        ):
+            terminal, _body_basis = _static_block_termination(
+                statement.body, aliases, depth=depth + 1
+            )
+            return terminal, (
+                "nonempty_iteration_terminal_body"
+                if terminal
+                else "nonempty_iteration_body_may_fall_through"
             )
     if isinstance(statement, ast.While):
         decision, _basis = _static_truth_value(statement.test, aliases)
@@ -1217,11 +1240,21 @@ def _handler_statement_outcomes(
         )
     if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
         if isinstance(statement, ast.For):
-            empty, _basis = _static_empty_iteration(statement.iter)
-            if empty:
+            present, _basis = _static_literal_iteration_presence(statement.iter)
+            if present is False:
                 return _handler_block_outcomes(
                     statement.orelse, exception_type_of, aliases, depth=depth + 1
                 )
+            if present is True:
+                body, body_truncated = _handler_block_outcomes(
+                    statement.body, exception_type_of, aliases, depth=depth + 1
+                )
+                if body and all(
+                    value[0]
+                    not in {"fallthrough", "break", "continue", "indeterminate"}
+                    for value in body
+                ):
+                    return _bounded_handler_outcomes(body, body_truncated)
         if isinstance(statement, ast.While):
             decision, _basis = _static_truth_value(statement.test, aliases)
             if decision is False:
@@ -1723,8 +1756,8 @@ class _FactVisitor(ast.NodeVisitor):
         self.facts.loops += 1
         self.facts.signals.add("control_logic")
         self._visit_with_context(node.iter, f"for@{node.lineno}:iterator")
-        empty, basis = _static_empty_iteration(node.iter)
-        if empty:
+        present, basis = _static_literal_iteration_presence(node.iter)
+        if present is False:
             self._record_control_flow_decision(
                 node.iter,
                 kind="empty_for_loop",
@@ -1738,6 +1771,22 @@ class _FactVisitor(ast.NodeVisitor):
             return
         self.visit(node.target)
         self._visit_block(node.body, f"for@{node.lineno}:body")
+        if (
+            present is True
+            and not _block_contains_current_loop_break(node.body)
+            and not _block_contains_current_loop_continue(node.body)
+            and _static_block_termination(node.body, self.aliases, depth=0)[0]
+        ):
+            self._record_control_flow_decision(
+                node.iter,
+                kind="nonempty_for_loop",
+                decision=True,
+                basis="nonempty_iteration_terminal_body",
+                selected_branch="body",
+                pruned_branch="else",
+                pruned_statement_count=len(node.orelse),
+            )
+            return
         self._visit_block(node.orelse, f"for@{node.lineno}:else")
 
     def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
