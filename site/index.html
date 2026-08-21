@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PySFMEA — Evidence-backed Software FMEA for Python</title>
+    <meta name="description" content="Scan Python repositories into reviewable Software FMEA findings, failure cascades, assurance tests, diagrams, and citation-linked evidence.">
+    <meta name="theme-color" content="#102520">
+    <meta name="color-scheme" content="light">
+    <link rel="canonical" href="https://willtran87.github.io/project-py-sfmea/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="PySFMEA">
+    <meta property="og:title" content="PySFMEA — Evidence-backed Software FMEA for Python">
+    <meta property="og:description" content="Turn Python source into reviewable failure analysis, traceable assurance work, and self-contained engineering reports.">
+    <meta property="og:url" content="https://willtran87.github.io/project-py-sfmea/">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="PySFMEA — Evidence-backed Software FMEA for Python">
+    <meta name="twitter:description" content="Static discovery, failure propagation, guidance citations, assurance tests, and verified reports for Python repositories.">
+    <link rel="stylesheet" href="assets/site.css">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "PySFMEA",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Cross-platform",
+        "description": "A local-first Software FMEA and software assurance workbench for Python repositories.",
+        "codeRepository": "https://github.com/willtran87/project-py-sfmea",
+        "license": "https://opensource.org/license/mit",
+        "url": "https://willtran87.github.io/project-py-sfmea/"
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="PySFMEA home">
+        <span class="brand-mark" aria-hidden="true">PF</span>
+        <span>PySFMEA</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#workflow">Workflow</a>
+        <a href="#capabilities">Capabilities</a>
+        <a href="#evidence">Evidence</a>
+        <a href="#demo">Live demo</a>
+        <a class="nav-cta" href="https://github.com/willtran87/project-py-sfmea">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">Evidence-backed software assurance</p>
+          <h1 id="hero-title">From Python source to reviewable failure analysis.</h1>
+          <p class="hero-intro">
+            PySFMEA maps components, interfaces, sequences, failure modes, cascades, timing,
+            resilience controls, and assurance work—without executing the repository.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="demo/report.html">Explore the live report</a>
+            <a class="button button-secondary" href="#quick-start">Start a local scan</a>
+          </div>
+          <ul class="signal-list" aria-label="Analysis properties">
+            <li>Static</li>
+            <li>Bounded</li>
+            <li>Citation-linked</li>
+            <li>Human-governed</li>
+          </ul>
+        </div>
+
+        <div class="hero-model" aria-label="PySFMEA analysis pipeline">
+          <div class="model-head">
+            <span>Assurance pipeline</span>
+            <span class="status"><span aria-hidden="true"></span> Reviewable</span>
+          </div>
+          <ol class="model-flow">
+            <li>
+              <span class="model-index">01</span>
+              <div><strong>Discover</strong><small>Components · interfaces · sequences</small></div>
+            </li>
+            <li>
+              <span class="model-index">02</span>
+              <div><strong>Analyze</strong><small>Failure modes · effects · cascades</small></div>
+            </li>
+            <li>
+              <span class="model-index">03</span>
+              <div><strong>Trace</strong><small>NASA / FAA guidance · source evidence</small></div>
+            </li>
+            <li>
+              <span class="model-index">04</span>
+              <div><strong>Harden</strong><small>Tests · controls · verification evidence</small></div>
+            </li>
+          </ol>
+          <div class="model-foot">
+            <span>Machine discovery</span>
+            <span aria-hidden="true">→</span>
+            <span>Engineering decision</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="principles" aria-label="Core principles">
+        <span>Local-first</span>
+        <span>Non-executing</span>
+        <span>Content-addressed</span>
+        <span>Schema-backed</span>
+        <span>Explicit limitations</span>
+      </div>
+
+      <section class="section" id="workflow" aria-labelledby="workflow-title">
+        <div class="section-heading">
+          <p class="eyebrow">A disciplined workflow</p>
+          <h2 id="workflow-title">Discovery is the beginning, not the verdict.</h2>
+          <p>Every machine-generated lead stays separate from human acceptance and verification evidence.</p>
+        </div>
+        <ol class="workflow-grid">
+          <li>
+            <span class="step-number">1</span>
+            <h3>Define the system</h3>
+            <p>Capture boundaries, hazards, operating modes, safe states, interfaces, timing, and assumptions.</p>
+          </li>
+          <li>
+            <span class="step-number">2</span>
+            <h3>Scan the repository</h3>
+            <p>Extract a bounded static model of code, calls, data flow, exception paths, and resilience semantics.</p>
+          </li>
+          <li>
+            <span class="step-number">3</span>
+            <h3>Review failure modes</h3>
+            <p>Inspect local, next-higher, and end effects with exact source locations and guidance relationships.</p>
+          </li>
+          <li>
+            <span class="step-number">4</span>
+            <h3>Close with evidence</h3>
+            <p>Turn accepted findings into testable obligations, register implementations, and retain results.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="section capabilities" id="capabilities" aria-labelledby="capabilities-title">
+        <div class="section-heading">
+          <p class="eyebrow">Analysis depth</p>
+          <h2 id="capabilities-title">One repository, multiple assurance views.</h2>
+        </div>
+        <div class="capability-grid">
+          <article>
+            <span class="card-kicker">Structure</span>
+            <h3>Architecture & interfaces</h3>
+            <p>Components, entry points, routes, external dependencies, contracts, deployment topology, and shared-fate regions.</p>
+          </article>
+          <article>
+            <span class="card-kicker">Behavior</span>
+            <h3>Sequences & propagation</h3>
+            <p>Bounded call sequences, typed exception flow, state transitions, data/alias flow, and failure cascade paths.</p>
+          </article>
+          <article>
+            <span class="card-kicker">Resilience</span>
+            <h3>Timing & controls</h3>
+            <p>Retries, deadlines, circuit breakers, transactions, idempotency, resource bounds, and concurrency review leads.</p>
+          </article>
+          <article>
+            <span class="card-kicker">Traceability</span>
+            <h3>Guidance & citations</h3>
+            <p>Versioned NASA/FAA source locators and typed rule-to-finding relationships with integrity and applicability metadata.</p>
+          </article>
+          <article>
+            <span class="card-kicker">Hardening</span>
+            <h3>Executable assurance</h3>
+            <p>Finding-derived verification obligations, fault-injection plans, test scaffolds, execution records, and evidence review.</p>
+          </article>
+          <article>
+            <span class="card-kicker">Communication</span>
+            <h3>Reports & diagrams</h3>
+            <p>Self-contained HTML, canonical diagram JSON, fault trees, worksheets, SARIF, SBOM, and portable review packages.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section evidence-section" id="evidence" aria-labelledby="evidence-title">
+        <div class="evidence-copy">
+          <p class="eyebrow">Evidence discipline</p>
+          <h2 id="evidence-title">Claims keep their authority boundaries.</h2>
+          <p>
+            Static evidence, runtime observations, guidance mappings, machine suggestions, human decisions,
+            test executions, and independent reviews remain distinct. Cross-references add leverage without
+            turning correlation into proof.
+          </p>
+          <a class="text-link" href="https://github.com/willtran87/project-py-sfmea/blob/main/docs/METHODOLOGY.md">Read the methodology <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="evidence-stack" aria-label="Evidence authority layers">
+          <div><span>01</span><strong>Repository evidence</strong><small>Source · configuration · contracts</small></div>
+          <div><span>02</span><strong>Analysis projections</strong><small>Bounded · reproducible · limited</small></div>
+          <div><span>03</span><strong>Engineering decisions</strong><small>Owned · reasoned · reviewable</small></div>
+          <div><span>04</span><strong>Verification evidence</strong><small>As-run · integrity-bound · independently reviewed</small></div>
+        </div>
+      </section>
+
+      <section class="section demo-section" id="demo" aria-labelledby="demo-title">
+        <div>
+          <p class="eyebrow">Generated on every deployment</p>
+          <h2 id="demo-title">Inspect the actual product output.</h2>
+          <p>
+            The demonstration is generated from the repository’s benchmark corpus by the same public CLI.
+            It is intentionally marked discovery-only and should not be read as an approved safety assessment.
+          </p>
+        </div>
+        <div class="demo-actions">
+          <a class="demo-card primary-demo" href="demo/report.html">
+            <span>Interactive artifact</span>
+            <strong>Open the SFMEA report</strong>
+            <small>Navigate findings, diagrams, sequences, citations, and assurance work.</small>
+          </a>
+          <a class="demo-card" href="demo/analysis.json.gz">
+            <span>Machine-readable</span>
+            <strong>Download the analysis</strong>
+            <small>Versioned, schema-backed, compressed JSON.</small>
+          </a>
+          <a class="demo-card" href="demo/diagrams.json">
+            <span>Renderer-neutral</span>
+            <strong>Download diagrams</strong>
+            <small>Canonical nodes, edges, bindings, and limitations.</small>
+          </a>
+          <a class="demo-card" href="demo/cross-reference.json.gz">
+            <span>Evidence fabric</span>
+            <strong>Download cross-references</strong>
+            <small>Fused entities, relationships, provenance, and reconciliation.</small>
+          </a>
+        </div>
+      </section>
+
+      <section class="section quick-start" id="quick-start" aria-labelledby="quick-start-title">
+        <div>
+          <p class="eyebrow">Local-first by design</p>
+          <h2 id="quick-start-title">Start with one repository.</h2>
+          <p>Install in an isolated environment, initialize governance, scan, and open the self-contained report locally.</p>
+        </div>
+        <div class="code-panel">
+          <div class="code-head"><span>Terminal</span><span>Python 3.11+</span></div>
+          <pre><code>python -m pip install "git+https://github.com/willtran87/project-py-sfmea.git"
+sfmea init /path/to/repository
+sfmea scan /path/to/repository
+sfmea report /path/to/repository/sfmea-analysis.json
+sfmea review /path/to/repository/sfmea-analysis.json</code></pre>
+        </div>
+      </section>
+
+      <section class="boundary" aria-labelledby="boundary-title">
+        <p class="eyebrow">Important boundary</p>
+        <h2 id="boundary-title">A scanner can accelerate assurance. It cannot approve risk.</h2>
+        <p>
+          PySFMEA provides review leads and evidence infrastructure. System effects, severity,
+          occurrence, control adequacy, compliance, and residual-risk acceptance remain engineering decisions.
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <div class="brand footer-brand"><span class="brand-mark" aria-hidden="true">PF</span><span>PySFMEA</span></div>
+      <p>Local-first Software FMEA and assurance tooling for Python.</p>
+      <nav aria-label="Footer navigation">
+        <a href="https://github.com/willtran87/project-py-sfmea">Source</a>
+        <a href="https://github.com/willtran87/project-py-sfmea/tree/main/docs">Documentation</a>
+        <a href="https://github.com/willtran87/project-py-sfmea/blob/main/LICENSE">MIT license</a>
+      </nav>
+    </footer>
+  </body>
+</html>

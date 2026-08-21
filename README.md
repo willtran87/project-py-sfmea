@@ -1,6 +1,7 @@
 # PySFMEA
 
 [![CI](https://github.com/willtran87/project-py-sfmea/actions/workflows/ci.yml/badge.svg)](https://github.com/willtran87/project-py-sfmea/actions/workflows/ci.yml)
+[![GitHub Pages](https://github.com/willtran87/project-py-sfmea/actions/workflows/pages.yml/badge.svg)](https://willtran87.github.io/project-py-sfmea/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -21,6 +22,7 @@ flowchart LR
 
 ## Documentation map
 
+- [Product site and generated live report](https://willtran87.github.io/project-py-sfmea/)
 - [Visual guide](docs/VISUAL_GUIDE.md) — workflows, failure cascades, trust boundaries, and outputs
 - [Operator workflow](docs/WORKFLOW.md) — the concise scan-to-handoff path
 - [Complete command guide](#quick-start)

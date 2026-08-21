@@ -1,0 +1,88 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - agent/refine-sfmea-assurance-workbench
+    paths:
+      - ".github/workflows/pages.yml"
+      - "benchmarks/python_sfmea_corpus/**"
+      - "site/**"
+      - "src/**"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build verified product site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.2.0
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install PySFMEA
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+
+      - name: Build site and live analysis demonstration
+        run: |
+          mkdir -p _site/demo
+          cp -R site/. _site/
+          sfmea scan benchmarks/python_sfmea_corpus/repository \
+            --allow-ungoverned \
+            --no-cache \
+            --fresh \
+            --output _site/demo/analysis.json.gz
+          sfmea cross-reference _site/demo/analysis.json.gz \
+            --format json \
+            --output _site/demo/cross-reference.json
+          sfmea cross-reference-verify _site/demo/cross-reference.json \
+            --analysis _site/demo/analysis.json.gz
+          gzip -9 _site/demo/cross-reference.json
+          sfmea diagram _site/demo/analysis.json.gz \
+            --type all \
+            --output _site/demo/diagrams.json
+          sfmea diagram-verify _site/demo/diagrams.json \
+            --analysis _site/demo/analysis.json.gz
+          sfmea report _site/demo/analysis.json.gz \
+            --output _site/demo/report.html \
+            --max-records 1000
+          sfmea report-verify _site/demo/report.html \
+            --analysis _site/demo/analysis.json.gz
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy GitHub Pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

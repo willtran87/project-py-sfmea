@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://willtran87.github.io/project-py-sfmea/sitemap.xml

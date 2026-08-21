@@ -47,7 +47,8 @@ quality = [
 browser = ["playwright>=1"]
 
 [project.urls]
-Documentation = "https://github.com/willtran87/project-py-sfmea/tree/main/docs"
+Documentation = "https://willtran87.github.io/project-py-sfmea/"
+Homepage = "https://willtran87.github.io/project-py-sfmea/"
 Issues = "https://github.com/willtran87/project-py-sfmea/issues"
 Repository = "https://github.com/willtran87/project-py-sfmea"
 
