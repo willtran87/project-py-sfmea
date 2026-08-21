@@ -10,7 +10,8 @@ package; public artifact and schema identifiers carry their own explicit compati
   loops, guaranteed-nonempty literal `for` loops whose first-iteration body cannot fall through,
   boolean short-circuiting, literal comparisons, bounded exact-built-in numeric/sequence
   expressions, exact built-in indexing and slicing, operand-valued boolean expressions, and
-  statically selected conditional-expression values,
+  statically selected conditional-expression values. Safely construct bounded tuple/list/set/dict
+  displays with deterministic literal unpacking, dictionary union, and exact set algebra,
   resolved `TYPE_CHECKING` guards, literal/singleton/OR/sequence/mapping/capture `match` patterns
   and statically decidable case guards, direct terminal statements, statically selected terminal
   blocks, exhaustive terminal `if/else` or `match` constructs, impossible `try` `else` clauses,
@@ -19,7 +20,7 @@ package; public artifact and schema identifiers carry their own explicit compati
   calls, raises, sequences, and downstream failure paths are excluded while unsupported paths
   remain conservative. Publish every decision in count-reconciled
   `pysfmea-static-control-flow-model-2`, validate exact source/component backlinks and evaluator
-  limits, preserve it through fact-cache format 15, and expose it through the evidence fabric, canonical diagram, and
+  limits, preserve it through fact-cache format 16, and expose it through the evidence fabric, canonical diagram, and
   HTML report. Handler outcomes use the same predicate, pattern, empty-loop, and constant-loop
   evaluators, avoiding impossible loop-`else` rethrow, return, or translation dispositions. Reject call-shaped expressions
   from literal evaluation—including `set()` accepted by `ast.literal_eval`—because repository code
@@ -29,7 +30,8 @@ package; public artifact and schema identifiers carry their own explicit compati
   `break`/`continue`, dynamic iterables, and bodies that may fall through remain conservative.
   Constant folding admits only exact built-in numeric operations, bounded tuple/list/string/byte
   concatenation or repetition, safe literal indexing/slicing, Python-compatible `and`/`or` value
-  selection, and statically decidable conditional expressions. It fails closed at depth 20, 4,096 integer bits or sequence items,
+  selection, statically decidable conditional expressions, bounded collection unpacking, dictionary
+  union, and set algebra. It fails closed at depth 20, 4,096 integer bits or collection/sequence items,
   exponent 64, and shift 1,024; calls, exceptional operations, oversized results, and unsupported
   types retain all alternatives. Publish these mandatory limits in format 2 rather than silently
   redefining static-control-flow format 1.

@@ -139,7 +139,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-15"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-16"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -740,7 +740,7 @@ def _static_literal_value(node: ast.AST) -> tuple[bool, Any]:
 def _bounded_static_expression_result(value: Any) -> tuple[bool, Any, str]:
     if type(value) is int and value.bit_length() > MAX_STATIC_INTEGER_BITS:
         return False, None, "bounded_expression_result_limit"
-    if type(value) in (tuple, list, str, bytes) and (
+    if type(value) in (tuple, list, set, frozenset, dict, str, bytes) and (
         len(value) > MAX_STATIC_SEQUENCE_LENGTH
     ):
         return False, None, "bounded_expression_result_limit"
@@ -774,6 +774,80 @@ def _static_subscript_selector(
     return True, slice(*values), True
 
 
+def _static_collection_expression_value(
+    node: ast.Tuple | ast.List | ast.Set | ast.Dict,
+    *,
+    depth: int,
+) -> tuple[bool, Any, str]:
+    """Build bounded exact collections, including safe literal unpacking."""
+
+    if isinstance(node, ast.Dict):
+        result: dict[Any, Any] = {}
+        try:
+            for key_node, value_node in zip(node.keys, node.values, strict=True):
+                if key_node is None:
+                    known, unpacked, _basis = _static_expression_value(
+                        value_node,
+                        depth=depth + 1,
+                    )
+                    if not known or type(unpacked) is not dict:
+                        return False, None, "dynamic_or_unsupported_expression"
+                    result.update(unpacked)
+                else:
+                    key_known, key, _key_basis = _static_expression_value(
+                        key_node,
+                        depth=depth + 1,
+                    )
+                    value_known, value, _value_basis = _static_expression_value(
+                        value_node,
+                        depth=depth + 1,
+                    )
+                    if not key_known or not value_known:
+                        return False, None, "dynamic_or_unsupported_expression"
+                    result[key] = value
+                if len(result) > MAX_STATIC_SEQUENCE_LENGTH:
+                    return False, None, "bounded_expression_result_limit"
+        except (ArithmeticError, TypeError, ValueError):
+            return False, None, "exceptional_literal_expression"
+        return _bounded_static_expression_result(result)
+
+    result_items: list[Any] = []
+    ordered_unpack_types = (tuple, list, str, bytes, dict)
+    set_unpack_types = (*ordered_unpack_types, set, frozenset)
+    for element in node.elts:
+        if isinstance(element, ast.Starred):
+            known, unpacked, _basis = _static_expression_value(
+                element.value,
+                depth=depth + 1,
+            )
+            allowed_types = (
+                set_unpack_types if isinstance(node, ast.Set) else ordered_unpack_types
+            )
+            if not known or type(unpacked) not in allowed_types:
+                return False, None, "dynamic_or_unsupported_expression"
+            if len(result_items) + len(unpacked) > MAX_STATIC_SEQUENCE_LENGTH:
+                return False, None, "bounded_expression_result_limit"
+            result_items.extend(unpacked)
+        else:
+            known, value, _basis = _static_expression_value(
+                element,
+                depth=depth + 1,
+            )
+            if not known:
+                return False, None, "dynamic_or_unsupported_expression"
+            result_items.append(value)
+            if len(result_items) > MAX_STATIC_SEQUENCE_LENGTH:
+                return False, None, "bounded_expression_result_limit"
+    try:
+        if isinstance(node, ast.Tuple):
+            return _bounded_static_expression_result(tuple(result_items))
+        if isinstance(node, ast.List):
+            return _bounded_static_expression_result(result_items)
+        return _bounded_static_expression_result(set(result_items))
+    except (ArithmeticError, TypeError, ValueError):
+        return False, None, "exceptional_literal_expression"
+
+
 def _static_expression_value(
     node: ast.AST,
     *,
@@ -783,9 +857,14 @@ def _static_expression_value(
 
     known, literal = _static_literal_value(node)
     if known:
+        bounded, _value, limit_basis = _bounded_static_expression_result(literal)
+        if not bounded:
+            return False, None, limit_basis
         return True, literal, "literal"
     if depth >= MAX_STATIC_EXPRESSION_DEPTH:
         return False, None, "bounded_expression_depth_limit"
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
+        return _static_collection_expression_value(node, depth=depth)
     if isinstance(node, ast.UnaryOp) and isinstance(
         node.op, (ast.UAdd, ast.USub, ast.Invert)
     ):
@@ -881,6 +960,7 @@ def _static_expression_value(
             return False, None, "bounded_expression_operand_limit"
     numeric_types = (bool, int, float, complex)
     sequence_types = (tuple, list, str, bytes)
+    set_types = (set, frozenset)
     try:
         if isinstance(node.op, ast.Add):
             if type(left) in numeric_types and type(right) in numeric_types:
@@ -891,6 +971,10 @@ def _static_expression_value(
                 return _bounded_static_expression_result(left + right)
         elif isinstance(node.op, ast.Sub) and (
             type(left) in numeric_types and type(right) in numeric_types
+        ):
+            return _bounded_static_expression_result(left - right)
+        elif isinstance(node.op, ast.Sub) and (
+            type(left) in set_types and type(right) in set_types
         ):
             return _bounded_static_expression_result(left - right)
         elif isinstance(node.op, ast.Mult):
@@ -933,12 +1017,28 @@ def _static_expression_value(
             type(left) in (bool, int) and type(right) in (bool, int)
         ):
             return _bounded_static_expression_result(left | right)
+        elif isinstance(node.op, ast.BitOr) and (
+            type(left) is dict and type(right) is dict
+        ):
+            return _bounded_static_expression_result(left | right)
+        elif isinstance(node.op, ast.BitOr) and (
+            type(left) in set_types and type(right) in set_types
+        ):
+            return _bounded_static_expression_result(left | right)
         elif isinstance(node.op, ast.BitXor) and (
             type(left) in (bool, int) and type(right) in (bool, int)
         ):
             return _bounded_static_expression_result(left ^ right)
+        elif isinstance(node.op, ast.BitXor) and (
+            type(left) in set_types and type(right) in set_types
+        ):
+            return _bounded_static_expression_result(left ^ right)
         elif isinstance(node.op, ast.BitAnd) and (
             type(left) in (bool, int) and type(right) in (bool, int)
+        ):
+            return _bounded_static_expression_result(left & right)
+        elif isinstance(node.op, ast.BitAnd) and (
+            type(left) in set_types and type(right) in set_types
         ):
             return _bounded_static_expression_result(left & right)
     except (ArithmeticError, TypeError, ValueError):
@@ -7230,7 +7330,7 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
             "shift": MAX_STATIC_SHIFT,
         },
         "limitations": [
-            "Only direct terminal statements, statically bounded empty/nonempty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, size-limited exact-built-in arithmetic, sequence, indexing/slicing, boolean-value, and selected conditional-value expressions, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; exceptional, oversized, unsupported, or dynamic expressions, indices, predicates, and patterns retain conservative alternatives.",
+            "Only direct terminal statements, statically bounded empty/nonempty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, size-limited exact-built-in arithmetic, sequence, indexing/slicing, boolean-value, selected conditional-value, deterministic collection-unpacking, mapping-union, and set-algebra expressions, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; exceptional, oversized, unsupported, unordered sequence unpacking, or dynamic expressions, indices, predicates, and patterns retain conservative alternatives.",
             "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
             "Loop iteration counts and dynamic break feasibility beyond lexical ownership, except-star and complex exception feasibility, class patterns, dynamic mapping keys or user-defined mapping semantics, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
         ],

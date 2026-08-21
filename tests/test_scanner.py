@@ -4865,8 +4865,7 @@ class ScannerTests(unittest.TestCase):
     def test_static_control_flow_pruning_removes_impossible_runtime_evidence(
         self,
     ) -> None:
-        (self.root / "branches.py").write_text(
-            """from typing import TYPE_CHECKING
+        branch_source = """from typing import TYPE_CHECKING
 
 def live():
     raise ValueError('live')
@@ -4943,6 +4942,66 @@ def computed_conditional_value():
     if (3 if 2 * 2 == 4 else 0) == 3:
         return live()
     return dead()
+
+def computed_tuple_unpack():
+    if (*('idle', 'ready'),)[1] == 'ready':
+        return live()
+    return dead()
+
+def computed_list_unpack():
+    if [0, *[1, 2]][1:] == [1, 2]:
+        return live()
+    return dead()
+
+def computed_mapping_unpack():
+    if {**{'status': 'idle'}, 'status': 'ready'}['status'] == 'ready':
+        return live()
+    return dead()
+
+def computed_mapping_union():
+    if ({'status': 'idle'} | {'status': 'ready'})['status'] == 'ready':
+        return live()
+    return dead()
+
+def computed_set_algebra():
+    if (
+        ({1, 2} | {2, 3}) == {1, 2, 3}
+        and ({1, 2} & {2, 3}) == {2}
+        and ({1, 2} - {2}) == {1}
+        and ({1, 2} ^ {2, 3}) == {1, 3}
+    ):
+        return live()
+    return dead()
+
+def dynamic_unpack(values):
+    if [*values]:
+        dead()
+    else:
+        live()
+
+def exceptional_set_unpack():
+    if {*[[]]}:
+        dead()
+    else:
+        live()
+
+def exceptional_mapping_unpack():
+    if {**[]}:
+        dead()
+    else:
+        live()
+
+def unordered_sequence_unpack():
+    if [*{1, 2}] == [1, 2]:
+        dead()
+    else:
+        live()
+
+def oversized_unpack():
+    if [*(('x',) * 4096), 'overflow']:
+        dead()
+    else:
+        live()
 
 def exceptional_subscript():
     if {'status': 'ready'}['missing']:
@@ -5064,6 +5123,13 @@ def computed_slice_for():
         dead()
     dead()
 
+def computed_unpack_for():
+    for item in [*(), *('run',)]:
+        return live()
+    else:
+        dead()
+    dead()
+
 def loop():
     while False:
         dead()
@@ -5108,6 +5174,13 @@ def computed_match_subject():
 def computed_subscript_match_subject():
     match ('zero', 'one')[1]:
         case 'one':
+            live()
+        case _:
+            dead()
+
+def computed_unpack_match_subject():
+    match {**{'state': 'ready'}, 'payload': (*('a', 'b'),)}:
+        case {'state': 'ready', 'payload': ('a', 'b')}:
             live()
         case _:
             dead()
@@ -5263,6 +5336,14 @@ def handler_subscript_condition():
             raise
         return None
 
+def handler_unpack_condition():
+    try:
+        live()
+    except ValueError:
+        if {**{'retry': True}}['retry']:
+            raise
+        return None
+
 def handler_match():
     try:
         live()
@@ -5315,7 +5396,14 @@ def try_handler_fallthrough():
     except ValueError:
         pass
     dead()
-""",
+"""
+        branch_source += (
+            "\ndef oversized_direct_literal():\n    if "
+            + repr("x" * 4_097)
+            + ":\n        dead()\n    else:\n        live()\n"
+        )
+        (self.root / "branches.py").write_text(
+            branch_source,
             encoding="utf-8",
         )
         (self.root / "startup.py").write_text(
@@ -5345,6 +5433,11 @@ def try_handler_fallthrough():
             "computed_mapping_subscript",
             "computed_boolean_value",
             "computed_conditional_value",
+            "computed_tuple_unpack",
+            "computed_list_unpack",
+            "computed_mapping_unpack",
+            "computed_mapping_union",
+            "computed_set_algebra",
             "type_guard",
             "expression",
             "boolean_and",
@@ -5357,6 +5450,7 @@ def try_handler_fallthrough():
             "literal_match",
             "computed_match_subject",
             "computed_subscript_match_subject",
+            "computed_unpack_match_subject",
             "sequence_match",
             "starred_or_match",
             "singleton_match",
@@ -5381,6 +5475,12 @@ def try_handler_fallthrough():
             "exceptional_subscript",
             "exceptional_slice",
             "dynamic_subscript",
+            "dynamic_unpack",
+            "exceptional_set_unpack",
+            "exceptional_mapping_unpack",
+            "unordered_sequence_unpack",
+            "oversized_unpack",
+            "oversized_direct_literal",
         ):
             self.assertEqual(set(components[name]["calls"]), {"dead", "live"})
         for name in ("dynamic_mapping_key", "conservative_class_pattern"):
@@ -5410,6 +5510,11 @@ def try_handler_fallthrough():
         ][0]
         self.assertEqual(subscript_handler["outcome_certainty"], "uniform")
         self.assertEqual(subscript_handler["outcome_kinds"], ["reraise"])
+        unpack_handler = components["handler_unpack_condition"][
+            "exception_handlers"
+        ][0]
+        self.assertEqual(unpack_handler["outcome_certainty"], "uniform")
+        self.assertEqual(unpack_handler["outcome_kinds"], ["reraise"])
         match_handler = components["handler_match"]["exception_handlers"][0]
         self.assertEqual(match_handler["outcome_certainty"], "uniform")
         self.assertEqual(match_handler["outcome_kinds"], ["reraise"])
@@ -5439,7 +5544,12 @@ def try_handler_fallthrough():
             "computed_slice_condition",
             "computed_mapping_subscript",
             "computed_conditional_value",
+            "computed_tuple_unpack",
+            "computed_list_unpack",
+            "computed_mapping_unpack",
+            "computed_mapping_union",
             "handler_subscript_condition",
+            "handler_unpack_condition",
         ):
             self.assertTrue(
                 any(
@@ -5451,7 +5561,9 @@ def try_handler_fallthrough():
             )
         expected_composed_bases = {
             "computed_boolean_value": "static_boolean_expression",
+            "computed_set_algebra": "static_boolean_expression",
             "computed_subscript_match_subject": "static_pattern_match",
+            "computed_unpack_match_subject": "static_pattern_match",
         }
         for name, expected_basis in expected_composed_bases.items():
             self.assertTrue(
@@ -5502,6 +5614,7 @@ def try_handler_fallthrough():
         self.assertNotIn("dead", components["computed_nonempty_for"]["calls"])
         self.assertNotIn("dead", components["computed_empty_for"]["calls"])
         self.assertNotIn("dead", components["computed_slice_for"]["calls"])
+        self.assertNotIn("dead", components["computed_unpack_for"]["calls"])
         after_return_raises = components["after_return"]["exception_raises"]
         self.assertEqual(after_return_raises, [])
         termination_bases = {
@@ -5550,6 +5663,11 @@ def try_handler_fallthrough():
                 "computed_mapping_subscript",
                 "computed_boolean_value",
                 "computed_conditional_value",
+                "computed_tuple_unpack",
+                "computed_list_unpack",
+                "computed_mapping_unpack",
+                "computed_mapping_union",
+                "computed_set_algebra",
                 "type_guard",
                 "expression",
                 "boolean_and",
@@ -5566,11 +5684,13 @@ def try_handler_fallthrough():
                 "computed_empty_for",
                 "computed_nonempty_for",
                 "computed_slice_for",
+                "computed_unpack_for",
                 "terminal_nonempty_for",
                 "terminal_nonempty_for_branches",
                 "literal_match",
                 "computed_match_subject",
                 "computed_subscript_match_subject",
+                "computed_unpack_match_subject",
                 "sequence_match",
                 "starred_or_match",
                 "singleton_match",
