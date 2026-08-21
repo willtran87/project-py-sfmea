@@ -39,3 +39,23 @@ def test_mutation_sandbox_copies_the_complete_package() -> None:
         "src/pysfmea/readiness.py",
         "src/pysfmea/scan_cache.py",
     }
+
+
+def test_mutation_gate_targets_mutmut_3_mangled_names() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    expected_functions = {
+        "x_assert_fault_injection_result__mutmut_",
+        "x__expected_outcomes__mutmut_",
+        "x_verify_fault_injection_plan__mutmut_",
+        "x__span_timing__mutmut_",
+        "x__component_from_span__mutmut_",
+        "x_sandbox_command__mutmut_",
+    }
+
+    for function in expected_functions:
+        assert f"{function}*" in workflow
+    assert '"mutmut>=3.7,<4"' in (ROOT / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )

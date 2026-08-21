@@ -289,9 +289,9 @@ jobs:
       - name: Reject surviving critical policy mutations
         run: >-
           mutmut run
-          "pysfmea.fault_injection.assert_fault_injection_result*"
-          "pysfmea.fault_injection._expected_outcomes*"
-          "pysfmea.fault_injection.verify_fault_injection_plan*"
-          "pysfmea.runtime._span_timing*"
-          "pysfmea.runtime._component_from_span*"
-          "pysfmea.sandbox_policy.sandbox_command*"
+          "pysfmea.fault_injection.x_assert_fault_injection_result__mutmut_*"
+          "pysfmea.fault_injection.x__expected_outcomes__mutmut_*"
+          "pysfmea.fault_injection.x_verify_fault_injection_plan__mutmut_*"
+          "pysfmea.runtime.x__span_timing__mutmut_*"
+          "pysfmea.runtime.x__component_from_span__mutmut_*"
+          "pysfmea.sandbox_policy.x_sandbox_command__mutmut_*"
