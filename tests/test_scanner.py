@@ -4777,6 +4777,15 @@ def live():
 def dead():
     raise RuntimeError('dead')
 
+def set():
+    return (1,)
+
+def shadowed_set_call():
+    if set():
+        dead()
+    else:
+        live()
+
 def literal_true():
     if True:
         return live()
@@ -4841,6 +4850,76 @@ def loop():
     else:
         live()
 
+def literal_match():
+    match 2:
+        case 1:
+            dead()
+        case 2:
+            live()
+        case _:
+            dead()
+
+def sequence_match():
+    match (1, 2):
+        case (0, _):
+            dead()
+        case (1, 2):
+            live()
+        case _:
+            dead()
+
+def starred_or_match():
+    match (1, 2, 3):
+        case (0, *middle) | (1, *middle):
+            live()
+        case _:
+            dead()
+
+def singleton_match():
+    match None:
+        case True:
+            dead()
+        case None:
+            live()
+        case _:
+            dead()
+
+def capture_match():
+    match 7:
+        case captured:
+            live()
+
+def unsupported_mapping_match():
+    match {'kind': 'ready'}:
+        case {'kind': 'ready'}:
+            live()
+        case _:
+            dead()
+
+def guarded_match():
+    match 'ready':
+        case 'ready' if False:
+            dead()
+        case 'ready':
+            live()
+        case _:
+            dead()
+
+def dynamic_match(value):
+    match value:
+        case 1:
+            dead()
+        case _:
+            live()
+
+def terminal_match(value):
+    match value:
+        case 1:
+            return live()
+        case _:
+            raise ValueError('alternate')
+    dead()
+
 def dynamic(flag):
     if flag:
         live()
@@ -4863,6 +4942,16 @@ def handler_empty_for():
             return None
         else:
             raise
+
+def handler_match():
+    try:
+        live()
+    except ValueError:
+        match 'retry':
+            case 'retry':
+                raise
+            case _:
+                return None
 """,
             encoding="utf-8",
         )
@@ -4891,9 +4980,25 @@ def handler_empty_for():
             "boolean_or",
             "repeated_short_circuit",
             "loop",
+            "literal_match",
+            "sequence_match",
+            "starred_or_match",
+            "singleton_match",
+            "capture_match",
+            "guarded_match",
         ):
             self.assertNotIn("dead", components[name]["calls"], name)
         self.assertEqual(set(components["dynamic"]["calls"]), {"dead", "live"})
+        self.assertEqual(
+            set(components["shadowed_set_call"]["calls"]), {"dead", "live", "set"}
+        )
+        self.assertEqual(
+            set(components["dynamic_match"]["calls"]), {"dead", "live"}
+        )
+        self.assertEqual(
+            set(components["unsupported_mapping_match"]["calls"]),
+            {"dead", "live"},
+        )
         self.assertEqual(components["boolean_and"]["calls"], [])
         self.assertEqual(components["boolean_or"]["calls"], [])
         handler_record = components["handler"]["exception_handlers"][0]
@@ -4902,10 +5007,13 @@ def handler_empty_for():
         empty_handler = components["handler_empty_for"]["exception_handlers"][0]
         self.assertEqual(empty_handler["outcome_certainty"], "uniform")
         self.assertEqual(empty_handler["outcome_kinds"], ["reraise"])
+        match_handler = components["handler_match"]["exception_handlers"][0]
+        self.assertEqual(match_handler["outcome_certainty"], "uniform")
+        self.assertEqual(match_handler["outcome_kinds"], ["reraise"])
 
         model = analysis["static_control_flow_model"]
         self.assertEqual(model["format"], "pysfmea-static-control-flow-model-1")
-        self.assertGreaterEqual(model["summary"]["decisions_discovered"], 14)
+        self.assertGreaterEqual(model["summary"]["decisions_discovered"], 22)
         self.assertEqual(
             model["summary"]["decisions_discovered"],
             model["summary"]["decisions_embedded"],
@@ -4915,6 +5023,12 @@ def handler_empty_for():
         self.assertIn("literal_comparison", bases)
         self.assertGreaterEqual(model["summary"]["pruned_operands"], 4)
         self.assertGreaterEqual(model["summary"]["pruned_statements"], 5)
+        self.assertGreaterEqual(
+            model["summary"]["decision_kinds"]["match_case_pattern"], 6
+        )
+        self.assertGreaterEqual(
+            model["summary"]["decision_kinds"]["match_case_guard"], 1
+        )
         repeated = [
             value for value in model["decisions"]
             if value["component_reference"] == "branches.py:repeated_short_circuit"
@@ -4922,7 +5036,12 @@ def handler_empty_for():
         self.assertEqual(len(repeated), 2)
         self.assertEqual(len({value["id"] for value in repeated}), 2)
         self.assertNotEqual(repeated[0]["column"], repeated[1]["column"])
-        for name in ("after_return", "after_selected_terminal", "after_all_terminal"):
+        for name in (
+            "after_return",
+            "after_selected_terminal",
+            "after_all_terminal",
+            "terminal_match",
+        ):
             self.assertNotIn("dead", components[name]["calls"], name)
             self.assertNotIn("dead", components[name]["ordered_calls"], name)
         self.assertNotIn("dead", components["empty_for"]["calls"])
@@ -4937,6 +5056,7 @@ def handler_empty_for():
         self.assertIn("direct_terminal_statement", termination_bases)
         self.assertIn("statically_selected_terminal_block", termination_bases)
         self.assertIn("all_conditional_branches_terminal", termination_bases)
+        self.assertIn("exhaustive_match_cases_terminal", termination_bases)
         startup = next(
             value
             for value in analysis["components"]
@@ -4972,6 +5092,13 @@ def handler_empty_for():
                 "after_selected_terminal",
                 "after_all_terminal",
                 "empty_for",
+                "literal_match",
+                "sequence_match",
+                "starred_or_match",
+                "singleton_match",
+                "capture_match",
+                "guarded_match",
+                "terminal_match",
             )
         }
         self.assertFalse(

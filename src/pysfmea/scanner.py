@@ -134,7 +134,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-8"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-9"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -721,6 +721,10 @@ def _is_safe_static_literal(value: Any) -> bool:
 
 
 def _static_literal_value(node: ast.AST) -> tuple[bool, Any]:
+    # ``ast.literal_eval`` accepts the special call syntax ``set()``. Repository
+    # code can shadow that name, so no call expression is a safe static literal.
+    if any(isinstance(value, ast.Call) for value in ast.walk(node)):
+        return False, None
     try:
         value = ast.literal_eval(node)
     except (SyntaxError, ValueError, TypeError):
@@ -813,6 +817,107 @@ def _static_empty_iteration(node: ast.AST) -> tuple[bool, str]:
     return False, "dynamic_or_nonempty_iterable"
 
 
+def _static_match_pattern(
+    subject: Any,
+    pattern: ast.pattern,
+) -> tuple[bool | None, str]:
+    """Match a safe literal subject without evaluating repository expressions."""
+
+    if isinstance(pattern, ast.MatchSingleton):
+        matched = subject is pattern.value
+        return matched, (
+            "static_pattern_match" if matched else "static_pattern_mismatch"
+        )
+    if isinstance(pattern, ast.MatchValue):
+        known, value = _static_literal_value(pattern.value)
+        if not known:
+            return None, "dynamic_or_unsupported_pattern"
+        try:
+            matched = subject == value
+        except (TypeError, ValueError):
+            return None, "dynamic_or_unsupported_pattern"
+        if not isinstance(matched, bool):
+            return None, "dynamic_or_unsupported_pattern"
+        return matched, (
+            "static_pattern_match" if matched else "static_pattern_mismatch"
+        )
+    if isinstance(pattern, ast.MatchAs):
+        if pattern.pattern is None:
+            return True, "irrefutable_pattern"
+        return _static_match_pattern(subject, pattern.pattern)
+    if isinstance(pattern, ast.MatchOr):
+        outcomes = [_static_match_pattern(subject, value)[0] for value in pattern.patterns]
+        if True in outcomes:
+            return True, "static_pattern_match"
+        if outcomes and all(value is False for value in outcomes):
+            return False, "static_pattern_mismatch"
+        return None, "dynamic_or_unsupported_pattern"
+    if isinstance(pattern, ast.MatchSequence) and type(subject) in (tuple, list):
+        stars = [
+            index
+            for index, value in enumerate(pattern.patterns)
+            if isinstance(value, ast.MatchStar)
+        ]
+        if len(stars) > 1:
+            return None, "dynamic_or_unsupported_pattern"
+        if not stars and len(subject) != len(pattern.patterns):
+            return False, "static_pattern_mismatch"
+        if stars and len(subject) < len(pattern.patterns) - 1:
+            return False, "static_pattern_mismatch"
+        pairs: list[tuple[Any, ast.pattern]] = []
+        if stars:
+            star = stars[0]
+            prefix = pattern.patterns[:star]
+            suffix = pattern.patterns[star + 1 :]
+            pairs.extend(zip(subject[:star], prefix, strict=True))
+            if suffix:
+                pairs.extend(zip(subject[-len(suffix) :], suffix, strict=True))
+        else:
+            pairs.extend(zip(subject, pattern.patterns, strict=True))
+        sequence_outcomes: list[tuple[bool | None, str]] = [
+            _static_match_pattern(value, item) for value, item in pairs
+        ]
+        if any(value is False for value, _basis in sequence_outcomes):
+            return False, "static_pattern_mismatch"
+        if all(value is True for value, _basis in sequence_outcomes):
+            return True, "static_pattern_match"
+        return None, "dynamic_or_unsupported_pattern"
+    return None, "dynamic_or_unsupported_pattern"
+
+
+def _static_irrefutable_pattern(pattern: ast.pattern) -> bool:
+    if isinstance(pattern, ast.MatchAs):
+        return pattern.pattern is None or _static_irrefutable_pattern(pattern.pattern)
+    if isinstance(pattern, ast.MatchOr):
+        return any(_static_irrefutable_pattern(value) for value in pattern.patterns)
+    return False
+
+
+def _static_match_selection(
+    statement: ast.Match,
+    aliases: dict[str, str],
+) -> tuple[int | None, bool, str]:
+    """Return the selected case and whether selection is completely decidable."""
+
+    known, subject = _static_literal_value(statement.subject)
+    if not known:
+        return None, False, "dynamic_or_unsupported_match_subject"
+    for index, case in enumerate(statement.cases):
+        matched, basis = _static_match_pattern(subject, case.pattern)
+        if matched is None:
+            return None, False, basis
+        if not matched:
+            continue
+        if case.guard is None:
+            return index, True, basis
+        guard, guard_basis = _static_truth_value(case.guard, aliases)
+        if guard is None:
+            return None, False, guard_basis
+        if guard:
+            return index, True, guard_basis
+    return None, True, "no_static_pattern_matched"
+
+
 def _static_block_termination(
     statements: list[ast.stmt],
     aliases: dict[str, str],
@@ -897,6 +1002,37 @@ def _static_statement_termination(
                 if terminal
                 else "false_loop_may_fall_through"
             )
+    if isinstance(statement, ast.Match):
+        selected_case_index, decidable, _selection_basis = _static_match_selection(
+            statement, aliases
+        )
+        if decidable:
+            if selected_case_index is None:
+                return False, "static_match_may_fall_through"
+            terminal, _selected_basis = _static_block_termination(
+                statement.cases[selected_case_index].body,
+                aliases,
+                depth=depth + 1,
+            )
+            return terminal, (
+                "statically_selected_match_case_terminal"
+                if terminal
+                else "selected_match_case_may_fall_through"
+            )
+        for case in statement.cases:
+            guard: bool | None = True
+            if case.guard is not None:
+                guard, _guard_basis = _static_truth_value(case.guard, aliases)
+            if guard is False:
+                continue
+            terminal, _case_basis = _static_block_termination(
+                case.body, aliases, depth=depth + 1
+            )
+            if not terminal:
+                return False, "match_case_may_fall_through"
+            if _static_irrefutable_pattern(case.pattern) and guard is True:
+                return True, "exhaustive_match_cases_terminal"
+        return False, "match_may_fall_through"
     return False, "unsupported_or_fallthrough_statement"
 
 
@@ -969,20 +1105,34 @@ def _handler_statement_outcomes(
             body | alternate, body_truncated or alternate_truncated
         )
     if isinstance(statement, ast.Match):
+        selected_case_index, decidable, _selection_basis = _static_match_selection(
+            statement, aliases
+        )
+        if decidable:
+            if selected_case_index is None:
+                return {("fallthrough", "", 0)}, False
+            return _handler_block_outcomes(
+                statement.cases[selected_case_index].body,
+                exception_type_of,
+                aliases,
+                depth=depth + 1,
+            )
         outcomes: set[HandlerOutcome] = set()
         truncated = False
         exhaustive = False
         for case in statement.cases:
+            guard: bool | None = True
+            if case.guard is not None:
+                guard, _guard_basis = _static_truth_value(case.guard, aliases)
+            if guard is False:
+                continue
             case_outcomes, case_truncated = _handler_block_outcomes(
                 case.body, exception_type_of, aliases, depth=depth + 1
             )
             outcomes.update(case_outcomes)
             truncated = truncated or case_truncated
             exhaustive = exhaustive or (
-                isinstance(case.pattern, ast.MatchAs)
-                and case.pattern.pattern is None
-                and case.pattern.name is None
-                and case.guard is None
+                _static_irrefutable_pattern(case.pattern) and guard is True
             )
         if not exhaustive:
             outcomes.add(("fallthrough", "", 0))
@@ -1176,7 +1326,7 @@ class _FactVisitor(ast.NodeVisitor):
                 "decisive_operand_index": decisive_operand_index,
                 "control_context": list(self.control_context),
                 "authority": (
-                    "safe_non_executing_static_truth_decision_not_runtime_"
+                    "safe_non_executing_static_control_flow_decision_not_runtime_"
                     "reachability_or_termination_proof"
                 ),
             }
@@ -1559,13 +1709,112 @@ class _FactVisitor(ast.NodeVisitor):
         self.facts.complexity += max(1, len(node.cases) - 1)
         self.facts.signals.add("control_logic")
         self._visit_with_context(node.subject, f"match@{node.lineno}:subject")
+        known, subject = _static_literal_value(node.subject)
+        if not known:
+            for index, case in enumerate(node.cases):
+                self.visit(case.pattern)
+                if case.guard is not None:
+                    self._visit_with_context(
+                        case.guard, f"match@{node.lineno}:case-{index + 1}-guard"
+                    )
+                self._visit_block(
+                    case.body, f"match@{node.lineno}:case-{index + 1}"
+                )
+            return
         for index, case in enumerate(node.cases):
-            self.visit(case.pattern)
+            matched, basis = _static_match_pattern(subject, case.pattern)
+            if matched is False:
+                self._record_control_flow_decision(
+                    case.pattern,
+                    kind="match_case_pattern",
+                    decision=False,
+                    basis=basis,
+                    selected_branch=f"continue_after_case_{index + 1}",
+                    pruned_branch=f"case_{index + 1}",
+                    pruned_statement_count=len(case.body),
+                    decisive_expression=ast.unparse(node.subject),
+                    decisive_operand_index=index + 1,
+                )
+                continue
+            if matched is None:
+                for remaining_index, remaining in enumerate(
+                    node.cases[index:], start=index
+                ):
+                    self.visit(remaining.pattern)
+                    if remaining.guard is not None:
+                        self._visit_with_context(
+                            remaining.guard,
+                            (
+                                f"match@{node.lineno}:case-"
+                                f"{remaining_index + 1}-guard"
+                            ),
+                        )
+                    self._visit_block(
+                        remaining.body,
+                        f"match@{node.lineno}:case-{remaining_index + 1}",
+                    )
+                return
             if case.guard is not None:
                 self._visit_with_context(
                     case.guard, f"match@{node.lineno}:case-{index + 1}-guard"
                 )
+                guard, guard_basis = _static_truth_value(case.guard, self.aliases)
+                if guard is False:
+                    self._record_control_flow_decision(
+                        case.guard,
+                        kind="match_case_guard",
+                        decision=False,
+                        basis=guard_basis,
+                        selected_branch=f"continue_after_case_{index + 1}",
+                        pruned_branch=f"case_{index + 1}",
+                        pruned_statement_count=len(case.body),
+                        decisive_expression=ast.unparse(case.pattern),
+                        decisive_operand_index=index + 1,
+                    )
+                    continue
+                if guard is None:
+                    self._visit_block(
+                        case.body, f"match@{node.lineno}:case-{index + 1}"
+                    )
+                    for remaining_index, remaining in enumerate(
+                        node.cases[index + 1 :], start=index + 1
+                    ):
+                        self.visit(remaining.pattern)
+                        if remaining.guard is not None:
+                            self._visit_with_context(
+                                remaining.guard,
+                                (
+                                    f"match@{node.lineno}:case-"
+                                    f"{remaining_index + 1}-guard"
+                                ),
+                            )
+                        self._visit_block(
+                            remaining.body,
+                            f"match@{node.lineno}:case-{remaining_index + 1}",
+                        )
+                    return
+                selection_node: ast.AST = case.guard
+                selection_basis = guard_basis
+                selection_kind = "match_case_guard"
+            else:
+                selection_node = case.pattern
+                selection_basis = basis
+                selection_kind = "match_case_pattern"
+            self._record_control_flow_decision(
+                selection_node,
+                kind=selection_kind,
+                decision=True,
+                basis=selection_basis,
+                selected_branch=f"case_{index + 1}",
+                pruned_branch="later_cases",
+                pruned_statement_count=sum(
+                    len(value.body) for value in node.cases[index + 1 :]
+                ),
+                decisive_expression=ast.unparse(node.subject),
+                decisive_operand_index=index + 1,
+            )
             self._visit_block(case.body, f"match@{node.lineno}:case-{index + 1}")
+            return
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
         self.facts.arithmetic_ops += 1
@@ -6480,7 +6729,7 @@ def _exception_propagation_model(
         },
         "limitations": [
             "Handler selection resolves built-in inheritance and statically declared project exception bases, then respects nearest-try and first-handler order; dynamic aliases and ambiguous same-named project classes remain explicit indeterminate matches.",
-            "Handler outcomes preserve sequential reachability and merge bounded if, match, loop, with, and nested-try branches; implicit exceptions, predicate feasibility, loop counts, and dynamic control flow remain conservative.",
+            "Handler outcomes preserve sequential reachability, select safely decidable literal structural-match cases, and merge remaining bounded if, match, loop, with, and nested-try branches; implicit exceptions, predicate feasibility, loop counts, and dynamic control flow remain conservative.",
             "Bare or literal-return, explicit-raise, break, and continue statements at the end of a finally block are modeled as bounded terminal candidates; evaluated returns, competing prior exits, conditional and nested path feasibility, ExceptionGroup splitting, callbacks, generators, native extensions, and dynamic dispatch remain incomplete.",
             "A propagation edge is a conservative review candidate, not proof that the call or exception is runtime reachable.",
         ],
@@ -6535,9 +6784,9 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
             "decisions": MAX_CONTROL_FLOW_DECISION_RECORDS,
         },
         "limitations": [
-            "Only direct terminal statements, statically empty literal iteration, literal truth, safe literal comparisons, static boolean composition, short-circuit operands, and resolved typing.TYPE_CHECKING guards are decided; all unsupported or dynamic predicates retain conservative alternatives.",
+            "Only direct terminal statements, statically empty literal iteration, literal truth, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/capture match patterns and guards are decided; all unsupported or dynamic predicates and patterns retain conservative alternatives.",
             "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
-            "Loop iteration counts, break feasibility, match-pattern selection, dynamic imports, descriptors, and runtime value refinements are not inferred.",
+            "Loop iteration counts, break feasibility, class and mapping patterns, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
         ],
         "authority": "bounded_safe_non_executing_static_control_flow_pruning_not_runtime_path_or_termination_proof",
     }

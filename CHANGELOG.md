@@ -7,14 +7,17 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 - Add safe, non-executing control-flow pruning for literal `if`/conditional expressions,
   `while False`, empty literal `for` loops, boolean short-circuiting, literal comparisons,
-  resolved `TYPE_CHECKING` guards, direct terminal statements, statically selected terminal
-  blocks, and dynamic `if/else` constructs whose alternatives all terminate. Provably unreachable
+  resolved `TYPE_CHECKING` guards, literal/singleton/OR/sequence/capture `match` patterns and
+  statically decidable case guards, direct terminal statements, statically selected terminal
+  blocks, and exhaustive terminal `if/else` or `match` constructs. Provably unreachable
   calls, raises, sequences, and downstream failure paths are excluded while unsupported paths
   remain conservative. Publish every decision in count-reconciled
   `pysfmea-static-control-flow-model-1`, validate exact source/component backlinks, preserve it
-  through fact-cache format 8, and expose it through the evidence fabric, canonical diagram, and
-  HTML report. Handler outcomes use the same predicate and empty-loop evaluator, avoiding false
-  conditional rethrow or translation dispositions.
+  through fact-cache format 9, and expose it through the evidence fabric, canonical diagram, and
+  HTML report. Handler outcomes use the same predicate, pattern, and empty-loop evaluators,
+  avoiding false conditional rethrow or translation dispositions. Reject call-shaped expressions
+  from literal evaluation—including `set()` accepted by `ast.literal_eval`—because repository code
+  can shadow the apparent constructor.
 - Deepen typed exception analysis with Python-compatible nearest-`try` and first-handler
   selection, exact built-in inheritance (including the `Exception`/`BaseException` boundary),
   statically declared project exception inheritance, and explicit indeterminate outcomes for
