@@ -141,8 +141,17 @@ The complete entity and relationship sets are recomputed from declared kinds and
 standalone verification. Unknown populated sections are `unmapped`; registered semantic sections
 with source records but no material link are `registered_without_projection`. Supplying
 `--analysis` additionally proves each source digest through exact regeneration. Section-level
-declared and material coverage percentages remain separate; neither claims that every nested
-source record was modeled.
+declared and material coverage percentages remain separate.
+
+`record_profiles` closes the nested-output accounting gap. Every bounded projectable record in a
+semantic section carries a stable section/path/locator identity, canonical source digest, bounded
+field-qualified identity tokens, a `semantically_projected` or `unresolved_projection` state,
+complete target-set counts and digests, and bounded graph witnesses. Section profiles reconcile
+projected, unresolved, and bound-omitted record counts; `record_coverage_percent` uses all semantic
+source records as its denominator. Standalone verification rebuilds every target set from declared
+kinds/channels and identity tokens and rejects witness drift. Exact verification additionally
+regenerates the tokens and source digests from the retained analysis. Identity equality establishes
+a navigable traceability witness, not analytical correctness or semantic equivalence.
 
 `repository_provenance` binds the analysis scope to its integrity-declaring inventory, every
 inventoried artifact and excluded region, dependency and contract declarations, the resolved
@@ -247,6 +256,7 @@ The governed analysis carries three additive, versioned top-level architecture o
 | `shared_fate_analysis` | `pysfmea-shared-fate-analysis-1` | Multi-component deployment, subsystem, and external-dependency common-cause review leads |
 | `architecture_hierarchy` | `pysfmea-architecture-hierarchy-1` | Repository/subsystem/source-package nesting, memberships, and upward trace aggregation |
 | `graphify_reconciliation` | `pysfmea-graphify-reconciliation-1` | Optional bounded Graphify provenance plus component-mapped typed static edges, native-call comparison, and explicit Graphify-only review leads |
+| `exception_propagation` | `pysfmea-exception-propagation-1` | Ordered, inheritance-aware raise/handler/finalizer records and resolved-call propagation edges with explicit handler/finalizer provenance, suppression/replacement disposition, uncertainty, and component/finding exposure |
 
 These are programmatic analysis outputs rather than separately cataloged `sfmea schema` names.
 Consumers should require the exact `format`, validate the full analysis, reconcile each summary to

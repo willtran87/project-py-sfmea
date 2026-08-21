@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -750,6 +751,14 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertEqual(set(profiles), set(self.analysis))
         self.assertEqual(coverage["coverage_percent"], 100.0)
         self.assertEqual(coverage["material_coverage_percent"], 100.0)
+        self.assertEqual(coverage["record_coverage_percent"], 100.0)
+        self.assertGreater(coverage["semantic_record_count"], 0)
+        self.assertEqual(
+            coverage["semantically_projected_record_count"],
+            coverage["semantic_record_count"],
+        )
+        self.assertEqual(coverage["unresolved_record_count"], 0)
+        self.assertEqual(coverage["record_profiles_omitted_by_bound"], 0)
         self.assertEqual(coverage["unmapped_section_names"], [])
         self.assertEqual(coverage["registered_without_projection_section_names"], [])
         self.assertEqual(
@@ -764,10 +773,19 @@ class CrossReferenceTests(unittest.TestCase):
             "semantically_projected",
         )
         self.assertEqual(profiles["suggestions"]["coverage_status"], "empty")
-        self.assertEqual(len(coverage["relationship_ids"]), len(self.analysis))
+        section_relationships = [
+            value
+            for value in index["relationships"]
+            if value["kind"] == "contains_analysis_section"
+        ]
+        self.assertEqual(len(section_relationships), len(self.analysis))
         self.assertEqual(
             index["summary"]["analysis_projection_relationships"],
-            len(self.analysis),
+            len(coverage["relationship_ids"]),
+        )
+        self.assertEqual(
+            index["summary"]["analysis_record_projection_coverage_percent"],
+            100.0,
         )
         self.assertFalse(
             any(
@@ -782,6 +800,11 @@ class CrossReferenceTests(unittest.TestCase):
         diagram_kinds = {value["kind"] for value in diagram["nodes"]}
         self.assertIn("analysis_scope", diagram_kinds)
         self.assertIn("analysis_section", diagram_kinds)
+        self.assertEqual(
+            diagram["metadata"]["analysis_record_projection_coverage_percent"],
+            100.0,
+        )
+        self.assertEqual(diagram["metadata"]["unresolved_analysis_records"], 0)
 
         from jsonschema import Draft202012Validator
 
@@ -803,6 +826,30 @@ class CrossReferenceTests(unittest.TestCase):
             "unmapped_analysis_outputs",
             {value["kind"] for value in extended_index["review_leads"]},
         )
+
+        unresolved = json.loads(json.dumps(self.analysis))
+        unresolved["resilience_semantics"]["effects"].append(
+            {
+                "component_reference": "missing.py:unknown_component",
+                "direct_effects": ["persistence_write"],
+                "transitive_effects": ["persistence_write"],
+                "retry_factor": 1,
+                "unprotected_retry_side_effect": False,
+            }
+        )
+        unresolved_index = build_cross_reference_index(unresolved)
+        unresolved_coverage = unresolved_index["analysis_projection_coverage"]
+        self.assertEqual(unresolved_coverage["unresolved_record_count"], 1)
+        self.assertLess(unresolved_coverage["record_coverage_percent"], 100.0)
+        self.assertIn(
+            "unresolved_analysis_record_projections",
+            {value["kind"] for value in unresolved_index["review_leads"]},
+        )
+        unresolved_output = self.root / "unresolved-record-fabric.json"
+        unresolved_output.write_text(json.dumps(unresolved_index), encoding="utf-8")
+        unresolved_verdict = verify_cross_reference_file(unresolved_output)
+        self.assertTrue(unresolved_verdict["valid"])
+        self.assertTrue(unresolved_verdict["checks"]["analysis_projection_integrity"])
 
     def test_verifier_rejects_rehashed_analysis_projection_tampering(self) -> None:
         output = self.root / "projection-fabric.json"
@@ -826,6 +873,67 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertFalse(rejected["valid"])
         self.assertTrue(rejected["checks"]["content_integrity"])
         self.assertFalse(rejected["checks"]["analysis_projection_integrity"])
+
+    def test_verifier_rejects_rehashed_record_witness_tampering(self) -> None:
+        output = self.root / "record-projection-fabric.json"
+        export_cross_reference_index(self.analysis, output)
+        exported = output.read_text(encoding="utf-8")
+        self.assertEqual(exported.count("\n"), 1)
+        original = json.loads(exported)
+        record_profile = next(
+            value
+            for value in original["analysis_projection_coverage"]["record_profiles"]
+            if value["projected_entity_count"]
+        )
+        witness_id = next(
+            relation_id
+            for relation_id in record_profile["projection_relationship_ids"]
+            if next(
+                value
+                for value in original["relationships"]
+                if value["id"] == relation_id
+            )["kind"]
+            == "witnesses_projected_entity"
+        )
+        witness = next(
+            value for value in original["relationships"] if value["id"] == witness_id
+        )
+        witness["metadata"]["projected_entity_id"] = "component:rewritten"
+        content = dict(original)
+        content.pop("content_sha256")
+        original["content_sha256"] = canonical_json_sha256(content)
+        output.write_text(json.dumps(original), encoding="utf-8")
+
+        rejected = verify_cross_reference_file(output)
+
+        self.assertFalse(rejected["valid"])
+        self.assertTrue(rejected["checks"]["content_integrity"])
+        self.assertFalse(rejected["checks"]["analysis_projection_integrity"])
+
+    def test_record_projection_bound_is_explicit_and_verifiable(self) -> None:
+        with mock.patch("pysfmea.cross_reference.MAX_ANALYSIS_PROJECTION_RECORDS", 1):
+            index = build_cross_reference_index(self.analysis)
+            coverage = index["analysis_projection_coverage"]
+
+            self.assertEqual(len(coverage["record_profiles"]), 1)
+            self.assertEqual(
+                coverage["record_profiles_omitted_by_bound"],
+                coverage["semantic_record_count"] - 1,
+            )
+            self.assertEqual(
+                coverage["unresolved_record_count"],
+                coverage["semantic_record_count"] - 1,
+            )
+            self.assertLess(coverage["record_coverage_percent"], 100.0)
+            self.assertIn(
+                "unresolved_analysis_record_projections",
+                {value["kind"] for value in index["review_leads"]},
+            )
+            output = self.root / "bounded-record-fabric.json"
+            output.write_text(json.dumps(index), encoding="utf-8")
+            verdict = verify_cross_reference_file(output)
+            self.assertTrue(verdict["valid"])
+            self.assertTrue(verdict["checks"]["analysis_projection_integrity"])
 
     def test_cross_references_system_context_and_lifecycle_history(self) -> None:
         self.analysis["system_context"] = build_system_context(
@@ -1169,6 +1277,114 @@ class CrossReferenceTests(unittest.TestCase):
         self.assertFalse(rejected["valid"])
         self.assertFalse(rejected["checks"]["verification_readiness_integrity"])
         self.assertFalse(rejected["checks"]["exact_regeneration"])
+
+    def test_cross_links_typed_exception_flow_with_disposition_metadata(self) -> None:
+        (self.root / "exceptions.py").write_text(
+            "class DomainError(Exception):\n"
+            "    pass\n\n"
+            "class ValidationError(DomainError):\n"
+            "    pass\n\n"
+            "def leaf():\n"
+            "    raise ValidationError('invalid')\n\n"
+            "def caller():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    except DomainError:\n"
+            "        pass\n"
+            "    finally:\n"
+            "        return None\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        components = {value["qualname"]: value for value in analysis["components"]}
+        index = build_cross_reference_index(analysis)
+
+        edge_entity = next(
+            value
+            for value in index["entities"]
+            if value["kind"] == "exception_propagation_edge"
+            and value["metadata"]["exception_type"] == "ValidationError"
+        )
+        self.assertEqual(
+            edge_entity["metadata"]["disposition"], "caught_and_suppresses"
+        )
+        finalizer_entity = next(
+            value
+            for value in index["entities"]
+            if value["kind"] == "exception_finalizer"
+        )
+        self.assertEqual(finalizer_entity["metadata"]["terminal_kind"], "return")
+        self.assertTrue(finalizer_entity["metadata"]["unconditional_terminal"])
+        component_links = {
+            (value["source"], value["kind"])
+            for value in index["relationships"]
+            if value["target"] == edge_entity["id"]
+        }
+        self.assertIn(
+            (
+                f"component:{components['leaf']['id']}",
+                "has_exception_propagation_outgoing_edge",
+            ),
+            component_links,
+        )
+        self.assertTrue(
+            any(
+                value["source"] == f"component:{components['caller']['id']}"
+                and value["target"] == finalizer_entity["id"]
+                and value["kind"] == "has_exception_propagation_finalizer"
+                for value in index["relationships"]
+            )
+        )
+        self.assertIn(
+            (
+                f"component:{components['caller']['id']}",
+                "has_exception_propagation_incoming_edge",
+            ),
+            component_links,
+        )
+        caller_profile = next(
+            value
+            for value in index["semantic_profiles"]
+            if value["component_id"] == components["caller"]["id"]
+        )
+        self.assertTrue(caller_profile["dimensions"]["exception_propagation"])
+        output = export_cross_reference_index(
+            analysis, self.root / "typed-exception-fabric.json"
+        )
+        self.assertTrue(verify_cross_reference_file(output, analysis=analysis)["valid"])
+
+    def test_dependency_finding_uses_resolved_artifact_path_in_source_chain(
+        self,
+    ) -> None:
+        (self.root / "pyproject.toml").write_text(
+            "[project]\n"
+            "name = 'sample'\n"
+            "version = '1.0.0'\n"
+            "dependencies = ['httpx>=1']\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        dependency_finding = next(
+            value
+            for value in analysis["items"]
+            if value["scanner"]["rule_id"] == "environment.dependency_drift"
+        )
+        index = build_cross_reference_index(analysis)
+        chain = next(
+            value
+            for value in index["finding_chains"]
+            if value["finding_id"] == dependency_finding["id"]
+        )
+
+        self.assertEqual(chain["source_repository_path"], "pyproject.toml")
+        self.assertEqual(
+            chain["source_repository_artifact_entity_ids"],
+            ["repository_artifact:pyproject.toml"],
+        )
+        output = export_cross_reference_index(
+            analysis, self.root / "dependency-fabric.json"
+        )
+        self.assertTrue(verify_cross_reference_file(output, analysis=analysis)["valid"])
 
     def test_cross_links_cascades_timing_retries_and_breaker_models(self) -> None:
         (self.root / "resilience.py").write_text(

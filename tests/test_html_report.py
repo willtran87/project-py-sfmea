@@ -97,6 +97,46 @@ class HtmlReportTests(unittest.TestCase):
             export_html_report(self.analysis, output, max_output_bytes=100)
         self.assertEqual(output.read_text(encoding="utf-8"), "trusted prior report")
 
+    def test_report_exposes_typed_exception_precision_summary(self) -> None:
+        (self.root / "exceptions.py").write_text(
+            "class DomainError(Exception):\n"
+            "    pass\n\n"
+            "def leaf():\n"
+            "    raise DomainError('failed')\n\n"
+            "def caller():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    except DomainError:\n"
+            "        raise RuntimeError('translated')\n"
+            "    finally:\n"
+            "        return None\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+
+        payload = build_html_report_data(analysis)
+
+        exception_analysis = payload["exception_analysis"]
+        self.assertEqual(
+            exception_analysis["summary"]["edge_dispositions"]["caught_and_translates"],
+            1,
+        )
+        self.assertEqual(
+            exception_analysis["summary"]["project_exception_types_indexed"],
+            1,
+        )
+        self.assertTrue(exception_analysis["edges"])
+        self.assertEqual(
+            exception_analysis["summary"]["unconditional_terminal_finalizers"], 1
+        )
+        self.assertEqual(exception_analysis["finalizers"][0]["terminal_kind"], "return")
+        report_path = export_html_report(analysis, self.root / "exception-report.html")
+        report_html = report_path.read_text(encoding="utf-8")
+        self.assertIn("translated exception edges", report_html)
+        self.assertIn("indeterminate exception matches", report_html)
+        self.assertIn("terminal finally overrides", report_html)
+        self.assertIn("exceptions suppressed by finally", report_html)
+
     def tearDown(self) -> None:
         self.temp.cleanup()
 
@@ -169,6 +209,17 @@ class HtmlReportTests(unittest.TestCase):
         self.assertEqual(set(profiles), set(self.analysis))
         self.assertEqual(coverage["coverage_percent"], 100.0)
         self.assertEqual(coverage["material_coverage_percent"], 100.0)
+        self.assertEqual(coverage["record_coverage_percent"], 100.0)
+        self.assertEqual(coverage["unresolved_record_count"], 0)
+        self.assertEqual(
+            coverage["semantically_projected_record_count"],
+            coverage["semantic_record_count"],
+        )
+        self.assertEqual(
+            coverage["record_profiles_embedded_count"],
+            len(coverage["record_profiles"]),
+        )
+        self.assertFalse(coverage["record_profiles_truncated_for_report"])
         self.assertEqual(coverage["unmapped_section_names"], [])
         self.assertEqual(cross_reference["summary"]["unmapped_analysis_sections"], 0)
 
@@ -177,6 +228,9 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn('"analysis_projection_coverage":', document)
         self.assertIn("declared analysis-output coverage", document)
         self.assertIn("material analysis-output coverage", document)
+        self.assertIn("nested record witness coverage", document)
+        self.assertIn("projectable nested records", document)
+        self.assertIn("records without semantic witness", document)
         self.assertIn("Output coverage:", document)
         self.assertIn("unmapped analysis sections", document)
 

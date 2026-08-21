@@ -15,12 +15,25 @@ class ScanCacheTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "service.py"
-            source.write_text("def run(value):\n    return value\n", encoding="utf-8")
+            source.write_text(
+                "def run(value):\n"
+                "    try:\n"
+                "        raise ValueError('failed')\n"
+                "    finally:\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
             cache: dict[str, Any] = {}
             cold: dict[str, Any] = {}
-            scan_repository(root, fact_cache=cache, telemetry=cold)
+            cold_analysis = scan_repository(root, fact_cache=cache, telemetry=cold)
             self.assertEqual(cold["fact_cache"]["hits"], 0)
             self.assertEqual(cold["fact_cache"]["misses"], 1)
+            self.assertEqual(
+                cold_analysis["exception_propagation"]["finalizers"][0][
+                    "terminal_kind"
+                ],
+                "return",
+            )
 
             cache_path = root / ".artifacts" / "facts.json"
             _path, published = save_fact_cache(cache_path, cache)
@@ -29,11 +42,17 @@ class ScanCacheTests(unittest.TestCase):
             self.assertEqual(accepted["status"], "accepted")
 
             warm: dict[str, Any] = {}
-            scan_repository(root, fact_cache=loaded, telemetry=warm)
+            warm_analysis = scan_repository(root, fact_cache=loaded, telemetry=warm)
             self.assertEqual(warm["fact_cache"]["hits"], 1)
             self.assertEqual(warm["fact_cache"]["misses"], 0)
+            self.assertEqual(
+                warm_analysis["exception_propagation"],
+                cold_analysis["exception_propagation"],
+            )
 
-            source.write_text("def run(value):\n    return value + 1\n", encoding="utf-8")
+            source.write_text(
+                "def run(value):\n    return value + 1\n", encoding="utf-8"
+            )
             changed: dict[str, Any] = {}
             analysis = scan_repository(root, fact_cache=loaded, telemetry=changed)
             self.assertEqual(changed["fact_cache"]["hits"], 0)
@@ -44,7 +63,9 @@ class ScanCacheTests(unittest.TestCase):
     def test_tampered_cache_is_rejected_completely(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "service.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+            (root / "service.py").write_text(
+                "def run():\n    return 1\n", encoding="utf-8"
+            )
             cache: dict[str, Any] = {}
             scan_repository(root, fact_cache=cache)
             cache_path = root / "facts.json"

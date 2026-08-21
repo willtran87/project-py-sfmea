@@ -447,9 +447,18 @@ states before treating the fabric as integrated:
 - `unmapped`: no declaration exists; this is a high-priority integration lead.
 
 The declared coverage percentage excludes unknown outputs; the material coverage percentage also
-excludes registered outputs that produced no usable link. Neither measures nested record completeness.
-Use exact `cross-reference-verify --analysis` regeneration to bind section digests back to the
-governed analysis.
+excludes registered outputs that produced no usable link. The separate record coverage percentage
+uses every declared `record_path`, removes explicitly structural shells, and requires each remaining
+record to have at least one identity-correlated entity or relationship witness. Each record profile
+retains its JSON locator, canonical digest, bounded identity-token set, complete target-set digests,
+samples, and navigable witness links. Review `unresolved_analysis_record_projections` whenever the
+percentage is below 100%; bound omissions count as unresolved rather than disappearing.
+
+Standalone verification recomputes target sets and witness shapes from the fabric. Use exact
+`cross-reference-verify --analysis` regeneration to additionally bind section and record digests,
+locators, and identity tokens back to the governed analysis. A witness proves deterministic identity
+correlation only; it does not prove that the source record is correct, complete, reachable at runtime,
+or adequate for compliance or risk acceptance.
 
 The same fabric exposes two previously separate review surfaces:
 
@@ -477,10 +486,23 @@ The analysis also carries `concurrency_model`, a machine-readable inventory of t
 join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
 relations. Use these records to choose runtime schedules and stress tests; they do not establish
 task identity, scheduler order, or race/deadlock freedom.
-`exception_propagation` similarly records explicit raise and lexical handler facts, then projects
-named exception types through resolved internal calls. Use `caught_by_lexical_handler` and
-`may_propagate` as review/test-selection evidence; neither value proves runtime path feasibility or
-complete Python exception inheritance.
+`exception_propagation` similarly records explicit raise, lexical handler, and terminal-finalizer
+facts, then projects
+named exception types through resolved internal calls. Selection follows Python's nearest-`try`,
+first-compatible-handler order. Match provenance distinguishes exact types, built-in subclasses,
+statically declared project subclasses, the `BaseException` catch-all, and indeterminate dynamic
+types. Dispositions distinguish `may_propagate`, indeterminate matches, suppression, continuation,
+control-flow exits, rethrow, explicit raise, translation, mixed handler outcomes, suppression by a
+terminal `finally` control exit, and replacement by a terminal `finally` raise. The bounded
+finalizer rule applies only when the last top-level statement is a bare/literal `return`, explicit
+or bare `raise`, `break`, or `continue`, with no earlier explicit competing exit; outer terminal
+finalizers take precedence because they execute last. Every
+affected edge retains the finalizer ID, terminal kind, and replacement type; a bare terminal
+`raise` is recorded as a rethrow rather than a replacement. Component and
+finding projections retain exact edge IDs, type/disposition counts, and bounded exception-injection
+test guidance. These records do not prove path feasibility; evaluated returns, conditional or
+nested finalizer outcomes, dynamic aliases, `ExceptionGroup` splitting, callbacks, native behavior, and undeclared
+third-party inheritance remain review boundaries.
 `state_machine_model` projects assignments to conventional state/status/phase/mode variables into
 stable state and guarded-transition records. Treat missing transitions and invariants as review
 questions: the static projection does not prove reachability, liveness, or completeness.

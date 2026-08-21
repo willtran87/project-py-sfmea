@@ -45,8 +45,13 @@ Cross-output integration traceability includes a closed declaration registry plu
 entity for every top-level analysis section. Standalone verification reconciles section identity,
 projection mode/status, declared entity kinds, declared relationship channels, sampled identities,
 complete identity-set digests, and summary accounting. Unknown populated outputs and registered
-semantic outputs without material links remain distinct review leads; exact verification binds the
-ledger back to the governed analysis without claiming nested-record completeness.
+semantic outputs without material links remain distinct review leads. A bounded second layer creates
+one digest-bound entity/profile per projectable nested record, independently recomputes its
+identity-correlated entity/relationship target sets and graph witnesses, and counts unresolved or
+bound-omitted records as high-priority gaps. Exact verification binds section and record locators,
+digests, and tokens back to the governed analysis. Adversarial tests rewrite witness metadata,
+introduce a source record with no valid component, and exhaust the record bound; each case remains
+fail-visible without promoting identity correlation to proof of correctness.
 
 This matrix traces the workbench acceptance criteria to executable implementation and
 verification evidence. “Implemented” means a bounded capability exists and is tested;

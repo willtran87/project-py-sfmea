@@ -2573,8 +2573,10 @@ class ScannerTests(unittest.TestCase):
             and value["callee_reference"] == "exceptions.py:leaf"
             and value["exception_type"] == "ValueError"
         )
-        self.assertEqual(handled_edge["disposition"], "caught_by_lexical_handler")
+        self.assertEqual(handled_edge["disposition"], "caught_and_translates")
         self.assertTrue(handled_edge["handler_ids"])
+        self.assertEqual(handled_edge["match_kind"], "exact_type")
+        self.assertFalse(handled_edge["propagates_original"])
         propagated = {
             (
                 value["caller_reference"],
@@ -2623,6 +2625,376 @@ class ScannerTests(unittest.TestCase):
             any(
                 value["rule_id"] == "analysis.invalid_exception_propagation"
                 for value in validation["findings"]
+            )
+        )
+        tampered_match = json.loads(json.dumps(analysis))
+        tampered_match["exception_propagation"]["edges"][0]["match_kind"] = (
+            "no_handler_match"
+        )
+        validation = validate_analysis(tampered_match)
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_exception_propagation"
+                for value in validation["findings"]
+            )
+        )
+
+    def test_exception_model_resolves_inheritance_order_and_reraise_semantics(
+        self,
+    ) -> None:
+        (self.root / "precise_exceptions.py").write_text(
+            "class DomainError(Exception):\n"
+            "    pass\n\n"
+            "class ValidationError(DomainError):\n"
+            "    pass\n\n"
+            "def validation_leaf():\n"
+            "    raise ValidationError('invalid')\n\n"
+            "def interrupt_leaf():\n"
+            "    raise KeyboardInterrupt()\n\n"
+            "def nested_handler():\n"
+            "    try:\n"
+            "        try:\n"
+            "            validation_leaf()\n"
+            "        except KeyError:\n"
+            "            pass\n"
+            "    except DomainError:\n"
+            "        pass\n\n"
+            "def ordered_handler():\n"
+            "    try:\n"
+            "        validation_leaf()\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "    except DomainError:\n"
+            "        raise\n\n"
+            "def rethrow_handler():\n"
+            "    try:\n"
+            "        validation_leaf()\n"
+            "    except DomainError:\n"
+            "        raise\n\n"
+            "def catches_exception():\n"
+            "    try:\n"
+            "        interrupt_leaf()\n"
+            "    except Exception:\n"
+            "        pass\n\n"
+            "def catches_base_exception():\n"
+            "    try:\n"
+            "        interrupt_leaf()\n"
+            "    except BaseException:\n"
+            "        pass\n\n"
+            "def nested_definition_is_not_handler_behavior():\n"
+            "    try:\n"
+            "        validation_leaf()\n"
+            "    except DomainError:\n"
+            "        def later():\n"
+            "            raise RuntimeError('later')\n"
+            "        return later\n",
+            encoding="utf-8",
+        )
+        (self.root / "root_faults.py").write_text(
+            "class RootFault(Exception):\n    pass\n",
+            encoding="utf-8",
+        )
+        (self.root / "odd_signal.py").write_text(
+            "from root_faults import RootFault\n\n"
+            "class OddSignal(RootFault):\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
+        (self.root / "use_odd.py").write_text(
+            "from odd_signal import OddSignal\n"
+            "from root_faults import RootFault\n\n"
+            "def odd_leaf():\n"
+            "    raise OddSignal('odd')\n\n"
+            "def odd_caller():\n"
+            "    try:\n"
+            "        odd_leaf()\n"
+            "    except RootFault:\n"
+            "        pass\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["exception_propagation"]
+        edges = {
+            (value["caller_reference"], value["exception_type"]): value
+            for value in model["edges"]
+        }
+        nested = edges[("precise_exceptions.py:nested_handler", "ValidationError")]
+        self.assertEqual(nested["disposition"], "caught_and_suppresses")
+        self.assertEqual(nested["match_kind"], "project_subclass")
+        self.assertEqual(len(nested["handler_ids"]), 1)
+
+        ordered = edges[("precise_exceptions.py:ordered_handler", "ValidationError")]
+        self.assertEqual(ordered["disposition"], "caught_and_suppresses")
+        selected = next(
+            value
+            for value in model["handlers"]
+            if value["id"] == ordered["selected_handler_id"]
+        )
+        self.assertEqual(selected["handler_index"], 0)
+        self.assertEqual(selected["exception_types"], ["Exception"])
+
+        reraised = edges[("precise_exceptions.py:rethrow_handler", "ValidationError")]
+        self.assertEqual(reraised["disposition"], "caught_and_reraised")
+        self.assertTrue(reraised["propagates_original"])
+
+        exception_boundary = edges[
+            ("precise_exceptions.py:catches_exception", "KeyboardInterrupt")
+        ]
+        self.assertEqual(exception_boundary["disposition"], "may_propagate")
+        self.assertFalse(exception_boundary["handler_ids"])
+        base_boundary = edges[
+            ("precise_exceptions.py:catches_base_exception", "KeyboardInterrupt")
+        ]
+        self.assertEqual(base_boundary["disposition"], "caught_and_suppresses")
+        self.assertEqual(base_boundary["match_kind"], "base_exception_catch_all")
+
+        nested_definition = edges[
+            (
+                "precise_exceptions.py:nested_definition_is_not_handler_behavior",
+                "ValidationError",
+            )
+        ]
+        self.assertEqual(
+            nested_definition["disposition"], "caught_and_exits_control_flow"
+        )
+        self.assertNotIn("raises_explicitly", nested_definition["handler_actions"])
+        exception_classes = {
+            value["name"]: value
+            for value in analysis["components"]
+            if "exception_type" in value["signals"]
+        }
+        self.assertEqual(exception_classes["DomainError"]["class_bases"], ["Exception"])
+        self.assertEqual(
+            exception_classes["ValidationError"]["class_bases"], ["DomainError"]
+        )
+        odd = edges[("use_odd.py:odd_caller", "odd_signal.OddSignal")]
+        self.assertEqual(odd["disposition"], "caught_and_suppresses")
+        self.assertEqual(odd["match_kind"], "project_subclass")
+        self.assertNotIn(
+            "internal_class_declarations",
+            {value["kind"] for value in analysis["components"]},
+        )
+        self.assertEqual(model["summary"]["project_exception_types_indexed"], 4)
+        self.assertFalse(
+            any(
+                value["rule_id"] == "analysis.invalid_exception_propagation"
+                for value in validate_analysis(analysis)["findings"]
+            )
+        )
+
+    def test_exception_model_applies_bounded_finally_override_semantics(self) -> None:
+        (self.root / "finalizers.py").write_text(
+            "def leaf():\n"
+            "    raise ValueError('failed')\n\n"
+            "def suppressed():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        return 'safe'\n\n"
+            "def replaced():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        raise RuntimeError('replacement')\n\n"
+            "def sees_replacement():\n"
+            "    replaced()\n\n"
+            "def conditional(flag):\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        if flag:\n"
+            "            return 'conditional'\n\n"
+            "def outer_terminal_wins():\n"
+            "    try:\n"
+            "        try:\n"
+            "            leaf()\n"
+            "        finally:\n"
+            "            raise LookupError('inner replacement')\n"
+            "    finally:\n"
+            "        return 'outer suppression'\n\n"
+            "def nested_callable_is_not_terminal():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        def later():\n"
+            "            return 'not now'\n\n"
+            "def computed_value():\n"
+            "    return 'computed'\n\n"
+            "def evaluated_return():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        return computed_value()\n\n"
+            "def bare_reraise():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        raise\n\n"
+            "def competing_terminal_paths(flag):\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        if flag:\n"
+            "            return 'suppressed'\n"
+            "        raise OSError('replaced')\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        model = analysis["exception_propagation"]
+        edges = {
+            (
+                value["caller_reference"],
+                value["callee_reference"],
+                value["exception_type"],
+            ): value
+            for value in model["edges"]
+        }
+
+        suppressed = edges[
+            ("finalizers.py:suppressed", "finalizers.py:leaf", "ValueError")
+        ]
+        self.assertEqual(
+            suppressed["disposition"], "suppressed_by_finally_control_flow"
+        )
+        self.assertEqual(suppressed["finalizer_terminal_kind"], "return")
+        self.assertFalse(suppressed["propagates_original"])
+
+        replaced = edges[("finalizers.py:replaced", "finalizers.py:leaf", "ValueError")]
+        self.assertEqual(replaced["disposition"], "replaced_by_finally_exception")
+        self.assertEqual(replaced["finalizer_terminal_kind"], "raise")
+        self.assertEqual(replaced["finalizer_exception_type"], "RuntimeError")
+        self.assertFalse(replaced["propagates_original"])
+        replacement_edge = edges[
+            (
+                "finalizers.py:sees_replacement",
+                "finalizers.py:replaced",
+                "RuntimeError",
+            )
+        ]
+        self.assertEqual(replacement_edge["disposition"], "may_propagate")
+
+        conditional = edges[
+            ("finalizers.py:conditional", "finalizers.py:leaf", "ValueError")
+        ]
+        self.assertEqual(conditional["disposition"], "may_propagate")
+        self.assertEqual(conditional["finalizer_id"], "")
+
+        outer = edges[
+            (
+                "finalizers.py:outer_terminal_wins",
+                "finalizers.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(outer["disposition"], "suppressed_by_finally_control_flow")
+        outer_record = next(
+            value
+            for value in model["finalizers"]
+            if value["id"] == outer["finalizer_id"]
+        )
+        outer_records = sorted(
+            (
+                value
+                for value in model["finalizers"]
+                if value["component_reference"] == "finalizers.py:outer_terminal_wins"
+            ),
+            key=lambda value: value["try_line"],
+        )
+        self.assertEqual(outer_record["id"], outer_records[0]["id"])
+        self.assertNotIn(
+            "LookupError",
+            {
+                value["exception_type"]
+                for value in model["edges"]
+                if value["callee_reference"] == "finalizers.py:outer_terminal_wins"
+            },
+        )
+
+        nested = edges[
+            (
+                "finalizers.py:nested_callable_is_not_terminal",
+                "finalizers.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(nested["disposition"], "may_propagate")
+        nested_finalizer = next(
+            value
+            for value in model["finalizers"]
+            if value["component_reference"]
+            == "finalizers.py:nested_callable_is_not_terminal"
+        )
+        self.assertEqual(nested_finalizer["terminal_kind"], "none")
+        self.assertNotIn("returns", nested_finalizer["actions"])
+
+        evaluated = edges[
+            ("finalizers.py:evaluated_return", "finalizers.py:leaf", "ValueError")
+        ]
+        self.assertEqual(evaluated["disposition"], "may_propagate")
+        self.assertEqual(evaluated["finalizer_id"], "")
+        evaluated_finalizer = next(
+            value
+            for value in model["finalizers"]
+            if value["component_reference"] == "finalizers.py:evaluated_return"
+        )
+        self.assertEqual(evaluated_finalizer["terminal_kind"], "none")
+        self.assertEqual(evaluated_finalizer["actions"], ["returns"])
+
+        reraised = edges[
+            ("finalizers.py:bare_reraise", "finalizers.py:leaf", "ValueError")
+        ]
+        self.assertEqual(reraised["disposition"], "may_propagate")
+        self.assertEqual(reraised["finalizer_terminal_kind"], "reraise")
+        self.assertEqual(
+            reraised["finalizer_exception_type"], "active_handler_exception"
+        )
+
+        competing = edges[
+            (
+                "finalizers.py:competing_terminal_paths",
+                "finalizers.py:leaf",
+                "ValueError",
+            )
+        ]
+        self.assertEqual(competing["disposition"], "may_propagate")
+        self.assertEqual(competing["finalizer_id"], "")
+        competing_finalizer = next(
+            value
+            for value in model["finalizers"]
+            if value["component_reference"] == "finalizers.py:competing_terminal_paths"
+        )
+        self.assertEqual(competing_finalizer["terminal_kind"], "none")
+        self.assertEqual(competing_finalizer["actions"], ["raises", "returns"])
+
+        self.assertEqual(model["summary"]["unconditional_terminal_finalizers"], 5)
+        self.assertEqual(
+            model["summary"]["edge_dispositions"]["suppressed_by_finally_control_flow"],
+            2,
+        )
+        replaced_component = next(
+            value for value in analysis["components"] if value["qualname"] == "replaced"
+        )
+        self.assertIn(
+            replaced["finalizer_id"],
+            replaced_component["exception_flow"]["finalizer_ids"],
+        )
+        self.assertFalse(
+            any(
+                value["rule_id"] == "analysis.invalid_exception_propagation"
+                for value in validate_analysis(analysis)["findings"]
+            )
+        )
+
+        tampered = json.loads(json.dumps(analysis))
+        tampered["exception_propagation"]["edges"][0]["finalizer_id"] = (
+            "EXCEPTION-FINALIZER-TAMPERED"
+        )
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_exception_propagation"
+                for value in validate_analysis(tampered)["findings"]
             )
         )
 
@@ -3673,7 +4045,9 @@ class ScannerTests(unittest.TestCase):
             {component["qualname"] for component in excluded["components"]},
         )
 
-    def test_same_named_nested_branch_callables_receive_distinct_identities(self) -> None:
+    def test_same_named_nested_branch_callables_receive_distinct_identities(
+        self,
+    ) -> None:
         (self.root / "lexical_collision.py").write_text(
             "def choose(flag, value):\n"
             "    if flag:\n"
@@ -3695,9 +4069,14 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(len(components), 2)
         self.assertEqual(len({component["id"] for component in components}), 2)
         self.assertTrue(
-            all(component["qualname"].startswith("choose.transform@L") for component in components)
+            all(
+                component["qualname"].startswith("choose.transform@L")
+                for component in components
+            )
         )
-        self.assertEqual(len(analysis["items"]), len({item["id"] for item in analysis["items"]}))
+        self.assertEqual(
+            len(analysis["items"]), len({item["id"] for item in analysis["items"]})
+        )
         obligations = analysis["assurance"]["obligations"]
         self.assertEqual(len(obligations), len({item["id"] for item in obligations}))
 

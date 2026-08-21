@@ -55,16 +55,18 @@ _INTEGER_FIELDS = {
     "state_records_omitted",
 }
 _BOOLEAN_FIELDS = {"is_async", "is_private", "mutates_state"}
-_STRING_LIST_FIELDS = {"decorators", "parameters", "ordered_calls"}
+_STRING_LIST_FIELDS = {"decorators", "parameters", "ordered_calls", "class_bases"}
 _STRING_SET_FIELDS = {"calls", "frameworks", "entrypoint_types", "signals"}
 _STRING_DICT_FIELDS = {"symbol_types", "symbol_type_sources"}
 _DICT_LIST_FIELDS = {
     "call_sites",
     "parameter_contracts",
+    "class_declarations",
     "return_values",
     "alias_bindings",
     "exception_raises",
     "exception_handlers",
+    "exception_finalizers",
     "state_guards",
     "state_transitions",
     "external_call_candidates",

@@ -102,8 +102,14 @@ flowchart LR
   classifies it as semantically projected, provenance-only, empty, registered without a material
   projection, or unmapped. Declared entity-kind and relationship-channel sets are independently
   reconciled; newly introduced or disconnected outputs become review leads instead of silently
-  disappearing from the evidence fabric. The HTML report, Markdown, CLI verifier, public schema,
-  and canonical diagram expose the same coverage state.
+  disappearing from the evidence fabric. A second bounded ledger enumerates each projectable
+  nested record, binds its locator and canonical digest, extracts conservative identity tokens,
+  and independently reconciles its semantic entity/relationship witnesses. Unresolved records and
+  bound omissions become high-priority leads. Graphify relations, runtime imports/spans/edges, and
+  scanner warnings are first-class evidence nodes so non-call or diagnostic tool output is not
+  hidden behind a section aggregate. Identity correlation proves traceability, not correctness.
+  The HTML report, Markdown, CLI verifier, public schema, and canonical diagram expose the same
+  section- and record-level coverage state.
   Source-provenance links then connect components and findings to content-addressed inventory
   entries, dependency/contract declarations, the run-manifest-bound configuration input, and
   excluded regions. Opaque artifacts and missing
@@ -135,9 +141,17 @@ flowchart LR
   exact embedded records from each component. It deliberately does not claim scheduler behavior,
   task identity, deadlock/race freedom, or a complete path-sensitive happens-before graph
 - Typed exception-flow records for explicit raises, lexical handlers, rethrows, translations,
-  suppression/control-flow exits, and bounded propagation across resolved internal calls. Handler
-  matching and component indexes are validated, while exception inheritance, dynamic aliases,
-  runtime reachability, and complete path feasibility remain explicit limitations
+  suppression/control-flow exits, terminal `finally` behavior, and bounded propagation across
+  resolved internal calls. Handler
+  selection follows nearest-`try` and first-match order, resolves built-in and statically declared
+  project inheritance, preserves the `Exception`/`BaseException` boundary, and emits explicit
+  indeterminate matches instead of silently crediting dynamic types. Findings inherit exact typed
+  exposure and injection-test guidance. Bare/literal top-level `return`, explicit `raise`, `break`,
+  and `continue` statements ending a `finally` block suppress or replace propagated exceptions
+  with explicit provenance, while a bare terminal `raise` preserves the original exception.
+  Evaluated returns, competing prior exits, conditional/nested `finally` path feasibility, dynamic aliases,
+  `ExceptionGroup` splitting, runtime reachability, and complete path feasibility remain explicit
+  limitations
 - A bounded guarded-state model that turns assignments to state/status/phase/mode variables into
   component-linked transition candidates, connects lexical `if`/`while` predicates, and retains
   stable target-state nodes. It supports review and test design without claiming formal

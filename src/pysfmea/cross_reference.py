@@ -59,6 +59,9 @@ MAX_RELATIONSHIPS = 500_000
 MAX_FUSIONS = 100_000
 MAX_CHAINS = 100_000
 MAX_REVIEW_LEADS = 100_000
+MAX_ANALYSIS_PROJECTION_RECORDS = 100_000
+MAX_ANALYSIS_RECORD_IDENTITY_TOKENS = 512
+MAX_ANALYSIS_RECORD_WITNESSES = 5
 
 ANALYSIS_PROJECTION_STATUSES = (
     "empty",
@@ -66,6 +69,18 @@ ANALYSIS_PROJECTION_STATUSES = (
     "registered_without_projection",
     "provenance_only",
     "unmapped",
+)
+
+ANALYSIS_RECORD_PROJECTION_STATUSES = (
+    "semantically_projected",
+    "unresolved_projection",
+)
+
+ANALYSIS_SECTION_RECORD_COVERAGE_STATUSES = (
+    "not_applicable",
+    "complete",
+    "partial",
+    "none",
 )
 
 # This registry is deliberately explicit. A newly introduced top-level analysis output is
@@ -99,6 +114,7 @@ ANALYSIS_SECTION_PROJECTION_DECLARATIONS: dict[str, dict[str, Any]] = {
             "contract",
             "dependency",
             "hazard",
+            "interface",
             "requirement",
             "subsystem",
         ),
@@ -107,6 +123,19 @@ ANALYSIS_SECTION_PROJECTION_DECLARATIONS: dict[str, dict[str, Any]] = {
             "contract_inventory",
             "dependency_inventory",
             "project_mapping",
+        ),
+        "record_paths": (
+            ("hazards",),
+            ("requirements",),
+            ("component_mappings",),
+            ("system_interfaces",),
+            ("dependencies",),
+            ("contracts",),
+            ("common_causes",),
+            ("critical_functions",),
+            ("guidance_applicability",),
+            ("guidance_rule_mappings",),
+            ("interface_dispositions",),
         ),
         "rationale": "Configured requirements, hazards, mappings, dependencies, and contracts are linked to findings and source inputs.",
     },
@@ -189,13 +218,14 @@ ANALYSIS_SECTION_PROJECTION_DECLARATIONS: dict[str, dict[str, Any]] = {
     "exception_propagation": {
         "mode": "semantic",
         "entity_kinds": (
+            "exception_finalizer",
             "exception_handler",
             "exception_propagation_edge",
             "exception_raise",
         ),
         "relationship_channels": ("exception_propagation",),
-        "record_paths": (("raises",), ("handlers",), ("edges",)),
-        "rationale": "Raises, handlers, and bounded propagation edges are linked to components.",
+        "record_paths": (("raises",), ("handlers",), ("finalizers",), ("edges",)),
+        "rationale": "Raises, handlers, finalizers, and bounded propagation edges are linked to components.",
     },
     "state_machine_model": {
         "mode": "semantic",
@@ -316,7 +346,7 @@ ANALYSIS_SECTION_PROJECTION_DECLARATIONS: dict[str, dict[str, Any]] = {
     },
     "warnings": {
         "mode": "semantic",
-        "entity_kinds": ("quality_gate_diagnostic",),
+        "entity_kinds": ("quality_gate_diagnostic", "scanner_warning"),
         "relationship_channels": ("validation",),
         "record_paths": ((),),
         "rationale": "Scanner and validation diagnostics remain distinct workflow-quality evidence.",
@@ -337,7 +367,7 @@ ANALYSIS_SECTION_PROJECTION_DECLARATIONS: dict[str, dict[str, Any]] = {
     },
     "runtime_evidence": {
         "mode": "semantic",
-        "entity_kinds": (),
+        "entity_kinds": ("runtime_edge", "runtime_import", "runtime_span"),
         "relationship_channels": ("runtime_observed",),
         "record_paths": (("imports",), ("spans",), ("edges",)),
         "rationale": "Observed runtime edges remain a distinct relationship channel and do not prove coverage.",
@@ -399,7 +429,7 @@ ANALYSIS_SECTION_PROJECTION_DECLARATIONS: dict[str, dict[str, Any]] = {
     },
     "graphify_reconciliation": {
         "mode": "semantic",
-        "entity_kinds": (),
+        "entity_kinds": ("graphify_relation",),
         "relationship_channels": ("graphify_static",),
         "record_paths": (("edges",),),
         "rationale": "Supplementary Graphify relationships remain a distinct static evidence channel.",
@@ -596,14 +626,44 @@ def _analysis_section_value_at_path(value: object, path: tuple[str, ...]) -> obj
     return current
 
 
-def _analysis_section_record_count(
+def _analysis_record_is_projectable(record: object, presence_rule: object) -> bool:
+    """Return whether a structural record carries a declared semantic signal."""
+
+    if not isinstance(presence_rule, dict):
+        return True
+    if not isinstance(record, dict):
+        return False
+    required_fields = tuple(presence_rule.get("required_fields", ()))
+    any_fields = tuple(presence_rule.get("any_fields", ()))
+    greater_than = presence_rule.get("greater_than", {})
+    greater_than = greater_than if isinstance(greater_than, dict) else {}
+    if required_fields and not all(
+        bool(record.get(field)) for field in required_fields
+    ):
+        return False
+    signal_rule_present = bool(any_fields or greater_than)
+    signal_present = any(bool(record.get(field)) for field in any_fields)
+    for field, threshold in greater_than.items():
+        candidate = record.get(field)
+        if isinstance(candidate, (int, float)) and isinstance(threshold, (int, float)):
+            signal_present = signal_present or candidate > threshold
+    return not signal_rule_present or signal_present
+
+
+def _analysis_path_label(path: tuple[str, ...]) -> str:
+    return "$" if not path else "$." + ".".join(path)
+
+
+def _analysis_section_records(
     value: object, declaration: dict[str, Any] | None
-) -> int:
-    """Count projectable records without treating structural summaries as evidence."""
+) -> list[dict[str, Any]]:
+    """Enumerate stable projectable records without counting structural shells."""
 
     if not declaration or "record_paths" not in declaration:
-        return 0 if value in (None, "", [], {}) else 1
-    count = 0
+        if value in (None, "", [], {}):
+            return []
+        return [{"path": "$", "locator": "$", "value": value}]
+    records: list[dict[str, Any]] = []
     presence_rules_by_path = (
         declaration.get("record_presence_rules", {})
         if isinstance(declaration.get("record_presence_rules"), dict)
@@ -613,38 +673,155 @@ def _analysis_section_record_count(
         normalized_path = tuple(path)
         selected = _analysis_section_value_at_path(value, normalized_path)
         presence_rule = presence_rules_by_path.get(normalized_path)
-        if isinstance(presence_rule, dict) and isinstance(selected, list):
-            required_fields = tuple(presence_rule.get("required_fields", ()))
-            any_fields = tuple(presence_rule.get("any_fields", ()))
-            greater_than = presence_rule.get("greater_than", {})
-            greater_than = greater_than if isinstance(greater_than, dict) else {}
-
-            def record_is_projectable(record: dict[str, Any]) -> bool:
-                if required_fields and not all(
-                    bool(record.get(field)) for field in required_fields
-                ):
-                    return False
-                signal_rule_present = bool(any_fields or greater_than)
-                signal_present = any(bool(record.get(field)) for field in any_fields)
-                for field, threshold in greater_than.items():
-                    candidate = record.get(field)
-                    if isinstance(candidate, (int, float)) and isinstance(
-                        threshold, (int, float)
-                    ):
-                        signal_present = signal_present or candidate > threshold
-                return not signal_rule_present or signal_present
-
-            count += sum(
-                record_is_projectable(record)
-                for record in selected
-                if isinstance(record, dict)
+        path_label = _analysis_path_label(normalized_path)
+        if isinstance(selected, list):
+            records.extend(
+                {
+                    "path": path_label,
+                    "locator": f"{path_label}[{index}]",
+                    "value": record,
+                }
+                for index, record in enumerate(selected)
+                if _analysis_record_is_projectable(record, presence_rule)
             )
+        elif isinstance(selected, dict):
+            records.extend(
+                {
+                    "path": path_label,
+                    "locator": f"{path_label}[{json.dumps(str(key))}]",
+                    "value": record,
+                }
+                for key, record in sorted(
+                    selected.items(), key=lambda item: str(item[0])
+                )
+                if _analysis_record_is_projectable(record, presence_rule)
+            )
+        elif selected not in (None, "") and _analysis_record_is_projectable(
+            selected, presence_rule
+        ):
+            records.append(
+                {"path": path_label, "locator": path_label, "value": selected}
+            )
+    return records
+
+
+def _analysis_section_record_count(
+    value: object, declaration: dict[str, Any] | None
+) -> int:
+    """Count projectable records without treating structural summaries as evidence."""
+
+    return len(_analysis_section_records(value, declaration))
+
+
+def _analysis_identity_field(field: str) -> bool:
+    normalized = field.casefold()
+    return bool(
+        normalized
+        in {
+            "id",
+            "path",
+            "file",
+            "source",
+            "target",
+            "source_file",
+            "qualname",
+            "reference",
+            "caller_reference",
+            "callee_reference",
+            "requirements",
+            "hazards",
+            "interfaces",
+            "subsystem",
+            "subsystems",
+        }
+        or normalized.endswith("_id")
+        or normalized.endswith("_ids")
+        or normalized.endswith("_path")
+        or normalized.endswith("_paths")
+        or normalized.endswith("_reference")
+        or normalized.endswith("_references")
+        or normalized.endswith("_sha256")
+    )
+
+
+def _analysis_identity_tokens(value: object) -> set[str]:
+    """Extract bounded, field-qualified identity tokens for deterministic joins."""
+
+    tokens: set[str] = set()
+    stack: list[tuple[object, str, int]] = [(value, "", 0)]
+    visited = 0
+    while stack and len(tokens) < MAX_ANALYSIS_RECORD_IDENTITY_TOKENS:
+        current, field, depth = stack.pop()
+        visited += 1
+        if visited > 20_000 or depth > 20:
+            break
+        if isinstance(current, dict):
+            for key, child in reversed(list(current.items())):
+                stack.append((child, str(key), depth + 1))
             continue
-        if isinstance(selected, (list, dict, str)):
-            count += len(selected)
-        elif selected is not None:
-            count += 1
-    return count
+        if isinstance(current, (list, tuple, set)):
+            for child in reversed(list(current)):
+                stack.append((child, field, depth + 1))
+            continue
+        if not field or not _analysis_identity_field(field):
+            continue
+        if current is None or isinstance(current, bool):
+            continue
+        text = str(current).strip()
+        if not text or len(text) > 4_096:
+            continue
+        normalized_field = field.casefold()
+        tokens.add(f"{normalized_field}={text}")
+        if (
+            normalized_field
+            in {
+                "id",
+                "source",
+                "target",
+                "reference",
+                "requirements",
+                "hazards",
+                "interfaces",
+                "subsystem",
+                "subsystems",
+            }
+            or normalized_field.endswith("_id")
+            or normalized_field.endswith("_ids")
+            or normalized_field.endswith("_reference")
+            or normalized_field.endswith("_references")
+        ):
+            tokens.add(f"id={text}")
+        if normalized_field.endswith("_sha256"):
+            tokens.add(f"sha256={text}")
+    return set(sorted(tokens)[:MAX_ANALYSIS_RECORD_IDENTITY_TOKENS])
+
+
+def _analysis_entity_identity_tokens(entity: dict[str, Any]) -> set[str]:
+    tokens = _analysis_identity_tokens(entity.get("metadata", {}))
+    raw_id = str(entity.get("raw_id", "")).strip()
+    if raw_id:
+        tokens.add(f"id={raw_id}")
+    entity_id = str(entity.get("id", "")).strip()
+    if entity_id:
+        tokens.add(f"entity_id={entity_id}")
+    return tokens
+
+
+def _analysis_relationship_identity_tokens(
+    relationship: dict[str, Any], entities_by_id: dict[str, dict[str, Any]]
+) -> set[str]:
+    tokens = _analysis_identity_tokens(relationship.get("metadata", {}))
+    for endpoint in (relationship.get("source"), relationship.get("target")):
+        entity = entities_by_id.get(str(endpoint), {})
+        raw_id = str(entity.get("raw_id", "")).strip()
+        if raw_id:
+            tokens.add(f"id={raw_id}")
+        if endpoint:
+            tokens.add(f"entity_id={endpoint}")
+    relation_id = str(relationship.get("id", "")).strip()
+    if relation_id:
+        tokens.add(f"relationship_id={relation_id}")
+    return tokens
 
 
 def _identifier_set_sha256(values: set[str]) -> str:
@@ -869,6 +1046,7 @@ def build_cross_reference_index(
     entities: dict[str, dict[str, Any]] = {}
     relationships: dict[str, dict[str, Any]] = {}
     omitted: Counter[str] = Counter()
+    analysis_section_reserve = len(analysis)
 
     def add_entity(
         kind: str,
@@ -880,7 +1058,12 @@ def build_cross_reference_index(
     ) -> str:
         entity_id = _entity_id(kind, raw_id)
         if entity_id not in entities:
-            if len(entities) >= MAX_ENTITIES:
+            entity_limit = (
+                MAX_ENTITIES
+                if kind == "analysis_section"
+                else MAX_ENTITIES - analysis_section_reserve
+            )
+            if len(entities) >= entity_limit:
                 omitted["entities"] += 1
                 return entity_id
             entities[entity_id] = {
@@ -908,7 +1091,12 @@ def build_cross_reference_index(
             omitted["relationships_missing_bounded_entity"] += 1
             return ""
         if relation_id not in relationships:
-            if len(relationships) >= MAX_RELATIONSHIPS:
+            relationship_limit = (
+                MAX_RELATIONSHIPS
+                if channel == "analysis_projection"
+                else MAX_RELATIONSHIPS - analysis_section_reserve
+            )
+            if len(relationships) >= relationship_limit:
                 omitted["relationships"] += 1
                 return relation_id
             relationships[relation_id] = {
@@ -1567,6 +1755,30 @@ def build_cross_reference_index(
         if relation_id in relationships:
             global_diagnostic_relationship_ids.append(relation_id)
 
+    for warning_index, warning in enumerate(analysis.get("warnings", [])):
+        if not isinstance(warning, dict):
+            continue
+        warning_sha256 = canonical_json_sha256(warning)
+        warning_entity = add_entity(
+            "scanner_warning",
+            stable_id("SCANNER-WARNING", str(warning_index), warning_sha256),
+            warning.get("type") or warning.get("message") or "scanner warning",
+            authority="scanner_emitted_analysis_diagnostic",
+            metadata={
+                "path": str(warning.get("path", "")),
+                "type": str(warning.get("type", "")),
+                "message": str(warning.get("message", "")),
+                "warning_sha256": warning_sha256,
+            },
+        )
+        add_relation(
+            analysis_scope_entity,
+            warning_entity,
+            "has_scanner_warning",
+            "validation",
+            authority="scanner_emitted_analysis_diagnostic",
+        )
+
     context = analysis.get("context", {})
     for kind, collection in (
         ("requirement", context.get("requirements", [])),
@@ -1801,6 +2013,125 @@ def build_cross_reference_index(
                 relation_id
             )
 
+    graphify_reconciliation = analysis.get("graphify_reconciliation", {})
+    if not isinstance(graphify_reconciliation, dict):
+        graphify_reconciliation = {}
+    for graphify_edge in graphify_reconciliation.get("edges", []):
+        if not isinstance(graphify_edge, dict) or not graphify_edge.get("id"):
+            continue
+        graphify_edge_id = str(graphify_edge["id"])
+        source_component_id = str(graphify_edge.get("source_component_id", ""))
+        target_component_id = str(graphify_edge.get("target_component_id", ""))
+        graphify_entity = add_entity(
+            "graphify_relation",
+            graphify_edge_id,
+            graphify_edge.get("relation") or graphify_edge_id,
+            authority="external_static_analysis_relation_record",
+            metadata={
+                "source_component_id": source_component_id,
+                "target_component_id": target_component_id,
+                "relation": str(graphify_edge.get("relation", "")),
+                "reconciliation": str(graphify_edge.get("reconciliation", "")),
+                "confidence": str(graphify_edge.get("confidence", "")),
+                "source_file": str(graphify_edge.get("source_file", "")),
+            },
+        )
+        add_relation(
+            analysis_scope_entity,
+            graphify_entity,
+            "records_graphify_relation",
+            "graphify_static",
+            authority="external_static_analysis_relation_record",
+        )
+        if source_component_id in components:
+            add_relation(
+                _entity_id("component", source_component_id),
+                graphify_entity,
+                "graphify_relation_source",
+                "graphify_static",
+                authority="external_static_analysis_relation_endpoint",
+            )
+        if target_component_id in components:
+            add_relation(
+                graphify_entity,
+                _entity_id("component", target_component_id),
+                "graphify_relation_target",
+                "graphify_static",
+                authority="external_static_analysis_relation_endpoint",
+            )
+
+    runtime_evidence = analysis.get("runtime_evidence", {})
+    if not isinstance(runtime_evidence, dict):
+        runtime_evidence = {}
+    for runtime_kind, collection in (
+        ("runtime_import", runtime_evidence.get("imports", [])),
+        ("runtime_span", runtime_evidence.get("spans", [])),
+        ("runtime_edge", runtime_evidence.get("edges", [])),
+    ):
+        if not isinstance(collection, list):
+            continue
+        for runtime_index, runtime_record in enumerate(collection):
+            if not isinstance(runtime_record, dict):
+                continue
+            runtime_record_sha256 = canonical_json_sha256(runtime_record)
+            raw_id = str(
+                runtime_record.get("id")
+                or runtime_record.get("span_id")
+                or stable_id(
+                    runtime_kind.upper(), str(runtime_index), runtime_record_sha256
+                )
+            )
+            runtime_entity = add_entity(
+                runtime_kind,
+                raw_id,
+                runtime_record.get("operation")
+                or runtime_record.get("name")
+                or runtime_record.get("source")
+                or raw_id,
+                authority="bounded_runtime_observation_record",
+                metadata={
+                    "source_component_id": str(
+                        runtime_record.get("source_component_id", "")
+                    ),
+                    "target_component_id": str(
+                        runtime_record.get("target_component_id", "")
+                    ),
+                    "component_id": str(runtime_record.get("component_id", "")),
+                    "trace_id": str(runtime_record.get("trace_id", "")),
+                    "span_id": str(runtime_record.get("span_id", "")),
+                    "source": str(runtime_record.get("source", "")),
+                    "runtime_record_sha256": runtime_record_sha256,
+                },
+            )
+            add_relation(
+                analysis_scope_entity,
+                runtime_entity,
+                "records_runtime_observation",
+                "runtime_observed",
+                authority="bounded_runtime_observation_record",
+            )
+            source_ids = {
+                str(runtime_record.get("component_id", "")),
+                str(runtime_record.get("source_component_id", "")),
+            }
+            for component_id in sorted(source_ids & set(components)):
+                add_relation(
+                    _entity_id("component", component_id),
+                    runtime_entity,
+                    "runtime_observation_source",
+                    "runtime_observed",
+                    authority="bounded_runtime_observation_component_reference",
+                )
+            target_component_id = str(runtime_record.get("target_component_id", ""))
+            if target_component_id in components:
+                add_relation(
+                    runtime_entity,
+                    _entity_id("component", target_component_id),
+                    "runtime_observation_target",
+                    "runtime_observed",
+                    authority="bounded_runtime_observation_component_reference",
+                )
+
     fusions: list[dict[str, Any]] = []
     for (source, target), channel_relations in sorted(component_pair_evidence.items()):
         if len(fusions) >= MAX_FUSIONS:
@@ -1924,6 +2255,8 @@ def build_cross_reference_index(
                 )
             ),
             metadata={
+                "component_id": component_id,
+                "component_reference": reference,
                 "direct_effects": direct_effects,
                 "transitive_effects": transitive_effects,
                 "retry_factor": retry_factor,
@@ -2070,6 +2403,10 @@ def build_cross_reference_index(
                 )
             ),
             metadata={
+                "origin_component_reference": str(
+                    retry.get("origin_component_reference", "")
+                ),
+                "path": path_references,
                 "amplification_factor_upper_candidate": retry.get(
                     "amplification_factor_upper_candidate"
                 ),
@@ -2139,6 +2476,9 @@ def build_cross_reference_index(
             "risks",
             "gaps",
             "exception_type",
+            "terminal_kind",
+            "terminal_exception_type",
+            "unconditional_terminal",
             "state_variable",
             "target_state_expression",
             "operation",
@@ -2268,6 +2608,7 @@ def build_cross_reference_index(
     for collection, record_kind, role in (
         ("raises", "exception_raise", "raise"),
         ("handlers", "exception_handler", "handler"),
+        ("finalizers", "exception_finalizer", "finalizer"),
     ):
         for record in exception_model.get(collection, []):
             if isinstance(record, dict) and record.get("id"):
@@ -2307,7 +2648,6 @@ def build_cross_reference_index(
             role="outgoing_edge",
             label=label,
         )
-
     state_model = analysis.get("state_machine_model", {})
     for collection, record_kind, role in (
         ("states", "state_candidate", "state"),
@@ -3328,7 +3668,11 @@ def build_cross_reference_index(
                 "source_configuration_input_entity_id": (
                     source_configuration_input_entity
                 ),
-                "source_repository_path": source_path,
+                "source_repository_path": (
+                    str(source_artifact_record.get("path", ""))
+                    if len(source_artifact_entities) == 1
+                    else source_path
+                ),
                 "source_repository_status": str(
                     source_artifact_record.get("status", "")
                     if len(source_artifact_entities) == 1
@@ -4977,10 +5321,29 @@ def build_cross_reference_index(
         projection_relationship_ids_by_channel[str(relation.get("channel", ""))].add(
             relation_id
         )
+    projection_entity_identity_index: dict[str, dict[str, set[str]]] = defaultdict(
+        lambda: defaultdict(set)
+    )
+    for entity_id, entity in entities.items():
+        entity_kind = str(entity.get("kind", ""))
+        for token in _analysis_entity_identity_tokens(entity):
+            projection_entity_identity_index[entity_kind][token].add(entity_id)
+    projection_relationship_identity_index: dict[str, dict[str, set[str]]] = (
+        defaultdict(lambda: defaultdict(set))
+    )
+    for relation_id, relation in relationships.items():
+        channel = str(relation.get("channel", ""))
+        for token in _analysis_relationship_identity_tokens(relation, entities):
+            projection_relationship_identity_index[channel][token].add(relation_id)
 
     analysis_projection_profiles: list[dict[str, Any]] = []
     analysis_projection_relationship_ids: set[str] = set()
-    for section_name in sorted(analysis):
+    analysis_record_profiles: list[dict[str, Any]] = []
+    analysis_record_relationship_ids: set[str] = set()
+    analysis_record_profile_omissions = 0
+    analysis_section_names = sorted(analysis)
+    for section_index, section_name in enumerate(analysis_section_names):
+        remaining_section_reserve = len(analysis_section_names) - section_index - 1
         section_value = analysis[section_name]
         declaration = ANALYSIS_SECTION_PROJECTION_DECLARATIONS.get(section_name)
         projection_mode = (
@@ -5001,7 +5364,8 @@ def build_cross_reference_index(
             )
         )
         source_sha256 = canonical_json_sha256(section_value)
-        source_record_count = _analysis_section_record_count(section_value, declaration)
+        source_records = _analysis_section_records(section_value, declaration)
+        source_record_count = len(source_records)
         projected_entity_ids = set().union(
             *(projection_entity_ids_by_kind[kind] for kind in declared_entity_kinds)
         )
@@ -5049,6 +5413,196 @@ def build_cross_reference_index(
         )
         if section_relationship_id in relationships:
             analysis_projection_relationship_ids.add(section_relationship_id)
+        section_record_profile_count_before = len(analysis_record_profiles)
+        section_record_omissions = 0
+        if projection_mode == "semantic" and declaration is not None:
+            for source_record in source_records:
+                if len(analysis_record_profiles) >= MAX_ANALYSIS_PROJECTION_RECORDS:
+                    section_record_omissions += 1
+                    analysis_record_profile_omissions += 1
+                    omitted["analysis_projection_records"] += 1
+                    continue
+                if len(entities) + 1 + remaining_section_reserve > MAX_ENTITIES or (
+                    len(relationships)
+                    + 1
+                    + MAX_ANALYSIS_RECORD_WITNESSES
+                    + remaining_section_reserve
+                    > MAX_RELATIONSHIPS
+                ):
+                    section_record_omissions += 1
+                    analysis_record_profile_omissions += 1
+                    omitted["analysis_projection_records"] += 1
+                    continue
+                record_path = str(source_record["path"])
+                record_locator = str(source_record["locator"])
+                record_value = source_record["value"]
+                record_source_sha256 = canonical_json_sha256(
+                    {"locator": record_locator, "value": record_value}
+                )
+                identity_tokens = _analysis_identity_tokens(record_value)
+                record_digest_token = f"sha256={canonical_json_sha256(record_value)}"
+                identity_tokens = set(
+                    sorted(identity_tokens - {record_digest_token})[
+                        : MAX_ANALYSIS_RECORD_IDENTITY_TOKENS - 1
+                    ]
+                )
+                identity_tokens.add(record_digest_token)
+                record_projected_entity_ids: set[str] = set()
+                for entity_kind in declared_entity_kinds:
+                    identity_index = projection_entity_identity_index[entity_kind]
+                    for token in identity_tokens:
+                        record_projected_entity_ids.update(
+                            identity_index.get(token, ())
+                        )
+                record_projected_relationship_ids: set[str] = set()
+                for channel in declared_relationship_channels:
+                    identity_index = projection_relationship_identity_index[channel]
+                    for token in identity_tokens:
+                        record_projected_relationship_ids.update(
+                            identity_index.get(token, ())
+                        )
+                record_status = (
+                    "semantically_projected"
+                    if record_projected_entity_ids or record_projected_relationship_ids
+                    else "unresolved_projection"
+                )
+                record_raw_id = stable_id(
+                    "ANALYSIS-RECORD",
+                    analysis_sha256,
+                    section_name,
+                    record_locator,
+                    record_source_sha256,
+                )
+                record_entity_id = add_entity(
+                    "analysis_record",
+                    record_raw_id,
+                    record_locator,
+                    authority="analysis_record_identity_correlated_projection_witness",
+                    metadata={
+                        "section": section_name,
+                        "path": record_path,
+                        "locator": record_locator,
+                        "source_record_sha256": record_source_sha256,
+                        "identity_token_count": len(identity_tokens),
+                        "coverage_status": record_status,
+                        "projected_entity_count": len(record_projected_entity_ids),
+                        "projected_relationship_count": len(
+                            record_projected_relationship_ids
+                        ),
+                    },
+                )
+                if record_entity_id not in entities:
+                    section_record_omissions += 1
+                    analysis_record_profile_omissions += 1
+                    omitted["analysis_projection_records"] += 1
+                    continue
+                record_projection_relationship_ids: set[str] = set()
+                containment_id = add_relation(
+                    section_entity_id,
+                    record_entity_id,
+                    "contains_analysis_record",
+                    "analysis_projection",
+                    authority="exact_analysis_record_digest_binding",
+                    metadata={
+                        "section": section_name,
+                        "locator": record_locator,
+                        "source_record_sha256": record_source_sha256,
+                    },
+                )
+                if containment_id in relationships:
+                    record_projection_relationship_ids.add(containment_id)
+                    analysis_projection_relationship_ids.add(containment_id)
+                    analysis_record_relationship_ids.add(containment_id)
+                witness_budget = MAX_ANALYSIS_RECORD_WITNESSES
+                for target_entity_id in sorted(record_projected_entity_ids)[
+                    :witness_budget
+                ]:
+                    witness_id = add_relation(
+                        record_entity_id,
+                        target_entity_id,
+                        "witnesses_projected_entity",
+                        "analysis_projection",
+                        authority="identity_correlated_analysis_record_projection",
+                        metadata={"projected_entity_id": target_entity_id},
+                    )
+                    if witness_id in relationships:
+                        record_projection_relationship_ids.add(witness_id)
+                        analysis_projection_relationship_ids.add(witness_id)
+                        analysis_record_relationship_ids.add(witness_id)
+                witness_budget -= min(witness_budget, len(record_projected_entity_ids))
+                for projected_relationship_id in sorted(
+                    record_projected_relationship_ids
+                )[:witness_budget]:
+                    target_entity_id = str(
+                        relationships[projected_relationship_id].get("target", "")
+                    )
+                    witness_id = add_relation(
+                        record_entity_id,
+                        target_entity_id,
+                        "witnesses_projected_relationship",
+                        "analysis_projection",
+                        authority="identity_correlated_analysis_record_projection",
+                        metadata={
+                            "projected_relationship_id": projected_relationship_id
+                        },
+                    )
+                    if witness_id in relationships:
+                        record_projection_relationship_ids.add(witness_id)
+                        analysis_projection_relationship_ids.add(witness_id)
+                        analysis_record_relationship_ids.add(witness_id)
+                analysis_record_profiles.append(
+                    {
+                        "section": section_name,
+                        "path": record_path,
+                        "locator": record_locator,
+                        "record_entity_id": record_entity_id,
+                        "source_record_sha256": record_source_sha256,
+                        "identity_tokens": sorted(identity_tokens),
+                        "identity_tokens_sha256": _identifier_set_sha256(
+                            identity_tokens
+                        ),
+                        "coverage_status": record_status,
+                        "projected_entity_count": len(record_projected_entity_ids),
+                        "projected_entity_ids_sha256": _identifier_set_sha256(
+                            record_projected_entity_ids
+                        ),
+                        "projected_entity_id_sample": sorted(
+                            record_projected_entity_ids
+                        )[:25],
+                        "projected_relationship_count": len(
+                            record_projected_relationship_ids
+                        ),
+                        "projected_relationship_ids_sha256": _identifier_set_sha256(
+                            record_projected_relationship_ids
+                        ),
+                        "projected_relationship_id_sample": sorted(
+                            record_projected_relationship_ids
+                        )[:25],
+                        "projection_relationship_ids": sorted(
+                            record_projection_relationship_ids
+                        ),
+                    }
+                )
+        section_record_profiles = analysis_record_profiles[
+            section_record_profile_count_before:
+        ]
+        section_projected_record_count = sum(
+            profile["coverage_status"] == "semantically_projected"
+            for profile in section_record_profiles
+        )
+        section_unresolved_record_count = (
+            len(section_record_profiles)
+            - section_projected_record_count
+            + section_record_omissions
+        )
+        if projection_mode != "semantic" or source_record_count == 0:
+            record_coverage_status = "not_applicable"
+        elif section_projected_record_count == source_record_count:
+            record_coverage_status = "complete"
+        elif section_projected_record_count:
+            record_coverage_status = "partial"
+        else:
+            record_coverage_status = "none"
         analysis_projection_profiles.append(
             {
                 "section": section_name,
@@ -5074,6 +5628,10 @@ def build_cross_reference_index(
                 "projected_relationship_id_sample": sorted(projected_relationship_ids)[
                     :25
                 ],
+                "record_coverage_status": record_coverage_status,
+                "semantically_projected_record_count": section_projected_record_count,
+                "unresolved_record_count": section_unresolved_record_count,
+                "record_profiles_omitted_by_bound": section_record_omissions,
                 "rationale": str(
                     declaration.get("rationale", "") if declaration else ""
                 )
@@ -5147,6 +5705,49 @@ def build_cross_reference_index(
                     "analysis output(s) contain candidate records but produced no linked entity "
                     "or relationship. Confirm that filtering was intentional or extend the "
                     "projection declaration and model."
+                ),
+            }
+        )
+    unresolved_analysis_record_profiles = [
+        profile
+        for profile in analysis_record_profiles
+        if profile["coverage_status"] == "unresolved_projection"
+    ]
+    unresolved_analysis_record_count = (
+        len(unresolved_analysis_record_profiles) + analysis_record_profile_omissions
+    )
+    if unresolved_analysis_record_count:
+        subject_ids = sorted(
+            str(profile["record_entity_id"])
+            for profile in unresolved_analysis_record_profiles
+        )
+        affected_sections = sorted(
+            {str(profile["section"]) for profile in unresolved_analysis_record_profiles}
+            | {
+                str(profile["section"])
+                for profile in analysis_projection_profiles
+                if profile["record_profiles_omitted_by_bound"]
+            }
+        )
+        review_leads.append(
+            {
+                "id": stable_id(
+                    "XLEAD",
+                    "analysis_record_projection",
+                    *affected_sections,
+                ),
+                "kind": "unresolved_analysis_record_projections",
+                "priority": "high",
+                "subject_ids": subject_ids[:25],
+                "affected_count": unresolved_analysis_record_count,
+                "subject_ids_omitted": max(
+                    0, unresolved_analysis_record_count - len(subject_ids[:25])
+                ),
+                "description": (
+                    f"{unresolved_analysis_record_count} projectable analysis record(s) "
+                    f"across {len(affected_sections)} section(s) have no identity-correlated "
+                    "semantic entity or relationship witness. Extend the source model or "
+                    "projection identity before treating nested output coverage as complete."
                 ),
             }
         )
@@ -5255,6 +5856,35 @@ def build_cross_reference_index(
             "unmapped_analysis_sections": len(populated_unmapped_section_profiles),
             "analysis_projection_relationships": len(
                 analysis_projection_relationship_ids
+            ),
+            "analysis_records": sum(
+                value["source_record_count"]
+                for value in analysis_projection_profiles
+                if value["projection_mode"] == "semantic"
+            ),
+            "semantically_projected_analysis_records": sum(
+                value["semantically_projected_record_count"]
+                for value in analysis_projection_profiles
+            ),
+            "unresolved_analysis_records": unresolved_analysis_record_count,
+            "analysis_record_projection_relationships": len(
+                analysis_record_relationship_ids
+            ),
+            "analysis_record_projection_coverage_percent": round(
+                100
+                * sum(
+                    value["semantically_projected_record_count"]
+                    for value in analysis_projection_profiles
+                )
+                / max(
+                    1,
+                    sum(
+                        value["source_record_count"]
+                        for value in analysis_projection_profiles
+                        if value["projection_mode"] == "semantic"
+                    ),
+                ),
+                1,
             ),
             "analysis_projection_coverage_percent": round(
                 100
@@ -5581,6 +6211,7 @@ def build_cross_reference_index(
         "analysis_projection_coverage": {
             "analysis_scope_entity_id": analysis_scope_entity,
             "section_profiles": analysis_projection_profiles,
+            "record_profiles": analysis_record_profiles,
             "registered_section_names": sorted(
                 value["section"]
                 for value in analysis_projection_profiles
@@ -5608,6 +6239,34 @@ def build_cross_reference_index(
                 value["section"] for value in populated_unmapped_section_profiles
             ),
             "relationship_ids": sorted(analysis_projection_relationship_ids),
+            "record_relationship_ids": sorted(analysis_record_relationship_ids),
+            "semantic_record_count": sum(
+                value["source_record_count"]
+                for value in analysis_projection_profiles
+                if value["projection_mode"] == "semantic"
+            ),
+            "semantically_projected_record_count": sum(
+                value["semantically_projected_record_count"]
+                for value in analysis_projection_profiles
+            ),
+            "unresolved_record_count": unresolved_analysis_record_count,
+            "record_profiles_omitted_by_bound": analysis_record_profile_omissions,
+            "record_coverage_percent": round(
+                100
+                * sum(
+                    value["semantically_projected_record_count"]
+                    for value in analysis_projection_profiles
+                )
+                / max(
+                    1,
+                    sum(
+                        value["source_record_count"]
+                        for value in analysis_projection_profiles
+                        if value["projection_mode"] == "semantic"
+                    ),
+                ),
+                1,
+            ),
             "coverage_percent": round(
                 100
                 * (
@@ -5629,9 +6288,11 @@ def build_cross_reference_index(
             ),
             "notice": (
                 "Coverage status proves only that each top-level analysis output is digest-bound "
-                "and has a declared projection surface. Matching entity kinds or relationship "
-                "channels does not prove record-level completeness, analytical correctness, "
-                "runtime reachability, compliance, or risk acceptance."
+                "and has a declared projection surface. Record coverage additionally requires "
+                "each projectable nested record to share a bounded identity token with a declared "
+                "semantic entity or relationship. Identity correlation is a traceability witness, "
+                "not proof of analytical correctness, runtime reachability, compliance, or risk "
+                "acceptance."
             ),
         },
         "adapter_provenance": {
@@ -5778,7 +6439,7 @@ def build_cross_reference_index(
             "Review-governance profiles cross-reference deterministic quality diagnostics, source change, revalidation, disposition, and assurance next actions; diagnostics are workflow conditions, not software-failure evidence.",
             "Adapter provenance links normalized contribution identities to integrity-bound adapter runs and the run manifest; tool attribution does not establish correctness, completeness, qualification, or independence.",
             "Repository provenance links source paths, inventory snapshots, dependencies, contracts, components, and findings without promoting indexed or opaque artifacts to semantic-analysis evidence.",
-            "Analysis-output projection coverage binds every top-level section and detects undeclared outputs; a declared entity kind or relationship channel is a section-level integration signal, not proof that every nested record was projected.",
+            "Analysis-output projection coverage binds every top-level section and every bounded projectable nested record; record witnesses prove deterministic identity correlation to declared semantic surfaces, not analytical correctness.",
             "Machine-assistance provenance preserves bounded suggestion, summary, evidence, citation, materialization, and lexical-comparison links; generated text and deterministic text similarity remain review aids, not authoritative engineering conclusions.",
             "Guidance provenance links recorded methodology, versioned source records, exact citation locators, and candidate findings without asserting applicability, compliance, source authenticity, or approval.",
             "System-context provenance preserves configured fields and values and uses exact normalized matches only; a match does not establish operational adequacy, and a mismatch does not establish an error.",
@@ -5822,6 +6483,11 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         "empty_analysis_sections",
         "unmapped_analysis_sections",
         "analysis_projection_relationships",
+        "analysis_records",
+        "semantically_projected_analysis_records",
+        "unresolved_analysis_records",
+        "analysis_record_projection_relationships",
+        "analysis_record_projection_coverage_percent",
         "analysis_projection_coverage_percent",
         "analysis_material_projection_coverage_percent",
         "quality_gate_diagnostics",
@@ -5988,8 +6654,12 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
             "",
             "## Analysis-output projection coverage",
             "",
-            "| Section | Status | Records | Entities | Relationships |",
-            "|---|---|---:|---:|---:|",
+            f"Nested record witness coverage: {summary.get('analysis_record_projection_coverage_percent', 0)}% "
+            f"({summary.get('semantically_projected_analysis_records', 0)} of "
+            f"{summary.get('analysis_records', 0)} projectable records).",
+            "",
+            "| Section | Section status | Record status | Records | Witnessed | Unresolved | Entities | Relationships |",
+            "|---|---|---|---:|---:|---:|---:|---:|",
         ]
     )
     for profile in index.get("analysis_projection_coverage", {}).get(
@@ -5998,7 +6668,10 @@ def cross_reference_markdown(index: dict[str, Any]) -> str:
         lines.append(
             f"| {profile.get('section', '')} | "
             f"{str(profile.get('coverage_status', '')).replace('_', ' ')} | "
+            f"{str(profile.get('record_coverage_status', '')).replace('_', ' ')} | "
             f"{profile.get('source_record_count', 0)} | "
+            f"{profile.get('semantically_projected_record_count', 0)} | "
+            f"{profile.get('unresolved_record_count', 0)} | "
             f"{profile.get('projected_entity_count', 0)} | "
             f"{profile.get('projected_relationship_count', 0)} |"
         )
@@ -6095,7 +6768,13 @@ def export_cross_reference_index(
 
     index = build_cross_reference_index(analysis)
     if format == "json":
-        content = json.dumps(index, indent=2, ensure_ascii=False) + "\n"
+        # The complete fabric can contain hundreds of thousands of typed relationships.
+        # Canonical compact JSON keeps the public artifact comfortably inside its bounded
+        # verifier envelope without dropping records or weakening integrity semantics.
+        content = (
+            json.dumps(index, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + "\n"
+        )
     elif format == "markdown":
         content = cross_reference_markdown(index)
     else:
@@ -6641,10 +7320,16 @@ def verify_cross_reference_file(
             analysis_projection if isinstance(analysis_projection, dict) else {}
         )
         analysis_projection_profiles = analysis_projection_data.get("section_profiles")
+        analysis_record_profiles = analysis_projection_data.get("record_profiles")
         analysis_section_entity_ids = {
             entity_id
             for entity_id, entity in entities_by_id.items()
             if entity.get("kind") == "analysis_section"
+        }
+        analysis_record_entity_ids = {
+            entity_id
+            for entity_id, entity in entities_by_id.items()
+            if entity.get("kind") == "analysis_record"
         }
         analysis_scope_entity_ids = {
             entity_id
@@ -6659,6 +7344,9 @@ def verify_cross_reference_file(
         declared_analysis_projection_relationship_ids = set(
             _text_values(analysis_projection_data.get("relationship_ids"))
         )
+        declared_analysis_record_relationship_ids = set(
+            _text_values(analysis_projection_data.get("record_relationship_ids"))
+        )
         analysis_projection_profile_sections = [
             str(profile.get("section", ""))
             for profile in analysis_projection_profiles or []
@@ -6672,6 +7360,215 @@ def verify_cross_reference_file(
             verification_relationship_ids_by_channel[
                 str(relation.get("channel", ""))
             ].add(relation_id)
+        verification_entity_identity_index: dict[str, dict[str, set[str]]] = (
+            defaultdict(lambda: defaultdict(set))
+        )
+        for entity_id, entity in entities_by_id.items():
+            if entity.get("kind") in {"analysis_section", "analysis_record"}:
+                continue
+            for token in _analysis_entity_identity_tokens(entity):
+                verification_entity_identity_index[str(entity.get("kind", ""))][
+                    token
+                ].add(entity_id)
+        verification_relationship_identity_index: dict[str, dict[str, set[str]]] = (
+            defaultdict(lambda: defaultdict(set))
+        )
+        for relation_id, relation in relationships_by_id.items():
+            if relation.get("channel") == "analysis_projection":
+                continue
+            for token in _analysis_relationship_identity_tokens(
+                relation, entities_by_id
+            ):
+                verification_relationship_identity_index[
+                    str(relation.get("channel", ""))
+                ][token].add(relation_id)
+
+        section_profile_by_name = {
+            str(profile.get("section", "")): profile
+            for profile in analysis_projection_profiles or []
+            if isinstance(profile, dict) and profile.get("section")
+        }
+        record_profiles_by_section: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for profile in analysis_record_profiles or []:
+            if isinstance(profile, dict):
+                record_profiles_by_section[str(profile.get("section", ""))].append(
+                    profile
+                )
+
+        def analysis_record_profile_valid(profile: object) -> bool:
+            if not isinstance(profile, dict):
+                return False
+            section = str(profile.get("section", ""))
+            declaration = ANALYSIS_SECTION_PROJECTION_DECLARATIONS.get(section)
+            if not declaration or declaration.get("mode") != "semantic":
+                return False
+            section_profile = section_profile_by_name.get(section, {})
+            section_entity_id = str(section_profile.get("section_entity_id", ""))
+            record_entity_id = str(profile.get("record_entity_id", ""))
+            record_path = str(profile.get("path", ""))
+            record_locator = str(profile.get("locator", ""))
+            record_source_sha256 = str(profile.get("source_record_sha256", ""))
+            identity_tokens = _text_values(profile.get("identity_tokens"))
+            if (
+                not section
+                or not record_path
+                or not record_locator
+                or not record_entity_id
+                or not identity_tokens
+                or identity_tokens != sorted(set(identity_tokens))
+                or len(identity_tokens) > MAX_ANALYSIS_RECORD_IDENTITY_TOKENS
+                or any(len(token) > 8_192 for token in identity_tokens)
+                or re.fullmatch(r"[0-9a-f]{64}", record_source_sha256) is None
+            ):
+                return False
+            expected_entity_kinds = set(
+                _text_values(list(declaration.get("entity_kinds", ())))
+            )
+            expected_relationship_channels = set(
+                _text_values(list(declaration.get("relationship_channels", ())))
+            )
+            expected_projected_entity_ids: set[str] = set()
+            for entity_kind in expected_entity_kinds:
+                identity_index = verification_entity_identity_index[entity_kind]
+                for token in identity_tokens:
+                    expected_projected_entity_ids.update(identity_index.get(token, ()))
+            expected_projected_relationship_ids: set[str] = set()
+            for channel in expected_relationship_channels:
+                identity_index = verification_relationship_identity_index[channel]
+                for token in identity_tokens:
+                    expected_projected_relationship_ids.update(
+                        identity_index.get(token, ())
+                    )
+            expected_status = (
+                "semantically_projected"
+                if expected_projected_entity_ids or expected_projected_relationship_ids
+                else "unresolved_projection"
+            )
+            expected_record_raw_id = stable_id(
+                "ANALYSIS-RECORD",
+                str(value.get("analysis_state_sha256", "")),
+                section,
+                record_locator,
+                record_source_sha256,
+            )
+            record_entity = entities_by_id.get(record_entity_id, {})
+            record_metadata = record_entity.get("metadata", {})
+            containment_id = _relation_id(
+                section_entity_id,
+                record_entity_id,
+                "contains_analysis_record",
+                "analysis_projection",
+            )
+            expected_projection_relationship_ids = {containment_id}
+            containment = relationships_by_id.get(containment_id, {})
+            witness_budget = MAX_ANALYSIS_RECORD_WITNESSES
+            expected_entity_witnesses: dict[str, str] = {}
+            for target_entity_id in sorted(expected_projected_entity_ids)[
+                :witness_budget
+            ]:
+                witness_id = _relation_id(
+                    record_entity_id,
+                    target_entity_id,
+                    "witnesses_projected_entity",
+                    "analysis_projection",
+                )
+                expected_projection_relationship_ids.add(witness_id)
+                expected_entity_witnesses[witness_id] = target_entity_id
+            witness_budget -= min(witness_budget, len(expected_projected_entity_ids))
+            expected_relationship_witnesses: dict[str, tuple[str, str]] = {}
+            for projected_relationship_id in sorted(
+                expected_projected_relationship_ids
+            )[:witness_budget]:
+                target_entity_id = str(
+                    relationships_by_id[projected_relationship_id].get("target", "")
+                )
+                witness_id = _relation_id(
+                    record_entity_id,
+                    target_entity_id,
+                    "witnesses_projected_relationship",
+                    "analysis_projection",
+                )
+                expected_projection_relationship_ids.add(witness_id)
+                expected_relationship_witnesses.setdefault(
+                    witness_id, (target_entity_id, projected_relationship_id)
+                )
+            entity_witnesses_valid = all(
+                (
+                    relationships_by_id.get(witness_id, {}).get("source")
+                    == record_entity_id
+                    and relationships_by_id.get(witness_id, {}).get("target")
+                    == target_entity_id
+                    and relationships_by_id.get(witness_id, {}).get("kind")
+                    == "witnesses_projected_entity"
+                    and relationships_by_id.get(witness_id, {})
+                    .get("metadata", {})
+                    .get("projected_entity_id")
+                    == target_entity_id
+                )
+                for witness_id, target_entity_id in expected_entity_witnesses.items()
+            )
+            relationship_witnesses_valid = all(
+                (
+                    relationships_by_id.get(witness_id, {}).get("source")
+                    == record_entity_id
+                    and relationships_by_id.get(witness_id, {}).get("target")
+                    == target_entity_id
+                    and relationships_by_id.get(witness_id, {}).get("kind")
+                    == "witnesses_projected_relationship"
+                    and relationships_by_id.get(witness_id, {})
+                    .get("metadata", {})
+                    .get("projected_relationship_id")
+                    == projected_relationship_id
+                )
+                for witness_id, (
+                    target_entity_id,
+                    projected_relationship_id,
+                ) in expected_relationship_witnesses.items()
+            )
+            return bool(
+                record_entity_id in analysis_record_entity_ids
+                and record_entity.get("raw_id") == expected_record_raw_id
+                and record_entity.get("label") == record_locator
+                and record_metadata.get("section") == section
+                and record_metadata.get("path") == record_path
+                and record_metadata.get("locator") == record_locator
+                and record_metadata.get("source_record_sha256") == record_source_sha256
+                and record_metadata.get("identity_token_count") == len(identity_tokens)
+                and record_metadata.get("coverage_status") == expected_status
+                and record_metadata.get("projected_entity_count")
+                == len(expected_projected_entity_ids)
+                and record_metadata.get("projected_relationship_count")
+                == len(expected_projected_relationship_ids)
+                and profile.get("identity_tokens_sha256")
+                == _identifier_set_sha256(set(identity_tokens))
+                and profile.get("coverage_status") == expected_status
+                and expected_status in ANALYSIS_RECORD_PROJECTION_STATUSES
+                and profile.get("projected_entity_count")
+                == len(expected_projected_entity_ids)
+                and profile.get("projected_entity_ids_sha256")
+                == _identifier_set_sha256(expected_projected_entity_ids)
+                and _text_values(profile.get("projected_entity_id_sample"))
+                == sorted(expected_projected_entity_ids)[:25]
+                and profile.get("projected_relationship_count")
+                == len(expected_projected_relationship_ids)
+                and profile.get("projected_relationship_ids_sha256")
+                == _identifier_set_sha256(expected_projected_relationship_ids)
+                and _text_values(profile.get("projected_relationship_id_sample"))
+                == sorted(expected_projected_relationship_ids)[:25]
+                and set(_text_values(profile.get("projection_relationship_ids")))
+                == expected_projection_relationship_ids
+                and expected_projection_relationship_ids
+                <= analysis_projection_channel_relationship_ids
+                and containment.get("source") == section_entity_id
+                and containment.get("target") == record_entity_id
+                and containment.get("kind") == "contains_analysis_record"
+                and containment.get("metadata", {}).get("section") == section
+                and containment.get("metadata", {}).get("locator") == record_locator
+                and containment.get("metadata", {}).get("source_record_sha256")
+                == record_source_sha256
+                and entity_witnesses_valid
+                and relationship_witnesses_valid
+            )
 
         def analysis_projection_profile_valid(profile: object) -> bool:
             if not isinstance(profile, dict):
@@ -6721,6 +7618,27 @@ def verify_cross_reference_file(
                 expected_status = "registered_without_projection"
             else:
                 expected_status = "unmapped"
+            section_record_profiles = record_profiles_by_section.get(section, [])
+            section_record_omissions = _safe_int(
+                profile.get("record_profiles_omitted_by_bound", -1), -1
+            )
+            expected_semantically_projected_record_count = sum(
+                record.get("coverage_status") == "semantically_projected"
+                for record in section_record_profiles
+            )
+            expected_unresolved_record_count = (
+                len(section_record_profiles)
+                - expected_semantically_projected_record_count
+                + max(0, section_record_omissions)
+            )
+            if expected_mode != "semantic" or source_record_count == 0:
+                expected_record_coverage_status = "not_applicable"
+            elif expected_semantically_projected_record_count == source_record_count:
+                expected_record_coverage_status = "complete"
+            elif expected_semantically_projected_record_count:
+                expected_record_coverage_status = "partial"
+            else:
+                expected_record_coverage_status = "none"
             entity = entities_by_id.get(section_entity_id, {})
             entity_metadata = entity.get("metadata", {})
             relation = relationships_by_id.get(section_relationship_id, {})
@@ -6765,6 +7683,21 @@ def verify_cross_reference_file(
                 == _identifier_set_sha256(expected_projected_relationship_ids)
                 and _text_values(profile.get("projected_relationship_id_sample"))
                 == sorted(expected_projected_relationship_ids)[:25]
+                and profile.get("record_coverage_status")
+                == expected_record_coverage_status
+                and expected_record_coverage_status
+                in ANALYSIS_SECTION_RECORD_COVERAGE_STATUSES
+                and profile.get("semantically_projected_record_count")
+                == expected_semantically_projected_record_count
+                and profile.get("unresolved_record_count")
+                == expected_unresolved_record_count
+                and section_record_omissions >= 0
+                and (
+                    expected_mode != "semantic"
+                    or len(section_record_profiles) + section_record_omissions
+                    == source_record_count
+                )
+                and (expected_mode == "semantic" or not section_record_profiles)
                 and section_relationship_id
                 in analysis_projection_channel_relationship_ids
                 and relation.get("source")
@@ -6811,9 +7744,55 @@ def verify_cross_reference_file(
             / max(1, len(analysis_projection_profiles or [])),
             1,
         )
+        expected_semantic_record_count = sum(
+            _safe_int(profile.get("source_record_count", 0))
+            for profile in analysis_projection_profiles or []
+            if isinstance(profile, dict)
+            and profile.get("projection_mode") == "semantic"
+        )
+        expected_semantically_projected_record_count = sum(
+            profile.get("coverage_status") == "semantically_projected"
+            for profile in analysis_record_profiles or []
+            if isinstance(profile, dict)
+        )
+        expected_record_profile_omissions = sum(
+            _safe_int(profile.get("record_profiles_omitted_by_bound", 0))
+            for profile in analysis_projection_profiles or []
+            if isinstance(profile, dict)
+        )
+        expected_unresolved_record_count = (
+            len(analysis_record_profiles or [])
+            - expected_semantically_projected_record_count
+            + expected_record_profile_omissions
+        )
+        expected_record_coverage_percent = round(
+            100
+            * expected_semantically_projected_record_count
+            / max(1, expected_semantic_record_count),
+            1,
+        )
+        expected_analysis_record_relationship_ids = {
+            relationship_id
+            for profile in analysis_record_profiles or []
+            if isinstance(profile, dict)
+            for relationship_id in _text_values(
+                profile.get("projection_relationship_ids")
+            )
+        }
+        analysis_record_profile_entity_ids = [
+            str(profile.get("record_entity_id", ""))
+            for profile in analysis_record_profiles or []
+            if isinstance(profile, dict)
+        ]
+        analysis_record_profile_locators = [
+            (str(profile.get("section", "")), str(profile.get("locator", "")))
+            for profile in analysis_record_profiles or []
+            if isinstance(profile, dict)
+        ]
         checks["analysis_projection_integrity"] = bool(
             isinstance(analysis_projection, dict)
             and isinstance(analysis_projection_profiles, list)
+            and isinstance(analysis_record_profiles, list)
             and len(analysis_scope_entity_ids) == 1
             and analysis_projection.get("analysis_scope_entity_id")
             in analysis_scope_entity_ids
@@ -6832,8 +7811,23 @@ def verify_cross_reference_file(
                 analysis_projection_profile_valid(profile)
                 for profile in analysis_projection_profiles
             )
+            and len(analysis_record_profile_entity_ids) == len(analysis_record_profiles)
+            and all(analysis_record_profile_entity_ids)
+            and len(analysis_record_profile_entity_ids)
+            == len(set(analysis_record_profile_entity_ids))
+            and len(analysis_record_profile_locators)
+            == len(set(analysis_record_profile_locators))
+            and set(analysis_record_profile_entity_ids) == analysis_record_entity_ids
+            and all(
+                analysis_record_profile_valid(profile)
+                for profile in analysis_record_profiles
+            )
             and declared_analysis_projection_relationship_ids
             == analysis_projection_channel_relationship_ids
+            and declared_analysis_record_relationship_ids
+            == expected_analysis_record_relationship_ids
+            and expected_analysis_record_relationship_ids
+            <= analysis_projection_channel_relationship_ids
             and analysis_projection.get("registered_section_names")
             == expected_registered_section_names
             and analysis_projection.get("semantically_projected_section_names")
@@ -6850,11 +7844,21 @@ def verify_cross_reference_file(
             == expected_analysis_projection_coverage_percent
             and analysis_projection.get("material_coverage_percent")
             == expected_analysis_material_projection_coverage_percent
+            and analysis_projection.get("semantic_record_count")
+            == expected_semantic_record_count
+            and analysis_projection.get("semantically_projected_record_count")
+            == expected_semantically_projected_record_count
+            and analysis_projection.get("unresolved_record_count")
+            == expected_unresolved_record_count
+            and analysis_projection.get("record_profiles_omitted_by_bound")
+            == expected_record_profile_omissions
+            and analysis_projection.get("record_coverage_percent")
+            == expected_record_coverage_percent
         )
         if not checks["analysis_projection_integrity"]:
             fail(
                 "cross_reference.analysis_projection_integrity_invalid",
-                "Analysis-output coverage must bind every section digest and reconcile each declared projection surface.",
+                "Analysis-output coverage must bind every section and nested record digest and reconcile each declared projection witness.",
             )
 
         machine_assistance = value.get("machine_assistance_provenance")
@@ -9847,6 +10851,15 @@ def verify_cross_reference_file(
             == len(expected_status_section_names["unmapped"])
             and summary.get("analysis_projection_relationships")
             == len(analysis_projection_channel_relationship_ids)
+            and summary.get("analysis_records") == expected_semantic_record_count
+            and summary.get("semantically_projected_analysis_records")
+            == expected_semantically_projected_record_count
+            and summary.get("unresolved_analysis_records")
+            == expected_unresolved_record_count
+            and summary.get("analysis_record_projection_relationships")
+            == len(expected_analysis_record_relationship_ids)
+            and summary.get("analysis_record_projection_coverage_percent")
+            == expected_record_coverage_percent
             and summary.get("analysis_projection_coverage_percent")
             == expected_analysis_projection_coverage_percent
             and summary.get("analysis_material_projection_coverage_percent")
@@ -10198,6 +11211,23 @@ def verify_cross_reference_file(
         "analysis_material_projection_coverage_percent": (
             value.get("summary", {}).get(
                 "analysis_material_projection_coverage_percent", 0
+            )
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "analysis_record_count": (
+            _safe_int(value.get("summary", {}).get("analysis_records", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "unresolved_analysis_record_count": (
+            _safe_int(value.get("summary", {}).get("unresolved_analysis_records", 0))
+            if isinstance(value, dict) and isinstance(value.get("summary"), dict)
+            else 0
+        ),
+        "analysis_record_projection_coverage_percent": (
+            value.get("summary", {}).get(
+                "analysis_record_projection_coverage_percent", 0
             )
             if isinstance(value, dict) and isinstance(value.get("summary"), dict)
             else 0

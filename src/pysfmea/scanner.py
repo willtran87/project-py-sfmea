@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import copy
 import fnmatch
 import hashlib
@@ -118,6 +119,7 @@ MAX_CONCURRENCY_RELATIONS = 200_000
 MAX_EXCEPTION_RECORDS_PER_COMPONENT = 10_000
 MAX_EXCEPTION_RAISE_RECORDS = 100_000
 MAX_EXCEPTION_HANDLER_RECORDS = 100_000
+MAX_EXCEPTION_FINALIZER_RECORDS = 100_000
 MAX_EXCEPTION_PROPAGATION_EDGES = 200_000
 MAX_STATE_RECORDS_PER_COMPONENT = 10_000
 MAX_STATE_TRANSITIONS = 100_000
@@ -128,7 +130,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-3"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-5"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -300,6 +302,8 @@ class FunctionFacts:
     decorators: list[str]
     parameters: list[str]
     parameter_contracts: list[dict[str, Any]] = field(default_factory=list)
+    class_bases: list[str] = field(default_factory=list)
+    class_declarations: list[dict[str, Any]] = field(default_factory=list)
     calls: set[str] = field(default_factory=set)
     ordered_calls: list[str] = field(default_factory=list)
     call_sites: list[dict[str, Any]] = field(default_factory=list)
@@ -308,6 +312,7 @@ class FunctionFacts:
     alias_bindings_omitted: int = 0
     exception_raises: list[dict[str, Any]] = field(default_factory=list)
     exception_handlers: list[dict[str, Any]] = field(default_factory=list)
+    exception_finalizers: list[dict[str, Any]] = field(default_factory=list)
     exception_records_omitted: int = 0
     state_guards: list[dict[str, Any]] = field(default_factory=list)
     state_transitions: list[dict[str, Any]] = field(default_factory=list)
@@ -671,6 +676,26 @@ def _flow_value(node: ast.AST) -> dict[str, Any]:
     }
 
 
+def _walk_executable_nodes(statements: list[ast.stmt]) -> Iterable[ast.AST]:
+    """Walk runtime statements without attributing nested callable bodies.
+
+    ``ast.walk`` descends into functions and classes declared inside a handler.  Their
+    raises and returns execute later (if at all), so treating them as handler behavior
+    corrupts the exception disposition for the enclosing function.
+    """
+
+    pending: list[ast.AST] = list(reversed(statements))
+    while pending:
+        value = pending.pop()
+        yield value
+        if isinstance(
+            value,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            continue
+        pending.extend(reversed(list(ast.iter_child_nodes(value))))
+
+
 class _FactVisitor(ast.NodeVisitor):
     def __init__(self, facts: FunctionFacts, aliases: dict[str, str]) -> None:
         self.facts = facts
@@ -1032,26 +1057,34 @@ class _FactVisitor(ast.NodeVisitor):
                 isinstance(stmt, (ast.Pass, ast.Continue)) for stmt in handler.body
             ):
                 self.facts.silent_handlers += 1
+            executable_nodes = list(_walk_executable_nodes(handler.body))
             raised_types = [
                 self._exception_raise_type(value.exc)
-                for value in ast.walk(ast.Module(body=handler.body, type_ignores=[]))
+                for value in executable_nodes
                 if isinstance(value, ast.Raise)
             ]
             actions = []
             if any(value is None for value in raised_types):
                 actions.append("reraises")
+            if any(value is not None for value in raised_types):
+                actions.append("raises_explicitly")
             translated_types = sorted(
                 {
                     value
                     for value in raised_types
-                    if value and value not in handler_types
+                    if value
+                    and value.rsplit(".", 1)[-1]
+                    not in {
+                        handler_type.rsplit(".", 1)[-1]
+                        for handler_type in handler_types
+                    }
                 }
             )
             if translated_types:
                 actions.append("translates")
             if any(
                 isinstance(value, (ast.Return, ast.Break, ast.Continue))
-                for value in ast.walk(ast.Module(body=handler.body, type_ignores=[]))
+                for value in executable_nodes
             ):
                 actions.append("control_flow_exit")
             if not actions and (
@@ -1065,7 +1098,7 @@ class _FactVisitor(ast.NodeVisitor):
                 isinstance(value, ast.Call)
                 and _dotted_name(value.func).rsplit(".", 1)[-1].casefold()
                 in {"debug", "info", "warning", "error", "exception", "critical", "log"}
-                for value in ast.walk(ast.Module(body=handler.body, type_ignores=[]))
+                for value in executable_nodes
             ):
                 actions.append("records_or_logs")
             self._record_exception_handler(
@@ -1075,7 +1108,9 @@ class _FactVisitor(ast.NodeVisitor):
                 handler_types,
                 sorted(set(actions)) or ["continues_after_handler"],
                 translated_types,
+                "exception_group" if isinstance(node, ast.TryStar) else "standard",
             )
+        self._record_exception_finalizer(node)
         self._visit_block(node.body, f"try@{node.lineno}:body")
         for index, handler in enumerate(node.handlers):
             if handler.type is not None:
@@ -1176,6 +1211,7 @@ class _FactVisitor(ast.NodeVisitor):
         handler_types: list[str],
         actions: list[str],
         translated_types: list[str],
+        handler_kind: str,
     ) -> None:
         if len(self.facts.exception_handlers) >= MAX_EXCEPTION_RECORDS_PER_COMPONENT:
             self.facts.exception_records_omitted += 1
@@ -1192,11 +1228,85 @@ class _FactVisitor(ast.NodeVisitor):
                 ),
                 "try_line": node.lineno,
                 "line": handler.lineno,
+                "handler_index": index,
+                "handler_kind": handler_kind,
                 "exception_types": handler_types,
                 "binding_name": handler.name or "",
                 "actions": actions,
                 "translated_exception_types": translated_types,
                 "authority": "lexically_scoped_static_exception_handler_candidate",
+            }
+        )
+
+    def _record_exception_finalizer(self, node: ast.Try | ast.TryStar) -> None:
+        if not node.finalbody:
+            return
+        if len(self.facts.exception_finalizers) >= MAX_EXCEPTION_RECORDS_PER_COMPONENT:
+            self.facts.exception_records_omitted += 1
+            return
+        executable_nodes = list(_walk_executable_nodes(node.finalbody))
+        actions: list[str] = []
+        if any(isinstance(value, ast.Return) for value in executable_nodes):
+            actions.append("returns")
+        if any(isinstance(value, ast.Raise) for value in executable_nodes):
+            actions.append("raises")
+        if any(isinstance(value, ast.Break) for value in executable_nodes):
+            actions.append("breaks")
+        if any(isinstance(value, ast.Continue) for value in executable_nodes):
+            actions.append("continues")
+        if any(
+            isinstance(value, ast.Call)
+            and _dotted_name(value.func).rsplit(".", 1)[-1].casefold()
+            in {"debug", "info", "warning", "error", "exception", "critical", "log"}
+            for value in executable_nodes
+        ):
+            actions.append("records_or_logs")
+
+        terminal = node.finalbody[-1]
+        terminal_kind = "none"
+        terminal_exception_type = ""
+        prior_terminal_candidate = any(
+            isinstance(value, (ast.Return, ast.Raise, ast.Break, ast.Continue))
+            for value in _walk_executable_nodes(node.finalbody[:-1])
+        )
+        if not prior_terminal_candidate:
+            if isinstance(terminal, ast.Return) and (
+                terminal.value is None or isinstance(terminal.value, ast.Constant)
+            ):
+                terminal_kind = "return"
+            elif isinstance(terminal, ast.Raise):
+                if terminal.exc is None:
+                    terminal_kind = "reraise"
+                    terminal_exception_type = "active_handler_exception"
+                else:
+                    terminal_kind = "raise"
+                    terminal_exception_type = self._exception_raise_type(
+                        terminal.exc
+                    ) or ("unknown_exception_expression")
+            elif isinstance(terminal, ast.Break):
+                terminal_kind = "break"
+            elif isinstance(terminal, ast.Continue):
+                terminal_kind = "continue"
+        unconditional_terminal = terminal_kind != "none"
+        self.facts.exception_finalizers.append(
+            {
+                "id": stable_id(
+                    "EXCEPTION-FINALIZER",
+                    self.facts.path,
+                    self.facts.qualname,
+                    str(node.lineno),
+                    str(getattr(node.finalbody[0], "lineno", node.lineno)),
+                    terminal_kind,
+                    terminal_exception_type,
+                ),
+                "try_line": node.lineno,
+                "line": getattr(node.finalbody[0], "lineno", node.lineno),
+                "end_line": getattr(node.finalbody[-1], "end_lineno", node.lineno),
+                "actions": sorted(set(actions)),
+                "terminal_kind": terminal_kind,
+                "terminal_exception_type": terminal_exception_type,
+                "unconditional_terminal": unconditional_terminal,
+                "authority": "bounded_top_level_finally_terminal_candidate",
             }
         )
 
@@ -1494,6 +1604,7 @@ class _ModuleCollector(ast.NodeVisitor):
         self.scope_stack: list[str] = []
         self.function_depth = 0
         self.functions: list[FunctionFacts] = []
+        self.class_declarations: list[dict[str, Any]] = []
         self.route_prefixes: dict[str, str] = {}
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -1512,6 +1623,24 @@ class _ModuleCollector(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         if self.function_depth and not self.include_nested:
             return
+        qualname = ".".join([*self.scope_stack, node.name])
+        module_parts = list(Path(self.path).with_suffix("").parts)
+        if module_parts and module_parts[-1] == "__init__":
+            module_parts.pop()
+        module = ".".join(module_parts)
+        self.class_declarations.append(
+            {
+                "reference": f"{module}.{qualname}" if module else qualname,
+                "qualname": qualname,
+                "name": node.name,
+                "bases": [
+                    _resolve_alias_reference(_dotted_name(value), self.aliases)
+                    for value in node.bases
+                    if _dotted_name(value)
+                ],
+                "line": node.lineno,
+            }
+        )
         self._collect_class_model(node)
         self.class_stack.append(node.name)
         self.scope_stack.append(node.name)
@@ -1554,9 +1683,19 @@ class _ModuleCollector(ast.NodeVisitor):
             "StrEnum",
             "Protocol",
         }
+        exception_markers = {"BaseException", "Exception", "Warning"}
+        is_exception_type = bool(
+            node.name.endswith(("Error", "Exception", "Warning"))
+            or any(
+                value.rsplit(".", 1)[-1] in exception_markers
+                or value.rsplit(".", 1)[-1].endswith(("Error", "Exception", "Warning"))
+                for value in bases
+            )
+        )
         is_model = bool(
             fields
             or any(value.rsplit(".", 1)[-1] in model_markers for value in bases)
+            or is_exception_type
             or any(
                 value.rsplit(".", 1)[-1] in {"dataclass", "define", "frozen"}
                 for value in decorators
@@ -1588,7 +1727,7 @@ class _ModuleCollector(ast.NodeVisitor):
         facts = FunctionFacts(
             name=node.name,
             qualname=qualname,
-            kind="class_model",
+            kind="exception_type" if is_exception_type else "class_model",
             path=self.path,
             line=node.lineno,
             end_line=getattr(node, "end_lineno", node.lineno),
@@ -1601,6 +1740,11 @@ class _ModuleCollector(ast.NodeVisitor):
             is_private=node.name.startswith("_"),
             decorators=[value for value in decorators if value],
             parameters=fields,
+            class_bases=[
+                _resolve_alias_reference(value, self.aliases)
+                for value in bases
+                if value
+            ],
         )
         facts.signals.add("data_model")
         if (
@@ -1608,6 +1752,8 @@ class _ModuleCollector(ast.NodeVisitor):
             or decorators
         ):
             facts.signals.add("serialization")
+        if is_exception_type:
+            facts.signals.add("exception_type")
         visitor = _FactVisitor(facts, dict(self.aliases))
         for statement in class_context:
             visitor.visit(statement)
@@ -2251,6 +2397,36 @@ def _module_initialization_facts(
     for statement in executable:
         visitor.visit(statement)
     return facts
+
+
+def _class_declaration_carrier(
+    path: str,
+    declarations: list[dict[str, Any]],
+    context_fingerprint: str,
+) -> FunctionFacts:
+    """Carry type-graph facts through the cache without creating a component."""
+
+    fingerprint = hashlib.sha256(
+        json.dumps(declarations, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return FunctionFacts(
+        name="<class declarations>",
+        qualname="<class declarations>",
+        kind="internal_class_declarations",
+        path=path,
+        line=min(int(value.get("line", 1)) for value in declarations),
+        end_line=max(int(value.get("line", 1)) for value in declarations),
+        signature="static class declarations",
+        source_fingerprint=fingerprint,
+        content_fingerprint=fingerprint,
+        context_fingerprint=context_fingerprint,
+        docstring="Carry static class inheritance declarations for bounded type resolution.",
+        is_async=False,
+        is_private=False,
+        decorators=[],
+        parameters=[],
+        class_declarations=copy.deepcopy(declarations),
+    )
 
 
 def _matches_pattern(value: str, patterns: Iterable[str]) -> bool:
@@ -3843,8 +4019,7 @@ def _contract_components_and_items(
                 (
                     value
                     for value in config.get("hazards", [])
-                    if isinstance(value, dict)
-                    and value.get("id") == linked_hazards[0]
+                    if isinstance(value, dict) and value.get("id") == linked_hazards[0]
                 ),
                 {},
             )
@@ -5054,13 +5229,249 @@ def _concurrency_model(facts_list: list[FunctionFacts]) -> dict[str, Any]:
     }
 
 
-def _exception_type_matches(exception_type: str, handler_types: list[str]) -> bool:
+_DEFINITE_EXCEPTION_MATCH_KINDS = {
+    "exact_type",
+    "builtin_subclass",
+    "project_subclass",
+    "base_exception_catch_all",
+}
+
+
+def _builtin_exception_type(reference: str) -> type[BaseException] | None:
+    value = getattr(builtins, reference.rsplit(".", 1)[-1], None)
+    if isinstance(value, type) and issubclass(value, BaseException):
+        return value
+    return None
+
+
+def _project_exception_hierarchy(
+    facts_list: list[FunctionFacts],
+    class_declarations: list[dict[str, Any]],
+) -> dict[str, set[str]]:
+    """Index declared project exception inheritance without importing repository code."""
+
+    hierarchy: dict[str, set[str]] = defaultdict(set)
+    declaration_references_by_leaf: dict[str, set[str]] = defaultdict(set)
+    for declaration in class_declarations:
+        if not isinstance(declaration, dict):
+            continue
+        bases = {
+            str(value)
+            for value in declaration.get("bases", [])
+            if isinstance(value, str) and value
+        }
+        for declaration_field in ("reference", "qualname", "name"):
+            key = str(declaration.get(declaration_field, ""))
+            if key:
+                hierarchy[key].update(bases)
+        reference = str(declaration.get("reference", ""))
+        name = str(declaration.get("name", ""))
+        if reference and name:
+            declaration_references_by_leaf[name].add(reference)
+    for facts in facts_list:
+        if not facts.class_bases or "exception_type" not in facts.signals:
+            continue
+        module_parts = list(Path(facts.path).with_suffix("").parts)
+        if module_parts and module_parts[-1] == "__init__":
+            module_parts.pop()
+        module = ".".join(module_parts)
+        keys = {facts.name, facts.qualname}
+        if module:
+            keys.add(f"{module}.{facts.qualname}")
+        for key in keys:
+            hierarchy[key].update(facts.class_bases)
+    for leaf, references in declaration_references_by_leaf.items():
+        if len(references) > 1:
+            hierarchy[f"<ambiguous-leaf>:{leaf}"].add("true")
+    return hierarchy
+
+
+def _project_exception_ancestors(
+    reference: str,
+    hierarchy: dict[str, set[str]],
+) -> tuple[set[str], bool]:
+    """Return bounded declared ancestors and whether leaf-name resolution was ambiguous."""
+
+    pending = [reference]
+    visited: set[str] = set()
+    ancestors: set[str] = set()
+    ambiguous = False
+    while pending and len(visited) <= 1_000:
+        value = pending.pop()
+        if value in visited:
+            continue
+        visited.add(value)
+        leaf = value.rsplit(".", 1)[-1]
+        exact = hierarchy.get(value, set())
+        ambiguous = ambiguous or bool(hierarchy.get(f"<ambiguous-leaf>:{leaf}"))
+        bases = set(exact or hierarchy.get(leaf, set()))
+        for base in bases:
+            if base not in ancestors:
+                ancestors.add(base)
+                pending.append(base)
+    return ancestors, ambiguous
+
+
+def _exception_match_kind(
+    exception_type: str,
+    handler_type: str,
+    hierarchy: dict[str, set[str]],
+) -> str | None:
     exception_leaf = exception_type.rsplit(".", 1)[-1]
-    return any(
-        handler_type.rsplit(".", 1)[-1]
-        in {exception_leaf, "Exception", "BaseException"}
-        for handler_type in handler_types
-    )
+    handler_leaf = handler_type.rsplit(".", 1)[-1]
+    if exception_leaf == handler_leaf:
+        return "exact_type"
+    if handler_leaf == "BaseException":
+        return "base_exception_catch_all"
+    exception_builtin = _builtin_exception_type(exception_type)
+    handler_builtin = _builtin_exception_type(handler_type)
+    if exception_builtin is not None and handler_builtin is not None:
+        return (
+            "builtin_subclass"
+            if issubclass(exception_builtin, handler_builtin)
+            else None
+        )
+    ancestors, ambiguous = _project_exception_ancestors(exception_type, hierarchy)
+    ancestor_leaves = {value.rsplit(".", 1)[-1] for value in ancestors}
+    if handler_type in ancestors or handler_leaf in ancestor_leaves:
+        return "ambiguous_project_subclass" if ambiguous else "project_subclass"
+    if handler_leaf == "Exception" or exception_type in {
+        "unknown_exception_expression",
+        "active_handler_exception",
+    }:
+        return "indeterminate_dynamic_type"
+    return None
+
+
+def _select_exception_handler(
+    exception_type: str,
+    control_context: list[Any],
+    handlers_by_try_line: dict[int, list[dict[str, Any]]],
+    hierarchy: dict[str, set[str]],
+) -> dict[str, Any] | None:
+    """Select the nearest, first compatible handler using Python catch order."""
+
+    uncertain: list[dict[str, Any]] = []
+    for try_line in reversed(_active_try_lines(control_context)):
+        handlers = sorted(
+            handlers_by_try_line.get(try_line, []),
+            key=lambda value: int(value.get("handler_index", 0)),
+        )
+        for handler in handlers:
+            kinds = [
+                kind
+                for handler_type in handler.get("exception_types", [])
+                if (
+                    kind := _exception_match_kind(
+                        exception_type,
+                        str(handler_type),
+                        hierarchy,
+                    )
+                )
+                is not None
+            ]
+            definite = next(
+                (kind for kind in kinds if kind in _DEFINITE_EXCEPTION_MATCH_KINDS),
+                "",
+            )
+            if definite:
+                if uncertain:
+                    return {
+                        "status": "indeterminate_handler_order",
+                        "match_kind": "indeterminate_handler_order",
+                        "handlers": [*uncertain, handler],
+                        "selected_handler": None,
+                    }
+                return {
+                    "status": "selected",
+                    "match_kind": definite,
+                    "handlers": [handler],
+                    "selected_handler": handler,
+                }
+            if kinds:
+                uncertain.append(handler)
+        if uncertain:
+            # An uncertain handler in the inner try may or may not pass the
+            # exception to an outer try, so no outer handler can be selected as fact.
+            return {
+                "status": "indeterminate_dynamic_type",
+                "match_kind": "indeterminate_dynamic_type",
+                "handlers": uncertain,
+                "selected_handler": None,
+            }
+    return None
+
+
+def _handler_disposition(selection: dict[str, Any] | None) -> str:
+    if selection is None:
+        return "may_propagate"
+    handler = selection.get("selected_handler")
+    if not isinstance(handler, dict):
+        return "indeterminate_handler_match"
+    actions = set(str(value) for value in handler.get("actions", []))
+    raises_again = bool(actions & {"reraises", "raises_explicitly"})
+    if {"reraises", "raises_explicitly"}.issubset(actions) or (
+        raises_again and "control_flow_exit" in actions
+    ):
+        return "caught_with_mixed_handler_outcome"
+    if "reraises" in actions:
+        return "caught_and_reraised"
+    if "translates" in actions:
+        return "caught_and_translates"
+    if "raises_explicitly" in actions:
+        return "caught_and_raises_explicitly"
+    if "control_flow_exit" in actions:
+        return "caught_and_exits_control_flow"
+    if "suppresses" in actions:
+        return "caught_and_suppresses"
+    return "caught_and_continues"
+
+
+def _disposition_propagates_original(disposition: str) -> bool:
+    return disposition in {
+        "may_propagate",
+        "indeterminate_handler_match",
+        "caught_and_reraised",
+        "caught_and_raises_explicitly",
+        "caught_with_mixed_handler_outcome",
+    }
+
+
+def _select_exception_finalizer(
+    control_context: list[Any],
+    finalizers_by_try_line: dict[int, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Select the last-executing proven terminal finalizer in lexical scope.
+
+    Control contexts are recorded outermost first.  An outer finalizer executes after
+    an inner one, so the first unconditional terminal record is the effective override.
+    Exceptions raised by a finalizer itself are not governed by that same finalizer.
+    """
+
+    for raw in control_context:
+        match = re.fullmatch(r"try@(\d+):(body|handler-\d+|else)", str(raw))
+        if not match:
+            continue
+        finalizer = finalizers_by_try_line.get(int(match.group(1)))
+        if finalizer is not None and finalizer.get("unconditional_terminal") is True:
+            return finalizer
+    return None
+
+
+def _apply_exception_finalizer(
+    disposition: str,
+    finalizer: dict[str, Any] | None,
+) -> str:
+    if finalizer is None:
+        return disposition
+    terminal_kind = str(finalizer.get("terminal_kind", "none"))
+    if terminal_kind == "raise":
+        return "replaced_by_finally_exception"
+    if terminal_kind in {"return", "break", "continue"} and (
+        _disposition_propagates_original(disposition)
+    ):
+        return "suppressed_by_finally_control_flow"
+    return disposition
 
 
 def _active_try_lines(control_context: list[Any]) -> list[int]:
@@ -5072,39 +5483,100 @@ def _active_try_lines(control_context: list[Any]) -> list[int]:
     return lines
 
 
-def _exception_propagation_model(facts_list: list[FunctionFacts]) -> dict[str, Any]:
-    """Build a bounded, lexical typed-exception propagation approximation."""
+def _active_exception_handler(
+    control_context: list[Any],
+    handlers_by_try_line: dict[int, list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    for raw in reversed(control_context):
+        match = re.fullmatch(r"try@(\d+):handler-(\d+)", str(raw))
+        if not match:
+            continue
+        try_line = int(match.group(1))
+        handler_index = int(match.group(2)) - 1
+        return next(
+            (
+                value
+                for value in handlers_by_try_line.get(try_line, [])
+                if int(value.get("handler_index", -1)) == handler_index
+            ),
+            None,
+        )
+    return None
+
+
+def _exception_propagation_model(
+    facts_list: list[FunctionFacts],
+    class_declarations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a bounded, inheritance- and handler-order-aware exception model."""
 
     by_file_name, by_full = _internal_resolution_indexes(facts_list)
+    hierarchy = _project_exception_hierarchy(facts_list, class_declarations)
+    project_exception_references = {
+        str(declaration.get("reference", ""))
+        for declaration in class_declarations
+        if isinstance(declaration, dict)
+        and declaration.get("reference")
+        and any(
+            _builtin_exception_type(ancestor) is not None
+            for ancestor in _project_exception_ancestors(
+                str(declaration.get("reference", "")), hierarchy
+            )[0]
+        )
+    }
     handlers_by_component: dict[str, dict[int, list[dict[str, Any]]]] = {}
+    finalizers_by_component: dict[str, dict[int, dict[str, Any]]] = {}
     outgoing: dict[str, set[str]] = {}
     locally_caught_raises = 0
+    locally_rethrown_raises = 0
+    local_raises_suppressed_by_finally = 0
+    local_raises_replaced_by_finally = 0
     for facts in facts_list:
         reference = _component_ref(facts)
         by_try_line: dict[int, list[dict[str, Any]]] = defaultdict(list)
         for handler in facts.exception_handlers:
             by_try_line[int(handler.get("try_line", 0))].append(handler)
         handlers_by_component[reference] = by_try_line
+        finalizers_by_try_line = {
+            int(finalizer.get("try_line", 0)): finalizer
+            for finalizer in facts.exception_finalizers
+        }
+        finalizers_by_component[reference] = finalizers_by_try_line
         outgoing[reference] = set()
         for raised in facts.exception_raises:
-            exception_type = str(
-                raised.get("exception_type", "unknown_exception_expression")
-            )
-            active_handlers = [
-                handler
-                for line in _active_try_lines(raised.get("control_context", []))
-                for handler in by_try_line.get(line, [])
+            control_context = raised.get("control_context", [])
+            exception_types = [
+                str(raised.get("exception_type", "unknown_exception_expression"))
             ]
-            if any(
-                _exception_type_matches(
+            if raised.get("bare_reraise"):
+                active_handler = _active_exception_handler(control_context, by_try_line)
+                if active_handler is not None:
+                    exception_types = [
+                        str(value)
+                        for value in active_handler.get("exception_types", [])
+                    ] or ["active_handler_exception"]
+            for exception_type in exception_types:
+                selection = _select_exception_handler(
                     exception_type,
-                    [str(value) for value in handler.get("exception_types", [])],
+                    control_context,
+                    by_try_line,
+                    hierarchy,
                 )
-                for handler in active_handlers
-            ):
-                locally_caught_raises += 1
-            else:
-                outgoing[reference].add(exception_type)
+                handler_disposition = _handler_disposition(selection)
+                finalizer = _select_exception_finalizer(
+                    control_context, finalizers_by_try_line
+                )
+                disposition = _apply_exception_finalizer(handler_disposition, finalizer)
+                if selection is not None and selection.get("selected_handler"):
+                    locally_caught_raises += 1
+                if disposition == "suppressed_by_finally_control_flow":
+                    local_raises_suppressed_by_finally += 1
+                elif disposition == "replaced_by_finally_exception":
+                    local_raises_replaced_by_finally += 1
+                if _disposition_propagates_original(disposition):
+                    outgoing[reference].add(exception_type)
+                    if disposition != "may_propagate":
+                        locally_rethrown_raises += 1
 
     changed = True
     iterations = 0
@@ -5114,6 +5586,7 @@ def _exception_propagation_model(facts_list: list[FunctionFacts]) -> dict[str, A
         for caller in sorted(facts_list, key=_component_ref):
             caller_reference = _component_ref(caller)
             by_try_line = handlers_by_component.get(caller_reference, {})
+            finalizers_by_try_line = finalizers_by_component.get(caller_reference, {})
             for site in caller.call_sites:
                 called = str(site.get("reference", ""))
                 targets = _resolve_internal_targets(
@@ -5125,26 +5598,21 @@ def _exception_propagation_model(facts_list: list[FunctionFacts]) -> dict[str, A
                 for target in targets:
                     target_reference = _component_ref(target)
                     for exception_type in sorted(outgoing.get(target_reference, set())):
-                        active_handlers = [
-                            handler
-                            for line in _active_try_lines(
-                                site.get("control_context", [])
-                            )
-                            for handler in by_try_line.get(line, [])
-                        ]
-                        matching = [
-                            handler
-                            for handler in active_handlers
-                            if _exception_type_matches(
-                                exception_type,
-                                [
-                                    str(value)
-                                    for value in handler.get("exception_types", [])
-                                ],
-                            )
-                        ]
+                        selection = _select_exception_handler(
+                            exception_type,
+                            site.get("control_context", []),
+                            by_try_line,
+                            hierarchy,
+                        )
+                        disposition = _apply_exception_finalizer(
+                            _handler_disposition(selection),
+                            _select_exception_finalizer(
+                                site.get("control_context", []),
+                                finalizers_by_try_line,
+                            ),
+                        )
                         if (
-                            not matching
+                            _disposition_propagates_original(disposition)
                             and exception_type not in outgoing[caller_reference]
                         ):
                             outgoing[caller_reference].add(exception_type)
@@ -5152,9 +5620,12 @@ def _exception_propagation_model(facts_list: list[FunctionFacts]) -> dict[str, A
 
     edges: list[dict[str, Any]] = []
     total_edges = 0
+    disposition_counts: Counter[str] = Counter()
+    match_kind_counts: Counter[str] = Counter()
     for caller in sorted(facts_list, key=_component_ref):
         caller_reference = _component_ref(caller)
         by_try_line = handlers_by_component.get(caller_reference, {})
+        finalizers_by_try_line = finalizers_by_component.get(caller_reference, {})
         for site in caller.call_sites:
             targets = _resolve_internal_targets(
                 caller,
@@ -5170,26 +5641,34 @@ def _exception_propagation_model(facts_list: list[FunctionFacts]) -> dict[str, A
             for target in targets:
                 target_reference = _component_ref(target)
                 for exception_type in sorted(outgoing.get(target_reference, set())):
-                    active_handlers = [
-                        handler
-                        for line in _active_try_lines(site.get("control_context", []))
-                        for handler in by_try_line.get(line, [])
-                    ]
-                    matching = [
-                        handler
-                        for handler in active_handlers
-                        if _exception_type_matches(
-                            exception_type,
-                            [
-                                str(value)
-                                for value in handler.get("exception_types", [])
-                            ],
-                        )
-                    ]
-                    disposition = (
-                        "caught_by_lexical_handler" if matching else "may_propagate"
+                    selection = _select_exception_handler(
+                        exception_type,
+                        site.get("control_context", []),
+                        by_try_line,
+                        hierarchy,
+                    )
+                    finalizer = _select_exception_finalizer(
+                        site.get("control_context", []), finalizers_by_try_line
+                    )
+                    disposition = _apply_exception_finalizer(
+                        _handler_disposition(selection), finalizer
+                    )
+                    handler_records = (
+                        selection.get("handlers", []) if selection is not None else []
+                    )
+                    selected_handler = (
+                        selection.get("selected_handler")
+                        if selection is not None
+                        else None
+                    )
+                    match_kind = (
+                        str(selection.get("match_kind", "no_handler_match"))
+                        if selection is not None
+                        else "no_handler_match"
                     )
                     total_edges += 1
+                    disposition_counts[disposition] += 1
+                    match_kind_counts[match_kind] += 1
                     if len(edges) < MAX_EXCEPTION_PROPAGATION_EDGES:
                         edges.append(
                             {
@@ -5219,16 +5698,47 @@ def _exception_propagation_model(facts_list: list[FunctionFacts]) -> dict[str, A
                                 "exception_type": exception_type,
                                 "disposition": disposition,
                                 "handler_ids": [
-                                    str(value.get("id", "")) for value in matching
+                                    str(value.get("id", ""))
+                                    for value in handler_records
                                 ],
+                                "selected_handler_id": str(
+                                    selected_handler.get("id", "")
+                                )
+                                if isinstance(selected_handler, dict)
+                                else "",
+                                "handler_actions": [
+                                    str(value)
+                                    for value in selected_handler.get("actions", [])
+                                ]
+                                if isinstance(selected_handler, dict)
+                                else [],
+                                "finalizer_id": str(finalizer.get("id", ""))
+                                if isinstance(finalizer, dict)
+                                else "",
+                                "finalizer_terminal_kind": str(
+                                    finalizer.get("terminal_kind", "")
+                                )
+                                if isinstance(finalizer, dict)
+                                else "",
+                                "finalizer_exception_type": str(
+                                    finalizer.get("terminal_exception_type", "")
+                                )
+                                if isinstance(finalizer, dict)
+                                else "",
+                                "match_kind": match_kind,
+                                "propagates_original": _disposition_propagates_original(
+                                    disposition
+                                ),
                                 "resolution": resolution,
-                                "authority": "bounded_lexical_typed_exception_propagation_candidate",
+                                "authority": "bounded_inheritance_and_handler_order_aware_exception_propagation_candidate",
                             }
                         )
     raises: list[dict[str, Any]] = []
     handlers: list[dict[str, Any]] = []
+    finalizers: list[dict[str, Any]] = []
     raises_discovered = 0
     handlers_discovered = 0
+    finalizers_discovered = 0
     source_omitted = 0
     for facts in sorted(facts_list, key=_component_ref):
         source_omitted += facts.exception_records_omitted
@@ -5256,8 +5766,21 @@ def _exception_propagation_model(facts_list: list[FunctionFacts]) -> dict[str, A
                         "component_reference": _component_ref(facts),
                     }
                 )
+        for record in facts.exception_finalizers:
+            finalizers_discovered += 1
+            if len(finalizers) < MAX_EXCEPTION_FINALIZER_RECORDS:
+                finalizers.append(
+                    {
+                        **copy.deepcopy(record),
+                        "component_id": stable_id(
+                            "CMP", facts.path, facts.qualname, facts.kind
+                        ),
+                        "component_reference": _component_ref(facts),
+                    }
+                )
     source_omitted += raises_discovered - len(raises)
     source_omitted += handlers_discovered - len(handlers)
+    source_omitted += finalizers_discovered - len(finalizers)
     return {
         "format": "pysfmea-exception-propagation-1",
         "summary": {
@@ -5265,30 +5788,43 @@ def _exception_propagation_model(facts_list: list[FunctionFacts]) -> dict[str, A
             "raise_records_embedded": len(raises),
             "handler_records_discovered": handlers_discovered,
             "handler_records_embedded": len(handlers),
+            "finalizer_records_discovered": finalizers_discovered,
+            "finalizer_records_embedded": len(finalizers),
+            "unconditional_terminal_finalizers": sum(
+                value.get("unconditional_terminal") is True for value in finalizers
+            ),
             "source_records_omitted": source_omitted,
             "propagation_edges_discovered": total_edges,
             "propagation_edges_embedded": len(edges),
             "propagation_edges_omitted": total_edges - len(edges),
             "locally_caught_raise_candidates": locally_caught_raises,
+            "locally_rethrown_raise_candidates": locally_rethrown_raises,
+            "local_raises_suppressed_by_finally": local_raises_suppressed_by_finally,
+            "local_raises_replaced_by_finally": local_raises_replaced_by_finally,
             "outgoing_exception_types": sum(len(value) for value in outgoing.values()),
             "fixed_point_iterations": iterations,
+            "project_exception_types_indexed": len(project_exception_references),
+            "edge_dispositions": dict(sorted(disposition_counts.items())),
+            "handler_match_kinds": dict(sorted(match_kind_counts.items())),
             "truncated": bool(source_omitted or total_edges > len(edges)),
         },
         "raises": raises,
         "handlers": handlers,
+        "finalizers": finalizers,
         "edges": edges,
         "limits": {
             "records_per_component": MAX_EXCEPTION_RECORDS_PER_COMPONENT,
             "raise_records": MAX_EXCEPTION_RAISE_RECORDS,
             "handler_records": MAX_EXCEPTION_HANDLER_RECORDS,
+            "finalizer_records": MAX_EXCEPTION_FINALIZER_RECORDS,
             "propagation_edges": MAX_EXCEPTION_PROPAGATION_EDGES,
         },
         "limitations": [
-            "Handler matching uses statically named exception types and broad-base recognition; inheritance and runtime aliases are not resolved.",
-            "Propagation is path-insensitive beyond lexical try-body scope and does not model ExceptionGroup splitting, callbacks, generators, native extensions, or dynamic dispatch completely.",
+            "Handler selection resolves built-in inheritance and statically declared project exception bases, then respects nearest-try and first-handler order; dynamic aliases and ambiguous same-named project classes remain explicit indeterminate matches.",
+            "Bare or literal-return, explicit-raise, break, and continue statements at the end of a finally block are modeled as bounded terminal candidates; evaluated returns, competing prior exits, conditional and nested path feasibility, ExceptionGroup splitting, callbacks, generators, native extensions, and dynamic dispatch remain incomplete.",
             "A propagation edge is a conservative review candidate, not proof that the call or exception is runtime reachable.",
         ],
-        "authority": "bounded_typed_static_exception_model_not_runtime_or_path_proof",
+        "authority": "bounded_inheritance_handler_order_and_finalizer_aware_static_exception_model_not_runtime_or_path_proof",
     }
 
 
@@ -5716,9 +6252,7 @@ def _resilience_semantics_model(facts_list: list[FunctionFacts]) -> dict[str, An
                     MAX_RETRY_AMPLIFICATION,
                     factor * local_retry_factor.get(target_reference, 1),
                 )
-                stack.append(
-                    (target_reference, [*path, target_reference], next_factor)
-                )
+                stack.append((target_reference, [*path, target_reference], next_factor))
         if best_factor > 1 or cycle:
             retry_paths.append(
                 {
@@ -7178,7 +7712,29 @@ def _candidate_rules(
     analysis_rules: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     name = facts.qualname
-    if facts.kind == "class_model":
+    if facts.kind == "exception_type":
+        rules = [
+            _rule(
+                "detection.exception_contract",
+                "Incorrect / ambiguous exception contract",
+                f"{name} conveys the wrong failure category, loses required context, or is handled at an unsafe abstraction boundary.",
+                "A caller raises, translates, catches, logs, serializes, or exposes this declared exception type.",
+                "The failure is misclassified, masked, retried incorrectly, or translated into an incompatible caller-visible response.",
+                [
+                    "Incorrect exception inheritance",
+                    "Ambiguous or overly broad catch contract",
+                    "Required failure context omitted",
+                    "Inconsistent translation across interface boundaries",
+                ],
+                [
+                    "Specify the exception meaning, required context, and permitted translation boundaries",
+                    "Test subclass catch order, rethrow/translation, diagnostics, and public error mapping",
+                    "Trace every statically resolved producer and consumer of the exception type",
+                ],
+                "high",
+            )
+        ]
+    elif facts.kind == "class_model":
         rules = [
             _rule(
                 "data.model_contract",
@@ -7777,6 +8333,7 @@ def _component_dict(
         "decorators": facts.decorators,
         "parameters": facts.parameters,
         "parameter_contracts": copy.deepcopy(facts.parameter_contracts),
+        "class_bases": list(facts.class_bases),
         "calls": sorted(facts.calls),
         "ordered_calls": facts.ordered_calls,
         "call_sites": copy.deepcopy(facts.call_sites),
@@ -7785,6 +8342,7 @@ def _component_dict(
         "alias_bindings_omitted": facts.alias_bindings_omitted,
         "exception_raises": copy.deepcopy(facts.exception_raises),
         "exception_handlers": copy.deepcopy(facts.exception_handlers),
+        "exception_finalizers": copy.deepcopy(facts.exception_finalizers),
         "exception_records_omitted": facts.exception_records_omitted,
         "state_guards": copy.deepcopy(facts.state_guards),
         "state_transitions": copy.deepcopy(facts.state_transitions),
@@ -8226,12 +8784,33 @@ def scan_repository(
         )
         if module_facts:
             file_facts.append(module_facts)
+        if collector.class_declarations:
+            if file_facts:
+                file_facts[0].class_declarations = copy.deepcopy(
+                    collector.class_declarations
+                )
+            else:
+                file_facts.append(
+                    _class_declaration_carrier(
+                        relative,
+                        collector.class_declarations,
+                        _module_context_fingerprint(tree),
+                    )
+                )
         _disambiguate_lexical_fact_collisions(file_facts)
         facts_list.extend(file_facts)
         if cache_entries is not None:
             cache_entries[cache_key] = copy.deepcopy(file_facts)
             cache_misses += 1
             used_cache_keys.add(cache_key)
+    class_declarations = [
+        copy.deepcopy(declaration)
+        for facts in facts_list
+        for declaration in facts.class_declarations
+    ]
+    facts_list = [
+        facts for facts in facts_list if facts.kind != "internal_class_declarations"
+    ]
     _compose_registered_route_prefixes(
         facts_list, source_snapshots, root_path, warnings
     )
@@ -8341,7 +8920,7 @@ def scan_repository(
     interprocedural_data_flow = _interprocedural_data_flow(facts_list)
     alias_object_flow = _alias_object_flow(facts_list)
     concurrency_model = _concurrency_model(facts_list)
-    exception_propagation = _exception_propagation_model(facts_list)
+    exception_propagation = _exception_propagation_model(facts_list, class_declarations)
     state_machine_model = _state_machine_model(facts_list)
     resilience_semantics = _resilience_semantics_model(facts_list)
     authorization_scope_flow = _authorization_scope_flow(
@@ -8442,8 +9021,10 @@ def scan_repository(
         )
     exception_raise_ids: dict[str, list[str]] = defaultdict(list)
     exception_handler_ids: dict[str, list[str]] = defaultdict(list)
+    exception_finalizer_ids: dict[str, list[str]] = defaultdict(list)
     exception_inbound_edge_ids: dict[str, list[str]] = defaultdict(list)
     exception_outbound_edge_ids: dict[str, list[str]] = defaultdict(list)
+    exception_edges_by_id: dict[str, dict[str, Any]] = {}
     for raised in exception_propagation["raises"]:
         exception_raise_ids[str(raised.get("component_id", ""))].append(
             str(raised["id"])
@@ -8452,7 +9033,12 @@ def scan_repository(
         exception_handler_ids[str(handler.get("component_id", ""))].append(
             str(handler["id"])
         )
+    for finalizer in exception_propagation["finalizers"]:
+        exception_finalizer_ids[str(finalizer.get("component_id", ""))].append(
+            str(finalizer["id"])
+        )
     for edge in exception_propagation["edges"]:
+        exception_edges_by_id[str(edge["id"])] = edge
         exception_outbound_edge_ids[str(edge.get("callee_component_id", ""))].append(
             str(edge["id"])
         )
@@ -8531,6 +9117,7 @@ def scan_repository(
         }
         raise_ids = exception_raise_ids.get(component_id, [])
         handler_ids = exception_handler_ids.get(component_id, [])
+        finalizer_ids = exception_finalizer_ids.get(component_id, [])
         incoming_exception_edges = exception_inbound_edge_ids.get(component_id, [])
         outgoing_exception_edges = exception_outbound_edge_ids.get(component_id, [])
         component["exception_flow"] = {
@@ -8538,12 +9125,51 @@ def scan_repository(
             "raises_omitted": max(0, len(raise_ids) - 1_000),
             "handler_ids": handler_ids[:1_000],
             "handlers_omitted": max(0, len(handler_ids) - 1_000),
+            "finalizer_ids": finalizer_ids[:1_000],
+            "finalizers_omitted": max(0, len(finalizer_ids) - 1_000),
             "incoming_edge_ids": incoming_exception_edges[:2_000],
             "incoming_edges_omitted": max(0, len(incoming_exception_edges) - 2_000),
             "outgoing_edge_ids": outgoing_exception_edges[:2_000],
             "outgoing_edges_omitted": max(0, len(outgoing_exception_edges) - 2_000),
             "authority": "references_to_complete_top_level_static_exception_model",
         }
+        incoming_exception_records = [
+            exception_edges_by_id[value]
+            for value in incoming_exception_edges
+            if value in exception_edges_by_id
+        ]
+        component["exception_flow"]["incoming_dispositions"] = dict(
+            sorted(
+                Counter(
+                    str(value.get("disposition", "unknown"))
+                    for value in incoming_exception_records
+                ).items()
+            )
+        )
+        component["exception_flow"]["incoming_exception_types"] = sorted(
+            {
+                str(value.get("exception_type", "unknown"))
+                for value in incoming_exception_records
+            }
+        )[:1_000]
+        component["exception_flow"]["incoming_exception_types_omitted"] = max(
+            0,
+            len(
+                {
+                    str(value.get("exception_type", "unknown"))
+                    for value in incoming_exception_records
+                }
+            )
+            - 1_000,
+        )
+        component["exception_flow"]["propagating_incoming_edges"] = sum(
+            bool(value.get("propagates_original"))
+            for value in incoming_exception_records
+        )
+        component["exception_flow"]["indeterminate_incoming_edges"] = sum(
+            value.get("disposition") == "indeterminate_handler_match"
+            for value in incoming_exception_records
+        )
         guard_ids = state_guard_ids.get(component_id, [])
         transition_ids = state_transition_ids.get(component_id, [])
         component["state_machine"] = {
@@ -8593,8 +9219,59 @@ def scan_repository(
         }
     finish_phase("component_and_candidate_generation")
 
+    components_by_id = {
+        str(component.get("id", "")): component for component in components
+    }
     for item in items:
         scanner = item.setdefault("scanner", {})
+        component = components_by_id.get(str(item.get("component_id", "")), {})
+        exception_flow = component.get("exception_flow", {})
+        exception_edge_ids = list(exception_flow.get("incoming_edge_ids", []))
+        exception_exposure = {
+            "edge_ids": exception_edge_ids[:25],
+            "edges_omitted": max(0, len(exception_edge_ids) - 25)
+            + int(exception_flow.get("incoming_edges_omitted", 0) or 0),
+            "exception_types": list(exception_flow.get("incoming_exception_types", [])),
+            "exception_types_omitted": int(
+                exception_flow.get("incoming_exception_types_omitted", 0) or 0
+            ),
+            "dispositions": copy.deepcopy(
+                exception_flow.get("incoming_dispositions", {})
+            ),
+            "propagating_edges": int(
+                exception_flow.get("propagating_incoming_edges", 0) or 0
+            ),
+            "indeterminate_edges": int(
+                exception_flow.get("indeterminate_incoming_edges", 0) or 0
+            ),
+            "authority": (
+                "bounded_static_exception_exposure_for_test_selection_not_runtime_"
+                "reachability_or_effect_proof"
+            ),
+        }
+        if exception_edge_ids:
+            scanner["exception_exposure"] = exception_exposure
+            scanner.setdefault("evidence", []).append(
+                "Typed exception exposure: "
+                f"{len(exception_edge_ids) + int(exception_flow.get('incoming_edges_omitted', 0) or 0)} "
+                "resolved call-edge candidate(s); dispositions "
+                + ", ".join(
+                    f"{key}={value}"
+                    for key, value in exception_exposure["dispositions"].items()
+                )
+                + "."
+            )
+        if exception_edge_ids and exception_exposure["propagating_edges"]:
+            recommendation = (
+                "Inject the statically propagated exception types at their recorded call "
+                "boundaries and assert the required containment, degraded response, state "
+                "integrity, diagnostics, and caller-visible contract."
+            )
+            actions = item.setdefault("review", {}).setdefault(
+                "recommended_actions", []
+            )
+            if recommendation not in actions:
+                actions.append(recommendation)
         scanner["citations"] = citations_for_rule(
             str(scanner.get("rule_id", "")),
             guidance_profiles,

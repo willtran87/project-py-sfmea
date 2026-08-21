@@ -501,6 +501,17 @@ def cross_reference_diagram(
         if isinstance(profile, dict)
         and str(profile.get("section_entity_id", "")) in entity_by_id
     )
+    unresolved_record_profiles = [
+        profile
+        for profile in projection_coverage.get("record_profiles", [])
+        if isinstance(profile, dict)
+        and profile.get("coverage_status") == "unresolved_projection"
+    ][:25]
+    selected.update(
+        str(profile.get("record_entity_id", ""))
+        for profile in unresolved_record_profiles
+        if str(profile.get("record_entity_id", "")) in entity_by_id
+    )
     for chain in chains:
         selected.update(
             entity_id
@@ -583,6 +594,7 @@ def cross_reference_diagram(
     layer_by_kind = {
         "analysis_scope": 0,
         "analysis_section": 1,
+        "analysis_record": 2,
         "methodology": 0,
         "guidance_source": 0,
         "methodology_review_check": 1,
@@ -608,6 +620,7 @@ def cross_reference_diagram(
         "concurrency_relation": 1,
         "exception_raise": 1,
         "exception_handler": 1,
+        "exception_finalizer": 1,
         "exception_propagation_edge": 1,
         "state_candidate": 1,
         "state_guard": 1,
@@ -684,6 +697,9 @@ def cross_reference_diagram(
                 " rather than relying on opaque citation metadata."
                 " Digest-bound analysis-section nodes expose which scanner outputs are"
                 " semantically projected, provenance-only, empty, or unmapped."
+                " Bounded analysis-record nodes surface unresolved nested projection"
+                " witnesses while complete record coverage remains summarized to avoid"
+                " overwhelming the review graph."
                 " Resolved context values, exact finding-context matches, and digest-bound "
                 "lifecycle events expose configuration and review history without implying "
                 "semantic equivalence or authenticated approval."
@@ -720,6 +736,14 @@ def cross_reference_diagram(
                 "registered_without_projection_analysis_sections": summary[
                     "registered_without_projection_analysis_sections"
                 ],
+                "analysis_records": summary["analysis_records"],
+                "unresolved_analysis_records": summary["unresolved_analysis_records"],
+                "analysis_record_projection_coverage_percent": summary[
+                    "analysis_record_projection_coverage_percent"
+                ],
+                "displayed_unresolved_analysis_records": len(
+                    unresolved_record_profiles
+                ),
                 "quality_gate_diagnostics": summary["quality_gate_diagnostics"],
                 "adapter_runs": summary["adapter_runs"],
                 "findings_with_tool_provenance": summary[

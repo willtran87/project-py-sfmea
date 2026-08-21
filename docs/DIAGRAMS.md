@@ -80,8 +80,11 @@ nodes and selected findings, making document lineage traversable without treatin
 applicability or compliance evidence. The analysis-scope node also connects to one digest-bound
 node per top-level analysis output, exposing semantic, provenance-only, empty,
 registered-without-projection, and unmapped coverage alongside the selected evidence chains. Its
-metadata reports coverage and gap counts and binds the exact analysis and complete cross-reference
-projection digests. The view is bounded to 40 finding chains and 500 entities; use
+metadata reports section and nested-record witness coverage, gap counts, and the exact analysis and
+complete cross-reference projection digests. Up to 25 unresolved `analysis_record` nodes are shown
+with their section containment and available witness edges; complete record populations remain
+summarized so they do not overwhelm the review graph. The view is bounded to 40 finding chains and
+500 entities; use
 `sfmea cross-reference ANALYSIS --format json` for the complete machine-readable relationship
 and discrepancy registers. Static agreement is corroboration, runtime presence is a bounded
 observation, and configured links retain project-supplied authority. Compound exposure nodes are
@@ -140,6 +143,13 @@ runtime relations as corroborated/not-observed, and observed edges as
 statically-predicted/runtime-only; timing state and valid durations remain in the canonical
 model. These projections describe bounded syntax and observations; they are not path-sensitive
 control-flow, reachability, schedule, receiver-type, or causal proofs.
+
+The cross-reference diagram projects each typed exception edge as a shared record node linked to
+its callee and caller. The record preserves exception type, selected-handler disposition, match
+provenance, terminal-finalizer override provenance, and whether the original type can continue
+propagating. Finalizers are also first-class component-linked semantic nodes. A
+suppressed or translated static edge is still a test-selection lead, not evidence that the handler
+ran or that its response is safe.
 
 Failure-propagation diagrams combine the reviewed local, next-higher, and end-effect
 chain with up to three conservative upstream caller paths per component and six caller

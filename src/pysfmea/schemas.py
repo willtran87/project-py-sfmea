@@ -36,10 +36,14 @@ from .browser_quality import (
 )
 from .cross_reference import (
     ANALYSIS_PROJECTION_STATUSES,
+    ANALYSIS_RECORD_PROJECTION_STATUSES,
+    ANALYSIS_SECTION_RECORD_COVERAGE_STATUSES,
     CROSS_REFERENCE_FORMAT,
     CROSS_REFERENCE_VERIFICATION_CHECKS,
     CROSS_REFERENCE_VERIFICATION_FORMAT,
     LIFECYCLE_SCOPE_PARENT_RELATIONS,
+    MAX_ANALYSIS_PROJECTION_RECORDS,
+    MAX_ANALYSIS_RECORD_IDENTITY_TOKENS,
     MAX_CHAINS,
     MAX_ENTITIES,
     MAX_FUSIONS,
@@ -1429,7 +1433,48 @@ def _cross_reference_schema() -> dict[str, Any]:
             "maxItems": 25,
             "items": text,
         },
+        "record_coverage_status": {
+            "enum": list(ANALYSIS_SECTION_RECORD_COVERAGE_STATUSES)
+        },
+        "semantically_projected_record_count": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "unresolved_record_count": {"type": "integer", "minimum": 0},
+        "record_profiles_omitted_by_bound": {
+            "type": "integer",
+            "minimum": 0,
+        },
         "rationale": text,
+    }
+    analysis_record_projection_profile_properties = {
+        "section": identifier,
+        "path": text,
+        "locator": text,
+        "record_entity_id": identifier,
+        "source_record_sha256": digest,
+        "identity_tokens": {
+            "type": "array",
+            "maxItems": MAX_ANALYSIS_RECORD_IDENTITY_TOKENS,
+            "items": {"type": "string", "maxLength": 8_192},
+        },
+        "identity_tokens_sha256": digest,
+        "coverage_status": {"enum": list(ANALYSIS_RECORD_PROJECTION_STATUSES)},
+        "projected_entity_count": {"type": "integer", "minimum": 0},
+        "projected_entity_ids_sha256": digest,
+        "projected_entity_id_sample": {
+            "type": "array",
+            "maxItems": 25,
+            "items": text,
+        },
+        "projected_relationship_count": {"type": "integer", "minimum": 0},
+        "projected_relationship_ids_sha256": digest,
+        "projected_relationship_id_sample": {
+            "type": "array",
+            "maxItems": 25,
+            "items": text,
+        },
+        "projection_relationship_ids": string_list,
     }
     analysis_projection_coverage_properties = {
         "analysis_scope_entity_id": identifier,
@@ -1443,6 +1488,16 @@ def _cross_reference_schema() -> dict[str, Any]:
                 "additionalProperties": False,
             },
         },
+        "record_profiles": {
+            "type": "array",
+            "maxItems": MAX_ANALYSIS_PROJECTION_RECORDS,
+            "items": {
+                "type": "object",
+                "required": list(analysis_record_projection_profile_properties),
+                "properties": analysis_record_projection_profile_properties,
+                "additionalProperties": False,
+            },
+        },
         "registered_section_names": string_list,
         "semantically_projected_section_names": string_list,
         "registered_without_projection_section_names": string_list,
@@ -1450,6 +1505,22 @@ def _cross_reference_schema() -> dict[str, Any]:
         "empty_section_names": string_list,
         "unmapped_section_names": string_list,
         "relationship_ids": string_list,
+        "record_relationship_ids": string_list,
+        "semantic_record_count": {"type": "integer", "minimum": 0},
+        "semantically_projected_record_count": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "unresolved_record_count": {"type": "integer", "minimum": 0},
+        "record_profiles_omitted_by_bound": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "record_coverage_percent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+        },
         "coverage_percent": {"type": "number", "minimum": 0, "maximum": 100},
         "material_coverage_percent": {
             "type": "number",
@@ -1853,6 +1924,21 @@ def _cross_reference_schema() -> dict[str, Any]:
         "analysis_projection_relationships": {
             "type": "integer",
             "minimum": 0,
+        },
+        "analysis_records": {"type": "integer", "minimum": 0},
+        "semantically_projected_analysis_records": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "unresolved_analysis_records": {"type": "integer", "minimum": 0},
+        "analysis_record_projection_relationships": {
+            "type": "integer",
+            "minimum": 0,
+        },
+        "analysis_record_projection_coverage_percent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
         },
         "analysis_projection_coverage_percent": {
             "type": "number",

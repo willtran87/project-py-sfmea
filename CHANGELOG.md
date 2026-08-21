@@ -5,6 +5,23 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Deepen typed exception analysis with Python-compatible nearest-`try` and first-handler
+  selection, exact built-in inheritance (including the `Exception`/`BaseException` boundary),
+  statically declared project exception inheritance, and explicit indeterminate outcomes for
+  dynamic or ambiguous types. Propagation edges now distinguish suppression, continuation,
+  control-flow exit, rethrow, explicit raise, translation, mixed outcomes, and unresolved handler
+  matches; retain match provenance and complete disposition accounting; exclude raises inside
+  nested callable declarations from enclosing-handler behavior; and project exact exception
+  exposure into components, findings, generated test guidance, cross-reference relationships,
+  diagrams, reports, validation, and the fact cache. Add bounded terminal-`finally` records and
+  model bare/literal top-level `return`, `break`, and `continue` as suppression and top-level
+  explicit `raise` as replacement. Outer terminal finalizers take precedence over inner ones;
+  bare terminal `raise` preserves the original exception, evaluated returns and competing
+  conditional terminal paths remain conservative, and every edge retains the governing finalizer ID, terminal kind, and
+  replacement type. Emit finding exception exposure sparsely so
+  unaffected findings do not consume the governed analysis-node budget. Correct dependency finding
+  provenance chains to use the resolved content-addressed artifact path rather than a synthetic
+  aggregate display label, keeping exact cross-reference verification valid on real repositories.
 - Add a deterministic `pysfmea-cross-reference-index-1` evidence fabric and
   `sfmea cross-reference` JSON/Markdown exporter. It fuses native AST, Graphify static, and
   imported runtime component relations; projects finding-to-guidance/requirement/hazard/SFTA/
@@ -74,6 +91,16 @@ package; public artifact and schema identifiers carry their own explicit compati
   Separate declared and material projection percentages, and ignore structural deployment
   placement shells whose node lists are empty, so sparse models produce actionable gaps rather
   than false missing-projection alerts.
+  Extend that ledger to every bounded projectable nested record. Stable record entities retain the
+  exact section/path/locator digest, conservative identity tokens, complete semantic target-set
+  digests, and bounded graph witnesses; standalone verification recomputes every join and exact
+  verification regenerates it from the analysis. Unresolved and bound-omitted records become
+  high-priority leads with a separate record coverage percentage. Promote all Graphify relations,
+  runtime imports/spans/edges, and scanner warnings to first-class cross-reference entities, and
+  retain source component/reference identity on resilience effects and retry paths. CLI, Markdown,
+  schemas, diagrams, and the self-contained HTML report expose the same contract. Publish the
+  complete JSON fabric in deterministic compact form so large verified repositories retain every
+  witness while staying inside the 200 MB ingestion envelope.
 
 - Qualify deterministic generated semantics, not detection keys alone. Golden corpora can now bind
   exact failure modes, triggers, causes, local effects, recommended actions, assurance methods,

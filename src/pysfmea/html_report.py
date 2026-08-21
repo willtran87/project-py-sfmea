@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import html
 import json
@@ -47,6 +48,7 @@ MAX_REPORT_ASSURANCE_OBLIGATIONS = 250
 MAX_REPORT_ASSURANCE_EXECUTIONS = 100
 MAX_REPORT_SFTA_GAPS_PER_CLASS = 250
 MAX_REPORT_SFTA_FINDING_LINKS = 250
+MAX_REPORT_ANALYSIS_RECORD_PROFILES = 1_000
 HTML_REPORT_FORMAT = "pysfmea-html-report-1"
 HTML_REPORT_VERIFICATION_FORMAT = "pysfmea-html-report-verification-1"
 MAX_HTML_REPORT_VERIFY_BYTES = 256 * 1024 * 1024
@@ -716,6 +718,26 @@ def build_html_report_data(
     consolidation_records = consolidation_state.get("records", [])
     if not isinstance(consolidation_records, list):
         consolidation_records = []
+    analysis_projection_coverage = cross_reference["analysis_projection_coverage"]
+    all_analysis_record_profiles = analysis_projection_coverage["record_profiles"]
+    embedded_analysis_record_profiles = sorted(
+        all_analysis_record_profiles,
+        key=lambda value: (
+            value.get("coverage_status") != "unresolved_projection",
+            str(value.get("section", "")),
+            str(value.get("locator", "")),
+        ),
+    )[:MAX_REPORT_ANALYSIS_RECORD_PROFILES]
+    report_analysis_projection_coverage = {
+        **analysis_projection_coverage,
+        "record_profiles": embedded_analysis_record_profiles,
+        "record_profiles_embedded_count": len(embedded_analysis_record_profiles),
+        "record_profiles_truncated_for_report": len(embedded_analysis_record_profiles)
+        < len(all_analysis_record_profiles),
+        "complete_record_profile_source": (
+            "cross-reference.json in the portable review package"
+        ),
+    }
     return {
         "report": {
             "generated_at": utc_now(),
@@ -851,9 +873,7 @@ def build_html_report_data(
                 "verification_readiness_profiles"
             ][:500],
             "quality_gate_projection": cross_reference["quality_gate_projection"],
-            "analysis_projection_coverage": cross_reference[
-                "analysis_projection_coverage"
-            ],
+            "analysis_projection_coverage": report_analysis_projection_coverage,
             "review_governance_profiles": cross_reference["review_governance_profiles"][
                 :500
             ],
@@ -1026,6 +1046,24 @@ def build_html_report_data(
             "report_projection": {
                 "record_limit_per_collection": 500,
                 "complete_source": "sfmea cross-reference ANALYSIS --format json",
+            },
+        },
+        "exception_analysis": {
+            "summary": copy.deepcopy(
+                analysis.get("exception_propagation", {}).get("summary", {})
+            ),
+            "limitations": copy.deepcopy(
+                analysis.get("exception_propagation", {}).get("limitations", [])
+            ),
+            "finalizers": copy.deepcopy(
+                analysis.get("exception_propagation", {}).get("finalizers", [])[:500]
+            ),
+            "edges": copy.deepcopy(
+                analysis.get("exception_propagation", {}).get("edges", [])[:500]
+            ),
+            "report_projection": {
+                "edge_limit": 500,
+                "complete_source": "exception_propagation in the JSON analysis",
             },
         },
         "sfta": sfta,
@@ -1663,16 +1701,26 @@ function openRecord(r,updateHash=true){$("detailEyebrow").textContent=`${r.id} �
 function exportCsv(){const fields=["id","priority","failure_class","disposition","status","component","path","line","failure_mode","operational_mode","operational_state","end_effect","required_safe_state","degraded_behavior","recovery_behavior","severity","occurrence","detection","rpn","residual_risk","linked_hazards","requirements","owner","target_date"];const quote=value=>`"${String(Array.isArray(value)?value.join(" | "):(value??"")).replaceAll('"','""')}"`;const csv=[fields.join(","),...filtered.map(r=>fields.map(f=>quote(r[f])).join(","))].join("\r\n");const blob=new Blob(["\ufeff",csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`${data.project.name.replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-sfmea-filtered.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),0)}
 function renderArchitecture(){const a=data.architecture,m=$("architectureMetrics"),instrumentation=a.runtime_instrumentation_statuses||{};m.append(metric(fmt(a.nodes),"graph nodes"),metric(fmt(a.edges),"graph edges"),metric(fmt(a.edge_counts.internal_call),"static calls"),metric(fmt(a.edge_counts.system_interface),"system interfaces"),metric(fmt(a.edge_counts.observed_runtime),"observed edges"),metric(fmt(a.runtime_imports),"runtime imports"),metric(fmt(instrumentation.complete_declared_and_observed),"complete declared trace scopes",instrumentation.complete_declared_and_observed?"good":""),metric(fmt(instrumentation.incomplete),"incomplete declared trace scopes",instrumentation.incomplete?"warning":"good"),metric(fmt(instrumentation.undeclared),"trace scopes undeclared",instrumentation.undeclared?"warning":"good"));const flows=$("interfaceFlows");if(!data.interfaces.length)flows.append(text("p","No system interfaces were configured.","muted"));data.interfaces.forEach(i=>{const row=document.createElement("div");row.className="flow";row.append(text("div",i.source,"flow-node"),text("div","→","flow-arrow"),text("div",i.target,"flow-node"));const desc=document.createElement("div");desc.append(text("strong",i.id),text("p",i.description));row.append(desc);flows.append(row)});const grid=$("subsystemGrid");data.subsystems.forEach(s=>{const card=document.createElement("article");card.className="subsystem";card.append(text("h3",s.name));const values=document.createElement("div");values.className="compact-metrics";[[s.components,"components"],[s.candidates,"candidates"],[s.high_priority,"high priority"]].forEach(([value,label])=>{const node=document.createElement("div");node.append(text("b",fmt(value)),text("span",label));values.append(node)});card.append(values);if(s.requirements.length)card.append(text("p",`Requirements: ${s.requirements.join(", ")}`,"small"));grid.append(card)})}
 function renderCrossReference(){
-  const x=data.cross_reference||{},s=x.summary||{},metrics=$("crossReferenceMetrics"),leads=$("crossReferenceLeads"),chains=$("crossReferenceChains");
+  const x=data.cross_reference||{},s=x.summary||{},projection=x.analysis_projection_coverage||{},exceptionSummary=data.exception_analysis?.summary||{},exceptionDispositions=exceptionSummary.edge_dispositions||{},metrics=$("crossReferenceMetrics"),leads=$("crossReferenceLeads"),chains=$("crossReferenceChains");
   metrics.append(
     metric(fmt(s.entities),"typed entities","info"),
     metric(fmt(s.relationships),"cross-model relationships","good"),
     metric(fmt(s.component_relationship_fusions),"component edge fusions"),
     metric(fmt(s.semantic_profiles),"semantic profiles","info"),
+    metric(fmt(exceptionSummary.project_exception_types_indexed),"project exception types","info"),
+    metric(fmt(exceptionSummary.unconditional_terminal_finalizers),"terminal finally overrides",exceptionSummary.unconditional_terminal_finalizers?"warning":"good"),
+    metric(fmt(exceptionDispositions.suppressed_by_finally_control_flow),"exceptions suppressed by finally",exceptionDispositions.suppressed_by_finally_control_flow?"warning":"good"),
+    metric(fmt(exceptionDispositions.replaced_by_finally_exception),"exceptions replaced by finally",exceptionDispositions.replaced_by_finally_exception?"warning":"good"),
+    metric(fmt(exceptionDispositions.caught_and_translates),"translated exception edges",exceptionDispositions.caught_and_translates?"warning":"good"),
+    metric(fmt(exceptionDispositions.indeterminate_handler_match),"indeterminate exception matches",exceptionDispositions.indeterminate_handler_match?"warning":"good"),
     metric(fmt(s.verification_readiness_profiles),"readiness profiles","info"),
     metric(fmt(s.review_governance_profiles),"review governance profiles","info"),
     metric(pct(s.analysis_projection_coverage_percent),"declared analysis-output coverage",s.unmapped_analysis_sections?"danger":"good"),
     metric(pct(s.analysis_material_projection_coverage_percent),"material analysis-output coverage",(s.unmapped_analysis_sections||s.registered_without_projection_analysis_sections)?"warning":"good"),
+    metric(pct(s.analysis_record_projection_coverage_percent),"nested record witness coverage",s.unresolved_analysis_records?"danger":"good"),
+    metric(fmt(s.analysis_records),"projectable nested records","info"),
+    metric(fmt(s.unresolved_analysis_records),"records without semantic witness",s.unresolved_analysis_records?"danger":"good"),
+    metric(fmt(projection.record_profiles_embedded_count),"record profiles embedded in report",projection.record_profiles_truncated_for_report?"warning":"info"),
     metric(fmt(s.analysis_sections),"bound analysis sections","info"),
     metric(fmt(s.unmapped_analysis_sections),"unmapped analysis sections",s.unmapped_analysis_sections?"danger":"good"),
     metric(fmt(s.registered_without_projection_analysis_sections),"registered outputs without material projection",s.registered_without_projection_analysis_sections?"warning":"good"),
@@ -1717,13 +1765,19 @@ function renderCrossReference(){
   renderBars("crossReferenceVerificationLifecycle",s.verification_lifecycle_states||{});
   renderBars("crossReferenceEvidencePosture",s.verification_evidence_postures||{});
   renderBars("crossReferenceReadinessGaps",s.verification_readiness_gaps||{});
-  const projection=x.analysis_projection_coverage||{};
   (projection.section_profiles||[]).forEach(value=>{
     const entry=document.createElement("article");entry.className="citation-entry";
     entry.append(text("h3",`Output coverage: ${value.section}`),text("p",value.rationale||"Projection rationale not recorded."));
     const meta=document.createElement("div");meta.className="citation-meta";
-    meta.append(tag((value.coverage_status||"unknown").replaceAll("_"," "),value.coverage_status==="unmapped"?"error":value.coverage_status==="registered_without_projection"?"warning":value.coverage_status==="empty"?"info":"accepted"),tag(`${fmt(value.source_record_count)} source records`,"info"),tag(`${fmt(value.projected_entity_count)} entities`,"info"),tag(`${fmt(value.projected_relationship_count)} relationships`,"info"));
+    meta.append(tag((value.coverage_status||"unknown").replaceAll("_"," "),value.coverage_status==="unmapped"?"error":value.coverage_status==="registered_without_projection"?"warning":value.coverage_status==="empty"?"info":"accepted"),tag(`records ${(value.record_coverage_status||"not_applicable").replaceAll("_"," ")}`,value.unresolved_record_count?"warning":"accepted"),tag(`${fmt(value.source_record_count)} source records`,"info"),tag(`${fmt(value.semantically_projected_record_count)} witnessed`,"info"),tag(`${fmt(value.unresolved_record_count)} unresolved`,value.unresolved_record_count?"error":"accepted"),tag(`${fmt(value.projected_entity_count)} entities`,"info"),tag(`${fmt(value.projected_relationship_count)} relationships`,"info"));
     entry.append(meta,text("p",`Section SHA-256 ${value.source_sha256||"not recorded"}`,"small mono"));leads.append(entry)
+  });
+  (projection.record_profiles||[]).filter(value=>value.coverage_status==="unresolved_projection").slice(0,50).forEach(value=>{
+    const entry=document.createElement("article");entry.className="citation-entry";
+    entry.append(text("h3",`Unresolved record: ${value.section} ${value.locator}`),text("p","No declared semantic entity or relationship shares a bounded identity token with this projectable source record."));
+    const meta=document.createElement("div");meta.className="citation-meta";
+    meta.append(tag("unresolved projection","error"),tag(`${fmt((value.identity_tokens||[]).length)} identity tokens`,"info"));
+    entry.append(meta,text("p",(value.identity_tokens||[]).slice(0,8).join(" · ")||"No identity token was available.","small mono"));leads.append(entry)
   });
   (x.review_leads||[]).slice(0,100).forEach(value=>{
     const entry=document.createElement("article");entry.className="citation-entry";
@@ -1760,7 +1814,7 @@ function renderCrossReference(){
     entry.append(meta,action);chains.append(entry)
   });
   if(!chains.children.length)chains.append(text("p","No finding chains were available.","muted"));
-  $("crossReferenceLimits").append(...(x.limitations||[]).map(value=>text("li",value)));
+  $("crossReferenceLimits").append(...[...(x.limitations||[]),...(data.exception_analysis?.limitations||[])].map(value=>text("li",value)));
   $("crossReferenceBinding").textContent=`Analysis ${x.analysis_state_sha256||"unbound"} · projection ${x.content_sha256||"unbound"} · complete JSON: ${x.report_projection?.complete_source||"not recorded"}`
 }
 function renderArchitectureModels(){const architecture=data.architecture||{},deployment=architecture.deployment_topology||{},deploymentSummary=deployment.summary||{},fate=architecture.shared_fate||{},fateSummary=fate.summary||{},hierarchy=architecture.hierarchy||{},hierarchySummary=hierarchy.summary||{},graphify=architecture.graphify_reconciliation||{},graphifySummary=graphify.summary||{},metrics=$("architectureMetrics");metrics.append(metric(fmt(deploymentSummary.nodes_embedded),"declared deployment nodes",deploymentSummary.nodes_embedded?"info":"warning"),metric(fmt(deploymentSummary.placed_components),"candidate placements",deploymentSummary.placed_components?"info":"warning"),metric(fmt(fateSummary.regions),"shared-fate regions",fateSummary.regions?"warning":"good"),metric(fmt(hierarchySummary.nodes),"hierarchy nodes",hierarchySummary.nodes?"good":"warning"),metric(fmt(hierarchySummary.unmapped_to_subsystem),"without subsystem mapping",hierarchySummary.unmapped_to_subsystem?"warning":"good"),metric(fmt(graphifySummary.corroborated_call_edges),"Graphify-correlated calls",graphifySummary.corroborated_call_edges?"info":""),metric(fmt(graphifySummary.graphify_only_call_review_leads),"Graphify call review leads",graphifySummary.graphify_only_call_review_leads?"warning":"good"));const deploymentRoot=$("deploymentTopology");(deployment.nodes||[]).slice(0,12).forEach(value=>{const entry=document.createElement("article");entry.className="citation-entry";entry.append(text("h3",value.name||value.id),text("p",value.artifact_path||"provenance unavailable","small mono"));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(value.kind||"entity","info"));entry.append(meta);deploymentRoot.append(entry)});if(!deploymentRoot.children.length)deploymentRoot.append(text("p","No supported deployment declarations were discovered.","muted"));const fateRoot=$("sharedFateRegions");(fate.regions||[]).slice(0,12).forEach(value=>{const entry=document.createElement("article");entry.className="citation-entry";entry.append(text("h3",value.key||value.id),text("p",`${fmt((value.affected_component_ids||[]).length)} affected components`,"small"));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(value.kind||"shared fate","warning"));entry.append(meta);fateRoot.append(entry)});if(!fateRoot.children.length)fateRoot.append(text("p","No multi-component shared-fate candidates were discovered.","muted"));const hierarchyRoot=$("architectureHierarchy");(hierarchy.nodes||[]).slice(0,12).forEach(value=>{const entry=document.createElement("article");entry.className="citation-entry";const trace=value.effective_trace||{};entry.append(text("h3",value.path||value.name),text("p",`${fmt((value.component_ids||[]).length)} components · ${fmt((trace.requirements||[]).length)} requirements · ${fmt((trace.hazards||[]).length)} hazards`,"small"));hierarchyRoot.append(entry)});if(!hierarchyRoot.children.length)hierarchyRoot.append(text("p","No architecture hierarchy was generated.","muted"));document.querySelectorAll("[data-open-diagram]").forEach(button=>button.addEventListener("click",()=>{const index=(data.diagrams||[]).findIndex(value=>value.id===button.dataset.openDiagram);if(index<0)return;$("diagramSelect").selectedIndex=index;renderGenericDiagram();setView("diagrams")}))}

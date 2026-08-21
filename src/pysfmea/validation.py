@@ -19,7 +19,7 @@ from .guidance import (
     mapping_review_expiry_audit,
 )
 from .integrity import verify_run_manifest_integrity
-from .model import calculate_rpn, utc_now
+from .model import calculate_rpn, stable_id, utc_now
 from .repository_inventory import (
     SNAPSHOT_SOURCES,
     derive_repository_inventory_summary,
@@ -1018,6 +1018,7 @@ def validate_analysis(
         exception_valid = isinstance(exception_model, dict)
         raises = exception_model.get("raises", []) if exception_valid else []
         handlers = exception_model.get("handlers", []) if exception_valid else []
+        finalizers = exception_model.get("finalizers", []) if exception_valid else []
         exception_edges = exception_model.get("edges", []) if exception_valid else []
         summary = exception_model.get("summary", {}) if exception_valid else {}
         exception_valid = (
@@ -1025,16 +1026,21 @@ def validate_analysis(
             and exception_model.get("format") == "pysfmea-exception-propagation-1"
             and isinstance(raises, list)
             and isinstance(handlers, list)
+            and isinstance(finalizers, list)
             and isinstance(exception_edges, list)
             and isinstance(summary, dict)
         )
         raise_ids: list[str] = []
         handler_ids: list[str] = []
+        finalizer_ids: list[str] = []
         exception_edge_ids: list[str] = []
         raises_by_component: dict[str, list[str]] = {
             str(identifier): [] for identifier in component_ids
         }
         handlers_by_component: dict[str, list[str]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        finalizers_by_component: dict[str, list[str]] = {
             str(identifier): [] for identifier in component_ids
         }
         exception_inbound_by_component: dict[str, list[str]] = {
@@ -1043,13 +1049,58 @@ def validate_analysis(
         exception_outbound_by_component: dict[str, list[str]] = {
             str(identifier): [] for identifier in component_ids
         }
+        exception_records_by_caller: dict[str, list[dict[str, Any]]] = {
+            str(identifier): [] for identifier in component_ids
+        }
+        components = [
+            value for value in analysis.get("components", []) if isinstance(value, dict)
+        ]
+        exception_components_by_id = {
+            str(value.get("id", "")): value for value in components if value.get("id")
+        }
         allowed_actions = {
             "reraises",
+            "raises_explicitly",
             "translates",
             "control_flow_exit",
             "suppresses",
             "records_or_logs",
             "continues_after_handler",
+        }
+        allowed_dispositions = {
+            "may_propagate",
+            "indeterminate_handler_match",
+            "caught_and_reraised",
+            "caught_and_translates",
+            "caught_and_raises_explicitly",
+            "caught_and_exits_control_flow",
+            "caught_and_suppresses",
+            "caught_and_continues",
+            "caught_with_mixed_handler_outcome",
+            "suppressed_by_finally_control_flow",
+            "replaced_by_finally_exception",
+        }
+        propagating_dispositions = {
+            "may_propagate",
+            "indeterminate_handler_match",
+            "caught_and_reraised",
+            "caught_and_raises_explicitly",
+            "caught_with_mixed_handler_outcome",
+        }
+        allowed_match_kinds = {
+            "no_handler_match",
+            "exact_type",
+            "builtin_subclass",
+            "project_subclass",
+            "base_exception_catch_all",
+            "indeterminate_dynamic_type",
+            "indeterminate_handler_order",
+        }
+        definite_match_kinds = {
+            "exact_type",
+            "builtin_subclass",
+            "project_subclass",
+            "base_exception_catch_all",
         }
         if exception_valid:
             for record in raises:
@@ -1091,9 +1142,79 @@ def validate_analysis(
                     or not isinstance(actions, list)
                     or not actions
                     or any(value not in allowed_actions for value in actions)
+                    or record.get("handler_kind") not in {"standard", "exception_group"}
+                    or not isinstance(record.get("handler_index"), int)
+                    or isinstance(record.get("handler_index"), bool)
+                    or int(record.get("handler_index", -1)) < 0
+                ):
+                    exception_valid = False
+            allowed_finalizer_actions = {
+                "returns",
+                "raises",
+                "breaks",
+                "continues",
+                "records_or_logs",
+            }
+            for record in finalizers:
+                if not isinstance(record, dict):
+                    exception_valid = False
+                    continue
+                identifier = str(record.get("id", ""))
+                component_id = str(record.get("component_id", ""))
+                actions = record.get("actions", [])
+                terminal_kind = str(record.get("terminal_kind", ""))
+                terminal_exception_type = str(record.get("terminal_exception_type", ""))
+                component_record = exception_components_by_id.get(component_id, {})
+                component_path = str(component_record.get("source", {}).get("path", ""))
+                component_qualname = str(component_record.get("qualname", ""))
+                finalizer_ids.append(identifier)
+                if component_id in finalizers_by_component:
+                    finalizers_by_component[component_id].append(identifier)
+                if (
+                    not identifier
+                    or component_id not in component_ids
+                    or record.get("component_reference")
+                    != f"{component_path}:{component_qualname}"
+                    or not isinstance(actions, list)
+                    or any(value not in allowed_finalizer_actions for value in actions)
+                    or terminal_kind
+                    not in {"none", "return", "raise", "reraise", "break", "continue"}
+                    or not isinstance(record.get("unconditional_terminal"), bool)
+                    or record.get("unconditional_terminal") != (terminal_kind != "none")
+                    or bool(terminal_exception_type)
+                    != (terminal_kind in {"raise", "reraise"})
+                    or terminal_kind == "reraise"
+                    and terminal_exception_type != "active_handler_exception"
+                    or not isinstance(record.get("try_line"), int)
+                    or isinstance(record.get("try_line"), bool)
+                    or int(record.get("try_line", 0)) <= 0
+                    or not isinstance(record.get("line"), int)
+                    or isinstance(record.get("line"), bool)
+                    or int(record.get("line", 0)) <= 0
+                    or identifier
+                    != stable_id(
+                        "EXCEPTION-FINALIZER",
+                        component_path,
+                        component_qualname,
+                        str(record.get("try_line", 0)),
+                        str(record.get("line", 0)),
+                        terminal_kind,
+                        terminal_exception_type,
+                    )
                 ):
                     exception_valid = False
             known_handler_ids = set(handler_ids)
+            known_finalizer_ids = set(finalizer_ids)
+            handlers_by_id = {
+                str(value.get("id", "")): value
+                for value in handlers
+                if isinstance(value, dict) and value.get("id")
+            }
+            finalizers_by_id = {
+                str(value.get("id", "")): value
+                for value in finalizers
+                if isinstance(value, dict) and value.get("id")
+            }
             for edge in exception_edges:
                 if not isinstance(edge, dict):
                     exception_valid = False
@@ -1103,9 +1224,17 @@ def validate_analysis(
                 callee_id = str(edge.get("callee_component_id", ""))
                 edge_handler_ids = edge.get("handler_ids", [])
                 disposition = edge.get("disposition")
+                selected_handler_id = str(edge.get("selected_handler_id", ""))
+                handler_actions = edge.get("handler_actions", [])
+                finalizer_id = str(edge.get("finalizer_id", ""))
+                finalizer_terminal_kind = str(edge.get("finalizer_terminal_kind", ""))
+                finalizer_exception_type = str(edge.get("finalizer_exception_type", ""))
+                match_kind = edge.get("match_kind")
+                call_site = edge.get("call_site", {})
                 exception_edge_ids.append(identifier)
                 if caller_id in exception_inbound_by_component:
                     exception_inbound_by_component[caller_id].append(identifier)
+                    exception_records_by_caller[caller_id].append(edge)
                 if callee_id in exception_outbound_by_component:
                     exception_outbound_by_component[callee_id].append(identifier)
                 if (
@@ -1113,21 +1242,64 @@ def validate_analysis(
                     or caller_id not in component_ids
                     or callee_id not in component_ids
                     or not str(edge.get("exception_type", ""))
-                    or disposition not in {"caught_by_lexical_handler", "may_propagate"}
+                    or disposition not in allowed_dispositions
                     or edge.get("resolution")
                     not in {"unique_static_target", "ambiguous_static_candidates"}
                     or not isinstance(edge_handler_ids, list)
                     or any(value not in known_handler_ids for value in edge_handler_ids)
-                    or bool(edge_handler_ids)
-                    != (disposition == "caught_by_lexical_handler")
-                    or not isinstance(edge.get("call_site"), dict)
+                    or selected_handler_id
+                    and selected_handler_id not in known_handler_ids
+                    or bool(edge_handler_ids) != (match_kind != "no_handler_match")
+                    or bool(selected_handler_id)
+                    and selected_handler_id not in edge_handler_ids
+                    or not isinstance(handler_actions, list)
+                    or any(value not in allowed_actions for value in handler_actions)
+                    or bool(selected_handler_id)
+                    and handler_actions
+                    != handlers_by_id.get(selected_handler_id, {}).get("actions", [])
+                    or finalizer_id
+                    and finalizer_id not in known_finalizer_ids
+                    or bool(finalizer_id) != bool(finalizer_terminal_kind)
+                    or bool(finalizer_exception_type)
+                    != (finalizer_terminal_kind in {"raise", "reraise"})
+                    or bool(finalizer_id)
+                    and finalizer_terminal_kind
+                    != finalizers_by_id.get(finalizer_id, {}).get("terminal_kind", "")
+                    or bool(finalizer_id)
+                    and finalizer_exception_type
+                    != finalizers_by_id.get(finalizer_id, {}).get(
+                        "terminal_exception_type", ""
+                    )
+                    or (finalizer_terminal_kind == "raise")
+                    != (disposition == "replaced_by_finally_exception")
+                    or disposition == "suppressed_by_finally_control_flow"
+                    and finalizer_terminal_kind not in {"return", "break", "continue"}
+                    or match_kind not in allowed_match_kinds
+                    or bool(selected_handler_id) != (match_kind in definite_match_kinds)
+                    or disposition == "may_propagate"
+                    and match_kind != "no_handler_match"
+                    or disposition == "indeterminate_handler_match"
+                    and match_kind
+                    not in {
+                        "indeterminate_dynamic_type",
+                        "indeterminate_handler_order",
+                    }
+                    or not isinstance(edge.get("propagates_original"), bool)
+                    or edge.get("propagates_original")
+                    != (disposition in propagating_dispositions)
+                    or not isinstance(call_site, dict)
+                    or identifier
+                    != stable_id(
+                        "EXCEPTION-PROPAGATION",
+                        str(edge.get("caller_reference", "")),
+                        str(edge.get("callee_reference", "")),
+                        str(call_site.get("line", 0)),
+                        str(call_site.get("order", 0)),
+                        str(edge.get("exception_type", "")),
+                        str(disposition),
+                    )
                 ):
                     exception_valid = False
-            components = [
-                value
-                for value in analysis.get("components", [])
-                if isinstance(value, dict)
-            ]
             source_raise_count = sum(
                 len(value.get("exception_raises", []))
                 for value in components
@@ -1137,6 +1309,11 @@ def validate_analysis(
                 len(value.get("exception_handlers", []))
                 for value in components
                 if isinstance(value.get("exception_handlers", []), list)
+            )
+            source_finalizer_count = sum(
+                len(value.get("exception_finalizers", []))
+                for value in components
+                if isinstance(value.get("exception_finalizers", []), list)
             )
             per_component_omitted = sum(
                 int(value.get("exception_records_omitted", 0))
@@ -1155,22 +1332,34 @@ def validate_analysis(
                 summary.get("raise_records_embedded"),
                 summary.get("handler_records_discovered"),
                 summary.get("handler_records_embedded"),
+                summary.get("finalizer_records_discovered"),
+                summary.get("finalizer_records_embedded"),
+                summary.get("unconditional_terminal_finalizers"),
                 summary.get("source_records_omitted"),
                 *edge_values,
                 summary.get("locally_caught_raise_candidates"),
+                summary.get("locally_rethrown_raise_candidates"),
+                summary.get("local_raises_suppressed_by_finally"),
+                summary.get("local_raises_replaced_by_finally"),
                 summary.get("outgoing_exception_types"),
                 summary.get("fixed_point_iterations"),
+                summary.get("project_exception_types_indexed"),
             )
+            disposition_counts = summary.get("edge_dispositions", {})
+            match_kind_counts = summary.get("handler_match_kinds", {})
             expected_source_omitted = (
                 per_component_omitted
                 + source_raise_count
                 - len(raises)
                 + source_handler_count
                 - len(handlers)
+                + source_finalizer_count
+                - len(finalizers)
             )
             if (
                 len(raise_ids) != len(set(raise_ids))
                 or len(handler_ids) != len(set(handler_ids))
+                or len(finalizer_ids) != len(set(finalizer_ids))
                 or len(exception_edge_ids) != len(set(exception_edge_ids))
                 or not all(
                     isinstance(value, int)
@@ -1182,9 +1371,51 @@ def validate_analysis(
                 or summary.get("raise_records_embedded") != len(raises)
                 or summary.get("handler_records_discovered") != source_handler_count
                 or summary.get("handler_records_embedded") != len(handlers)
+                or summary.get("finalizer_records_discovered") != source_finalizer_count
+                or summary.get("finalizer_records_embedded") != len(finalizers)
+                or summary.get("unconditional_terminal_finalizers")
+                != sum(
+                    value.get("unconditional_terminal") is True
+                    for value in finalizers
+                    if isinstance(value, dict)
+                )
                 or summary.get("source_records_omitted") != expected_source_omitted
                 or edge_values[1] != len(exception_edges)
                 or edge_values[0] != edge_values[1] + edge_values[2]
+                or not isinstance(disposition_counts, dict)
+                or set(disposition_counts) - allowed_dispositions
+                or any(
+                    not isinstance(value, int) or isinstance(value, bool) or value < 0
+                    for value in disposition_counts.values()
+                )
+                or sum(disposition_counts.values()) != edge_values[0]
+                or edge_values[2] == 0
+                and disposition_counts
+                != dict(
+                    sorted(
+                        Counter(
+                            str(value.get("disposition", ""))
+                            for value in exception_edges
+                        ).items()
+                    )
+                )
+                or not isinstance(match_kind_counts, dict)
+                or set(match_kind_counts) - allowed_match_kinds
+                or any(
+                    not isinstance(value, int) or isinstance(value, bool) or value < 0
+                    for value in match_kind_counts.values()
+                )
+                or sum(match_kind_counts.values()) != edge_values[0]
+                or edge_values[2] == 0
+                and match_kind_counts
+                != dict(
+                    sorted(
+                        Counter(
+                            str(value.get("match_kind", ""))
+                            for value in exception_edges
+                        ).items()
+                    )
+                )
                 or summary.get("truncated")
                 != bool(expected_source_omitted or edge_values[2])
             ):
@@ -1194,11 +1425,27 @@ def validate_analysis(
                 index = component.get("exception_flow", {})
                 expected_raises = raises_by_component.get(component_id, [])
                 expected_handlers = handlers_by_component.get(component_id, [])
+                expected_finalizers = finalizers_by_component.get(component_id, [])
                 expected_inbound: list[str] = exception_inbound_by_component.get(
                     component_id, []
                 )
                 expected_outbound: list[str] = exception_outbound_by_component.get(
                     component_id, []
+                )
+                expected_records = exception_records_by_caller.get(component_id, [])
+                expected_types = sorted(
+                    {
+                        str(value.get("exception_type", "unknown"))
+                        for value in expected_records
+                    }
+                )
+                expected_dispositions = dict(
+                    sorted(
+                        Counter(
+                            str(value.get("disposition", "unknown"))
+                            for value in expected_records
+                        ).items()
+                    )
                 )
                 if (
                     not isinstance(index, dict)
@@ -1208,19 +1455,36 @@ def validate_analysis(
                     or index.get("handler_ids") != expected_handlers[:1_000]
                     or index.get("handlers_omitted")
                     != max(0, len(expected_handlers) - 1_000)
+                    or index.get("finalizer_ids") != expected_finalizers[:1_000]
+                    or index.get("finalizers_omitted")
+                    != max(0, len(expected_finalizers) - 1_000)
                     or index.get("incoming_edge_ids") != expected_inbound[:2_000]
                     or index.get("incoming_edges_omitted")
                     != max(0, len(expected_inbound) - 2_000)
                     or index.get("outgoing_edge_ids") != expected_outbound[:2_000]
                     or index.get("outgoing_edges_omitted")
                     != max(0, len(expected_outbound) - 2_000)
+                    or index.get("incoming_dispositions") != expected_dispositions
+                    or index.get("incoming_exception_types") != expected_types[:1_000]
+                    or index.get("incoming_exception_types_omitted")
+                    != max(0, len(expected_types) - 1_000)
+                    or index.get("propagating_incoming_edges")
+                    != sum(
+                        bool(value.get("propagates_original"))
+                        for value in expected_records
+                    )
+                    or index.get("indeterminate_incoming_edges")
+                    != sum(
+                        value.get("disposition") == "indeterminate_handler_match"
+                        for value in expected_records
+                    )
                 ):
                     exception_valid = False
         if not exception_valid:
             add(
                 "analysis.invalid_exception_propagation",
                 "error",
-                "Exception raise, handler, propagation, count, or component-index records are inconsistent.",
+                "Exception raise, handler, finalizer, propagation, count, or component-index records are inconsistent.",
                 field="exception_propagation",
             )
     state_model = analysis.get("state_machine_model")
@@ -2423,7 +2687,10 @@ def validate_analysis(
                     graphify_valid = False
                 if relation == "calls" and reconciliation == "corroborated":
                     expected_correlated += 1
-                if relation == "calls" and reconciliation == "graphify_only_review_lead":
+                if (
+                    relation == "calls"
+                    and reconciliation == "graphify_only_review_lead"
+                ):
                     expected_leads += 1
             count_fields = (
                 "nodes_discovered",
@@ -2449,8 +2716,7 @@ def validate_analysis(
                 != len(edges) + summary.get("edges_omitted", 0)
                 or summary.get("corroborated_call_edges") != expected_correlated
                 or summary.get("graphify_only_call_review_leads") != expected_leads
-                or summary.get("truncated")
-                != bool(summary.get("edges_omitted"))
+                or summary.get("truncated") != bool(summary.get("edges_omitted"))
                 or not isinstance(graphify.get("reconciliation_sha256"), str)
                 or len(graphify.get("reconciliation_sha256", "")) != 64
             ):
