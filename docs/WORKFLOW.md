@@ -513,8 +513,9 @@ predicate or context evaluation; evaluated or non-uniform finalizer returns, dyn
 third-party inheritance remain review boundaries.
 `static_control_flow_model` explains paths excluded before calls, exceptions, sequences, and
 failure-mode candidates are composed. Decisions cover safe literal truth/comparisons, boolean
-short-circuiting, bounded exact-built-in arithmetic and sequence expressions, `while False`,
-conditional expressions, imported `TYPE_CHECKING` guards, empty
+short-circuiting, bounded exact-built-in arithmetic and sequence expressions, safe literal
+indexing/slicing, operand-valued boolean expressions, selected conditional-expression values,
+`while False`, conditional expressions, imported `TYPE_CHECKING` guards, empty
 literal `for` loops, guaranteed-nonempty literal loops whose first-iteration body cannot fall
 through, bounded literal/singleton/OR/sequence/mapping/capture `match` patterns and
 static case guards, constant-true loop reachability, direct exits, statically selected terminal blocks,
@@ -526,7 +527,8 @@ unsupported predicates retain conservative alternatives. Predicate and iterator 
 always visited, so effects needed to evaluate them are not discarded. This is bounded static
 pruning, not proof that a selected path runs, completes, or satisfies its contract. The model
 publishes and validates its expression depth, integer-bit, sequence-length, exponent, and shift
-ceilings; exceptional or over-limit expressions retain conservative alternatives.
+ceilings; dynamic indices, missing keys, invalid slices, exceptional operations, or over-limit
+expressions retain conservative alternatives.
 `state_machine_model` projects assignments to conventional state/status/phase/mode variables into
 stable state and guarded-transition records. Treat missing transitions and invariants as review
 questions: the static projection does not prove reachability, liveness, or completeness.

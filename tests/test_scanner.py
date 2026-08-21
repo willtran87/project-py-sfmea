@@ -4919,6 +4919,49 @@ def computed_operator_family():
         return live()
     return dead()
 
+def computed_subscript_condition():
+    if ('zero', 'one')[1] == 'one':
+        return live()
+    return dead()
+
+def computed_slice_condition():
+    if ('a', 'b', 'c')[1:] == ('b', 'c'):
+        return live()
+    return dead()
+
+def computed_mapping_subscript():
+    if {'status': 'ready'}['status'] == 'ready':
+        return live()
+    return dead()
+
+def computed_boolean_value():
+    if (0 or 2) == 2 and (1 and 'ready') == 'ready':
+        return live()
+    return dead()
+
+def computed_conditional_value():
+    if (3 if 2 * 2 == 4 else 0) == 3:
+        return live()
+    return dead()
+
+def exceptional_subscript():
+    if {'status': 'ready'}['missing']:
+        dead()
+    else:
+        live()
+
+def exceptional_slice():
+    if ('a', 'b')[::0]:
+        dead()
+    else:
+        live()
+
+def dynamic_subscript(index):
+    if ('zero', 'one')[index]:
+        dead()
+    else:
+        live()
+
 def oversized_literal_expression():
     if 2 ** 65:
         dead()
@@ -5014,6 +5057,13 @@ def computed_empty_for():
     else:
         live()
 
+def computed_slice_for():
+    for item in ('a', 'b', 'c')[1:]:
+        return live()
+    else:
+        dead()
+    dead()
+
 def loop():
     while False:
         dead()
@@ -5051,6 +5101,13 @@ def literal_match():
 def computed_match_subject():
     match 1 + 1:
         case 2:
+            live()
+        case _:
+            dead()
+
+def computed_subscript_match_subject():
+    match ('zero', 'one')[1]:
+        case 'one':
             live()
         case _:
             dead()
@@ -5198,6 +5255,14 @@ def handler_computed_condition():
             raise
         return None
 
+def handler_subscript_condition():
+    try:
+        live()
+    except ValueError:
+        if {'retry': True}['retry']:
+            raise
+        return None
+
 def handler_match():
     try:
         live()
@@ -5275,6 +5340,11 @@ def try_handler_fallthrough():
             "computed_literal_comparison",
             "computed_literal_truth",
             "computed_operator_family",
+            "computed_subscript_condition",
+            "computed_slice_condition",
+            "computed_mapping_subscript",
+            "computed_boolean_value",
+            "computed_conditional_value",
             "type_guard",
             "expression",
             "boolean_and",
@@ -5286,6 +5356,7 @@ def try_handler_fallthrough():
             "nested_loop_break",
             "literal_match",
             "computed_match_subject",
+            "computed_subscript_match_subject",
             "sequence_match",
             "starred_or_match",
             "singleton_match",
@@ -5304,7 +5375,13 @@ def try_handler_fallthrough():
         self.assertEqual(
             set(components["dynamic_match"]["calls"]), {"dead", "live"}
         )
-        for name in ("oversized_literal_expression", "exceptional_literal_expression"):
+        for name in (
+            "oversized_literal_expression",
+            "exceptional_literal_expression",
+            "exceptional_subscript",
+            "exceptional_slice",
+            "dynamic_subscript",
+        ):
             self.assertEqual(set(components[name]["calls"]), {"dead", "live"})
         for name in ("dynamic_mapping_key", "conservative_class_pattern"):
             self.assertEqual(set(components[name]["calls"]), {"dead", "live"})
@@ -5328,6 +5405,11 @@ def try_handler_fallthrough():
         ][0]
         self.assertEqual(computed_handler["outcome_certainty"], "uniform")
         self.assertEqual(computed_handler["outcome_kinds"], ["reraise"])
+        subscript_handler = components["handler_subscript_condition"][
+            "exception_handlers"
+        ][0]
+        self.assertEqual(subscript_handler["outcome_certainty"], "uniform")
+        self.assertEqual(subscript_handler["outcome_kinds"], ["reraise"])
         match_handler = components["handler_match"]["exception_handlers"][0]
         self.assertEqual(match_handler["outcome_certainty"], "uniform")
         self.assertEqual(match_handler["outcome_kinds"], ["reraise"])
@@ -5352,6 +5434,34 @@ def try_handler_fallthrough():
         self.assertIn("literal_comparison", bases)
         self.assertIn("bounded_literal_expression", bases)
         self.assertIn("empty_bounded_literal_iterable", bases)
+        for name in (
+            "computed_subscript_condition",
+            "computed_slice_condition",
+            "computed_mapping_subscript",
+            "computed_conditional_value",
+            "handler_subscript_condition",
+        ):
+            self.assertTrue(
+                any(
+                    value["component_reference"] == f"branches.py:{name}"
+                    and value["basis"] == "bounded_literal_expression"
+                    for value in model["decisions"]
+                ),
+                name,
+            )
+        expected_composed_bases = {
+            "computed_boolean_value": "static_boolean_expression",
+            "computed_subscript_match_subject": "static_pattern_match",
+        }
+        for name, expected_basis in expected_composed_bases.items():
+            self.assertTrue(
+                any(
+                    value["component_reference"] == f"branches.py:{name}"
+                    and value["basis"] == expected_basis
+                    for value in model["decisions"]
+                ),
+                name,
+            )
         self.assertGreaterEqual(model["summary"]["pruned_operands"], 4)
         self.assertGreaterEqual(model["summary"]["pruned_statements"], 5)
         self.assertGreaterEqual(
@@ -5391,6 +5501,7 @@ def try_handler_fallthrough():
         )
         self.assertNotIn("dead", components["computed_nonempty_for"]["calls"])
         self.assertNotIn("dead", components["computed_empty_for"]["calls"])
+        self.assertNotIn("dead", components["computed_slice_for"]["calls"])
         after_return_raises = components["after_return"]["exception_raises"]
         self.assertEqual(after_return_raises, [])
         termination_bases = {
@@ -5434,6 +5545,11 @@ def try_handler_fallthrough():
                 "computed_literal_comparison",
                 "computed_literal_truth",
                 "computed_operator_family",
+                "computed_subscript_condition",
+                "computed_slice_condition",
+                "computed_mapping_subscript",
+                "computed_boolean_value",
+                "computed_conditional_value",
                 "type_guard",
                 "expression",
                 "boolean_and",
@@ -5449,10 +5565,12 @@ def try_handler_fallthrough():
                 "empty_for",
                 "computed_empty_for",
                 "computed_nonempty_for",
+                "computed_slice_for",
                 "terminal_nonempty_for",
                 "terminal_nonempty_for_branches",
                 "literal_match",
                 "computed_match_subject",
+                "computed_subscript_match_subject",
                 "sequence_match",
                 "starred_or_match",
                 "singleton_match",

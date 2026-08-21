@@ -139,7 +139,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-14"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-15"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -749,6 +749,31 @@ def _bounded_static_expression_result(value: Any) -> tuple[bool, Any, str]:
     return True, value, "bounded_literal_expression"
 
 
+def _static_subscript_selector(
+    node: ast.AST,
+    *,
+    depth: int,
+) -> tuple[bool, Any, bool]:
+    """Resolve an exact-built-in index or slice without invoking project code."""
+
+    if not isinstance(node, ast.Slice):
+        known, value, _basis = _static_expression_value(node, depth=depth)
+        return known, value, False
+
+    values: list[int | None] = []
+    for part in (node.lower, node.upper, node.step):
+        if part is None:
+            values.append(None)
+            continue
+        known, value, _basis = _static_expression_value(part, depth=depth)
+        if not known or type(value) not in (bool, int):
+            return False, None, True
+        if type(value) is int and value.bit_length() > MAX_STATIC_INTEGER_BITS:
+            return False, None, True
+        values.append(value)
+    return True, slice(*values), True
+
+
 def _static_expression_value(
     node: ast.AST,
     *,
@@ -791,6 +816,56 @@ def _static_expression_value(
         except (ArithmeticError, TypeError, ValueError):
             pass
         return False, None, "dynamic_or_unsupported_expression"
+    if isinstance(node, ast.BoolOp):
+        if not node.values:
+            return False, None, "dynamic_or_unsupported_expression"
+        last_value: Any = None
+        for operand in node.values:
+            operand_known, last_value, _basis = _static_expression_value(
+                operand, depth=depth + 1
+            )
+            if not operand_known:
+                return False, None, "dynamic_or_unsupported_expression"
+            if isinstance(node.op, ast.And) and not bool(last_value):
+                return _bounded_static_expression_result(last_value)
+            if isinstance(node.op, ast.Or) and bool(last_value):
+                return _bounded_static_expression_result(last_value)
+        return _bounded_static_expression_result(last_value)
+    if isinstance(node, ast.IfExp):
+        decision, _basis = _static_truth_value(node.test)
+        if decision is None:
+            return False, None, "dynamic_or_unsupported_expression"
+        selected = node.body if decision else node.orelse
+        selected_known, selected_value, _selected_basis = _static_expression_value(
+            selected,
+            depth=depth + 1,
+        )
+        if not selected_known:
+            return False, None, "dynamic_or_unsupported_expression"
+        return _bounded_static_expression_result(selected_value)
+    if isinstance(node, ast.Subscript):
+        container_known, container, _basis = _static_expression_value(
+            node.value, depth=depth + 1
+        )
+        selector_known, selector, is_slice = _static_subscript_selector(
+            node.slice,
+            depth=depth + 1,
+        )
+        if not container_known or not selector_known:
+            return False, None, "dynamic_or_unsupported_expression"
+        sequence_types = (tuple, list, str, bytes)
+        if type(container) in sequence_types:
+            if not is_slice and type(selector) not in (bool, int):
+                return False, None, "dynamic_or_unsupported_expression"
+        elif type(container) is dict:
+            if is_slice:
+                return False, None, "dynamic_or_unsupported_expression"
+        else:
+            return False, None, "dynamic_or_unsupported_expression"
+        try:
+            return _bounded_static_expression_result(container[selector])
+        except (ArithmeticError, LookupError, TypeError, ValueError):
+            return False, None, "exceptional_literal_expression"
     if not isinstance(node, ast.BinOp):
         return False, None, "dynamic_or_unsupported_expression"
     left_known, left, _left_basis = _static_expression_value(
@@ -7155,7 +7230,7 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
             "shift": MAX_STATIC_SHIFT,
         },
         "limitations": [
-            "Only direct terminal statements, statically bounded empty/nonempty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, size-limited exact-built-in arithmetic and sequence expressions, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; exceptional, oversized, unsupported, or dynamic expressions, predicates, and patterns retain conservative alternatives.",
+            "Only direct terminal statements, statically bounded empty/nonempty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, size-limited exact-built-in arithmetic, sequence, indexing/slicing, boolean-value, and selected conditional-value expressions, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; exceptional, oversized, unsupported, or dynamic expressions, indices, predicates, and patterns retain conservative alternatives.",
             "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
             "Loop iteration counts and dynamic break feasibility beyond lexical ownership, except-star and complex exception feasibility, class patterns, dynamic mapping keys or user-defined mapping semantics, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
         ],
