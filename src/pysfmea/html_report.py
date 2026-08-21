@@ -1066,19 +1066,21 @@ def build_html_report_data(
                 "complete_source": "exception_propagation in the JSON analysis",
             },
         },
-        "static_branch_analysis": {
+        "static_control_flow_analysis": {
             "summary": copy.deepcopy(
-                analysis.get("static_branch_model", {}).get("summary", {})
+                analysis.get("static_control_flow_model", {}).get("summary", {})
             ),
             "limitations": copy.deepcopy(
-                analysis.get("static_branch_model", {}).get("limitations", [])
+                analysis.get("static_control_flow_model", {}).get("limitations", [])
             ),
             "decisions": copy.deepcopy(
-                analysis.get("static_branch_model", {}).get("decisions", [])[:500]
+                analysis.get("static_control_flow_model", {}).get("decisions", [])[
+                    :500
+                ]
             ),
             "report_projection": {
                 "decision_limit": 500,
-                "complete_source": "static_branch_model in the JSON analysis",
+                "complete_source": "static_control_flow_model in the JSON analysis",
             },
         },
         "sfta": sfta,
@@ -1716,14 +1718,15 @@ function openRecord(r,updateHash=true){$("detailEyebrow").textContent=`${r.id} �
 function exportCsv(){const fields=["id","priority","failure_class","disposition","status","component","path","line","failure_mode","operational_mode","operational_state","end_effect","required_safe_state","degraded_behavior","recovery_behavior","severity","occurrence","detection","rpn","residual_risk","linked_hazards","requirements","owner","target_date"];const quote=value=>`"${String(Array.isArray(value)?value.join(" | "):(value??"")).replaceAll('"','""')}"`;const csv=[fields.join(","),...filtered.map(r=>fields.map(f=>quote(r[f])).join(","))].join("\r\n");const blob=new Blob(["\ufeff",csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`${data.project.name.replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-sfmea-filtered.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),0)}
 function renderArchitecture(){const a=data.architecture,m=$("architectureMetrics"),instrumentation=a.runtime_instrumentation_statuses||{};m.append(metric(fmt(a.nodes),"graph nodes"),metric(fmt(a.edges),"graph edges"),metric(fmt(a.edge_counts.internal_call),"static calls"),metric(fmt(a.edge_counts.system_interface),"system interfaces"),metric(fmt(a.edge_counts.observed_runtime),"observed edges"),metric(fmt(a.runtime_imports),"runtime imports"),metric(fmt(instrumentation.complete_declared_and_observed),"complete declared trace scopes",instrumentation.complete_declared_and_observed?"good":""),metric(fmt(instrumentation.incomplete),"incomplete declared trace scopes",instrumentation.incomplete?"warning":"good"),metric(fmt(instrumentation.undeclared),"trace scopes undeclared",instrumentation.undeclared?"warning":"good"));const flows=$("interfaceFlows");if(!data.interfaces.length)flows.append(text("p","No system interfaces were configured.","muted"));data.interfaces.forEach(i=>{const row=document.createElement("div");row.className="flow";row.append(text("div",i.source,"flow-node"),text("div","→","flow-arrow"),text("div",i.target,"flow-node"));const desc=document.createElement("div");desc.append(text("strong",i.id),text("p",i.description));row.append(desc);flows.append(row)});const grid=$("subsystemGrid");data.subsystems.forEach(s=>{const card=document.createElement("article");card.className="subsystem";card.append(text("h3",s.name));const values=document.createElement("div");values.className="compact-metrics";[[s.components,"components"],[s.candidates,"candidates"],[s.high_priority,"high priority"]].forEach(([value,label])=>{const node=document.createElement("div");node.append(text("b",fmt(value)),text("span",label));values.append(node)});card.append(values);if(s.requirements.length)card.append(text("p",`Requirements: ${s.requirements.join(", ")}`,"small"));grid.append(card)})}
 function renderCrossReference(){
-  const x=data.cross_reference||{},s=x.summary||{},projection=x.analysis_projection_coverage||{},exceptionSummary=data.exception_analysis?.summary||{},branchSummary=data.static_branch_analysis?.summary||{},exceptionDispositions=exceptionSummary.edge_dispositions||{},handlerCertainties=exceptionSummary.handler_outcome_certainties||{},metrics=$("crossReferenceMetrics"),leads=$("crossReferenceLeads"),chains=$("crossReferenceChains");
+  const x=data.cross_reference||{},s=x.summary||{},projection=x.analysis_projection_coverage||{},exceptionSummary=data.exception_analysis?.summary||{},controlFlowSummary=data.static_control_flow_analysis?.summary||{},exceptionDispositions=exceptionSummary.edge_dispositions||{},handlerCertainties=exceptionSummary.handler_outcome_certainties||{},metrics=$("crossReferenceMetrics"),leads=$("crossReferenceLeads"),chains=$("crossReferenceChains");
   metrics.append(
     metric(fmt(s.entities),"typed entities","info"),
     metric(fmt(s.relationships),"cross-model relationships","good"),
     metric(fmt(s.component_relationship_fusions),"component edge fusions"),
     metric(fmt(s.semantic_profiles),"semantic profiles","info"),
-    metric(fmt(branchSummary.decisions_discovered),"static branch decisions","info"),
-    metric(fmt(branchSummary.pruned_operands),"short-circuit operands pruned","good"),
+    metric(fmt(controlFlowSummary.decisions_discovered),"static control-flow decisions","info"),
+    metric(fmt(controlFlowSummary.pruned_statements),"unreachable statements pruned","good"),
+    metric(fmt(controlFlowSummary.pruned_operands),"short-circuit operands pruned","good"),
     metric(fmt(exceptionSummary.project_exception_types_indexed),"project exception types","info"),
     metric(fmt(exceptionSummary.unconditional_terminal_finalizers),"terminal finally overrides",exceptionSummary.unconditional_terminal_finalizers?"warning":"good"),
     metric(fmt(handlerCertainties.conditional),"conditional handler outcomes",handlerCertainties.conditional?"warning":"good"),
@@ -1835,7 +1838,7 @@ function renderCrossReference(){
     entry.append(meta,action);chains.append(entry)
   });
   if(!chains.children.length)chains.append(text("p","No finding chains were available.","muted"));
-  $("crossReferenceLimits").append(...[...(x.limitations||[]),...(data.exception_analysis?.limitations||[]),...(data.static_branch_analysis?.limitations||[])].map(value=>text("li",value)));
+  $("crossReferenceLimits").append(...[...(x.limitations||[]),...(data.exception_analysis?.limitations||[]),...(data.static_control_flow_analysis?.limitations||[])].map(value=>text("li",value)));
   $("crossReferenceBinding").textContent=`Analysis ${x.analysis_state_sha256||"unbound"} · projection ${x.content_sha256||"unbound"} · complete JSON: ${x.report_projection?.complete_source||"not recorded"}`
 }
 function renderArchitectureModels(){const architecture=data.architecture||{},deployment=architecture.deployment_topology||{},deploymentSummary=deployment.summary||{},fate=architecture.shared_fate||{},fateSummary=fate.summary||{},hierarchy=architecture.hierarchy||{},hierarchySummary=hierarchy.summary||{},graphify=architecture.graphify_reconciliation||{},graphifySummary=graphify.summary||{},metrics=$("architectureMetrics");metrics.append(metric(fmt(deploymentSummary.nodes_embedded),"declared deployment nodes",deploymentSummary.nodes_embedded?"info":"warning"),metric(fmt(deploymentSummary.placed_components),"candidate placements",deploymentSummary.placed_components?"info":"warning"),metric(fmt(fateSummary.regions),"shared-fate regions",fateSummary.regions?"warning":"good"),metric(fmt(hierarchySummary.nodes),"hierarchy nodes",hierarchySummary.nodes?"good":"warning"),metric(fmt(hierarchySummary.unmapped_to_subsystem),"without subsystem mapping",hierarchySummary.unmapped_to_subsystem?"warning":"good"),metric(fmt(graphifySummary.corroborated_call_edges),"Graphify-correlated calls",graphifySummary.corroborated_call_edges?"info":""),metric(fmt(graphifySummary.graphify_only_call_review_leads),"Graphify call review leads",graphifySummary.graphify_only_call_review_leads?"warning":"good"));const deploymentRoot=$("deploymentTopology");(deployment.nodes||[]).slice(0,12).forEach(value=>{const entry=document.createElement("article");entry.className="citation-entry";entry.append(text("h3",value.name||value.id),text("p",value.artifact_path||"provenance unavailable","small mono"));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(value.kind||"entity","info"));entry.append(meta);deploymentRoot.append(entry)});if(!deploymentRoot.children.length)deploymentRoot.append(text("p","No supported deployment declarations were discovered.","muted"));const fateRoot=$("sharedFateRegions");(fate.regions||[]).slice(0,12).forEach(value=>{const entry=document.createElement("article");entry.className="citation-entry";entry.append(text("h3",value.key||value.id),text("p",`${fmt((value.affected_component_ids||[]).length)} affected components`,"small"));const meta=document.createElement("div");meta.className="citation-meta";meta.append(tag(value.kind||"shared fate","warning"));entry.append(meta);fateRoot.append(entry)});if(!fateRoot.children.length)fateRoot.append(text("p","No multi-component shared-fate candidates were discovered.","muted"));const hierarchyRoot=$("architectureHierarchy");(hierarchy.nodes||[]).slice(0,12).forEach(value=>{const entry=document.createElement("article");entry.className="citation-entry";const trace=value.effective_trace||{};entry.append(text("h3",value.path||value.name),text("p",`${fmt((value.component_ids||[]).length)} components · ${fmt((trace.requirements||[]).length)} requirements · ${fmt((trace.hazards||[]).length)} hazards`,"small"));hierarchyRoot.append(entry)});if(!hierarchyRoot.children.length)hierarchyRoot.append(text("p","No architecture hierarchy was generated.","muted"));document.querySelectorAll("[data-open-diagram]").forEach(button=>button.addEventListener("click",()=>{const index=(data.diagrams||[]).findIndex(value=>value.id===button.dataset.openDiagram);if(index<0)return;$("diagramSelect").selectedIndex=index;renderGenericDiagram();setView("diagrams")}))}

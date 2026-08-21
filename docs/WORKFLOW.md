@@ -509,14 +509,16 @@ finding projections retain exact edge IDs, type/disposition counts, and bounded 
 test guidance. These records do not prove path feasibility; evaluated returns, conditional or
 nested finalizer outcomes, dynamic aliases, `ExceptionGroup` splitting, callbacks, native behavior, and undeclared
 third-party inheritance remain review boundaries.
-`static_branch_model` explains the callable-body paths excluded before calls, exceptions,
-sequences, and failure-mode candidates are composed. Decisions cover safe literal truth and
-comparisons, boolean expressions and short-circuit operands, `while False`, conditional
-expressions, and imported `typing.TYPE_CHECKING`/`typing_extensions.TYPE_CHECKING` guards. Use each
-record's component, source line, expression, selected/pruned branch, basis, and authority when
-reviewing why an edge is absent. Dynamic and unsupported predicates retain both branches. The
-predicate expression itself is always visited, so calls and effects needed to evaluate it are not
-discarded. This is bounded static pruning, not proof that the selected branch runs or terminates.
+`static_control_flow_model` explains paths excluded before calls, exceptions, sequences, and
+failure-mode candidates are composed. Decisions cover safe literal truth/comparisons, boolean
+short-circuiting, `while False`, conditional expressions, imported `TYPE_CHECKING` guards, empty
+literal `for` loops, direct exits, statically selected terminal blocks, and `if/else` constructs
+whose alternatives all terminate. Function, class-construction, and module-initialization tails
+use the same block traversal. Each record retains component, exact source coordinates, expression,
+selected/pruned region, omitted statement/operand counts, basis, and authority. Dynamic and
+unsupported predicates retain conservative alternatives. Predicate and iterator expressions are
+always visited, so effects needed to evaluate them are not discarded. This is bounded static
+pruning, not proof that a selected path runs, completes, or satisfies its contract.
 `state_machine_model` projects assignments to conventional state/status/phase/mode variables into
 stable state and guarded-transition records. Treat missing transitions and invariants as review
 questions: the static projection does not prove reachability, liveness, or completeness.

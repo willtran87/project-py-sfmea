@@ -29,11 +29,12 @@ path-level HTTP-method reconciliation, reviewer-disposition calibration, review-
 mapping proposals, repository-relative cache outputs, and an embedded HTML diagnostic scorecard.
 Dynamic wiring and every proposed mapping remain explicit review gaps.
 
-2026-08-21 refinement: callable-body analysis now prunes only safely decidable literal,
-comparison, boolean-short-circuit, conditional-expression, `while False`, and imported
-`TYPE_CHECKING` alternatives before composing calls, exceptions, sequences, and failure-mode
-candidates. Every prune is retained as validated component-linked evidence. Dynamic predicates,
-module-level conditional declarations, loop feasibility, match selection, and general symbolic
+2026-08-21 refinement: function, class-construction, and module-initialization analysis now prunes
+only safely decidable literal/comparison/boolean/conditional/`TYPE_CHECKING` alternatives, empty
+literal iteration, direct exits, selected terminal blocks, and `if/else` alternatives that all
+terminate before composing calls, exceptions, sequences, and failure-mode candidates. Every prune
+is retained as validated component-linked evidence with omission counts. Conditional declarations,
+nonempty/dynamic loop feasibility, match selection, complex `try` termination, and general symbolic
 execution remain explicit boundaries rather than inferred behavior.
 
 The schema-backed enhancement workbench now accounts for the complete 56-item follow-on backlog,

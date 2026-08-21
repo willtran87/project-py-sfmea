@@ -227,9 +227,9 @@ ANALYSIS_SECTION_PROJECTION_DECLARATIONS: dict[str, dict[str, Any]] = {
         "record_paths": (("raises",), ("handlers",), ("finalizers",), ("edges",)),
         "rationale": "Raises, handlers, finalizers, and bounded propagation edges are linked to components.",
     },
-    "static_branch_model": {
+    "static_control_flow_model": {
         "mode": "semantic",
-        "entity_kinds": ("static_branch_decision",),
+        "entity_kinds": ("static_control_flow_decision",),
         "relationship_channels": ("static_control_flow",),
         "record_paths": (("decisions",),),
         "rationale": "Safe non-executing branch decisions expose why impossible calls and failure paths were pruned.",
@@ -2662,13 +2662,13 @@ def build_cross_reference_index(
             role="outgoing_edge",
             label=label,
         )
-    branch_model = analysis.get("static_branch_model", {})
-    for record in branch_model.get("decisions", []):
+    control_flow_model = analysis.get("static_control_flow_model", {})
+    for record in control_flow_model.get("decisions", []):
         if isinstance(record, dict) and record.get("id"):
             link_semantic_record(
                 str(record.get("component_id", "")),
                 "static_control_flow",
-                "static_branch_decision",
+                "static_control_flow_decision",
                 record["id"],
                 record,
                 role="pruned_branch",

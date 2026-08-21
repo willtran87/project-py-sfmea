@@ -123,8 +123,8 @@ MAX_EXCEPTION_FINALIZER_RECORDS = 100_000
 MAX_EXCEPTION_PROPAGATION_EDGES = 200_000
 MAX_HANDLER_OUTCOMES_PER_HANDLER = 250
 MAX_HANDLER_OUTCOME_DEPTH = 100
-MAX_BRANCH_DECISIONS_PER_COMPONENT = 10_000
-MAX_BRANCH_DECISION_RECORDS = 100_000
+MAX_CONTROL_FLOW_DECISIONS_PER_COMPONENT = 10_000
+MAX_CONTROL_FLOW_DECISION_RECORDS = 100_000
 MAX_STATE_RECORDS_PER_COMPONENT = 10_000
 MAX_STATE_TRANSITIONS = 100_000
 MAX_RESILIENCE_SEMANTIC_OPERATIONS = 200_000
@@ -134,7 +134,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-7"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-8"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -318,8 +318,8 @@ class FunctionFacts:
     exception_handlers: list[dict[str, Any]] = field(default_factory=list)
     exception_finalizers: list[dict[str, Any]] = field(default_factory=list)
     exception_records_omitted: int = 0
-    branch_decisions: list[dict[str, Any]] = field(default_factory=list)
-    branch_decisions_omitted: int = 0
+    control_flow_decisions: list[dict[str, Any]] = field(default_factory=list)
+    control_flow_decisions_omitted: int = 0
     state_guards: list[dict[str, Any]] = field(default_factory=list)
     state_transitions: list[dict[str, Any]] = field(default_factory=list)
     state_records_omitted: int = 0
@@ -801,6 +801,105 @@ def _static_truth_value(
     return None, "dynamic_or_unsupported_expression"
 
 
+def _static_empty_iteration(node: ast.AST) -> tuple[bool, str]:
+    """Identify only literal iterables that cannot yield a value."""
+
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)) and not node.elts:
+        return True, "empty_literal_iterable"
+    if isinstance(node, ast.Dict) and not node.keys:
+        return True, "empty_literal_iterable"
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        return not node.value, "empty_literal_iterable"
+    return False, "dynamic_or_nonempty_iterable"
+
+
+def _static_block_termination(
+    statements: list[ast.stmt],
+    aliases: dict[str, str],
+    *,
+    depth: int,
+) -> tuple[bool, str]:
+    if depth > MAX_HANDLER_OUTCOME_DEPTH:
+        return False, "control_flow_depth_limit"
+    for statement in statements:
+        terminal, basis = _static_statement_termination(
+            statement, aliases, depth=depth + 1
+        )
+        if terminal:
+            return True, basis
+    return False, "block_may_fall_through"
+
+
+def _static_statement_termination(
+    statement: ast.stmt,
+    aliases: dict[str, str],
+    *,
+    depth: int = 0,
+) -> tuple[bool, str]:
+    """Prove a bounded statement cannot continue to its following sibling."""
+
+    if isinstance(statement, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+        return True, "direct_terminal_statement"
+    if depth > MAX_HANDLER_OUTCOME_DEPTH:
+        return False, "control_flow_depth_limit"
+    if isinstance(statement, ast.If):
+        decision, _basis = _static_truth_value(statement.test, aliases)
+        if decision is not None:
+            selected = statement.body if decision else statement.orelse
+            terminal, _selected_basis = _static_block_termination(
+                selected, aliases, depth=depth + 1
+            )
+            return terminal, (
+                "statically_selected_terminal_block"
+                if terminal
+                else "selected_block_may_fall_through"
+            )
+        if not statement.orelse:
+            return False, "if_without_else_may_fall_through"
+        body_terminal, _body_basis = _static_block_termination(
+            statement.body, aliases, depth=depth + 1
+        )
+        alternate_terminal, _alternate_basis = _static_block_termination(
+            statement.orelse, aliases, depth=depth + 1
+        )
+        terminal = body_terminal and alternate_terminal
+        return terminal, (
+            "all_conditional_branches_terminal"
+            if terminal
+            else "conditional_branch_may_fall_through"
+        )
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        terminal, _basis = _static_block_termination(
+            statement.body, aliases, depth=depth + 1
+        )
+        return terminal, (
+            "context_block_terminal" if terminal else "context_block_may_fall_through"
+        )
+    if isinstance(statement, ast.For):
+        empty, _basis = _static_empty_iteration(statement.iter)
+        if empty:
+            terminal, _alternate_basis = _static_block_termination(
+                statement.orelse, aliases, depth=depth + 1
+            )
+            return terminal, (
+                "empty_iteration_else_terminal"
+                if terminal
+                else "empty_iteration_may_fall_through"
+            )
+    if isinstance(statement, ast.While):
+        decision, _basis = _static_truth_value(statement.test, aliases)
+        if decision is False:
+            terminal, _alternate_basis = _static_block_termination(
+                statement.orelse, aliases, depth=depth + 1
+            )
+            return terminal, (
+                "false_loop_else_terminal"
+                if terminal
+                else "false_loop_may_fall_through"
+            )
+    return False, "unsupported_or_fallthrough_statement"
+
+
 HandlerOutcome = tuple[str, str, int]
 
 
@@ -893,6 +992,12 @@ def _handler_statement_outcomes(
             statement.body, exception_type_of, aliases, depth=depth + 1
         )
     if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+        if isinstance(statement, ast.For):
+            empty, _basis = _static_empty_iteration(statement.iter)
+            if empty:
+                return _handler_block_outcomes(
+                    statement.orelse, exception_type_of, aliases, depth=depth + 1
+                )
         if isinstance(statement, ast.While):
             decision, _basis = _static_truth_value(statement.test, aliases)
             if decision is False:
@@ -985,9 +1090,30 @@ class _FactVisitor(ast.NodeVisitor):
             self.control_context.pop()
 
     def _visit_block(self, values: list[ast.stmt], context: str) -> None:
-        for value in values:
-            self._visit_with_context(value, context)
-            if isinstance(value, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+        for index, value in enumerate(values):
+            terminal, terminal_basis = _static_statement_termination(
+                value, self.aliases
+            )
+            pushed_context = bool(context)
+            if pushed_context:
+                self.control_context.append(context)
+            try:
+                self.visit(value)
+                omitted = len(values) - index - 1
+                if terminal and omitted:
+                    self._record_control_flow_decision(
+                        value,
+                        kind="statement_sequence_termination",
+                        decision=True,
+                        basis=terminal_basis,
+                        selected_branch="terminal_exit",
+                        pruned_branch="subsequent_statements",
+                        pruned_statement_count=omitted,
+                    )
+            finally:
+                if pushed_context:
+                    self.control_context.pop()
+            if terminal:
                 break
 
     def _visit_as_value(self, value: ast.AST, context: dict[str, Any]) -> None:
@@ -997,7 +1123,7 @@ class _FactVisitor(ast.NodeVisitor):
         finally:
             self.value_context.pop()
 
-    def _record_branch_decision(
+    def _record_control_flow_decision(
         self,
         node: ast.AST,
         *,
@@ -1007,6 +1133,7 @@ class _FactVisitor(ast.NodeVisitor):
         selected_branch: str,
         pruned_branch: str,
         pruned_operand_count: int = 0,
+        pruned_statement_count: int = 0,
         decisive_expression: str = "",
         decisive_operand_index: int = 0,
     ) -> None:
@@ -1014,13 +1141,16 @@ class _FactVisitor(ast.NodeVisitor):
         column = int(getattr(node, "col_offset", 0) or 0)
         end_column = int(getattr(node, "end_col_offset", column) or column)
         expression = ast.unparse(node)[:1_000]
-        if len(self.facts.branch_decisions) >= MAX_BRANCH_DECISIONS_PER_COMPONENT:
-            self.facts.branch_decisions_omitted += 1
+        if (
+            len(self.facts.control_flow_decisions)
+            >= MAX_CONTROL_FLOW_DECISIONS_PER_COMPONENT
+        ):
+            self.facts.control_flow_decisions_omitted += 1
             return
-        self.facts.branch_decisions.append(
+        self.facts.control_flow_decisions.append(
             {
                 "id": stable_id(
-                    "STATIC-BRANCH",
+                    "STATIC-CONTROL-FLOW",
                     self.facts.path,
                     self.facts.qualname,
                     kind,
@@ -1041,6 +1171,7 @@ class _FactVisitor(ast.NodeVisitor):
                 "selected_branch": selected_branch,
                 "pruned_branch": pruned_branch,
                 "pruned_operand_count": pruned_operand_count,
+                "pruned_statement_count": pruned_statement_count,
                 "decisive_expression": decisive_expression[:1_000],
                 "decisive_operand_index": decisive_operand_index,
                 "control_context": list(self.control_context),
@@ -1309,7 +1440,7 @@ class _FactVisitor(ast.NodeVisitor):
         self._visit_with_context(node.test, f"if@{node.lineno}:condition")
         decision, basis = _static_truth_value(node.test, self.aliases)
         if decision is not None:
-            self._record_branch_decision(
+            self._record_control_flow_decision(
                 node.test,
                 kind="if_statement",
                 decision=decision,
@@ -1331,7 +1462,7 @@ class _FactVisitor(ast.NodeVisitor):
         self._visit_with_context(node.test, f"ifexp@{node.lineno}:condition")
         decision, basis = _static_truth_value(node.test, self.aliases)
         if decision is not None:
-            self._record_branch_decision(
+            self._record_control_flow_decision(
                 node.test,
                 kind="if_expression",
                 decision=decision,
@@ -1351,8 +1482,21 @@ class _FactVisitor(ast.NodeVisitor):
         self.facts.complexity += 1
         self.facts.loops += 1
         self.facts.signals.add("control_logic")
-        self.visit(node.target)
         self._visit_with_context(node.iter, f"for@{node.lineno}:iterator")
+        empty, basis = _static_empty_iteration(node.iter)
+        if empty:
+            self._record_control_flow_decision(
+                node.iter,
+                kind="empty_for_loop",
+                decision=False,
+                basis=basis,
+                selected_branch="else",
+                pruned_branch="body",
+                pruned_statement_count=len(node.body),
+            )
+            self._visit_block(node.orelse, f"for@{node.lineno}:else")
+            return
+        self.visit(node.target)
         self._visit_block(node.body, f"for@{node.lineno}:body")
         self._visit_block(node.orelse, f"for@{node.lineno}:else")
 
@@ -1373,7 +1517,7 @@ class _FactVisitor(ast.NodeVisitor):
         self._visit_with_context(node.test, f"while@{node.lineno}:condition")
         decision, basis = _static_truth_value(node.test, self.aliases)
         if decision is False:
-            self._record_branch_decision(
+            self._record_control_flow_decision(
                 node.test,
                 kind="while_statement",
                 decision=False,
@@ -1398,7 +1542,7 @@ class _FactVisitor(ast.NodeVisitor):
                 continue
             omitted = len(node.values) - index - 1
             if omitted:
-                self._record_branch_decision(
+                self._record_control_flow_decision(
                     node,
                     kind="boolean_short_circuit",
                     decision=bool(decision),
@@ -2212,8 +2356,7 @@ class _ModuleCollector(ast.NodeVisitor):
         if is_exception_type:
             facts.signals.add("exception_type")
         visitor = _FactVisitor(facts, dict(self.aliases))
-        for statement in class_context:
-            visitor.visit(statement)
+        visitor._visit_block(class_context, "")
         self.functions.append(facts)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -2437,8 +2580,7 @@ class _ModuleCollector(ast.NodeVisitor):
                 elif leaf == "command":
                     facts.entrypoint_types.add("cli_command")
         visitor = _FactVisitor(facts, self.aliases)
-        for statement in node.body:
-            visitor.visit(statement)
+        visitor._visit_block(node.body, "")
         member_qualname = qualname
         scope_qualname = (
             ".".join(self.scope_stack) if self.class_stack else member_qualname
@@ -2851,8 +2993,7 @@ def _module_initialization_facts(
     # dominating high-priority queues while preserving their complete candidate inventory.
     facts.signals.add("module_initialization")
     visitor = _FactVisitor(facts, dict(aliases))
-    for statement in executable:
-        visitor.visit(statement)
+    visitor._visit_block(executable, "")
     return facts
 
 
@@ -6347,17 +6488,17 @@ def _exception_propagation_model(
     }
 
 
-def _static_branch_model(facts_list: list[FunctionFacts]) -> dict[str, Any]:
+def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any]:
     decisions: list[dict[str, Any]] = []
     discovered = 0
     source_omitted = 0
     for facts in sorted(facts_list, key=_component_ref):
         component_id = stable_id("CMP", facts.path, facts.qualname, facts.kind)
         component_reference = _component_ref(facts)
-        source_omitted += facts.branch_decisions_omitted
-        for decision in facts.branch_decisions:
+        source_omitted += facts.control_flow_decisions_omitted
+        for decision in facts.control_flow_decisions:
             discovered += 1
-            if len(decisions) < MAX_BRANCH_DECISION_RECORDS:
+            if len(decisions) < MAX_CONTROL_FLOW_DECISION_RECORDS:
                 decisions.append(
                     {
                         **copy.deepcopy(decision),
@@ -6367,7 +6508,7 @@ def _static_branch_model(facts_list: list[FunctionFacts]) -> dict[str, Any]:
                 )
     source_omitted += discovered - len(decisions)
     return {
-        "format": "pysfmea-static-branch-model-1",
+        "format": "pysfmea-static-control-flow-model-1",
         "summary": {
             "decisions_discovered": discovered,
             "decisions_embedded": len(decisions),
@@ -6376,6 +6517,9 @@ def _static_branch_model(facts_list: list[FunctionFacts]) -> dict[str, Any]:
             "false_decisions": sum(value["decision"] is False for value in decisions),
             "pruned_operands": sum(
                 int(value.get("pruned_operand_count", 0)) for value in decisions
+            ),
+            "pruned_statements": sum(
+                int(value.get("pruned_statement_count", 0)) for value in decisions
             ),
             "decision_kinds": dict(
                 sorted(Counter(str(value["kind"]) for value in decisions).items())
@@ -6387,15 +6531,15 @@ def _static_branch_model(facts_list: list[FunctionFacts]) -> dict[str, Any]:
         },
         "decisions": decisions,
         "limits": {
-            "records_per_component": MAX_BRANCH_DECISIONS_PER_COMPONENT,
-            "decisions": MAX_BRANCH_DECISION_RECORDS,
+            "records_per_component": MAX_CONTROL_FLOW_DECISIONS_PER_COMPONENT,
+            "decisions": MAX_CONTROL_FLOW_DECISION_RECORDS,
         },
         "limitations": [
-            "Only literal truth, safe literal comparisons, static boolean composition, short-circuit operands, and resolved typing.TYPE_CHECKING guards are decided; all unsupported or dynamic predicates retain both branches.",
+            "Only direct terminal statements, statically empty literal iteration, literal truth, safe literal comparisons, static boolean composition, short-circuit operands, and resolved typing.TYPE_CHECKING guards are decided; all unsupported or dynamic predicates retain conservative alternatives.",
             "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
             "Loop iteration counts, break feasibility, match-pattern selection, dynamic imports, descriptors, and runtime value refinements are not inferred.",
         ],
-        "authority": "bounded_safe_non_executing_static_branch_pruning_not_runtime_path_or_termination_proof",
+        "authority": "bounded_safe_non_executing_static_control_flow_pruning_not_runtime_path_or_termination_proof",
     }
 
 
@@ -8915,8 +9059,8 @@ def _component_dict(
         "exception_handlers": copy.deepcopy(facts.exception_handlers),
         "exception_finalizers": copy.deepcopy(facts.exception_finalizers),
         "exception_records_omitted": facts.exception_records_omitted,
-        "branch_decisions": copy.deepcopy(facts.branch_decisions),
-        "branch_decisions_omitted": facts.branch_decisions_omitted,
+        "control_flow_decisions": copy.deepcopy(facts.control_flow_decisions),
+        "control_flow_decisions_omitted": facts.control_flow_decisions_omitted,
         "state_guards": copy.deepcopy(facts.state_guards),
         "state_transitions": copy.deepcopy(facts.state_transitions),
         "state_records_omitted": facts.state_records_omitted,
@@ -9494,7 +9638,7 @@ def scan_repository(
     alias_object_flow = _alias_object_flow(facts_list)
     concurrency_model = _concurrency_model(facts_list)
     exception_propagation = _exception_propagation_model(facts_list, class_declarations)
-    static_branch_model = _static_branch_model(facts_list)
+    static_control_flow_model = _static_control_flow_model(facts_list)
     state_machine_model = _state_machine_model(facts_list)
     resilience_semantics = _resilience_semantics_model(facts_list)
     authorization_scope_flow = _authorization_scope_flow(
@@ -9627,9 +9771,9 @@ def scan_repository(
         state_transition_ids[str(transition.get("component_id", ""))].append(
             str(transition["id"])
         )
-    branch_decision_ids: dict[str, list[str]] = defaultdict(list)
-    for decision in static_branch_model["decisions"]:
-        branch_decision_ids[str(decision.get("component_id", ""))].append(
+    control_flow_decision_ids: dict[str, list[str]] = defaultdict(list)
+    for decision in static_control_flow_model["decisions"]:
+        control_flow_decision_ids[str(decision.get("component_id", ""))].append(
             str(decision["id"])
         )
     resilience_operation_ids: dict[str, list[str]] = defaultdict(list)
@@ -9749,11 +9893,11 @@ def scan_repository(
             value.get("disposition") == "indeterminate_handler_match"
             for value in incoming_exception_records
         )
-        decision_ids = branch_decision_ids.get(component_id, [])
+        decision_ids = control_flow_decision_ids.get(component_id, [])
         component["static_control_flow"] = {
             "decision_ids": decision_ids[:1_000],
             "decisions_omitted": max(0, len(decision_ids) - 1_000),
-            "authority": "references_to_complete_top_level_static_branch_model",
+            "authority": "references_to_complete_top_level_static_control_flow_model",
         }
         guard_ids = state_guard_ids.get(component_id, [])
         transition_ids = state_transition_ids.get(component_id, [])
@@ -9963,7 +10107,7 @@ def scan_repository(
             "exception_propagation_edges": exception_propagation["summary"][
                 "propagation_edges_discovered"
             ],
-            "static_branch_decisions": static_branch_model["summary"][
+            "static_control_flow_decisions": static_control_flow_model["summary"][
                 "decisions_discovered"
             ],
             "state_transitions": state_machine_model["summary"][
@@ -9997,7 +10141,7 @@ def scan_repository(
         "alias_object_flow": alias_object_flow,
         "concurrency_model": concurrency_model,
         "exception_propagation": exception_propagation,
-        "static_branch_model": static_branch_model,
+        "static_control_flow_model": static_control_flow_model,
         "state_machine_model": state_machine_model,
         "resilience_semantics": resilience_semantics,
         "authorization_scope_flow": authorization_scope_flow,

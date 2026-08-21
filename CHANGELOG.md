@@ -5,14 +5,16 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
-- Add safe, non-executing static truth evaluation for callable-body `if`, conditional-expression,
-  `while False`, boolean short-circuit, literal comparison, and resolved `TYPE_CHECKING` guards.
-  Provably unselected calls, raises, sequences, and downstream failure paths are now excluded while
-  dynamic predicates remain conservative. Publish every decision in the count-reconciled
-  `pysfmea-static-branch-model-1`, validate source and component backlinks, preserve it through
-  fact-cache format 7, and expose it through the evidence fabric, canonical diagram, and HTML
-  report. Handler outcome classification uses the same evaluator so literal branches no longer
-  create false conditional rethrow or translation dispositions.
+- Add safe, non-executing control-flow pruning for literal `if`/conditional expressions,
+  `while False`, empty literal `for` loops, boolean short-circuiting, literal comparisons,
+  resolved `TYPE_CHECKING` guards, direct terminal statements, statically selected terminal
+  blocks, and dynamic `if/else` constructs whose alternatives all terminate. Provably unreachable
+  calls, raises, sequences, and downstream failure paths are excluded while unsupported paths
+  remain conservative. Publish every decision in count-reconciled
+  `pysfmea-static-control-flow-model-1`, validate exact source/component backlinks, preserve it
+  through fact-cache format 8, and expose it through the evidence fabric, canonical diagram, and
+  HTML report. Handler outcomes use the same predicate and empty-loop evaluator, avoiding false
+  conditional rethrow or translation dispositions.
 - Deepen typed exception analysis with Python-compatible nearest-`try` and first-handler
   selection, exact built-in inheritance (including the `Exception`/`BaseException` boundary),
   statically declared project exception inheritance, and explicit indeterminate outcomes for

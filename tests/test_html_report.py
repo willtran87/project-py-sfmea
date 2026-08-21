@@ -143,7 +143,7 @@ class HtmlReportTests(unittest.TestCase):
         self.assertIn("conditional handler outcomes", report_html)
         self.assertIn("conditional rethrow edges", report_html)
 
-    def test_report_exposes_static_branch_pruning_evidence(self) -> None:
+    def test_report_exposes_static_control_flow_pruning_evidence(self) -> None:
         (self.root / "branches.py").write_text(
             "def choose():\n    return publish(1) if True else missing()\n",
             encoding="utf-8",
@@ -151,9 +151,9 @@ class HtmlReportTests(unittest.TestCase):
         analysis = scan_repository(self.root)
         payload = build_html_report_data(analysis)
 
-        branch_analysis = payload["static_branch_analysis"]
-        self.assertEqual(branch_analysis["summary"]["decisions_discovered"], 1)
-        self.assertEqual(branch_analysis["decisions"][0]["kind"], "if_expression")
+        control_flow = payload["static_control_flow_analysis"]
+        self.assertEqual(control_flow["summary"]["decisions_discovered"], 1)
+        self.assertEqual(control_flow["decisions"][0]["kind"], "if_expression")
         self.assertNotIn(
             "missing",
             next(
@@ -163,7 +163,8 @@ class HtmlReportTests(unittest.TestCase):
         )
         report_path = export_html_report(analysis, self.root / "branch-report.html")
         report_html = report_path.read_text(encoding="utf-8")
-        self.assertIn("static branch decisions", report_html)
+        self.assertIn("static control-flow decisions", report_html)
+        self.assertIn("unreachable statements pruned", report_html)
         self.assertIn("short-circuit operands pruned", report_html)
 
     def tearDown(self) -> None:

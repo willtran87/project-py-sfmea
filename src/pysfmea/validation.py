@@ -1013,16 +1013,21 @@ def validate_analysis(
                 "Concurrency operations, relations, counts, or component indexes are inconsistent.",
                 field="concurrency_model",
             )
-    branch_model = analysis.get("static_branch_model")
-    if branch_model is not None:
-        branch_valid = isinstance(branch_model, dict)
-        decisions = branch_model.get("decisions", []) if branch_valid else []
-        branch_summary = branch_model.get("summary", {}) if branch_valid else {}
-        branch_valid = (
-            branch_valid
-            and branch_model.get("format") == "pysfmea-static-branch-model-1"
+    control_flow_model = analysis.get("static_control_flow_model")
+    if control_flow_model is not None:
+        control_flow_valid = isinstance(control_flow_model, dict)
+        decisions = (
+            control_flow_model.get("decisions", []) if control_flow_valid else []
+        )
+        control_flow_summary = (
+            control_flow_model.get("summary", {}) if control_flow_valid else {}
+        )
+        control_flow_valid = (
+            control_flow_valid
+            and control_flow_model.get("format")
+            == "pysfmea-static-control-flow-model-1"
             and isinstance(decisions, list)
-            and isinstance(branch_summary, dict)
+            and isinstance(control_flow_summary, dict)
         )
         decision_ids: list[str] = []
         decisions_by_component: dict[str, list[str]] = {
@@ -1033,22 +1038,31 @@ def validate_analysis(
             for value in analysis.get("components", [])
             if isinstance(value, dict)
         }
-        if branch_valid:
+        if control_flow_valid:
             allowed_kinds = {
                 "if_statement",
                 "if_expression",
                 "while_statement",
                 "boolean_short_circuit",
+                "empty_for_loop",
+                "statement_sequence_termination",
             }
             allowed_bases = {
                 "literal_truth",
                 "literal_comparison",
                 "static_boolean_expression",
                 "type_checking_guard",
+                "empty_literal_iterable",
+                "direct_terminal_statement",
+                "statically_selected_terminal_block",
+                "all_conditional_branches_terminal",
+                "context_block_terminal",
+                "empty_iteration_else_terminal",
+                "false_loop_else_terminal",
             }
             for decision in decisions:
                 if not isinstance(decision, dict):
-                    branch_valid = False
+                    control_flow_valid = False
                     continue
                 identifier = str(decision.get("id", ""))
                 component_id = str(decision.get("component_id", ""))
@@ -1057,7 +1071,7 @@ def validate_analysis(
                 decision_ids.append(identifier)
                 if component_id in decisions_by_component:
                     decisions_by_component[component_id].append(identifier)
-                raw_records = component.get("branch_decisions", [])
+                raw_records = component.get("control_flow_decisions", [])
                 raw_match = next(
                     (
                         value
@@ -1092,13 +1106,16 @@ def validate_analysis(
                     or not isinstance(decision.get("pruned_operand_count"), int)
                     or isinstance(decision.get("pruned_operand_count"), bool)
                     or int(decision.get("pruned_operand_count", 0)) < 0
+                    or not isinstance(decision.get("pruned_statement_count"), int)
+                    or isinstance(decision.get("pruned_statement_count"), bool)
+                    or int(decision.get("pruned_statement_count", 0)) < 0
                     or not isinstance(decision.get("decisive_operand_index"), int)
                     or isinstance(decision.get("decisive_operand_index"), bool)
                     or int(decision.get("decisive_operand_index", 0)) < 0
                     or raw_match != raw_projection
                     or identifier
                     != stable_id(
-                        "STATIC-BRANCH",
+                        "STATIC-CONTROL-FLOW",
                         str(source.get("path", "")),
                         str(component.get("qualname", "")),
                         str(decision.get("kind", "")),
@@ -1110,18 +1127,20 @@ def validate_analysis(
                         str(decision.get("selected_branch", "")),
                     )
                 ):
-                    branch_valid = False
+                    control_flow_valid = False
             source_records = sum(
-                len(value.get("branch_decisions", []))
+                len(value.get("control_flow_decisions", []))
                 for value in components_by_id.values()
-                if isinstance(value.get("branch_decisions", []), list)
+                if isinstance(value.get("control_flow_decisions", []), list)
             )
             source_omitted = sum(
-                int(value.get("branch_decisions_omitted", 0))
+                int(value.get("control_flow_decisions_omitted", 0))
                 for value in components_by_id.values()
-                if isinstance(value.get("branch_decisions_omitted", 0), int)
-                and not isinstance(value.get("branch_decisions_omitted", 0), bool)
-                and int(value.get("branch_decisions_omitted", 0)) >= 0
+                if isinstance(value.get("control_flow_decisions_omitted", 0), int)
+                and not isinstance(
+                    value.get("control_flow_decisions_omitted", 0), bool
+                )
+                and int(value.get("control_flow_decisions_omitted", 0)) >= 0
             )
             expected_omitted = source_omitted + source_records - len(decisions)
             expected_kinds = dict(
@@ -1131,12 +1150,13 @@ def validate_analysis(
                 sorted(Counter(str(value.get("basis", "")) for value in decisions).items())
             )
             summary_integers = (
-                branch_summary.get("decisions_discovered"),
-                branch_summary.get("decisions_embedded"),
-                branch_summary.get("decisions_omitted"),
-                branch_summary.get("true_decisions"),
-                branch_summary.get("false_decisions"),
-                branch_summary.get("pruned_operands"),
+                control_flow_summary.get("decisions_discovered"),
+                control_flow_summary.get("decisions_embedded"),
+                control_flow_summary.get("decisions_omitted"),
+                control_flow_summary.get("true_decisions"),
+                control_flow_summary.get("false_decisions"),
+                control_flow_summary.get("pruned_operands"),
+                control_flow_summary.get("pruned_statements"),
             )
             if (
                 len(decision_ids) != len(set(decision_ids))
@@ -1146,20 +1166,25 @@ def validate_analysis(
                     and value >= 0
                     for value in summary_integers
                 )
-                or branch_summary.get("decisions_discovered") != source_records
-                or branch_summary.get("decisions_embedded") != len(decisions)
-                or branch_summary.get("decisions_omitted") != expected_omitted
-                or branch_summary.get("true_decisions")
+                or control_flow_summary.get("decisions_discovered") != source_records
+                or control_flow_summary.get("decisions_embedded") != len(decisions)
+                or control_flow_summary.get("decisions_omitted") != expected_omitted
+                or control_flow_summary.get("true_decisions")
                 != sum(value.get("decision") is True for value in decisions)
-                or branch_summary.get("false_decisions")
+                or control_flow_summary.get("false_decisions")
                 != sum(value.get("decision") is False for value in decisions)
-                or branch_summary.get("pruned_operands")
+                or control_flow_summary.get("pruned_operands")
                 != sum(int(value.get("pruned_operand_count", 0)) for value in decisions)
-                or branch_summary.get("decision_kinds") != expected_kinds
-                or branch_summary.get("decision_bases") != expected_bases
-                or branch_summary.get("truncated") != bool(expected_omitted)
+                or control_flow_summary.get("pruned_statements")
+                != sum(
+                    int(value.get("pruned_statement_count", 0))
+                    for value in decisions
+                )
+                or control_flow_summary.get("decision_kinds") != expected_kinds
+                or control_flow_summary.get("decision_bases") != expected_bases
+                or control_flow_summary.get("truncated") != bool(expected_omitted)
             ):
-                branch_valid = False
+                control_flow_valid = False
             for component_id, component in components_by_id.items():
                 expected = decisions_by_component.get(component_id, [])
                 index = component.get("static_control_flow", {})
@@ -1169,13 +1194,13 @@ def validate_analysis(
                     or index.get("decisions_omitted")
                     != max(0, len(expected) - 1_000)
                 ):
-                    branch_valid = False
-        if not branch_valid:
+                    control_flow_valid = False
+        if not control_flow_valid:
             add(
-                "analysis.invalid_static_branch_model",
+                "analysis.invalid_static_control_flow_model",
                 "error",
-                "Static branch decisions, counts, source projections, or component indexes are inconsistent.",
-                field="static_branch_model",
+                "Static control-flow decisions, counts, source projections, or component indexes are inconsistent.",
+                field="static_control_flow_model",
             )
     exception_model = analysis.get("exception_propagation")
     if exception_model is not None:

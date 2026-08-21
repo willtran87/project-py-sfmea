@@ -152,11 +152,12 @@ propagating. Finalizers are also first-class component-linked semantic nodes. A
 suppressed or translated static edge is still a test-selection lead, not evidence that the handler
 ran or that its response is safe.
 
-The same cross-reference diagram exposes `static_branch_decision` nodes linked to their owning
-components. These nodes preserve the exact predicate, source line, selected and pruned portions,
-decision basis, and bounded authority. They make an absent call or exception path auditable
-without drawing the discarded path as if it were feasible. Literal pruning is not runtime-path or
-termination proof; dynamic predicates remain represented by both downstream alternatives.
+The same cross-reference diagram exposes `static_control_flow_decision` nodes linked to their
+owning components. These nodes preserve exact source coordinates, expression, selected and pruned
+regions, omitted statement/operand counts, decision basis, and bounded authority for literal
+branches, empty iteration, short-circuiting, and proven terminal blocks. They make an absent call
+or exception path auditable without drawing discarded code as feasible. Static pruning is not
+runtime-path or termination proof; unsupported predicates and loops remain conservative.
 
 Failure-propagation diagrams combine the reviewed local, next-higher, and end-effect
 chain with up to three conservative upstream caller paths per component and six caller

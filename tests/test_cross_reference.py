@@ -1775,7 +1775,7 @@ class CrossReferenceTests(unittest.TestCase):
         )
         Draft202012Validator(schema_document("cross-reference")).validate(fabric)
 
-    def test_static_branch_decisions_are_exact_semantic_records(self) -> None:
+    def test_static_control_flow_decisions_are_exact_semantic_records(self) -> None:
         (self.root / "pruned.py").write_text(
             "def choose():\n    if False:\n        return missing()\n    return 1\n",
             encoding="utf-8",
@@ -1783,14 +1783,14 @@ class CrossReferenceTests(unittest.TestCase):
         analysis = scan_repository(self.root)
         fabric = build_cross_reference_index(analysis)
         decision = next(
-            value for value in analysis["static_branch_model"]["decisions"]
+            value for value in analysis["static_control_flow_model"]["decisions"]
             if value["component_reference"] == "pruned.py:choose"
         )
         entity = next(
             value for value in fabric["entities"]
-            if value["id"] == f"static_branch_decision:{decision['id']}"
+            if value["id"] == f"static_control_flow_decision:{decision['id']}"
         )
-        self.assertEqual(entity["kind"], "static_branch_decision")
+        self.assertEqual(entity["kind"], "static_control_flow_decision")
         self.assertTrue(
             any(
                 value["channel"] == "static_control_flow"
@@ -1801,14 +1801,17 @@ class CrossReferenceTests(unittest.TestCase):
         coverage = next(
             value
             for value in fabric["analysis_projection_coverage"]["section_profiles"]
-            if value["section"] == "static_branch_model"
+            if value["section"] == "static_control_flow_model"
         )
         self.assertEqual(coverage["coverage_status"], "semantically_projected")
         self.assertEqual(coverage["source_record_count"], 1)
         self.assertEqual(coverage["semantically_projected_record_count"], 1)
         diagram = build_diagram_models(analysis, kind="cross_reference")[0]
         self.assertTrue(
-            any(value["kind"] == "static_branch_decision" for value in diagram["nodes"])
+            any(
+                value["kind"] == "static_control_flow_decision"
+                for value in diagram["nodes"]
+            )
         )
 
 

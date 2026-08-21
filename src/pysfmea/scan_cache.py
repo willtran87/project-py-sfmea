@@ -52,7 +52,7 @@ _INTEGER_FIELDS = {
     "arithmetic_ops",
     "alias_bindings_omitted",
     "exception_records_omitted",
-    "branch_decisions_omitted",
+    "control_flow_decisions_omitted",
     "state_records_omitted",
 }
 _BOOLEAN_FIELDS = {"is_async", "is_private", "mutates_state"}
@@ -68,7 +68,7 @@ _DICT_LIST_FIELDS = {
     "exception_raises",
     "exception_handlers",
     "exception_finalizers",
-    "branch_decisions",
+    "control_flow_decisions",
     "state_guards",
     "state_transitions",
     "external_call_candidates",

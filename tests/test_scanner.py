@@ -4765,7 +4765,9 @@ class ScannerTests(unittest.TestCase):
             },
         )
 
-    def test_static_branch_pruning_removes_impossible_runtime_evidence(self) -> None:
+    def test_static_control_flow_pruning_removes_impossible_runtime_evidence(
+        self,
+    ) -> None:
         (self.root / "branches.py").write_text(
             """from typing import TYPE_CHECKING
 
@@ -4803,6 +4805,36 @@ def boolean_or():
 def repeated_short_circuit():
     return (False and dead(), False and dead())
 
+def after_return():
+    live()
+    return None
+    dead()
+    raise RuntimeError('unreachable')
+
+def after_selected_terminal():
+    if True:
+        return live()
+    dead()
+
+def after_all_terminal(flag):
+    if flag:
+        return live()
+    else:
+        raise ValueError('alternate')
+    dead()
+
+def empty_for():
+    for item in ():
+        dead()
+    else:
+        live()
+
+def nonempty_for():
+    for item in (1,):
+        dead()
+    else:
+        live()
+
 def loop():
     while False:
         dead()
@@ -4822,7 +4854,26 @@ def handler():
         if True:
             raise
         return None
+
+def handler_empty_for():
+    try:
+        live()
+    except ValueError:
+        for item in []:
+            return None
+        else:
+            raise
 """,
+            encoding="utf-8",
+        )
+        (self.root / "startup.py").write_text(
+            "def startup_live():\n"
+            "    return 1\n\n"
+            "def startup_dead():\n"
+            "    return 2\n\n"
+            "startup_live()\n"
+            "raise RuntimeError('startup stopped')\n"
+            "startup_dead()\n",
             encoding="utf-8",
         )
         analysis = scan_repository(self.root)
@@ -4848,10 +4899,13 @@ def handler():
         handler_record = components["handler"]["exception_handlers"][0]
         self.assertEqual(handler_record["outcome_certainty"], "uniform")
         self.assertEqual(handler_record["outcome_kinds"], ["reraise"])
+        empty_handler = components["handler_empty_for"]["exception_handlers"][0]
+        self.assertEqual(empty_handler["outcome_certainty"], "uniform")
+        self.assertEqual(empty_handler["outcome_kinds"], ["reraise"])
 
-        model = analysis["static_branch_model"]
-        self.assertEqual(model["format"], "pysfmea-static-branch-model-1")
-        self.assertGreaterEqual(model["summary"]["decisions_discovered"], 10)
+        model = analysis["static_control_flow_model"]
+        self.assertEqual(model["format"], "pysfmea-static-control-flow-model-1")
+        self.assertGreaterEqual(model["summary"]["decisions_discovered"], 14)
         self.assertEqual(
             model["summary"]["decisions_discovered"],
             model["summary"]["decisions_embedded"],
@@ -4860,6 +4914,7 @@ def handler():
         self.assertIn("type_checking_guard", bases)
         self.assertIn("literal_comparison", bases)
         self.assertGreaterEqual(model["summary"]["pruned_operands"], 4)
+        self.assertGreaterEqual(model["summary"]["pruned_statements"], 5)
         repeated = [
             value for value in model["decisions"]
             if value["component_reference"] == "branches.py:repeated_short_circuit"
@@ -4867,6 +4922,33 @@ def handler():
         self.assertEqual(len(repeated), 2)
         self.assertEqual(len({value["id"] for value in repeated}), 2)
         self.assertNotEqual(repeated[0]["column"], repeated[1]["column"])
+        for name in ("after_return", "after_selected_terminal", "after_all_terminal"):
+            self.assertNotIn("dead", components[name]["calls"], name)
+            self.assertNotIn("dead", components[name]["ordered_calls"], name)
+        self.assertNotIn("dead", components["empty_for"]["calls"])
+        self.assertEqual(set(components["nonempty_for"]["calls"]), {"dead", "live"})
+        after_return_raises = components["after_return"]["exception_raises"]
+        self.assertEqual(after_return_raises, [])
+        termination_bases = {
+            value["basis"]
+            for value in model["decisions"]
+            if value["kind"] == "statement_sequence_termination"
+        }
+        self.assertIn("direct_terminal_statement", termination_bases)
+        self.assertIn("statically_selected_terminal_block", termination_bases)
+        self.assertIn("all_conditional_branches_terminal", termination_bases)
+        startup = next(
+            value
+            for value in analysis["components"]
+            if value["source"]["path"] == "startup.py"
+            and value["kind"] == "module_initialization"
+        )
+        self.assertIn("startup_live", startup["calls"])
+        self.assertNotIn("startup_dead", startup["calls"])
+        self.assertEqual(
+            [value["exception_type"] for value in startup["exception_raises"]],
+            ["RuntimeError"],
+        )
         decision_ids = {value["id"] for value in model["decisions"]}
         for component in components.values():
             self.assertTrue(
@@ -4886,6 +4968,10 @@ def handler():
                 "boolean_or",
                 "repeated_short_circuit",
                 "loop",
+                "after_return",
+                "after_selected_terminal",
+                "after_all_terminal",
+                "empty_for",
             )
         }
         self.assertFalse(
@@ -4896,15 +4982,15 @@ def handler():
             )
         )
         self.assertNotIn(
-            "analysis.invalid_static_branch_model",
+            "analysis.invalid_static_control_flow_model",
             {value["rule_id"] for value in validate_analysis(analysis)["findings"]},
         )
         tampered = json.loads(json.dumps(analysis))
-        tampered["static_branch_model"]["decisions"][0]["decision"] = not tampered[
-            "static_branch_model"
+        tampered["static_control_flow_model"]["decisions"][0]["decision"] = not tampered[
+            "static_control_flow_model"
         ]["decisions"][0]["decision"]
         self.assertIn(
-            "analysis.invalid_static_branch_model",
+            "analysis.invalid_static_control_flow_model",
             {value["rule_id"] for value in validate_analysis(tampered)["findings"]},
         )
 

@@ -46,7 +46,7 @@ class ScanCacheTests(unittest.TestCase):
                 ["fallthrough", "reraise"],
             )
             self.assertEqual(
-                cold_analysis["static_branch_model"]["summary"][
+                cold_analysis["static_control_flow_model"]["summary"][
                     "decisions_discovered"
                 ],
                 1,
@@ -67,8 +67,8 @@ class ScanCacheTests(unittest.TestCase):
                 cold_analysis["exception_propagation"],
             )
             self.assertEqual(
-                warm_analysis["static_branch_model"],
-                cold_analysis["static_branch_model"],
+                warm_analysis["static_control_flow_model"],
+                cold_analysis["static_control_flow_model"],
             )
 
             source.write_text(
