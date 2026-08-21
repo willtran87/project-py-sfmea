@@ -573,7 +573,9 @@ class ExtensionTests(unittest.TestCase):
                 ValueError, "changed during bounded consumption"
             ):
                 import_runtime_trace(self.analysis, trace_path)
-        with patch("pysfmea.json_ingestion.stat.S_ISLNK", return_value=True):
+        with patch(
+            "pysfmea.json_ingestion._is_symbolic_link_mode", return_value=True
+        ):
             with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
                 import_runtime_trace(self.analysis, trace_path)
         with self.assertRaisesRegex(ValueError, "500 printable"):

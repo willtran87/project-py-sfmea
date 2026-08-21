@@ -15,6 +15,12 @@ from .integrity import bounded_json_structure_metrics
 _same_file_identity = os.path.samestat
 
 
+def _is_symbolic_link_mode(mode: int) -> bool:
+    """Return whether *mode* identifies a link without exposing ``stat`` globally."""
+
+    return stat.S_ISLNK(mode)
+
+
 class BoundedFileSnapshotError(ValueError):
     """Reject a file snapshot while retaining its bounded I/O accounting."""
 
@@ -98,7 +104,12 @@ def load_bounded_file_snapshot(
         raise BoundedFileSnapshotError(
             f"{label} must be an available regular file"
         ) from exc
-    if stat.S_ISLNK(inspected.st_mode) or not stat.S_ISREG(inspected.st_mode):
+    if _is_symbolic_link_mode(inspected.st_mode):
+        raise BoundedFileSnapshotError(
+            f"{label} must be a regular non-symbolic-link file; "
+            "symbolic link input is not allowed"
+        )
+    if not stat.S_ISREG(inspected.st_mode):
         raise BoundedFileSnapshotError(
             f"{label} must be a regular non-symbolic-link file"
         )

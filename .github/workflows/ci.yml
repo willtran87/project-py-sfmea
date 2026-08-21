@@ -229,6 +229,7 @@ jobs:
         with:
           name: pysfmea-browser-report-quality
           path: .ci-report/*
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
 

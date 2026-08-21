@@ -1661,7 +1661,9 @@ class AssuranceRegisterTests(unittest.TestCase):
                     evidence_root=evidence_root,
                     initiated_by="Boundary Importer",
                 )
-        with mock.patch("pysfmea.json_ingestion.stat.S_ISLNK", return_value=True):
+        with mock.patch(
+            "pysfmea.json_ingestion._is_symbolic_link_mode", return_value=True
+        ):
             with self.assertRaisesRegex(ValueError, "regular non-symbolic-link"):
                 import_execution_evidence(
                     self.analysis,

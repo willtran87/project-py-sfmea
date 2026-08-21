@@ -1136,7 +1136,9 @@ class ScannerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "10-byte safety limit"):
                 load_organizational_guidance_pack(oversized)
 
-        with patch("pysfmea.json_ingestion.stat.S_ISLNK", return_value=True):
+        with patch(
+            "pysfmea.json_ingestion._is_symbolic_link_mode", return_value=True
+        ):
             with self.assertRaisesRegex(ValueError, "non-symbolic-link"):
                 load_organizational_guidance_pack(pack_path)
 
@@ -4084,7 +4086,9 @@ class ScannerTests(unittest.TestCase):
             "coverage JSON has no files object",
         )
         coverage.write_text(json.dumps(coverage_payload), encoding="utf-8")
-        with patch("pysfmea.json_ingestion.stat.S_ISLNK", return_value=True):
+        with patch(
+            "pysfmea.json_ingestion._is_symbolic_link_mode", return_value=True
+        ):
             linked, linked_warnings = _load_coverage(coverage, self.root.resolve())
         self.assertEqual(linked, {})
         self.assertIn("regular non-symbolic-link", linked_warnings[0]["message"])

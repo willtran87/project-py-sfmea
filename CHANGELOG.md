@@ -5,6 +5,10 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Restore release-gate portability by isolating symbolic-link test seams from Python's
+  process-wide `stat` module, copying the complete `pysfmea` package into focused mutation
+  sandboxes while mutating only governed targets, and explicitly publishing hidden Chromium
+  quality evidence from `.ci-report`.
 - Add safe, non-executing control-flow pruning for literal `if`/conditional expressions,
   `while False`, constant-true loop `else` clauses and unbreakable tails, empty literal `for`
   loops, guaranteed-nonempty literal `for` loops whose first-iteration body cannot fall through,
