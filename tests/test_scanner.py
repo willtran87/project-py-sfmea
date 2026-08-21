@@ -2565,7 +2565,7 @@ class ScannerTests(unittest.TestCase):
 
         analysis = scan_repository(self.root)
         model = analysis["exception_propagation"]
-        self.assertEqual(model["format"], "pysfmea-exception-propagation-2")
+        self.assertEqual(model["format"], "pysfmea-exception-propagation-3")
         handled_edge = next(
             value
             for value in model["edges"]
@@ -2805,6 +2805,39 @@ class ScannerTests(unittest.TestCase):
             "    finally:\n"
             "        if flag:\n"
             "            return 'conditional'\n\n"
+            "def static_conditional():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        if 2 > 1:\n"
+            "            return None\n"
+            "        else:\n"
+            "            pass\n\n"
+            "def uniform_conditional(flag):\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        if flag:\n"
+            "            return None\n"
+            "        else:\n"
+            "            return 0\n\n"
+            "def uniform_replacement(flag):\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        if flag:\n"
+            "            raise RuntimeError('first')\n"
+            "        else:\n"
+            "            raise RuntimeError('second')\n\n"
+            "def static_mapping_match():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        match {'status': 'ready'}:\n"
+            "            case {'status': 'ready'}:\n"
+            "                return 'matched'\n"
+            "            case _:\n"
+            "                pass\n\n"
             "def outer_terminal_wins():\n"
             "    try:\n"
             "        try:\n"
@@ -2881,6 +2914,37 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(conditional["disposition"], "may_propagate")
         self.assertEqual(conditional["finalizer_id"], "")
 
+        for reference in (
+            "finalizers.py:static_conditional",
+            "finalizers.py:uniform_conditional",
+            "finalizers.py:static_mapping_match",
+        ):
+            edge = edges[(reference, "finalizers.py:leaf", "ValueError")]
+            self.assertEqual(
+                edge["disposition"], "suppressed_by_finally_control_flow"
+            )
+            record = next(
+                value
+                for value in model["finalizers"]
+                if value["id"] == edge["finalizer_id"]
+            )
+            self.assertEqual(record["terminal_kind"], "return")
+            self.assertEqual(record["outcome_certainty"], "uniform")
+            self.assertEqual(
+                record["terminal_basis"], "uniform_safe_terminal_outcome"
+            )
+            self.assertFalse(edge["propagates_original"])
+
+        uniform_replacement = edges[
+            ("finalizers.py:uniform_replacement", "finalizers.py:leaf", "ValueError")
+        ]
+        self.assertEqual(
+            uniform_replacement["disposition"], "replaced_by_finally_exception"
+        )
+        self.assertEqual(
+            uniform_replacement["finalizer_exception_type"], "RuntimeError"
+        )
+
         outer = edges[
             (
                 "finalizers.py:outer_terminal_wins",
@@ -2941,6 +3005,9 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertEqual(evaluated_finalizer["terminal_kind"], "none")
         self.assertEqual(evaluated_finalizer["actions"], ["returns"])
+        self.assertEqual(
+            evaluated_finalizer["terminal_basis"], "evaluated_return_expression"
+        )
 
         reraised = edges[
             ("finalizers.py:bare_reraise", "finalizers.py:leaf", "ValueError")
@@ -2967,11 +3034,12 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertEqual(competing_finalizer["terminal_kind"], "none")
         self.assertEqual(competing_finalizer["actions"], ["raises", "returns"])
+        self.assertEqual(competing_finalizer["outcome_certainty"], "conditional")
 
-        self.assertEqual(model["summary"]["unconditional_terminal_finalizers"], 5)
+        self.assertEqual(model["summary"]["unconditional_terminal_finalizers"], 9)
         self.assertEqual(
             model["summary"]["edge_dispositions"]["suppressed_by_finally_control_flow"],
-            2,
+            5,
         )
         replaced_component = next(
             value for value in analysis["components"] if value["qualname"] == "replaced"
@@ -2995,6 +3063,17 @@ class ScannerTests(unittest.TestCase):
             any(
                 value["rule_id"] == "analysis.invalid_exception_propagation"
                 for value in validate_analysis(tampered)["findings"]
+            )
+        )
+
+        tampered_outcomes = json.loads(json.dumps(analysis))
+        tampered_outcomes["exception_propagation"]["finalizers"][0][
+            "terminal_basis"
+        ] = "unbounded_runtime_claim"
+        self.assertTrue(
+            any(
+                value["rule_id"] == "analysis.invalid_exception_propagation"
+                for value in validate_analysis(tampered_outcomes)["findings"]
             )
         )
 

@@ -497,17 +497,19 @@ types. Handler outcomes preserve sequential reachability and merge bounded `if`,
 `may_propagate`, indeterminate matches, suppression, continuation, conditional/unconditional
 control-flow exits, conditional/unconditional rethrow, explicit new raise, translation, mixed
 handler outcomes, suppression by a
-terminal `finally` control exit, and replacement by a terminal `finally` raise. The bounded
-finalizer rule applies only when the last top-level statement is a bare/literal `return`, explicit
-or bare `raise`, `break`, or `continue`, with no earlier explicit competing exit; outer terminal
-finalizers take precedence because they execute last. Every
-affected edge retains the finalizer ID, terminal kind, and replacement type; a bare terminal
-`raise` is recorded as a rethrow rather than a replacement. Within a handler, both bare `raise` and
+terminal `finally` control exit, and replacement by a terminal `finally` raise. Finalizer outcomes
+use the same bounded sequential and branch-merging model as handlers. Only a uniform bare/literal
+`return`, explicit or bare `raise`, `break`, or `continue` is credited as terminal; evaluated
+returns and conditional, fallthrough, truncated, or indeterminate outcome sets remain
+conservative. Outer terminal finalizers take precedence because they execute last. Every finalizer
+retains its outcomes, certainty, terminal basis, ID, terminal kind, and replacement type; a uniform
+bare `raise` is recorded as a rethrow rather than a replacement. Within a handler, both bare `raise` and
 `raise <active catch binding>` propagate the original object; other explicit raises are separate
 outgoing exceptions and do not falsely credit the original as propagating. Component and
 finding projections retain exact edge IDs, type/disposition counts, and bounded exception-injection
-test guidance. These records do not prove path feasibility; evaluated returns, conditional or
-nested finalizer outcomes, dynamic aliases, `ExceptionGroup` splitting, callbacks, native behavior, and undeclared
+test guidance. These records do not prove runtime path feasibility or implicit exceptions during
+predicate or context evaluation; evaluated or non-uniform finalizer returns, dynamic aliases,
+`ExceptionGroup` splitting, callbacks, native behavior, and undeclared
 third-party inheritance remain review boundaries.
 `static_control_flow_model` explains paths excluded before calls, exceptions, sequences, and
 failure-mode candidates are composed. Decisions cover safe literal truth/comparisons, boolean

@@ -1224,7 +1224,7 @@ def validate_analysis(
         summary = exception_model.get("summary", {}) if exception_valid else {}
         exception_valid = (
             exception_valid
-            and exception_model.get("format") == "pysfmea-exception-propagation-2"
+            and exception_model.get("format") == "pysfmea-exception-propagation-3"
             and isinstance(raises, list)
             and isinstance(handlers, list)
             and isinstance(finalizers, list)
@@ -1444,6 +1444,13 @@ def validate_analysis(
                 "continues",
                 "records_or_logs",
             }
+            allowed_finalizer_terminal_bases = {
+                "uniform_safe_terminal_outcome",
+                "evaluated_return_expression",
+                "uniform_nonterminal_outcome",
+                "conditional_or_fallthrough_outcomes",
+                "indeterminate_or_truncated_outcomes",
+            }
             for record in finalizers:
                 if not isinstance(record, dict):
                     exception_valid = False
@@ -1451,8 +1458,31 @@ def validate_analysis(
                 identifier = str(record.get("id", ""))
                 component_id = str(record.get("component_id", ""))
                 actions = record.get("actions", [])
+                outcomes = record.get("outcomes", [])
+                outcome_kinds = record.get("outcome_kinds", [])
+                normalized_outcomes = {
+                    (
+                        str(value.get("kind", "")),
+                        str(value.get("exception_type", "")),
+                    )
+                    for value in outcomes
+                    if isinstance(value, dict)
+                }
+                expected_outcome_kinds = sorted(
+                    {value[0] for value in normalized_outcomes}
+                )
+                outcomes_truncated = record.get("outcomes_truncated")
+                expected_certainty = (
+                    "indeterminate"
+                    if outcomes_truncated is True
+                    or "indeterminate" in expected_outcome_kinds
+                    else "uniform"
+                    if len(normalized_outcomes) == 1
+                    else "conditional"
+                )
                 terminal_kind = str(record.get("terminal_kind", ""))
                 terminal_exception_type = str(record.get("terminal_exception_type", ""))
+                terminal_basis = str(record.get("terminal_basis", ""))
                 component_record = exception_components_by_id.get(component_id, {})
                 component_path = str(component_record.get("source", {}).get("path", ""))
                 component_qualname = str(component_record.get("qualname", ""))
@@ -1466,6 +1496,39 @@ def validate_analysis(
                     != f"{component_path}:{component_qualname}"
                     or not isinstance(actions, list)
                     or any(value not in allowed_finalizer_actions for value in actions)
+                    or not isinstance(outcomes, list)
+                    or not outcomes
+                    or len(outcomes) > 250
+                    or len(outcomes)
+                    != len(
+                        {
+                            (
+                                value.get("kind"),
+                                value.get("exception_type"),
+                                value.get("line"),
+                            )
+                            for value in outcomes
+                            if isinstance(value, dict)
+                        }
+                    )
+                    or any(
+                        not isinstance(value, dict)
+                        or value.get("kind") not in allowed_handler_outcome_kinds
+                        or not isinstance(value.get("exception_type"), str)
+                        or bool(value.get("exception_type"))
+                        != (value.get("kind") in {"raise", "reraise"})
+                        or value.get("kind") == "reraise"
+                        and value.get("exception_type") != "active_handler_exception"
+                        or not isinstance(value.get("line"), int)
+                        or isinstance(value.get("line"), bool)
+                        or int(value.get("line", -1)) < 0
+                        or value.get("kind") != "fallthrough"
+                        and int(value.get("line", 0)) <= 0
+                        for value in outcomes
+                    )
+                    or outcome_kinds != expected_outcome_kinds
+                    or not isinstance(outcomes_truncated, bool)
+                    or record.get("outcome_certainty") != expected_certainty
                     or terminal_kind
                     not in {"none", "return", "raise", "reraise", "break", "continue"}
                     or not isinstance(record.get("unconditional_terminal"), bool)
@@ -1474,6 +1537,22 @@ def validate_analysis(
                     != (terminal_kind in {"raise", "reraise"})
                     or terminal_kind == "reraise"
                     and terminal_exception_type != "active_handler_exception"
+                    or terminal_basis not in allowed_finalizer_terminal_bases
+                    or (terminal_kind != "none")
+                    != (terminal_basis == "uniform_safe_terminal_outcome")
+                    or terminal_kind != "none"
+                    and normalized_outcomes
+                    != {(terminal_kind, terminal_exception_type)}
+                    or terminal_basis == "evaluated_return_expression"
+                    and normalized_outcomes != {("return", "")}
+                    or terminal_basis == "uniform_nonterminal_outcome"
+                    and normalized_outcomes != {("fallthrough", "")}
+                    or terminal_basis == "conditional_or_fallthrough_outcomes"
+                    and expected_certainty != "conditional"
+                    or terminal_basis == "indeterminate_or_truncated_outcomes"
+                    and expected_certainty != "indeterminate"
+                    or record.get("authority")
+                    != "bounded_branch_aware_static_finally_outcome_candidate"
                     or not isinstance(record.get("try_line"), int)
                     or isinstance(record.get("try_line"), bool)
                     or int(record.get("try_line", 0)) <= 0

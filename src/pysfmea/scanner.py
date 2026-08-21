@@ -134,7 +134,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-11"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-12"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -2230,31 +2230,66 @@ class _FactVisitor(ast.NodeVisitor):
         ):
             actions.append("records_or_logs")
 
-        terminal = node.finalbody[-1]
+        finalizer_outcomes, outcomes_truncated = _handler_block_outcomes(
+            node.finalbody, self._exception_raise_type, self.aliases
+        )
+        outcomes: list[dict[str, Any]] = [
+            {
+                "kind": kind,
+                "exception_type": exception_type,
+                "line": line,
+            }
+            for kind, exception_type, line in sorted(finalizer_outcomes)
+        ]
+        outcome_kinds = sorted({str(value["kind"]) for value in outcomes})
+        normalized_outcomes = {
+            (str(value["kind"]), str(value["exception_type"]))
+            for value in outcomes
+        }
+        outcome_certainty = (
+            "indeterminate"
+            if outcomes_truncated or "indeterminate" in outcome_kinds
+            else "uniform"
+            if len(normalized_outcomes) == 1
+            else "conditional"
+        )
         terminal_kind = "none"
         terminal_exception_type = ""
-        prior_terminal_candidate = any(
-            isinstance(value, (ast.Return, ast.Raise, ast.Break, ast.Continue))
-            for value in _walk_executable_nodes(node.finalbody[:-1])
-        )
-        if not prior_terminal_candidate:
-            if isinstance(terminal, ast.Return) and (
-                terminal.value is None or isinstance(terminal.value, ast.Constant)
-            ):
-                terminal_kind = "return"
-            elif isinstance(terminal, ast.Raise):
-                if terminal.exc is None:
-                    terminal_kind = "reraise"
-                    terminal_exception_type = "active_handler_exception"
+        terminal_basis = "conditional_or_fallthrough_outcomes"
+        if outcomes_truncated or "indeterminate" in outcome_kinds:
+            terminal_basis = "indeterminate_or_truncated_outcomes"
+        elif len(normalized_outcomes) == 1:
+            candidate_kind, candidate_exception_type = next(
+                iter(normalized_outcomes)
+            )
+            if candidate_kind == "return":
+                return_lines = {
+                    int(value["line"])
+                    for value in outcomes
+                    if value["kind"] == "return"
+                }
+                return_nodes = [
+                    value
+                    for value in executable_nodes
+                    if isinstance(value, ast.Return)
+                    and int(getattr(value, "lineno", 0) or 0) in return_lines
+                ]
+                if return_nodes and {
+                    int(getattr(value, "lineno", 0) or 0) for value in return_nodes
+                } == return_lines and all(
+                    value.value is None or isinstance(value.value, ast.Constant)
+                    for value in return_nodes
+                ):
+                    terminal_kind = "return"
+                    terminal_basis = "uniform_safe_terminal_outcome"
                 else:
-                    terminal_kind = "raise"
-                    terminal_exception_type = self._exception_raise_type(
-                        terminal.exc
-                    ) or ("unknown_exception_expression")
-            elif isinstance(terminal, ast.Break):
-                terminal_kind = "break"
-            elif isinstance(terminal, ast.Continue):
-                terminal_kind = "continue"
+                    terminal_basis = "evaluated_return_expression"
+            elif candidate_kind in {"raise", "reraise", "break", "continue"}:
+                terminal_kind = candidate_kind
+                terminal_exception_type = candidate_exception_type
+                terminal_basis = "uniform_safe_terminal_outcome"
+            else:
+                terminal_basis = "uniform_nonterminal_outcome"
         unconditional_terminal = terminal_kind != "none"
         self.facts.exception_finalizers.append(
             {
@@ -2274,7 +2309,12 @@ class _FactVisitor(ast.NodeVisitor):
                 "terminal_kind": terminal_kind,
                 "terminal_exception_type": terminal_exception_type,
                 "unconditional_terminal": unconditional_terminal,
-                "authority": "bounded_top_level_finally_terminal_candidate",
+                "outcomes": outcomes,
+                "outcome_kinds": outcome_kinds,
+                "outcome_certainty": outcome_certainty,
+                "outcomes_truncated": outcomes_truncated,
+                "terminal_basis": terminal_basis,
+                "authority": "bounded_branch_aware_static_finally_outcome_candidate",
             }
         )
 
@@ -6795,7 +6835,7 @@ def _exception_propagation_model(
     source_omitted += handlers_discovered - len(handlers)
     source_omitted += finalizers_discovered - len(finalizers)
     return {
-        "format": "pysfmea-exception-propagation-2",
+        "format": "pysfmea-exception-propagation-3",
         "summary": {
             "raise_records_discovered": raises_discovered,
             "raise_records_embedded": len(raises),

@@ -38,6 +38,14 @@ package; public artifact and schema identifiers carry their own explicit compati
   unaffected findings do not consume the governed analysis-node budget. Correct dependency finding
   provenance chains to use the resolved content-addressed artifact path rather than a synthetic
   aggregate display label, keeping exact cross-reference verification valid on real repositories.
+  Extend the bounded branch-outcome engine to `finally` blocks: sequential `if`, `match`, loop,
+  `with`, and nested-`try` alternatives now publish complete outcomes, certainty, and terminal
+  basis. Uniform bare/literal returns and control exits suppress the original exception, uniform
+  explicit raises replace it, and uniform bare raises preserve it; evaluated returns and mixed,
+  fallthrough, truncated, or indeterminate paths remain conservative. Validate the complete
+  finalizer projection, expose terminal basis in the evidence fabric, and invalidate stale fact
+  caches through format 12. Publish the strengthened programmatic contract as
+  `pysfmea-exception-propagation-3` rather than silently redefining format 2.
 - Replace candidate-only handler action classification with a bounded branch-aware outcome model.
   Sequential reachability and `if`/`match`/loop/`with`/nested-`try` branch merging now distinguish
   uniform, conditional, and indeterminate handler outcomes; conditional rethrow, translation,

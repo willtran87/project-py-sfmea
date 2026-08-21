@@ -151,10 +151,12 @@ flowchart LR
   and control exit. Bare `raise` and `raise <active catch binding>` retain the original exception;
   explicit new exceptions propagate independently rather than being credited as the original.
   Findings inherit exact typed
-  exposure and injection-test guidance. Bare/literal top-level `return`, explicit `raise`, `break`,
-  and `continue` statements ending a `finally` block suppress or replace propagated exceptions
-  with explicit provenance, while a bare terminal `raise` preserves the original exception.
-  Evaluated returns, competing prior exits, conditional/nested `finally` path feasibility, dynamic aliases,
+  exposure and injection-test guidance. Bounded branch-aware `finally` outcomes merge sequential
+  `if`, `match`, loop, `with`, and nested-`try` alternatives. A uniform bare/literal `return`,
+  explicit `raise`, `break`, or `continue` suppresses or replaces propagated exceptions with
+  explicit outcome certainty and terminal-basis provenance; a uniform bare `raise` preserves the
+  original exception. Evaluated returns and mixed/fallthrough/indeterminate finalizer paths remain
+  conservative. Implicit exceptions during predicate/context evaluation, dynamic aliases,
   `ExceptionGroup` splitting, runtime reachability, and complete path feasibility remain explicit
   limitations
 - Safe static control-flow pruning evaluates only non-executing literal truth/comparisons,

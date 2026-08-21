@@ -2492,6 +2492,7 @@ def build_cross_reference_index(
             "handler_may_reraise_original",
             "terminal_kind",
             "terminal_exception_type",
+            "terminal_basis",
             "unconditional_terminal",
             "state_variable",
             "target_state_expression",
