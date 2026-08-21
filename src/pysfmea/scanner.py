@@ -123,6 +123,11 @@ MAX_EXCEPTION_FINALIZER_RECORDS = 100_000
 MAX_EXCEPTION_PROPAGATION_EDGES = 200_000
 MAX_HANDLER_OUTCOMES_PER_HANDLER = 250
 MAX_HANDLER_OUTCOME_DEPTH = 100
+MAX_STATIC_EXPRESSION_DEPTH = 20
+MAX_STATIC_INTEGER_BITS = 4_096
+MAX_STATIC_SEQUENCE_LENGTH = 4_096
+MAX_STATIC_POWER_EXPONENT = 64
+MAX_STATIC_SHIFT = 1_024
 MAX_CONTROL_FLOW_DECISIONS_PER_COMPONENT = 10_000
 MAX_CONTROL_FLOW_DECISION_RECORDS = 100_000
 MAX_STATE_RECORDS_PER_COMPONENT = 10_000
@@ -134,7 +139,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-13"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-14"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -732,6 +737,140 @@ def _static_literal_value(node: ast.AST) -> tuple[bool, Any]:
     return (_is_safe_static_literal(value), value)
 
 
+def _bounded_static_expression_result(value: Any) -> tuple[bool, Any, str]:
+    if type(value) is int and value.bit_length() > MAX_STATIC_INTEGER_BITS:
+        return False, None, "bounded_expression_result_limit"
+    if type(value) in (tuple, list, str, bytes) and (
+        len(value) > MAX_STATIC_SEQUENCE_LENGTH
+    ):
+        return False, None, "bounded_expression_result_limit"
+    if not _is_safe_static_literal(value):
+        return False, None, "unsupported_expression_result"
+    return True, value, "bounded_literal_expression"
+
+
+def _static_expression_value(
+    node: ast.AST,
+    *,
+    depth: int = 0,
+) -> tuple[bool, Any, str]:
+    """Evaluate a small exact-built-in expression without repository execution."""
+
+    known, literal = _static_literal_value(node)
+    if known:
+        return True, literal, "literal"
+    if depth >= MAX_STATIC_EXPRESSION_DEPTH:
+        return False, None, "bounded_expression_depth_limit"
+    if isinstance(node, ast.UnaryOp) and isinstance(
+        node.op, (ast.UAdd, ast.USub, ast.Invert)
+    ):
+        operand_known, operand, _basis = _static_expression_value(
+            node.operand, depth=depth + 1
+        )
+        if not operand_known:
+            return False, None, "dynamic_or_unsupported_expression"
+        if type(operand) is int and operand.bit_length() > MAX_STATIC_INTEGER_BITS:
+            return False, None, "bounded_expression_operand_limit"
+        try:
+            if isinstance(node.op, ast.Invert) and type(operand) in (bool, int):
+                return _bounded_static_expression_result(~operand)
+            if isinstance(node.op, ast.UAdd) and type(operand) in (
+                bool,
+                int,
+                float,
+                complex,
+            ):
+                return _bounded_static_expression_result(+operand)
+            if isinstance(node.op, ast.USub) and type(operand) in (
+                bool,
+                int,
+                float,
+                complex,
+            ):
+                return _bounded_static_expression_result(-operand)
+        except (ArithmeticError, TypeError, ValueError):
+            pass
+        return False, None, "dynamic_or_unsupported_expression"
+    if not isinstance(node, ast.BinOp):
+        return False, None, "dynamic_or_unsupported_expression"
+    left_known, left, _left_basis = _static_expression_value(
+        node.left, depth=depth + 1
+    )
+    right_known, right, _right_basis = _static_expression_value(
+        node.right, depth=depth + 1
+    )
+    if not left_known or not right_known:
+        return False, None, "dynamic_or_unsupported_expression"
+    for value in (left, right):
+        if type(value) is int and value.bit_length() > MAX_STATIC_INTEGER_BITS:
+            return False, None, "bounded_expression_operand_limit"
+    numeric_types = (bool, int, float, complex)
+    sequence_types = (tuple, list, str, bytes)
+    try:
+        if isinstance(node.op, ast.Add):
+            if type(left) in numeric_types and type(right) in numeric_types:
+                return _bounded_static_expression_result(left + right)
+            if type(left) is type(right) and type(left) in sequence_types:
+                if len(left) + len(right) > MAX_STATIC_SEQUENCE_LENGTH:
+                    return False, None, "bounded_expression_result_limit"
+                return _bounded_static_expression_result(left + right)
+        elif isinstance(node.op, ast.Sub) and (
+            type(left) in numeric_types and type(right) in numeric_types
+        ):
+            return _bounded_static_expression_result(left - right)
+        elif isinstance(node.op, ast.Mult):
+            if type(left) in numeric_types and type(right) in numeric_types:
+                return _bounded_static_expression_result(left * right)
+            sequence = left if type(left) in sequence_types else right
+            multiplier = right if sequence is left else left
+            if type(sequence) in sequence_types and type(multiplier) in (bool, int):
+                if abs(multiplier) > MAX_STATIC_SEQUENCE_LENGTH or (
+                    len(sequence) * max(multiplier, 0) > MAX_STATIC_SEQUENCE_LENGTH
+                ):
+                    return False, None, "bounded_expression_result_limit"
+                return _bounded_static_expression_result(sequence * multiplier)
+        elif isinstance(node.op, ast.Div) and (
+            type(left) in numeric_types and type(right) in numeric_types
+        ):
+            return _bounded_static_expression_result(left / right)
+        elif isinstance(node.op, ast.FloorDiv) and (
+            type(left) in numeric_types and type(right) in numeric_types
+        ):
+            return _bounded_static_expression_result(left // right)
+        elif isinstance(node.op, ast.Mod) and (
+            type(left) in numeric_types and type(right) in numeric_types
+        ):
+            return _bounded_static_expression_result(left % right)
+        elif isinstance(node.op, ast.Pow) and (
+            type(left) in numeric_types and type(right) in numeric_types
+        ):
+            if type(right) not in (bool, int) or abs(right) > MAX_STATIC_POWER_EXPONENT:
+                return False, None, "bounded_expression_operand_limit"
+            return _bounded_static_expression_result(left**right)
+        elif isinstance(node.op, (ast.LShift, ast.RShift)) and (
+            type(left) in (bool, int) and type(right) in (bool, int)
+        ):
+            if right < 0 or right > MAX_STATIC_SHIFT:
+                return False, None, "bounded_expression_operand_limit"
+            result = left << right if isinstance(node.op, ast.LShift) else left >> right
+            return _bounded_static_expression_result(result)
+        elif isinstance(node.op, ast.BitOr) and (
+            type(left) in (bool, int) and type(right) in (bool, int)
+        ):
+            return _bounded_static_expression_result(left | right)
+        elif isinstance(node.op, ast.BitXor) and (
+            type(left) in (bool, int) and type(right) in (bool, int)
+        ):
+            return _bounded_static_expression_result(left ^ right)
+        elif isinstance(node.op, ast.BitAnd) and (
+            type(left) in (bool, int) and type(right) in (bool, int)
+        ):
+            return _bounded_static_expression_result(left & right)
+    except (ArithmeticError, TypeError, ValueError):
+        return False, None, "exceptional_literal_expression"
+    return False, None, "dynamic_or_unsupported_expression"
+
+
 def _static_truth_value(
     node: ast.AST,
     aliases: dict[str, str] | None = None,
@@ -762,10 +901,15 @@ def _static_truth_value(
         return None, "dynamic_or_unsupported_expression"
     if isinstance(node, ast.Compare):
         operands = [node.left, *node.comparators]
-        resolved = [_static_literal_value(value) for value in operands]
-        if not all(known for known, _value in resolved):
+        resolved = [_static_expression_value(value) for value in operands]
+        if not all(known for known, _value, _basis in resolved):
             return None, "dynamic_or_unsupported_expression"
-        values = [value for _known, value in resolved]
+        values = [value for _known, value, _basis in resolved]
+        comparison_basis = (
+            "literal_comparison"
+            if all(basis == "literal" for _known, _value, basis in resolved)
+            else "bounded_literal_expression"
+        )
         try:
             outcomes: list[bool] = []
             for left, operator, right in zip(
@@ -798,22 +942,32 @@ def _static_truth_value(
                     return None, "dynamic_or_unsupported_expression"
         except (TypeError, ValueError):
             return None, "dynamic_or_unsupported_expression"
-        return all(outcomes), "literal_comparison"
-    known, literal = _static_literal_value(node)
+        return all(outcomes), comparison_basis
+    known, literal, basis = _static_expression_value(node)
     if known:
-        return bool(literal), "literal_truth"
+        return bool(literal), (
+            "literal_truth" if basis == "literal" else "bounded_literal_expression"
+        )
     return None, "dynamic_or_unsupported_expression"
 
 
 def _static_literal_iteration_presence(node: ast.AST) -> tuple[bool | None, str]:
     """Identify whether a safe built-in literal yields at least one value."""
 
-    known, value = _static_literal_value(node)
+    known, value, basis = _static_expression_value(node)
     if not known or type(value) not in (tuple, list, set, dict, str, bytes):
         return None, "dynamic_or_unsupported_iterable"
     if value:
-        return True, "nonempty_literal_iterable"
-    return False, "empty_literal_iterable"
+        return True, (
+            "nonempty_literal_iterable"
+            if basis == "literal"
+            else "nonempty_bounded_literal_iterable"
+        )
+    return False, (
+        "empty_literal_iterable"
+        if basis == "literal"
+        else "empty_bounded_literal_iterable"
+    )
 
 
 def _block_contains_current_loop_control(
@@ -958,7 +1112,7 @@ def _static_match_selection(
 ) -> tuple[int | None, bool, str]:
     """Return the selected case and whether selection is completely decidable."""
 
-    known, subject = _static_literal_value(statement.subject)
+    known, subject, _subject_basis = _static_expression_value(statement.subject)
     if not known:
         return None, False, "dynamic_or_unsupported_match_subject"
     for index, case in enumerate(statement.cases):
@@ -1860,7 +2014,7 @@ class _FactVisitor(ast.NodeVisitor):
         self.facts.complexity += max(1, len(node.cases) - 1)
         self.facts.signals.add("control_logic")
         self._visit_with_context(node.subject, f"match@{node.lineno}:subject")
-        known, subject = _static_literal_value(node.subject)
+        known, subject, _subject_basis = _static_expression_value(node.subject)
         if not known:
             for index, case in enumerate(node.cases):
                 self.visit(case.pattern)
@@ -6931,6 +7085,11 @@ def _exception_propagation_model(
             "handler_records": MAX_EXCEPTION_HANDLER_RECORDS,
             "handler_outcomes_per_handler": MAX_HANDLER_OUTCOMES_PER_HANDLER,
             "handler_outcome_depth": MAX_HANDLER_OUTCOME_DEPTH,
+            "static_expression_depth": MAX_STATIC_EXPRESSION_DEPTH,
+            "static_integer_bits": MAX_STATIC_INTEGER_BITS,
+            "static_sequence_length": MAX_STATIC_SEQUENCE_LENGTH,
+            "static_power_exponent": MAX_STATIC_POWER_EXPONENT,
+            "static_shift": MAX_STATIC_SHIFT,
             "finalizer_records": MAX_EXCEPTION_FINALIZER_RECORDS,
             "propagation_edges": MAX_EXCEPTION_PROPAGATION_EDGES,
         },
@@ -6964,7 +7123,7 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
                 )
     source_omitted += discovered - len(decisions)
     return {
-        "format": "pysfmea-static-control-flow-model-1",
+        "format": "pysfmea-static-control-flow-model-2",
         "summary": {
             "decisions_discovered": discovered,
             "decisions_embedded": len(decisions),
@@ -6989,9 +7148,14 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
         "limits": {
             "records_per_component": MAX_CONTROL_FLOW_DECISIONS_PER_COMPONENT,
             "decisions": MAX_CONTROL_FLOW_DECISION_RECORDS,
+            "expression_depth": MAX_STATIC_EXPRESSION_DEPTH,
+            "integer_bits": MAX_STATIC_INTEGER_BITS,
+            "sequence_length": MAX_STATIC_SEQUENCE_LENGTH,
+            "power_exponent": MAX_STATIC_POWER_EXPONENT,
+            "shift": MAX_STATIC_SHIFT,
         },
         "limitations": [
-            "Only direct terminal statements, statically empty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; all unsupported or dynamic predicates and patterns retain conservative alternatives.",
+            "Only direct terminal statements, statically bounded empty/nonempty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, size-limited exact-built-in arithmetic and sequence expressions, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; exceptional, oversized, unsupported, or dynamic expressions, predicates, and patterns retain conservative alternatives.",
             "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
             "Loop iteration counts and dynamic break feasibility beyond lexical ownership, except-star and complex exception feasibility, class patterns, dynamic mapping keys or user-defined mapping semantics, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
         ],

@@ -1025,9 +1025,19 @@ def validate_analysis(
         control_flow_valid = (
             control_flow_valid
             and control_flow_model.get("format")
-            == "pysfmea-static-control-flow-model-1"
+            == "pysfmea-static-control-flow-model-2"
             and isinstance(decisions, list)
             and isinstance(control_flow_summary, dict)
+            and control_flow_model.get("limits")
+            == {
+                "records_per_component": 10_000,
+                "decisions": 100_000,
+                "expression_depth": 20,
+                "integer_bits": 4_096,
+                "sequence_length": 4_096,
+                "power_exponent": 64,
+                "shift": 1_024,
+            }
         )
         decision_ids: list[str] = []
         decisions_by_component: dict[str, list[str]] = {
@@ -1054,9 +1064,11 @@ def validate_analysis(
             allowed_bases = {
                 "literal_truth",
                 "literal_comparison",
+                "bounded_literal_expression",
                 "static_boolean_expression",
                 "type_checking_guard",
                 "empty_literal_iterable",
+                "empty_bounded_literal_iterable",
                 "nonempty_iteration_terminal_body",
                 "direct_terminal_statement",
                 "statically_selected_terminal_block",

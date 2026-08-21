@@ -160,6 +160,7 @@ flowchart LR
   `ExceptionGroup` splitting, runtime reachability, and complete path feasibility remain explicit
   limitations
 - Safe static control-flow pruning evaluates only non-executing literal truth/comparisons,
+  bounded exact-built-in arithmetic and sequence composition,
   boolean composition/short-circuiting, resolved `TYPE_CHECKING` guards, empty literal iteration,
   guaranteed-nonempty literal iteration with a terminal first-iteration body,
   bounded literal/singleton/OR/sequence/mapping/capture `match` patterns and static case guards, direct
@@ -170,7 +171,8 @@ flowchart LR
   statement tails. Every decision is retained in the bounded, count-reconciled
   `static_control_flow_model`, linked to its component and source coordinates, validated, cached,
   and navigable in the evidence fabric and HTML report. Class patterns, dynamic mapping keys,
-  user-defined mappings, dynamic values, and other unsupported patterns—as well as dynamic predicates,
+  user-defined mappings, dynamic values, oversized or exceptional constant expressions, and other
+  unsupported patterns—as well as dynamic predicates,
   complex `try`/`except*` flows, and loops—remain
   conservative; evaluated predicate/iterator effects remain scanned, and the model does not claim
   runtime reachability, termination, or general symbolic execution

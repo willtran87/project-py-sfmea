@@ -8,7 +8,8 @@ package; public artifact and schema identifiers carry their own explicit compati
 - Add safe, non-executing control-flow pruning for literal `if`/conditional expressions,
   `while False`, constant-true loop `else` clauses and unbreakable tails, empty literal `for`
   loops, guaranteed-nonempty literal `for` loops whose first-iteration body cannot fall through,
-  boolean short-circuiting, literal comparisons,
+  boolean short-circuiting, literal comparisons, bounded exact-built-in numeric/sequence
+  expressions,
   resolved `TYPE_CHECKING` guards, literal/singleton/OR/sequence/mapping/capture `match` patterns
   and statically decidable case guards, direct terminal statements, statically selected terminal
   blocks, exhaustive terminal `if/else` or `match` constructs, impossible `try` `else` clauses,
@@ -16,8 +17,8 @@ package; public artifact and schema identifiers carry their own explicit compati
   Provably unreachable
   calls, raises, sequences, and downstream failure paths are excluded while unsupported paths
   remain conservative. Publish every decision in count-reconciled
-  `pysfmea-static-control-flow-model-1`, validate exact source/component backlinks, preserve it
-  through fact-cache format 13, and expose it through the evidence fabric, canonical diagram, and
+  `pysfmea-static-control-flow-model-2`, validate exact source/component backlinks and evaluator
+  limits, preserve it through fact-cache format 14, and expose it through the evidence fabric, canonical diagram, and
   HTML report. Handler outcomes use the same predicate, pattern, empty-loop, and constant-loop
   evaluators, avoiding impossible loop-`else` rethrow, return, or translation dispositions. Reject call-shaped expressions
   from literal evaluation—including `set()` accepted by `ast.literal_eval`—because repository code
@@ -25,6 +26,11 @@ package; public artifact and schema identifiers carry their own explicit compati
   Feed nonempty literal iteration into handler and `finally` outcome merging so a guaranteed first
   iteration with only explicit terminal outcomes excludes an unreachable loop `else`; owned
   `break`/`continue`, dynamic iterables, and bodies that may fall through remain conservative.
+  Constant folding admits only exact built-in numeric operations and bounded tuple/list/string/byte
+  concatenation or repetition. It fails closed at depth 20, 4,096 integer bits or sequence items,
+  exponent 64, and shift 1,024; calls, exceptional operations, oversized results, and unsupported
+  types retain all alternatives. Publish these mandatory limits in format 2 rather than silently
+  redefining static-control-flow format 1.
 - Deepen typed exception analysis with Python-compatible nearest-`try` and first-handler
   selection, exact built-in inheritance (including the `Exception`/`BaseException` boundary),
   statically declared project exception inheritance, and explicit indeterminate outcomes for

@@ -2813,6 +2813,14 @@ class ScannerTests(unittest.TestCase):
             "            return None\n"
             "        else:\n"
             "            pass\n\n"
+            "def computed_conditional():\n"
+            "    try:\n"
+            "        leaf()\n"
+            "    finally:\n"
+            "        if 3 * 3 == 9:\n"
+            "            return None\n"
+            "        else:\n"
+            "            pass\n\n"
             "def uniform_conditional(flag):\n"
             "    try:\n"
             "        leaf()\n"
@@ -2924,6 +2932,7 @@ class ScannerTests(unittest.TestCase):
 
         for reference in (
             "finalizers.py:static_conditional",
+            "finalizers.py:computed_conditional",
             "finalizers.py:uniform_conditional",
             "finalizers.py:static_mapping_match",
             "finalizers.py:nonempty_loop_suppressed",
@@ -3045,10 +3054,10 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(competing_finalizer["actions"], ["raises", "returns"])
         self.assertEqual(competing_finalizer["outcome_certainty"], "conditional")
 
-        self.assertEqual(model["summary"]["unconditional_terminal_finalizers"], 10)
+        self.assertEqual(model["summary"]["unconditional_terminal_finalizers"], 11)
         self.assertEqual(
             model["summary"]["edge_dispositions"]["suppressed_by_finally_control_flow"],
-            6,
+            7,
         )
         replaced_component = next(
             value for value in analysis["components"] if value["qualname"] == "replaced"
@@ -4885,6 +4894,43 @@ def literal_comparison():
         return dead()
     return live()
 
+def computed_literal_comparison():
+    if 2 * 3 == 1 + 5:
+        return live()
+    return dead()
+
+def computed_literal_truth():
+    if (2 ** 5) - 32:
+        return dead()
+    return live()
+
+def computed_operator_family():
+    if (
+        8 / 2 == 4
+        and 9 // 2 == 4
+        and 9 % 4 == 1
+        and 1 << 3 == 8
+        and 7 & 3 == 3
+        and 4 | 1 == 5
+        and 7 ^ 3 == 4
+        and ~0 == -1
+        and 'a' + 'b' == 'ab'
+    ):
+        return live()
+    return dead()
+
+def oversized_literal_expression():
+    if 2 ** 65:
+        dead()
+    else:
+        live()
+
+def exceptional_literal_expression():
+    if 1 // 0:
+        dead()
+    else:
+        live()
+
 def type_guard():
     if TYPE_CHECKING:
         dead()
@@ -4955,6 +5001,19 @@ def nonempty_for_continue():
         live()
     dead()
 
+def computed_nonempty_for():
+    for item in ('x',) * 2:
+        return live()
+    else:
+        dead()
+    dead()
+
+def computed_empty_for():
+    for item in ('x',) * 0:
+        dead()
+    else:
+        live()
+
 def loop():
     while False:
         dead()
@@ -4984,6 +5043,13 @@ def literal_match():
     match 2:
         case 1:
             dead()
+        case 2:
+            live()
+        case _:
+            dead()
+
+def computed_match_subject():
+    match 1 + 1:
         case 2:
             live()
         case _:
@@ -5124,6 +5190,14 @@ def handler_nonempty_for():
         else:
             return None
 
+def handler_computed_condition():
+    try:
+        live()
+    except ValueError:
+        if 3 * 3 == 9:
+            raise
+        return None
+
 def handler_match():
     try:
         live()
@@ -5198,6 +5272,9 @@ def try_handler_fallthrough():
         for name in (
             "literal_true",
             "literal_comparison",
+            "computed_literal_comparison",
+            "computed_literal_truth",
+            "computed_operator_family",
             "type_guard",
             "expression",
             "boolean_and",
@@ -5208,6 +5285,7 @@ def try_handler_fallthrough():
             "true_loop_without_break",
             "nested_loop_break",
             "literal_match",
+            "computed_match_subject",
             "sequence_match",
             "starred_or_match",
             "singleton_match",
@@ -5226,6 +5304,8 @@ def try_handler_fallthrough():
         self.assertEqual(
             set(components["dynamic_match"]["calls"]), {"dead", "live"}
         )
+        for name in ("oversized_literal_expression", "exceptional_literal_expression"):
+            self.assertEqual(set(components[name]["calls"]), {"dead", "live"})
         for name in ("dynamic_mapping_key", "conservative_class_pattern"):
             self.assertEqual(set(components[name]["calls"]), {"dead", "live"})
         self.assertEqual(
@@ -5243,6 +5323,11 @@ def try_handler_fallthrough():
         nonempty_handler = components["handler_nonempty_for"]["exception_handlers"][0]
         self.assertEqual(nonempty_handler["outcome_certainty"], "uniform")
         self.assertEqual(nonempty_handler["outcome_kinds"], ["reraise"])
+        computed_handler = components["handler_computed_condition"][
+            "exception_handlers"
+        ][0]
+        self.assertEqual(computed_handler["outcome_certainty"], "uniform")
+        self.assertEqual(computed_handler["outcome_kinds"], ["reraise"])
         match_handler = components["handler_match"]["exception_handlers"][0]
         self.assertEqual(match_handler["outcome_certainty"], "uniform")
         self.assertEqual(match_handler["outcome_kinds"], ["reraise"])
@@ -5251,15 +5336,22 @@ def try_handler_fallthrough():
         self.assertEqual(true_loop_handler["outcome_kinds"], ["reraise"])
 
         model = analysis["static_control_flow_model"]
-        self.assertEqual(model["format"], "pysfmea-static-control-flow-model-1")
+        self.assertEqual(model["format"], "pysfmea-static-control-flow-model-2")
         self.assertGreaterEqual(model["summary"]["decisions_discovered"], 40)
         self.assertEqual(
             model["summary"]["decisions_discovered"],
             model["summary"]["decisions_embedded"],
         )
+        self.assertEqual(model["limits"]["expression_depth"], 20)
+        self.assertEqual(model["limits"]["integer_bits"], 4_096)
+        self.assertEqual(model["limits"]["sequence_length"], 4_096)
+        self.assertEqual(model["limits"]["power_exponent"], 64)
+        self.assertEqual(model["limits"]["shift"], 1_024)
         bases = model["summary"]["decision_bases"]
         self.assertIn("type_checking_guard", bases)
         self.assertIn("literal_comparison", bases)
+        self.assertIn("bounded_literal_expression", bases)
+        self.assertIn("empty_bounded_literal_iterable", bases)
         self.assertGreaterEqual(model["summary"]["pruned_operands"], 4)
         self.assertGreaterEqual(model["summary"]["pruned_statements"], 5)
         self.assertGreaterEqual(
@@ -5297,6 +5389,8 @@ def try_handler_fallthrough():
         self.assertEqual(
             set(components["nonempty_for_continue"]["calls"]), {"dead", "live"}
         )
+        self.assertNotIn("dead", components["computed_nonempty_for"]["calls"])
+        self.assertNotIn("dead", components["computed_empty_for"]["calls"])
         after_return_raises = components["after_return"]["exception_raises"]
         self.assertEqual(after_return_raises, [])
         termination_bases = {
@@ -5337,6 +5431,9 @@ def try_handler_fallthrough():
             for name in (
                 "literal_true",
                 "literal_comparison",
+                "computed_literal_comparison",
+                "computed_literal_truth",
+                "computed_operator_family",
                 "type_guard",
                 "expression",
                 "boolean_and",
@@ -5350,9 +5447,12 @@ def try_handler_fallthrough():
                 "after_selected_terminal",
                 "after_all_terminal",
                 "empty_for",
+                "computed_empty_for",
+                "computed_nonempty_for",
                 "terminal_nonempty_for",
                 "terminal_nonempty_for_branches",
                 "literal_match",
+                "computed_match_subject",
                 "sequence_match",
                 "starred_or_match",
                 "singleton_match",
@@ -5378,6 +5478,15 @@ def try_handler_fallthrough():
         self.assertNotIn(
             "analysis.invalid_static_control_flow_model",
             {value["rule_id"] for value in validate_analysis(analysis)["findings"]},
+        )
+        tampered_limit = json.loads(json.dumps(analysis))
+        tampered_limit["static_control_flow_model"]["limits"]["power_exponent"] = 65
+        self.assertIn(
+            "analysis.invalid_static_control_flow_model",
+            {
+                value["rule_id"]
+                for value in validate_analysis(tampered_limit)["findings"]
+            },
         )
         tampered = json.loads(json.dumps(analysis))
         tampered["static_control_flow_model"]["decisions"][0]["decision"] = not tampered[
