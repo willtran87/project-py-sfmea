@@ -7,6 +7,18 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+UPLOAD_ARTIFACT_V7_SHA = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+
+
+def test_artifact_uploads_use_the_node24_release_with_an_immutable_pin() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    uploads = re.findall(r"actions/upload-artifact@([^\s]+)", workflow)
+
+    assert uploads
+    assert set(uploads) == {UPLOAD_ARTIFACT_V7_SHA}
+    assert workflow.count("# v7.0.1") == len(uploads)
 
 
 def test_hidden_browser_evidence_is_explicitly_uploaded() -> None:

@@ -51,7 +51,7 @@ jobs:
         run: python scripts/platform_qualification.py platform-junit.xml --output platform-qualification.json
 
       - name: Publish platform qualification receipt
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: platform-${{ matrix.os }}-python-${{ matrix.python-version }}
           path: |
@@ -98,7 +98,7 @@ jobs:
           .package-smoke/bin/sfmea schema --list
 
       - name: Publish workflow artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pysfmea-distributions
           path: dist/*
@@ -142,7 +142,7 @@ jobs:
         run: python -m pip_audit . --format cyclonedx-json --output pysfmea-build.cdx.json --progress-spinner off
 
       - name: Publish coverage evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pysfmea-coverage
           path: |
@@ -225,7 +225,7 @@ jobs:
           --output .ci-report/browser-quality-verification.json
 
       - name: Publish browser quality evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pysfmea-browser-report-quality
           path: .ci-report/*
@@ -261,7 +261,7 @@ jobs:
           --output scan-performance.json
 
       - name: Publish performance evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pysfmea-performance-evidence
           path: scan-performance.json
