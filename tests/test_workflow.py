@@ -41,7 +41,7 @@ from pysfmea.workflow import (
 class WorkflowStatusTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "app.py").write_text(
             "def authorize(actor, request):\n    return bool(actor and request)\n",
             encoding="utf-8",

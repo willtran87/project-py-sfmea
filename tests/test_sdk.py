@@ -26,7 +26,7 @@ from pysfmea.store import load_analysis, save_analysis
 class PluginSdkTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "sample.py").write_text(
             "def calculate(value):\n    return value + 1\n", encoding="utf-8"
         )

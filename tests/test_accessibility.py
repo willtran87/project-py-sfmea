@@ -25,7 +25,7 @@ from pysfmea.schemas import schema_document
 class AccessibilityEvidenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def process(value):\n    return value + 1\n", encoding="utf-8"
         )

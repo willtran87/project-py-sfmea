@@ -28,7 +28,7 @@ from pysfmea.store import load_analysis, save_analysis
 class EvidenceOnboardingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         (self.root / "app.py").write_text(
             "def run(value: int) -> int:\n    return value + 1\n",
             encoding="utf-8",

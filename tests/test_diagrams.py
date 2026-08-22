@@ -88,7 +88,7 @@ def custom_state_diagram() -> dict[str, object]:
 class DiagramTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def validate(value):\n    return bool(value)\n\n"
             "def execute(value):\n    validate(value)\n    return value\n",

@@ -55,7 +55,7 @@ from pysfmea.version import __version__
 class AssuranceRegisterTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def divide(value):\n    return 100 / value\n\n"
             "def publish(client, payload):\n    return client.send(payload)\n",

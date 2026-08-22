@@ -21,7 +21,7 @@ from pysfmea.file_publication import (
 class FilePublicationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
 
     def tearDown(self) -> None:
         self.temp.cleanup()

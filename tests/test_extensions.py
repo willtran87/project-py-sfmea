@@ -124,7 +124,7 @@ class UnknownCitationProvider(StaticProvider):
 class ExtensionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def validate(value):\n    return bool(value)\n\n"
             "def charge(value):\n    return value * 2\n\n"

@@ -39,7 +39,7 @@ from pysfmea.version import __version__
 class HtmlReportTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def validate(value):\n    return bool(value)\n\n"
             "def publish(value):\n    return value\n\n"

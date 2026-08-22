@@ -23,7 +23,7 @@ from pysfmea.validation import validate_analysis
 class GraphifyIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "app.py").write_text(
             "def caller():\n"
             "    return callee()\n"

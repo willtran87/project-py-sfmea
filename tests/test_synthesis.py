@@ -29,7 +29,7 @@ from pysfmea.synthesis import (
 class SynthesisWorkspaceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def fetch():\n    return request_remote()\n", encoding="utf-8"
         )

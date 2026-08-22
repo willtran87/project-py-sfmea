@@ -20,7 +20,7 @@ from pysfmea.validation import review_queue, validate_analysis
 class ValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def authorize(user):\n    return bool(user)\n",
             encoding="utf-8",

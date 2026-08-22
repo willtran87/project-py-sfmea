@@ -74,7 +74,7 @@ def _identity_changes_once():
 class ScannerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "app.py").write_text(SAMPLE_SOURCE, encoding="utf-8")
         tests = self.root / "tests"
         tests.mkdir()

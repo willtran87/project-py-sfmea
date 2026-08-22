@@ -27,7 +27,7 @@ from pysfmea.schemas import schema_document
 class BrowserQualityReceiptTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.report = self.root / "report.html"
         self.report.write_text("<!doctype html><title>Report</title>", encoding="utf-8")
 

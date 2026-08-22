@@ -29,7 +29,7 @@ from pysfmea.workflow import workflow_status
 class ConfigurationAuthoringTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         (self.root / "app.py").write_text(
             "import os\n"
             "from fastapi import APIRouter\n"

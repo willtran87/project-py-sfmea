@@ -42,7 +42,7 @@ from pysfmea.store import load_analysis, save_analysis
 class AssuranceProgramTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.analysis_paths: list[Path] = []
         self.analyses: list[dict[str, object]] = []
         for name in ("orders", "payments"):

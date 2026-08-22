@@ -27,7 +27,7 @@ from pysfmea.store import save_analysis
 class EvaluationBoundaryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def perform(value):\n    return value\n", encoding="utf-8"
         )

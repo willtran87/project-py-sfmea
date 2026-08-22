@@ -29,7 +29,7 @@ from pysfmea.validation import validate_analysis
 class GuidanceTraceabilityTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def transform(value):\n    return value / 100\n",
             encoding="utf-8",

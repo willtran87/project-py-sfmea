@@ -59,3 +59,16 @@ def test_mutation_gate_targets_mutmut_3_mangled_names() -> None:
     assert '"mutmut>=3.7,<4"' in (ROOT / "pyproject.toml").read_text(
         encoding="utf-8"
     )
+
+
+def test_temporary_repository_fixtures_use_canonical_roots() -> None:
+    noncanonical_assignment = re.compile(
+        r"self\.root\s*=\s*Path\(self\.(?:temp|temporary)\.name\)(?!\.resolve\(\))"
+    )
+
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted((ROOT / "tests").glob("test_*.py"))
+        if noncanonical_assignment.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == []

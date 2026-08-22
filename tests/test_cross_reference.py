@@ -33,7 +33,7 @@ from pysfmea.system_context import build_system_context
 class CrossReferenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "app.py").write_text(
             "def caller():\n    return callee()\n\ndef callee():\n    return 1\n",
             encoding="utf-8",

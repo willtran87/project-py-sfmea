@@ -27,7 +27,7 @@ from pysfmea.store import load_analysis, save_analysis
 class SftaAuthoringTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         (self.root / "service.py").write_text(
             "def process(value):\n    return value\n", encoding="utf-8"
         )

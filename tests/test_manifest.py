@@ -20,7 +20,7 @@ from pysfmea.validation import validate_analysis
 class RunManifestTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def execute(value):\n    return value\n", encoding="utf-8"
         )

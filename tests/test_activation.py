@@ -33,7 +33,7 @@ from pysfmea.store import load_analysis, save_analysis
 class ActivationWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         (self.root / "app.py").write_text(
             "def publish(value):\n    return value\n", encoding="utf-8"
         )

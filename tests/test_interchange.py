@@ -20,7 +20,7 @@ from pysfmea.scanner import scan_repository
 class InterchangeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def process(value):\n    return value\n", encoding="utf-8"
         )

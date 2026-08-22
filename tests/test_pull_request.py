@@ -20,7 +20,7 @@ from pysfmea.schemas import schema_document
 class PullRequestAnalysisTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.repo = self.root / "repository"
         self.repo.mkdir()
         self._git("init")
