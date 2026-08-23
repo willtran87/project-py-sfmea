@@ -139,7 +139,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-18"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-19"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -192,6 +192,25 @@ def _dotted_name(node: ast.AST) -> str:
         parent = _dotted_name(node.value)
         return f"{parent}.{node.attr}" if parent else node.attr
     return ""
+
+
+def _callable_reference(node: ast.AST, *, allow_zero_argument_super: bool) -> str:
+    """Return a call reference without flattening call-result dispatch."""
+
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Call):
+        receiver_call = node.value
+        receiver_reference = _dotted_name(receiver_call.func)
+        if receiver_reference == "super":
+            if (
+                allow_zero_argument_super
+                and not receiver_call.args
+                and not receiver_call.keywords
+            ):
+                return f"super().{node.attr}"
+            return f"super(<unresolved>).{node.attr}"
+        receiver_label = receiver_reference or "<dynamic-call>"
+        return f"{receiver_label}(...).{node.attr}"
+    return _dotted_name(node)
 
 
 def _resolve_alias_reference(reference: str, aliases: dict[str, str]) -> str:
@@ -739,6 +758,46 @@ def _walk_executable_nodes(statements: list[ast.stmt]) -> Iterable[ast.AST]:
         ):
             continue
         pending.extend(reversed(list(ast.iter_child_nodes(value))))
+
+
+def _statements_bind_name(statements: list[ast.stmt], name: str) -> bool:
+    for value in _walk_executable_nodes(statements):
+        if isinstance(value, ast.Name) and isinstance(value.ctx, ast.Store):
+            if value.id == name:
+                return True
+        elif isinstance(value, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if value.name == name:
+                return True
+        elif isinstance(value, ast.Import):
+            if any((alias.asname or alias.name.split(".")[0]) == name for alias in value.names):
+                return True
+        elif isinstance(value, ast.ImportFrom):
+            if any((alias.asname or alias.name) == name for alias in value.names):
+                return True
+        elif isinstance(value, (ast.Global, ast.Nonlocal)) and name in value.names:
+            return True
+    return False
+
+
+def _function_scope_binds_name(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    name: str,
+) -> bool:
+    """Conservatively detect names that shadow a builtin in one function scope."""
+
+    arguments = [
+        *node.args.posonlyargs,
+        *node.args.args,
+        *node.args.kwonlyargs,
+    ]
+    if node.args.vararg:
+        arguments.append(node.args.vararg)
+    if node.args.kwarg:
+        arguments.append(node.args.kwarg)
+    return any(argument.arg == name for argument in arguments) or _statements_bind_name(
+        node.body,
+        name,
+    )
 
 
 _STATIC_LITERAL_SCALARS = (type(None), bool, int, float, complex, str, bytes)
@@ -1853,9 +1912,16 @@ def _handler_block_outcomes(
 
 
 class _FactVisitor(ast.NodeVisitor):
-    def __init__(self, facts: FunctionFacts, aliases: dict[str, str]) -> None:
+    def __init__(
+        self,
+        facts: FunctionFacts,
+        aliases: dict[str, str],
+        *,
+        allow_zero_argument_super: bool = False,
+    ) -> None:
         self.facts = facts
         self.aliases = aliases
+        self.allow_zero_argument_super = allow_zero_argument_super
         self.control_context: list[str] = []
         self.await_depth = 0
         self.value_context: list[dict[str, Any]] = []
@@ -2119,7 +2185,10 @@ class _FactVisitor(ast.NodeVisitor):
         return
 
     def visit_Call(self, node: ast.Call) -> None:
-        raw = _dotted_name(node.func)
+        raw = _callable_reference(
+            node.func,
+            allow_zero_argument_super=self.allow_zero_argument_super,
+        )
         resolved, resolution = self._resolve_with_provenance(raw)
         # Python evaluates the callable expression and arguments before invoking the
         # outer call. Recording after child traversal preserves that lexical order for
@@ -2195,7 +2264,12 @@ class _FactVisitor(ast.NodeVisitor):
             self._classify_call(resolved)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        resolved = self._resolve(_dotted_name(node))
+        resolved = self._resolve(
+            _callable_reference(
+                node,
+                allow_zero_argument_super=self.allow_zero_argument_super,
+            )
+        )
         if resolved:
             self._classify_call(resolved)
         self.generic_visit(node)
@@ -3002,6 +3076,12 @@ class _FactVisitor(ast.NodeVisitor):
     def _resolve_with_provenance(self, raw: str) -> tuple[str, str]:
         if not raw:
             return "", "unresolved"
+        if raw.startswith("super()."):
+            return raw, "zero_argument_super"
+        if raw.startswith("super(<unresolved>)."):
+            return raw, "unresolved_super_dispatch"
+        if "(...)." in raw:
+            return raw, "unresolved_call_result_dispatch"
         head, dot, rest = raw.partition(".")
         alias_origins = self.alias_origins.get(head, [])
         alias_resolution = ""
@@ -3157,13 +3237,16 @@ class _ModuleCollector(ast.NodeVisitor):
         aliases: dict[str, str],
         context_fingerprint: str,
         include_nested: bool,
+        module_super_shadowed: bool,
     ) -> None:
         self.path = path
         self.include_private = include_private
         self.aliases = aliases
         self.context_fingerprint = context_fingerprint
         self.include_nested = include_nested
+        self.module_super_shadowed = module_super_shadowed
         self.class_stack: list[str] = []
+        self.class_base_stack: list[list[str]] = []
         self.function_stack: list[str] = []
         self.scope_stack: list[str] = []
         self.function_depth = 0
@@ -3193,25 +3276,28 @@ class _ModuleCollector(ast.NodeVisitor):
         if module_parts and module_parts[-1] == "__init__":
             module_parts.pop()
         module = ".".join(module_parts)
+        resolved_bases = [
+            _resolve_alias_reference(_dotted_name(value), self.aliases)
+            for value in node.bases
+            if _dotted_name(value)
+        ]
         self.class_declarations.append(
             {
                 "reference": f"{module}.{qualname}" if module else qualname,
                 "qualname": qualname,
                 "name": node.name,
-                "bases": [
-                    _resolve_alias_reference(_dotted_name(value), self.aliases)
-                    for value in node.bases
-                    if _dotted_name(value)
-                ],
+                "bases": resolved_bases,
                 "line": node.lineno,
             }
         )
         self._collect_class_model(node)
         self.class_stack.append(node.name)
+        self.class_base_stack.append(resolved_bases)
         self.scope_stack.append(node.name)
         for child in node.body:
             self.visit(child)
         self.scope_stack.pop()
+        self.class_base_stack.pop()
         self.class_stack.pop()
 
     def _collect_class_model(self, node: ast.ClassDef) -> None:
@@ -3448,6 +3534,11 @@ class _ModuleCollector(ast.NodeVisitor):
             decorators=decorators,
             parameters=params,
             parameter_contracts=_parameter_contracts(node.args),
+            class_bases=(
+                list(self.class_base_stack[-1])
+                if kind == "method" and self.class_base_stack
+                else []
+            ),
         )
         facts.interface_endpoints.extend(
             endpoint
@@ -3543,7 +3634,23 @@ class _ModuleCollector(ast.NodeVisitor):
                     facts.entrypoint_types.add("event_handler")
                 elif leaf == "command":
                     facts.entrypoint_types.add("cli_command")
-        visitor = _FactVisitor(facts, self.aliases)
+        zero_argument_super_enabled = bool(
+            kind == "method"
+            and len(facts.class_bases) == 1
+            and not self.module_super_shadowed
+            and "super" not in self.aliases
+            and not any(
+                _resolve_alias_reference(decorator, self.aliases).rsplit(".", 1)[-1]
+                == "staticmethod"
+                for decorator in decorators
+            )
+            and not _function_scope_binds_name(node, "super")
+        )
+        visitor = _FactVisitor(
+            facts,
+            self.aliases,
+            allow_zero_argument_super=zero_argument_super_enabled,
+        )
         visitor._visit_block(node.body, "")
         member_qualname = qualname
         scope_qualname = (
@@ -6358,6 +6465,21 @@ def _resolve_internal_targets(
             ]
             best = max(score for score, _target in scored)
             targets = [target for score, target in scored if score == best]
+    elif (
+        called.startswith("super().")
+        and caller_class
+        and len(caller.class_bases) == 1
+    ):
+        method = called.rsplit(".", 1)[-1]
+        base = caller.class_bases[0]
+        if "." in base:
+            targets = by_full.get(f"{base}.{method}", [])
+        else:
+            targets = [
+                target
+                for target in by_file_name.get((caller.path, method), [])
+                if target.qualname == f"{base}.{method}"
+            ]
     elif called.startswith(("self.", "cls.")) and caller_class:
         method = called.rsplit(".", 1)[-1]
         targets = [
@@ -9172,7 +9294,7 @@ def _external_call_candidates(
         leaf = reference.rsplit(".", 1)[-1].casefold()
         receiver = reference.rsplit(".", 1)[0].casefold()
         receiver_tokens = set(re.split(r"[^a-z0-9]+", receiver))
-        if root in {"self", "cls"}:
+        if root in {"self", "cls", "super()", "super(<unresolved>)"} or "(...)" in root:
             continue
         resolution_sources = {
             str(site.get("resolution", "lexical_name"))
@@ -10465,6 +10587,7 @@ def scan_repository(
             aliases=_module_aliases(tree, relative),
             context_fingerprint=_module_context_fingerprint(tree),
             include_nested=include_nested,
+            module_super_shadowed=_statements_bind_name(tree.body, "super"),
         )
         collector.visit(tree)
         file_facts = list(collector.functions)

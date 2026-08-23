@@ -2516,6 +2516,164 @@ class ScannerTests(unittest.TestCase):
             },
         )
 
+    def test_zero_argument_super_resolves_only_exact_single_base_dispatch(
+        self,
+    ) -> None:
+        (self.root / "inheritance.py").write_text(
+            "from builtins import staticmethod as static\n\n"
+            "class Base:\n"
+            "    def transmit(self, value):\n"
+            "        raise ValueError(value)\n\n"
+            "class Unrelated:\n"
+            "    def transmit(self, value):\n"
+            "        return value\n\n"
+            "class Child(Base):\n"
+            "    def run(self, value):\n"
+            "        return super().transmit(value)\n\n"
+            "class Multiple(Base, Unrelated):\n"
+            "    def run_multiple(self, value):\n"
+            "        return super().transmit(value)\n\n"
+            "class StaticChild(Base):\n"
+            "    @staticmethod\n"
+            "    def run_static(value):\n"
+            "        return super().transmit(value)\n\n"
+            "class AliasedStaticChild(Base):\n"
+            "    @static\n"
+            "    def run_aliased_static(value):\n"
+            "        return super().transmit(value)\n\n"
+            "class ShadowedChild(Base):\n"
+            "    def run_shadowed(self, super, value):\n"
+            "        return super().transmit(value)\n\n"
+            "def make_base():\n"
+            "    return Base()\n\n"
+            "def run_factory(value):\n"
+            "    return make_base().transmit(value)\n",
+            encoding="utf-8",
+        )
+        (self.root / "provider.py").write_text(
+            "class ImportedBase:\n"
+            "    def transmit(self, value):\n"
+            "        return value\n",
+            encoding="utf-8",
+        )
+        (self.root / "consumer.py").write_text(
+            "from provider import ImportedBase\n\n"
+            "class ImportedChild(ImportedBase):\n"
+            "    def run_imported(self, value):\n"
+            "        return super().transmit(value)\n",
+            encoding="utf-8",
+        )
+        (self.root / "global_shadow.py").write_text(
+            "def replacement():\n"
+            "    return object()\n\n"
+            "super = replacement\n\n"
+            "class Base:\n"
+            "    def transmit(self, value):\n"
+            "        return value\n\n"
+            "class Child(Base):\n"
+            "    def run(self, value):\n"
+            "        return super().transmit(value)\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        components = {
+            f"{value['source']['path']}:{value['qualname']}": value
+            for value in analysis["components"]
+        }
+        child = components["inheritance.py:Child.run"]
+        self.assertEqual(child["class_bases"], ["Base"])
+        child_super_site = next(
+            value
+            for value in child["call_sites"]
+            if value["reference"].endswith(".transmit")
+        )
+        self.assertEqual(
+            child_super_site["reference"],
+            "super().transmit",
+        )
+        self.assertEqual(
+            child_super_site["resolution"],
+            "zero_argument_super",
+        )
+        self.assertEqual(
+            components["inheritance.py:Base.transmit"]["called_by"],
+            ["inheritance.py:Child.run"],
+        )
+        self.assertEqual(
+            components["inheritance.py:Unrelated.transmit"]["called_by"],
+            [],
+        )
+        self.assertEqual(
+            components["provider.py:ImportedBase.transmit"]["called_by"],
+            ["consumer.py:ImportedChild.run_imported"],
+        )
+        for reference in (
+            "inheritance.py:Multiple.run_multiple",
+            "inheritance.py:StaticChild.run_static",
+            "inheritance.py:AliasedStaticChild.run_aliased_static",
+            "inheritance.py:ShadowedChild.run_shadowed",
+        ):
+            site = next(
+                value
+                for value in components[reference]["call_sites"]
+                if value["reference"].endswith(".transmit")
+            )
+            self.assertEqual(site["reference"], "super(<unresolved>).transmit")
+            self.assertEqual(site["resolution"], "unresolved_super_dispatch")
+        factory_site = next(
+            value
+            for value in components["inheritance.py:run_factory"]["call_sites"]
+            if value["reference"].endswith(".transmit")
+        )
+        self.assertEqual(factory_site["reference"], "make_base(...).transmit")
+        self.assertEqual(
+            factory_site["resolution"],
+            "unresolved_call_result_dispatch",
+        )
+        global_shadow_site = next(
+            value
+            for value in components["global_shadow.py:Child.run"]["call_sites"]
+            if value["reference"].endswith(".transmit")
+        )
+        self.assertEqual(
+            global_shadow_site["reference"],
+            "super(<unresolved>).transmit",
+        )
+
+        flow_edges = {
+            (value["caller_reference"], value["callee_reference"])
+            for value in analysis["interprocedural_data_flow"]["edges"]
+            if value["caller_reference"].startswith("inheritance.py:")
+            and value["callee_reference"].endswith(".transmit")
+        }
+        self.assertEqual(
+            flow_edges,
+            {("inheritance.py:Child.run", "inheritance.py:Base.transmit")},
+        )
+        imported_flow_edges = {
+            (value["caller_reference"], value["callee_reference"])
+            for value in analysis["interprocedural_data_flow"]["edges"]
+            if value["caller_reference"].startswith("consumer.py:")
+        }
+        self.assertEqual(
+            imported_flow_edges,
+            {
+                (
+                    "consumer.py:ImportedChild.run_imported",
+                    "provider.py:ImportedBase.transmit",
+                )
+            },
+        )
+        self.assertTrue(
+            any(
+                value["caller_reference"] == "inheritance.py:Child.run"
+                and value["callee_reference"] == "inheritance.py:Base.transmit"
+                and value["exception_type"] == "ValueError"
+                for value in analysis["exception_propagation"]["edges"]
+            )
+        )
+
     def test_alias_and_object_flow_resolves_typed_receiver_and_mutation(self) -> None:
         (self.root / "aliases.py").write_text(
             "class Client:\n"

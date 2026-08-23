@@ -5,13 +5,22 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Resolve unshadowed zero-argument `super().method()` calls to an exact direct base method when
+  static single-inheritance evidence is available. Preserve imported-base provenance and feed the
+  corrected edge into caller, interprocedural data-flow, exception-cascade, and sequence models.
+  Keep arbitrary call-result dispatch such as `factory().method()` explicitly unresolved unless a
+  future analyzer supplies receiver-type evidence, rather than collapsing it to a bare method.
+  Shadowed `super`, static methods, explicit/dynamic `super(...)`, and multiple inheritance now
+  remain explicitly unresolved instead of being flattened to a bare method name and cross-linked
+  to unrelated classes. Retain base evidence on method components, invalidate stale facts through
+  cache format 19, and add same-file/imported-base positive cases plus adversarial negative cases.
 - Make Python call resolution package-aware for `from .module import symbol`,
   `from . import module`, ancestor-relative imports, and function-local relative imports. This
   prevents same-named modules in sibling packages from creating false internal-call, data-flow,
   exception-cascade, and sequence edges while preserving exact callers in each package. Relative
   imports without sufficient source-package context now remain unresolved with their leading dots
-  instead of being guessed as top-level modules. Invalidate stale scanner facts through cache
-  format 18 and add a multi-package positive/negative regression corpus.
+  instead of being guessed as top-level modules. Invalidate stale scanner facts and add a
+  multi-package positive/negative regression corpus.
 - Restore release-gate portability by isolating symbolic-link test seams from Python's
   process-wide `stat` module, copying the complete `pysfmea` package into focused mutation
   sandboxes while mutating only governed targets through Mutmut 3 mangled identifiers, and

@@ -488,6 +488,14 @@ This prevents same-named modules in sibling packages from being merged into fals
 data-flow edges, exception cascades, or sequences. If the analyzed source path does not contain
 enough package context for the requested relative level, the leading-dot reference is retained as
 unresolved rather than guessed as a top-level module.
+For inheritance dispatch, an unshadowed zero-argument `super().method()` in a regular or class
+method is linked only when the declaring class has exactly one statically resolved direct base and
+that base declares the method. Imported direct bases are supported. Multiple inheritance,
+`staticmethod`, a locally shadowed `super`, explicit/dynamic `super(...)`, and missing base methods
+remain explicitly unresolved; they are not flattened to bare method names that could cross-link
+unrelated classes. Arbitrary call-result dispatch such as `factory().method()` follows the same
+fail-closed rule unless a future analyzer contributes concrete receiver-type evidence; the factory
+call and its evaluation order are still retained independently.
 The analysis also carries `concurrency_model`, a machine-readable inventory of task spawn,
 join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
 relations. Use these records to choose runtime schedules and stress tests; they do not establish

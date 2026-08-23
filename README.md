@@ -137,9 +137,13 @@ flowchart LR
   constructor-assignment-aware call resolution with explicit provenance. Relative imports are
   anchored to their source package—including ancestor-relative and function-local forms—so
   same-named sibling modules do not create false cross-package callers or cascades; imports without
-  enough package context remain conservatively unresolved. Nested calls preserve Python evaluation
-  order. This improves receiver and interface identification without claiming whole-program type
-  inference
+  enough package context remain conservatively unresolved. Unshadowed zero-argument `super()`
+  dispatch is resolved for exact direct single-inheritance targets; multiple inheritance, static
+  methods, shadowed names, and explicit/dynamic `super(...)` stay unresolved rather than being
+  flattened into ambiguous bare method calls. Other call-result dispatch such as
+  `factory().method()` also remains unresolved without receiver-type evidence. Nested calls
+  preserve Python evaluation order. This improves receiver and interface identification without
+  claiming whole-program type inference
 - A bounded static concurrency model that records task spawn, join/wait, cancellation/timeout,
   synchronization, and awaited-completion operations; relates them through lexical order,
   await-before-next-operation, and conservative spawn-to-later-join candidates; and indexes the
