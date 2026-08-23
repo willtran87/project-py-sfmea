@@ -134,9 +134,12 @@ flowchart LR
 - Bounded path-insensitive interprocedural value flow that maps caller expressions to callee
   parameters and callee returns to assignment, argument, attribute, container, or return contexts,
   plus order-aware local alias/object-flow provenance and lightweight annotation-, import-, and
-  constructor-assignment-aware call resolution with
-  explicit provenance, plus Python evaluation-order preservation for nested calls. This improves
-  receiver and interface identification without claiming whole-program type inference
+  constructor-assignment-aware call resolution with explicit provenance. Relative imports are
+  anchored to their source package—including ancestor-relative and function-local forms—so
+  same-named sibling modules do not create false cross-package callers or cascades; imports without
+  enough package context remain conservatively unresolved. Nested calls preserve Python evaluation
+  order. This improves receiver and interface identification without claiming whole-program type
+  inference
 - A bounded static concurrency model that records task spawn, join/wait, cancellation/timeout,
   synchronization, and awaited-completion operations; relates them through lexical order,
   await-before-next-operation, and conservative spawn-to-later-join candidates; and indexes the

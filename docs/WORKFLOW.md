@@ -482,6 +482,12 @@ causality, vulnerability, or failure.
 Use `sfmea diagram $analysis --kind data_flow` for the bounded interprocedural view. Its edges map
 caller expressions to callee parameters and callee returns to caller sinks; ambiguity, omissions,
 and the path-insensitive/static authority boundary remain embedded in the model.
+Internal-call resolution anchors `from .module import symbol`, `from . import module`,
+ancestor-relative imports, and function-local relative imports to the importing file's package.
+This prevents same-named modules in sibling packages from being merged into false callers,
+data-flow edges, exception cascades, or sequences. If the analyzed source path does not contain
+enough package context for the requested relative level, the leading-dot reference is retained as
+unresolved rather than guessed as a top-level module.
 The analysis also carries `concurrency_model`, a machine-readable inventory of task spawn,
 join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
 relations. Use these records to choose runtime schedules and stress tests; they do not establish

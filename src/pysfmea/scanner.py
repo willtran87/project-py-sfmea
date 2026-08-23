@@ -139,7 +139,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-17"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-18"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -200,6 +200,40 @@ def _resolve_alias_reference(reference: str, aliases: dict[str, str]) -> str:
     head, dot, rest = reference.partition(".")
     mapped = aliases.get(head, head)
     return f"{mapped}.{rest}" if dot else mapped
+
+
+def _import_from_reference(
+    node: ast.ImportFrom,
+    alias_name: str,
+    path: str,
+) -> str:
+    """Resolve an imported symbol without conflating sibling packages.
+
+    Relative imports are anchored to the source file's package. If the source
+    path does not provide enough package context, retain the leading-dot spelling
+    so downstream resolution stays conservative instead of guessing a top-level
+    module with the same name.
+    """
+
+    module = node.module or ""
+    if not node.level:
+        return f"{module}.{alias_name}".strip(".")
+
+    normalized_path = path.replace("\\", "/")
+    module_parts = list(Path(normalized_path).with_suffix("").parts)
+    package_parts = module_parts[:-1]
+    if node.level > len(package_parts):
+        relative_module = "." * node.level + module
+        separator = "." if module else ""
+        return f"{relative_module}{separator}{alias_name}"
+
+    parent_count = node.level - 1
+    anchor = package_parts[: len(package_parts) - parent_count]
+    resolved_parts = [*anchor]
+    if module:
+        resolved_parts.extend(part for part in module.split(".") if part)
+    resolved_parts.append(alias_name)
+    return ".".join(resolved_parts)
 
 
 def _annotation_reference(node: ast.AST | None, aliases: dict[str, str]) -> str:
@@ -2171,11 +2205,12 @@ class _FactVisitor(ast.NodeVisitor):
             self.aliases[alias.asname or alias.name.split(".")[0]] = alias.name
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        module = node.module or ""
         for alias in node.names:
             if alias.name != "*":
-                self.aliases[alias.asname or alias.name] = (
-                    f"{module}.{alias.name}".strip(".")
+                self.aliases[alias.asname or alias.name] = _import_from_reference(
+                    node,
+                    alias.name,
+                    self.facts.path,
                 )
 
     def visit_If(self, node: ast.If) -> None:
@@ -3141,12 +3176,13 @@ class _ModuleCollector(ast.NodeVisitor):
             self.aliases[alias.asname or alias.name.split(".")[0]] = alias.name
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        module = node.module or ""
         for alias in node.names:
             if alias.name == "*":
                 continue
-            self.aliases[alias.asname or alias.name] = f"{module}.{alias.name}".strip(
-                "."
+            self.aliases[alias.asname or alias.name] = _import_from_reference(
+                node,
+                alias.name,
+                self.path,
             )
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
@@ -3566,18 +3602,19 @@ def _formatted_arg(arg: ast.arg) -> str:
     )
 
 
-def _module_aliases(tree: ast.Module) -> dict[str, str]:
+def _module_aliases(tree: ast.Module, path: str) -> dict[str, str]:
     aliases: dict[str, str] = {}
     for node in tree.body:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 aliases[alias.asname or alias.name.split(".")[0]] = alias.name
         elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
             for alias in node.names:
                 if alias.name != "*":
-                    aliases[alias.asname or alias.name] = (
-                        f"{module}.{alias.name}".strip(".")
+                    aliases[alias.asname or alias.name] = _import_from_reference(
+                        node,
+                        alias.name,
+                        path,
                     )
     return aliases
 
@@ -3653,7 +3690,7 @@ def _router_registrations(
         tree = ast.parse(_decode_python_source(raw), filename=path)
     except (SyntaxError, ValueError):
         return []
-    aliases = _module_aliases(tree)
+    aliases = _module_aliases(tree, path)
     environment: dict[str, Any] = {}
     registrations: list[dict[str, Any]] = []
 
@@ -10425,7 +10462,7 @@ def scan_repository(
         collector = _ModuleCollector(
             relative,
             include_private=include_private,
-            aliases=_module_aliases(tree),
+            aliases=_module_aliases(tree, relative),
             context_fingerprint=_module_context_fingerprint(tree),
             include_nested=include_nested,
         )
@@ -10434,7 +10471,7 @@ def scan_repository(
         module_facts = _module_initialization_facts(
             relative,
             tree,
-            _module_aliases(tree),
+            _module_aliases(tree, relative),
             _module_context_fingerprint(tree),
         )
         if module_facts:

@@ -5,6 +5,13 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Make Python call resolution package-aware for `from .module import symbol`,
+  `from . import module`, ancestor-relative imports, and function-local relative imports. This
+  prevents same-named modules in sibling packages from creating false internal-call, data-flow,
+  exception-cascade, and sequence edges while preserving exact callers in each package. Relative
+  imports without sufficient source-package context now remain unresolved with their leading dots
+  instead of being guessed as top-level modules. Invalidate stale scanner facts through cache
+  format 18 and add a multi-package positive/negative regression corpus.
 - Restore release-gate portability by isolating symbolic-link test seams from Python's
   process-wide `stat` module, copying the complete `pysfmea` package into focused mutation
   sandboxes while mutating only governed targets through Mutmut 3 mangled identifiers, and

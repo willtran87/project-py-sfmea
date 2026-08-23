@@ -2431,6 +2431,91 @@ class ScannerTests(unittest.TestCase):
             )
         )
 
+    def test_relative_imports_do_not_cross_link_same_named_sibling_packages(
+        self,
+    ) -> None:
+        for package in ("package_a", "package_b"):
+            package_root = self.root / package
+            package_root.mkdir()
+            (package_root / "__init__.py").write_text("", encoding="utf-8")
+            (package_root / "service.py").write_text(
+                f"def process(value):\n    return {package!r}, value\n",
+                encoding="utf-8",
+            )
+        (self.root / "package_a" / "caller.py").write_text(
+            "def run(value):\n"
+            "    from .service import process\n"
+            "    return process(value)\n",
+            encoding="utf-8",
+        )
+        (self.root / "package_b" / "caller.py").write_text(
+            "from . import service\n\n"
+            "def run(value):\n"
+            "    return service.process(value)\n",
+            encoding="utf-8",
+        )
+        package_a_subpackage = self.root / "package_a" / "subpackage"
+        package_a_subpackage.mkdir()
+        (package_a_subpackage / "__init__.py").write_text("", encoding="utf-8")
+        (package_a_subpackage / "caller.py").write_text(
+            "from ..service import process\n\n"
+            "def run_parent(value):\n"
+            "    return process(value)\n",
+            encoding="utf-8",
+        )
+        (self.root / "invalid_relative.py").write_text(
+            "from .service import process\n\n"
+            "def invalid_run(value):\n"
+            "    return process(value)\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        components = {
+            f"{value['source']['path']}:{value['qualname']}": value
+            for value in analysis["components"]
+        }
+
+        self.assertEqual(
+            components["package_a/caller.py:run"]["call_sites"][0]["reference"],
+            "package_a.service.process",
+        )
+        self.assertEqual(
+            components["package_b/caller.py:run"]["call_sites"][0]["reference"],
+            "package_b.service.process",
+        )
+        self.assertEqual(
+            components["invalid_relative.py:invalid_run"]["call_sites"][0]["reference"],
+            ".service.process",
+        )
+        self.assertEqual(
+            components["package_a/service.py:process"]["called_by"],
+            [
+                "package_a/caller.py:run",
+                "package_a/subpackage/caller.py:run_parent",
+            ],
+        )
+        self.assertEqual(
+            components["package_b/service.py:process"]["called_by"],
+            ["package_b/caller.py:run"],
+        )
+        edges = {
+            (value["caller_reference"], value["callee_reference"])
+            for value in analysis["interprocedural_data_flow"]["edges"]
+            if "caller.py:run" in value["caller_reference"]
+        }
+        self.assertEqual(
+            edges,
+            {
+                ("package_a/caller.py:run", "package_a/service.py:process"),
+                ("package_b/caller.py:run", "package_b/service.py:process"),
+                (
+                    "package_a/subpackage/caller.py:run_parent",
+                    "package_a/service.py:process",
+                ),
+            },
+        )
+
     def test_alias_and_object_flow_resolves_typed_receiver_and_mutation(self) -> None:
         (self.root / "aliases.py").write_text(
             "class Client:\n"
