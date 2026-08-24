@@ -172,9 +172,10 @@ Function bodies are separated from definition-time execution. Decorator expressi
 defaults are assigned to module initialization or the enclosing callable, in Python evaluation
 order; bare decorator application is represented in reverse order. Decorator-derived framework
 and entrypoint classification remains on the declared function without asserting that its body
-calls the decorator. Call-form decorators retain their factory call, but the returned callable is
-not resolved without runtime evidence. Annotation execution is not inferred because its semantics
-depend on Python version and future imports.
+calls the decorator. Call-form decorators retain their factory call and a separate reverse-order
+application site for the returned callable. That second site is explicitly unresolved, carries the
+decorated-object argument and rebinding context, and neither double-counts the factory nor invents
+a runtime target.
 
 Class construction is likewise assigned to one enclosing execution component. Top-level decorator
 expressions and applications, dynamic bases/metaclass keywords, class-body initializers, and method
@@ -192,6 +193,13 @@ generator-expression bodies while retaining their immediately evaluated construc
 Generic subscription syntax and annotation `A | B` unions remain type evidence rather than being
 misclassified as startup calculations; annotation calls and eagerly created deferred expressions
 remain modeled.
+
+PEP 695 type-alias values and generic type-parameter bounds/constraints are lazy annotation-scope
+expressions; PEP 696 defaults are lazy as well. On Python runtimes that can parse the syntax,
+scanner-visible dynamic expressions become distinct `deferred_type_expression` components with
+their own calls, typed exception cascades, and fingerprints. They are removed from module/class
+startup edges and fingerprints. The component is evidence about behavior if the lazy expression is
+requested, not proof that `__value__`, `__bound__`, `__constraints__`, or `__default__` is accessed.
 
 Python source uses one exact identity-stable snapshot per selected file. The same immutable bytes
 drive PEP 263 decoding, AST construction, included-test reference indexing, and baseline hashing;

@@ -4979,7 +4979,12 @@ class ScannerTests(unittest.TestCase):
         }
         startup = components["<module initialization>"]
         self.assertEqual(
-            startup["ordered_calls"], ["decorator_factory", "build_default"]
+            startup["ordered_calls"],
+            [
+                "decorator_factory",
+                "build_default",
+                "decorator_factory(...).__call__",
+            ],
         )
         self.assertEqual(components["endpoint"]["ordered_calls"], ["runtime_call"])
         self.assertEqual(
@@ -4996,6 +5001,24 @@ class ScannerTests(unittest.TestCase):
             any("decorator:0:expression" in value[0] for value in startup_contexts)
         )
         self.assertTrue(any("default:0" in value[0] for value in startup_contexts))
+        factory_application = startup["call_sites"][-1]
+        self.assertEqual(
+            factory_application["resolution"],
+            "unresolved_decorator_factory_result",
+        )
+        self.assertTrue(factory_application["dynamic_target"])
+        self.assertEqual(
+            factory_application["arguments"][0]["expression"], "endpoint"
+        )
+        self.assertEqual(
+            factory_application["result_context"],
+            {
+                "kind": "definition_rebinding",
+                "targets": ["endpoint"],
+                "line": components["endpoint"]["source"]["line"],
+            },
+        )
+        self.assertIn("decorator:0:application", startup_contexts[-1][0])
         enclosing_contexts = [
             value["control_context"] for value in components["enclosing"]["call_sites"]
         ]
@@ -5032,9 +5055,12 @@ class ScannerTests(unittest.TestCase):
             "    raise ValueError('method definition failure')\n\n"
             "def class_decorator(subject):\n"
             "    return subject\n\n"
+            "def class_decorator_factory():\n"
+            "    return class_decorator\n\n"
             "def runtime_call(value):\n"
             "    return value\n\n"
             "@class_decorator\n"
+            "@class_decorator_factory()\n"
             "class Service(build_base(), metaclass=build_metaclass()):\n"
             "    configured = field_value()\n\n"
             "    def execute(self, value=method_default()):\n"
@@ -5056,10 +5082,12 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(
             startup["ordered_calls"],
             [
+                "class_decorator_factory",
                 "build_base",
                 "build_metaclass",
                 "field_value",
                 "method_default",
+                "class_decorator_factory(...).__call__",
                 "class_decorator",
             ],
         )
@@ -5081,6 +5109,12 @@ class ScannerTests(unittest.TestCase):
             startup_contexts,
         )
         self.assertTrue(any(":body" in value for value in startup_contexts))
+        factory_application = startup["call_sites"][-2]
+        self.assertEqual(
+            factory_application["resolution"],
+            "unresolved_decorator_factory_result",
+        )
+        self.assertEqual(factory_application["arguments"][0]["expression"], "Service")
         self.assertEqual(
             startup_contexts[-1],
             f"class-definition@{class_line}:decorator:0:application",
@@ -5208,6 +5242,153 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(deferred["deferred"]["ordered_calls"], [])
         self.assertEqual(deferred["DeferredModel"]["ordered_calls"], [])
         self.assertFalse(any(value["kind"] == "lambda" for value in deferred.values()))
+
+    @unittest.skipUnless(
+        sys.version_info >= (3, 13),
+        "PEP 695 aliases and PEP 696 defaults require Python 3.13+",
+    )
+    def test_lazy_type_expressions_have_distinct_non_startup_components(self) -> None:
+        def source(alias_call: str, bound_call: str, startup_call: str) -> str:
+            return (
+                "def alias_value():\n"
+                "    raise RuntimeError('alias')\n\n"
+                "def alternate_alias_value():\n"
+                "    raise RuntimeError('alternate alias')\n\n"
+                "def bound_value():\n"
+                "    raise ValueError('bound')\n\n"
+                "def alternate_bound_value():\n"
+                "    raise ValueError('alternate bound')\n\n"
+                "def default_value():\n"
+                "    return str\n\n"
+                "def startup_value():\n"
+                "    return 1\n\n"
+                "def alternate_startup_value():\n"
+                "    return 2\n\n"
+                f"type Alias[T: {bound_call}() = default_value()] = {alias_call}()\n\n"
+                f"def generic[T: {bound_call}() = default_value()]():\n"
+                "    return None\n\n"
+                f"def constrained[T: ({bound_call}(), str)]():\n"
+                "    return None\n\n"
+                f"class Generic[T: {bound_call}() = default_value()]:\n"
+                f"    type Nested = {alias_call}()\n"
+                f"    eager = {startup_call}()\n"
+            )
+
+        path = self.root / "lazy_types.py"
+        path.write_text(
+            source("alias_value", "bound_value", "startup_value"),
+            encoding="utf-8",
+        )
+        initial = scan_repository(self.root)
+        components = {
+            value["qualname"]: value
+            for value in initial["components"]
+            if value["source"]["path"] == "lazy_types.py"
+        }
+        startup = components["<module initialization>"]
+        self.assertEqual(startup["ordered_calls"], ["startup_value"])
+        self.assertEqual(
+            {
+                name: components[name]["ordered_calls"]
+                for name in (
+                    "Alias.<type-param:T:bound>",
+                    "Alias.<type-param:T:default>",
+                    "Alias.<type-alias-value>",
+                    "generic.<type-param:T:bound>",
+                    "generic.<type-param:T:default>",
+                    "constrained.<type-param:T:constraints>",
+                    "Generic.<type-param:T:bound>",
+                    "Generic.<type-param:T:default>",
+                    "Generic.Nested.<type-alias-value>",
+                )
+            },
+            {
+                "Alias.<type-param:T:bound>": ["bound_value"],
+                "Alias.<type-param:T:default>": ["default_value"],
+                "Alias.<type-alias-value>": ["alias_value"],
+                "generic.<type-param:T:bound>": ["bound_value"],
+                "generic.<type-param:T:default>": ["default_value"],
+                "constrained.<type-param:T:constraints>": ["bound_value"],
+                "Generic.<type-param:T:bound>": ["bound_value"],
+                "Generic.<type-param:T:default>": ["default_value"],
+                "Generic.Nested.<type-alias-value>": ["alias_value"],
+            },
+        )
+        self.assertTrue(
+            all(
+                components[name]["kind"] == "deferred_type_expression"
+                for name in components
+                if "<type-" in name
+            )
+        )
+        self.assertEqual(
+            set(components["alias_value"]["called_by"]),
+            {
+                "lazy_types.py:Alias.<type-alias-value>",
+                "lazy_types.py:Generic.Nested.<type-alias-value>",
+            },
+        )
+        self.assertNotIn(
+            "lazy_types.py:<module initialization>",
+            components["alias_value"]["called_by"],
+        )
+        propagation_callers = {
+            value["caller_reference"]
+            for value in initial["exception_propagation"]["edges"]
+            if value["callee_reference"] == "lazy_types.py:alias_value"
+            and value["exception_type"] == "RuntimeError"
+        }
+        self.assertEqual(
+            propagation_callers,
+            {
+                "lazy_types.py:Alias.<type-alias-value>",
+                "lazy_types.py:Generic.Nested.<type-alias-value>",
+            },
+        )
+
+        initial_startup_fingerprint = startup["source_fingerprint"]
+        initial_alias_fingerprint = components["Alias.<type-alias-value>"][
+            "source_fingerprint"
+        ]
+        path.write_text(
+            source(
+                "alternate_alias_value",
+                "alternate_bound_value",
+                "startup_value",
+            ),
+            encoding="utf-8",
+        )
+        deferred_change = {
+            value["qualname"]: value
+            for value in scan_repository(self.root)["components"]
+            if value["source"]["path"] == "lazy_types.py"
+        }
+        self.assertEqual(
+            deferred_change["<module initialization>"]["source_fingerprint"],
+            initial_startup_fingerprint,
+        )
+        self.assertNotEqual(
+            deferred_change["Alias.<type-alias-value>"]["source_fingerprint"],
+            initial_alias_fingerprint,
+        )
+
+        path.write_text(
+            source(
+                "alternate_alias_value",
+                "alternate_bound_value",
+                "alternate_startup_value",
+            ),
+            encoding="utf-8",
+        )
+        eager_change = {
+            value["qualname"]: value
+            for value in scan_repository(self.root)["components"]
+            if value["source"]["path"] == "lazy_types.py"
+        }
+        self.assertNotEqual(
+            eager_change["<module initialization>"]["source_fingerprint"],
+            initial_startup_fingerprint,
+        )
 
     def test_startup_fingerprint_excludes_deferred_expression_bodies(self) -> None:
         source_path = self.root / "startup_fingerprint.py"

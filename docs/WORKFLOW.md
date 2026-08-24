@@ -514,9 +514,9 @@ the enclosing scope when the function object is created, while the body executes
 The scanner therefore assigns top-level definition-time calls to module initialization and nested
 definition-time calls to the enclosing function. It follows decorator-expression order, default
 order, and reverse bare-decorator application order. Framework endpoint/task metadata remains on
-the declared callable without becoming a runtime call edge. The callable returned by a decorator
-factory is not guessed, and annotation evaluation remains dependent on Python version and future
-imports rather than being claimed as a resolved call sequence.
+the declared callable without becoming a body call edge. A call-form decorator records its factory
+call and then an explicitly unresolved reverse-order invocation of the returned callable, including
+the decorated-object argument and rebinding context. The returned target is not guessed.
 Class statements use the same ownership rule. The scanner orders decorator expressions, dynamic
 bases and metaclass keywords, executable class-body statements (including method defaults), and
 reverse bare-decorator applications. Top-level work belongs to module initialization; a nested
@@ -532,6 +532,10 @@ deferred lambda bodies and generator filters/nested iterables/elements, retainin
 defaults and the generator's eagerly evaluated outer iterable. Ordinary generic subscriptions and
 `A | B` type unions remain contract metadata and do not independently create startup or arithmetic
 failure evidence.
+Python 3.12+ type-alias values and generic bounds/defaults use a separate lazy boundary. Dynamic
+expressions are inventoried as `deferred_type_expression` components so their calls and failure
+cascades remain reviewable, while startup edges and fingerprints exclude them. This models what
+could execute when a lazy type attribute is requested; it does not prove such a request occurs.
 The analysis also carries `concurrency_model`, a machine-readable inventory of task spawn,
 join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
 relations. Use these records to choose runtime schedules and stress tests; they do not establish

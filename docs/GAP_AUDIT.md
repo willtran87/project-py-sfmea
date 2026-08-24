@@ -44,6 +44,14 @@ mapping keys, user-defined mappings, dynamic value patterns, dynamic loop feasib
 and complex exception/path feasibility, and general
 symbolic execution remain explicit boundaries rather than inferred behavior.
 
+2026-08-24 refinement: call-form decorators now preserve both their eager factory call and the
+reverse-order application of the returned callable. The application remains an explicitly
+unresolved call-result site with decorated-object and rebinding context, so the scanner neither
+omits execution nor invents a target. Dynamic PEP 695/696 type-alias values and generic
+bounds/defaults are inventoried as distinct deferred type-expression components with independent
+calls, cascades, and fingerprints. They are excluded from module/class startup evidence because
+Python evaluates them only when the corresponding lazy type attribute is requested.
+
 The schema-backed enhancement workbench now accounts for the complete 56-item follow-on backlog,
 including evidence recipes, root-cause clusters, verification portfolios, disposition queues, and
 bounded system-surface candidates. Project evidence and named authority remain open by design.

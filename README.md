@@ -156,9 +156,10 @@ flowchart LR
 - Function-definition execution is assigned to its enclosing runtime scope instead of the declared
   callable body. Top-level decorator factories and dynamic defaults appear under module
   initialization; nested-definition calls appear on the enclosing function. Bare decorator
-  applications retain reverse application order. Route/task/decorator metadata remains on the
-  declared callable, but it no longer creates a false runtime call edge. A decorator returned by a
-  factory remains unnamed unless runtime evidence identifies it
+  applications retain reverse application order. Call-form decorators retain both the factory
+  call and an explicitly unresolved application of the returned callable, with the decorated
+  object and rebinding context preserved without double-counting the factory or inventing a target.
+  Route/task/decorator metadata remains on the declared callable without becoming a body call edge
 - Class construction follows the same single-owner rule. Top-level class decorators, dynamic
   bases/metaclasses, field initializers, and method defaults are ordered under module
   initialization; nested class work stays on its enclosing function. Declarative class-model and
@@ -171,6 +172,11 @@ flowchart LR
   fingerprints exclude later lambda/generator bodies while retaining eager defaults and the outer
   generator iterable. Generic subscriptions and `A | B` unions remain type metadata, not false
   startup/calculation findings
+- Python 3.12+ type-alias values and generic type-parameter bounds/defaults are treated as lazy
+  annotation-scope work. Dynamic expressions become distinct `deferred_type_expression`
+  components with their own calls, exception cascades, and fingerprints; they are excluded from
+  module/class startup edges and fingerprints. These components show what may execute when the
+  lazy value is requested, not evidence that the request occurs at runtime
 - A bounded static concurrency model that records task spawn, join/wait, cancellation/timeout,
   synchronization, and awaited-completion operations; relates them through lexical order,
   await-before-next-operation, and conservative spawn-to-later-join candidates; and indexes the

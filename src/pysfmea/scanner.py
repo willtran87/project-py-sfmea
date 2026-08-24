@@ -140,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-25"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-26"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -212,6 +212,38 @@ def _callable_reference(node: ast.AST, *, allow_zero_argument_super: bool) -> st
         receiver_label = receiver_reference or "<dynamic-call>"
         return f"{receiver_label}(...).{node.attr}"
     return _dotted_name(node)
+
+
+def _is_type_alias_node(node: ast.AST) -> bool:
+    """Recognize the Python 3.12+ node without breaking Python 3.11 imports."""
+
+    return type(node).__name__ == "TypeAlias" and hasattr(node, "value")
+
+
+def _type_parameter_expressions(node: ast.AST) -> list[tuple[str, ast.AST]]:
+    """Return lazily evaluated PEP 695/696 bound, constraint, and default expressions."""
+
+    expressions: list[tuple[str, ast.AST]] = []
+    raw_parameters = getattr(node, "type_params", [])
+    if not isinstance(raw_parameters, list):
+        return expressions
+    for index, parameter in enumerate(raw_parameters):
+        if not isinstance(parameter, ast.AST):
+            continue
+        raw_name = getattr(parameter, "name", "")
+        name = raw_name if isinstance(raw_name, str) and raw_name else str(index)
+        for role, attribute in (("bound", "bound"), ("default", "default_value")):
+            expression = getattr(parameter, attribute, None)
+            if isinstance(expression, ast.AST):
+                expression_role = (
+                    "constraints"
+                    if role == "bound" and isinstance(expression, ast.Tuple)
+                    else role
+                )
+                expressions.append(
+                    (f"type-param:{name}:{expression_role}", expression)
+                )
+    return expressions
 
 
 def _resolve_alias_reference(reference: str, aliases: dict[str, str]) -> str:
@@ -2417,17 +2449,24 @@ class _FactVisitor(ast.NodeVisitor):
                     f"{kind}@{node.lineno}:annotation:return",
                 )
         for reverse_index, decorator in enumerate(reversed(node.decorator_list)):
-            if isinstance(decorator, ast.Call):
-                continue
-            application = ast.copy_location(
-                ast.Call(func=copy.deepcopy(decorator), args=[], keywords=[]),
-                decorator,
-            )
             original_index = len(node.decorator_list) - reverse_index - 1
-            self._visit_with_context(
-                application,
-                f"{kind}@{node.lineno}:decorator:{original_index}:application",
-            )
+            context = f"{kind}@{node.lineno}:decorator:{original_index}:application"
+            if isinstance(decorator, ast.Call):
+                self.control_context.append(context)
+                try:
+                    self._record_decorator_factory_application(
+                        decorator,
+                        definition_name=node.name,
+                        definition_line=node.lineno,
+                    )
+                finally:
+                    self.control_context.pop()
+            else:
+                application = ast.copy_location(
+                    ast.Call(func=copy.deepcopy(decorator), args=[], keywords=[]),
+                    decorator,
+                )
+                self._visit_with_context(application, context)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         # The implementation remains deferred, but defaults and decorators execute
@@ -2465,20 +2504,90 @@ class _FactVisitor(ast.NodeVisitor):
         finally:
             self.class_definition_depth -= 1
         for reverse_index, decorator in enumerate(reversed(node.decorator_list)):
-            if isinstance(decorator, ast.Call):
-                continue
-            application = ast.copy_location(
-                ast.Call(func=copy.deepcopy(decorator), args=[], keywords=[]),
-                decorator,
-            )
             original_index = len(node.decorator_list) - reverse_index - 1
-            self._visit_with_context(
-                application,
-                (
-                    f"class-definition@{node.lineno}:decorator:"
-                    f"{original_index}:application"
-                ),
+            context = (
+                f"class-definition@{node.lineno}:decorator:"
+                f"{original_index}:application"
             )
+            if isinstance(decorator, ast.Call):
+                self.control_context.append(context)
+                try:
+                    self._record_decorator_factory_application(
+                        decorator,
+                        definition_name=node.name,
+                        definition_line=node.lineno,
+                    )
+                finally:
+                    self.control_context.pop()
+            else:
+                application = ast.copy_location(
+                    ast.Call(func=copy.deepcopy(decorator), args=[], keywords=[]),
+                    decorator,
+                )
+                self._visit_with_context(application, context)
+
+    def _record_decorator_factory_application(
+        self,
+        decorator: ast.Call,
+        *,
+        definition_name: str,
+        definition_line: int,
+    ) -> None:
+        """Record invocation of a decorator factory's unknown returned callable.
+
+        The factory expression was already evaluated and recorded. Re-visiting a
+        synthetic nested call would double count it, while omitting this step hides
+        a real definition-time invocation. Keep the application as an explicitly
+        unresolved call-result target and retain the decorated definition as its
+        argument/result context.
+        """
+
+        factory_raw = _callable_reference(
+            decorator.func,
+            allow_zero_argument_super=self.allow_zero_argument_super,
+        ) or ast.unparse(decorator.func)[:500]
+        factory_reference, _factory_resolution = self._resolve_with_provenance(factory_raw)
+        raw_reference = f"{factory_raw or '<dynamic-decorator-factory>'}(...).__call__"
+        reference = (
+            f"{factory_reference or factory_raw or '<dynamic-decorator-factory>'}"
+            "(...).__call__"
+        )
+        decorated_value = ast.copy_location(
+            ast.Name(id=definition_name, ctx=ast.Load()), decorator
+        )
+        self.facts.calls.add(reference)
+        self.facts.ordered_calls.append(reference)
+        self.facts.call_sites.append(
+            {
+                "raw_reference": raw_reference,
+                "reference": reference,
+                "resolution": "unresolved_decorator_factory_result",
+                "line": getattr(decorator, "lineno", definition_line),
+                "column": getattr(decorator, "col_offset", 0),
+                "order": len(self.facts.call_sites),
+                "control_context": list(self.control_context),
+                "awaited": False,
+                "arguments": [
+                    {
+                        "position": 0,
+                        "keyword": "",
+                        "unpacked": False,
+                        **self._flow_value(decorated_value),
+                    }
+                ],
+                "arguments_omitted": 0,
+                "result_context": {
+                    "kind": "definition_rebinding",
+                    "targets": [definition_name],
+                    "line": definition_line,
+                },
+                "dynamic_target": True,
+                "authority": (
+                    "python_decorator_factory_result_application_"
+                    "without_runtime_target_resolution"
+                ),
+            }
+        )
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         # Lambda defaults execute when the lambda is created; its body executes only
@@ -3465,6 +3574,12 @@ class _FactVisitor(ast.NodeVisitor):
                 },
             )
 
+    def visit_TypeAlias(self, node: ast.AST) -> None:
+        # Python 3.12+ creates the alias object here, but its value and type-parameter
+        # expressions are evaluated lazily in annotation scopes. The collector gives
+        # those expressions distinct deferred components; they are not startup work.
+        return
+
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         if isinstance(node.target, (ast.Attribute, ast.Subscript, ast.Name)):
             self.facts.mutates_state = True
@@ -3699,6 +3814,7 @@ class _ModuleCollector(ast.NodeVisitor):
         for keyword in node.keywords:
             self.visit(keyword.value)
         qualname = ".".join([*self.scope_stack, node.name])
+        self._collect_lazy_type_expressions(node, qualname)
         module_parts = list(Path(self.path).with_suffix("").parts)
         if module_parts and module_parts[-1] == "__init__":
             module_parts.pop()
@@ -3871,6 +3987,101 @@ class _ModuleCollector(ast.NodeVisitor):
             self.visit(node.annotation)
         if node.value is not None:
             self.visit(node.value)
+
+    def visit_TypeAlias(self, node: ast.AST) -> None:
+        if self.function_depth and not self.include_nested:
+            return
+        name_node = getattr(node, "name", None)
+        alias_name = _dotted_name(name_node) if isinstance(name_node, ast.AST) else ""
+        if not alias_name:
+            alias_name = f"<type-alias>@L{getattr(node, 'lineno', 0)}"
+        owner_qualname = ".".join([*self.scope_stack, alias_name])
+        self._collect_lazy_type_expressions(node, owner_qualname)
+        value = getattr(node, "value", None)
+        if isinstance(value, ast.AST):
+            self._collect_lazy_type_expression(
+                owner_qualname,
+                "type-alias-value",
+                value,
+                owner=node,
+            )
+
+    def _collect_lazy_type_expressions(
+        self,
+        node: ast.AST,
+        owner_qualname: str,
+    ) -> None:
+        for label, expression in _type_parameter_expressions(node):
+            self._collect_lazy_type_expression(
+                owner_qualname,
+                label,
+                expression,
+                owner=node,
+            )
+
+    def _collect_lazy_type_expression(
+        self,
+        owner_qualname: str,
+        label: str,
+        expression: ast.AST,
+        *,
+        owner: ast.AST,
+    ) -> None:
+        if not _annotation_expression_requires_analysis(expression):
+            return
+        component_name = f"<{label}>"
+        qualname = f"{owner_qualname}.{component_name}"
+        fingerprint = hashlib.sha256(
+            ast.dump(expression, include_attributes=False).encode("utf-8")
+        ).hexdigest()
+        type_parameters = [
+            str(name)
+            for parameter in getattr(owner, "type_params", [])
+            if isinstance(parameter, ast.AST)
+            and isinstance((name := getattr(parameter, "name", "")), str)
+            and name
+        ]
+        facts = FunctionFacts(
+            name=component_name,
+            qualname=qualname,
+            kind="deferred_type_expression",
+            path=self.path,
+            line=getattr(expression, "lineno", getattr(owner, "lineno", 1)),
+            end_line=getattr(
+                expression,
+                "end_lineno",
+                getattr(expression, "lineno", getattr(owner, "lineno", 1)),
+            ),
+            signature=f"lazy {label} expression",
+            source_fingerprint=fingerprint,
+            content_fingerprint=fingerprint,
+            context_fingerprint=self.context_fingerprint,
+            docstring=(
+                f"Evaluate the lazy {label.replace('-', ' ')} for {owner_qualname}."
+            ),
+            is_async=False,
+            is_private=False,
+            decorators=[],
+            parameters=type_parameters,
+            module_rebound_names=sorted(self.module_rebound_names),
+        )
+        facts.signals.add("deferred_type_expression")
+        _FactVisitor(
+            facts,
+            dict(self.aliases),
+            annotations_deferred=False,
+        ).visit(expression)
+        self.functions.append(facts)
+        if self.include_nested:
+            self.function_depth += 1
+            self.function_stack.append(component_name)
+            self.scope_stack.append(component_name)
+            try:
+                self.visit(expression)
+            finally:
+                self.scope_stack.pop()
+                self.function_stack.pop()
+                self.function_depth -= 1
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         if id(node) not in self.deferred_expression_names:
@@ -4219,6 +4430,7 @@ class _ModuleCollector(ast.NodeVisitor):
             if circuit_breaker.get("synchronization"):
                 facts.signals.add("concurrency")
         self.functions.append(facts)
+        self._collect_lazy_type_expressions(node, qualname)
         # Defaults and decorator expressions execute in the enclosing scope, so any
         # deferred expressions they create are nested under that scope rather than
         # under the function body that has not run yet.
@@ -4683,6 +4895,8 @@ def _class_definition_requires_initialization_analysis(
             ):
                 return True
             continue
+        if _is_type_alias_node(statement):
+            continue
         if isinstance(statement, ast.Pass):
             continue
         if (
@@ -4739,6 +4953,18 @@ def _normalize_deferred_fingerprint_bodies(node: ast.AST) -> ast.AST:
 
 
 def _definition_time_statement_fingerprint_node(node: ast.stmt) -> ast.stmt:
+    if _is_type_alias_node(node):
+        normalized = copy.deepcopy(node)
+        setattr(normalized, "type_params", [])
+        setattr(
+            normalized,
+            "value",
+            ast.copy_location(
+                ast.Constant(value="<deferred type alias value>"),
+                cast(ast.AST, getattr(normalized, "value")),
+            ),
+        )
+        return normalized
     return cast(
         ast.stmt,
         _normalize_deferred_fingerprint_bodies(copy.deepcopy(node)),
@@ -4781,6 +5007,8 @@ def _definition_time_class_fingerprint_node(
     """Strip deferred method bodies from class-startup fingerprinting."""
 
     normalized = copy.deepcopy(node)
+    if hasattr(normalized, "type_params"):
+        normalized.type_params = []
     normalized.body = [
         _definition_time_function_fingerprint_node(
             statement,
@@ -4792,7 +5020,7 @@ def _definition_time_class_fingerprint_node(
             annotations_deferred=annotations_deferred,
         )
         if isinstance(statement, ast.ClassDef)
-        else statement
+        else _definition_time_statement_fingerprint_node(statement)
         for statement in normalized.body
     ]
     result = _normalize_deferred_fingerprint_bodies(normalized)
@@ -4825,6 +5053,8 @@ def _module_initialization_facts(
                 executable.append(node)
             continue
         if isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        if _is_type_alias_node(node):
             continue
         if (
             index == 0

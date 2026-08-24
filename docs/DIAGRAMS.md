@@ -151,8 +151,9 @@ assigned to the constructing parent; eager comprehension edges follow iterable/f
 order. A deferred component is an analysis boundary, not evidence that it is invoked or consumed.
 Function-definition edges likewise appear on module initialization or the enclosing callable:
 decorator factories and defaults do not appear as calls made by the later function body. Static
-sequence views preserve definition-expression and bare-decorator application context, but do not
-invent a target for the callable returned by a decorator factory.
+sequence evidence preserves definition-expression and reverse application context. For a call-form
+decorator, the returned callable's application is retained as an unresolved call-result site rather
+than omitted or connected to an invented target.
 Top-level class-construction edges also appear once on module initialization, in decorator/base/
 keyword/body/application order; nested classes use their enclosing callable. Declarative model and
 exception nodes do not repeat those sequence or propagation edges.
@@ -160,6 +161,9 @@ Executable annotation edges appear in the same definition-time sequence, with mo
 parameter/return context. Local annotations and annotations explicitly postponed by a future import
 produce no sequence or cascade edge. Diagram identity for enclosing startup work is unaffected by
 changes confined to deferred lambda or generator bodies.
+Dynamic PEP 695/696 type-alias values, bounds, constraints, and defaults live on distinct deferred
+type-expression components. Their internal calls and exception cascades can appear in component,
+propagation, and cross-reference views, but no diagram claims that the lazy attribute was accessed.
 
 The cross-reference diagram projects each typed exception edge as a shared record node linked to
 its callee and caller. The record preserves exception type, selected-handler disposition, match

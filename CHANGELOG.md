@@ -5,6 +5,15 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Close the remaining Python definition-time invocation and lazy-type boundaries. Call-form
+  decorators now retain both the factory call and the reverse-order application of its returned
+  callable as an explicitly unresolved call-result site, including decorated-object argument and
+  rebinding context without double-counting or inventing a target. Python 3.12+ type-alias values
+  and generic type-parameter bounds/defaults with scanner-visible behavior become distinct
+  `deferred_type_expression` components, with their own calls, failures, cascades, and fingerprints;
+  they no longer appear as module/class startup execution. Remove lazy type expressions from
+  enclosing startup fingerprints, advance the fact cache to format 26, and add function, class,
+  exception-propagation, ownership, ordering, and fingerprint regressions.
 - Correct annotation and deferred-expression execution boundaries. Attribute scanner-visible eager
   module, class, parameter, variadic, keyword-only, and return annotation calls to module startup
   or the enclosing callable in Python definition order; never treat local-variable annotations as
