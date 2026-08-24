@@ -509,6 +509,14 @@ component; eager list/set/dict comprehensions retain iterable/filter/element eva
 `include_nested = false` excludes the deferred components without discarding the immediately
 evaluated parent expressions. These records do not prove later invocation, iteration count, or
 completion.
+Named function definitions have a second boundary: decorator expressions and defaults execute in
+the enclosing scope when the function object is created, while the body executes only when called.
+The scanner therefore assigns top-level definition-time calls to module initialization and nested
+definition-time calls to the enclosing function. It follows decorator-expression order, default
+order, and reverse bare-decorator application order. Framework endpoint/task metadata remains on
+the declared callable without becoming a runtime call edge. The callable returned by a decorator
+factory is not guessed, and annotation evaluation remains dependent on Python version and future
+imports rather than being claimed as a resolved call sequence.
 The analysis also carries `concurrency_model`, a machine-readable inventory of task spawn,
 join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
 relations. Use these records to choose runtime schedules and stress tests; they do not establish

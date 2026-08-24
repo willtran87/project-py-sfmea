@@ -153,6 +153,12 @@ flowchart LR
   yielded elements remain on the deferred component. Eager list/set/dict comprehensions record
   iterable, filter, then element/key/value order. These are lexical static boundaries, not proof
   that a callback is invoked, a generator is consumed, or a comprehension completes
+- Function-definition execution is assigned to its enclosing runtime scope instead of the declared
+  callable body. Top-level decorator factories and dynamic defaults appear under module
+  initialization; nested-definition calls appear on the enclosing function. Bare decorator
+  applications retain reverse application order. Route/task/decorator metadata remains on the
+  declared callable, but it no longer creates a false runtime call edge. A decorator returned by a
+  factory remains unnamed unless runtime evidence identifies it
 - A bounded static concurrency model that records task spawn, join/wait, cancellation/timeout,
   synchronization, and awaited-completion operations; relates them through lexical order,
   await-before-next-operation, and conservative spawn-to-later-join candidates; and indexes the

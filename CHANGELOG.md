@@ -5,6 +5,13 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Attribute Python function-definition execution to the scope that actually performs it. Decorator
+  factory expressions now execute before defaults, bare decorator applications execute afterward
+  in reverse order, and nested definitions remain on their enclosing function. Top-level dynamic
+  definitions create module-initialization evidence, while the declared callable retains route,
+  task, and framework metadata without false decorator call edges or exception cascades. Traverse
+  default/decorator expressions for nested lambda and generator discovery, invalidate stale facts
+  through cache format 23, and add ordering, context, caller, and exception-propagation regressions.
 - Separate deferred Python execution from enclosing-function evidence. Named and inline lambdas
   and generator-expression bodies are now distinct components, so their calls, exceptions,
   sequences, data flow, and failure cascades are not falsely attributed to callable or generator

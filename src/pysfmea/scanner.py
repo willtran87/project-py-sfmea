@@ -140,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-22"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-23"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -2349,12 +2349,93 @@ class _FactVisitor(ast.NodeVisitor):
             }
         )
 
+    def _visit_function_definition(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> None:
+        # Decorator expressions are evaluated from top to bottom before defaults.
+        # The resulting decorators are then applied from bottom to top. A call-form
+        # decorator already records its factory expression; the callable returned by
+        # that expression cannot be named soundly without runtime evidence.
+        kind = (
+            "async-function-definition"
+            if isinstance(node, ast.AsyncFunctionDef)
+            else "function-definition"
+        )
+        for index, decorator in enumerate(node.decorator_list):
+            self._visit_with_context(
+                decorator,
+                f"{kind}@{node.lineno}:decorator:{index}:expression",
+            )
+        for index, value in enumerate(node.args.defaults):
+            self._visit_with_context(
+                value,
+                f"{kind}@{node.lineno}:default:{index}",
+            )
+        for index, keyword_default in enumerate(node.args.kw_defaults):
+            if keyword_default is not None:
+                self._visit_with_context(
+                    keyword_default,
+                    f"{kind}@{node.lineno}:keyword-default:{index}",
+                )
+        for reverse_index, decorator in enumerate(reversed(node.decorator_list)):
+            if isinstance(decorator, ast.Call):
+                continue
+            application = ast.copy_location(
+                ast.Call(func=copy.deepcopy(decorator), args=[], keywords=[]),
+                decorator,
+            )
+            original_index = len(node.decorator_list) - reverse_index - 1
+            self._visit_with_context(
+                application,
+                f"{kind}@{node.lineno}:decorator:{original_index}:application",
+            )
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        # Do not attribute nested function implementation to its parent.
-        return
+        # The implementation remains deferred, but defaults and decorators execute
+        # in the enclosing scope when the function object is created.
+        self._visit_function_definition(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        return
+        self._visit_function_definition(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        # A class statement evaluates its decorator expressions, bases, keywords,
+        # and body in the enclosing execution. Decorator application follows body
+        # execution and runs from bottom to top.
+        for index, decorator in enumerate(node.decorator_list):
+            self._visit_with_context(
+                decorator,
+                f"class-definition@{node.lineno}:decorator:{index}:expression",
+            )
+        for index, base in enumerate(node.bases):
+            self._visit_with_context(
+                base,
+                f"class-definition@{node.lineno}:base:{index}",
+            )
+        for index, keyword in enumerate(node.keywords):
+            self._visit_with_context(
+                keyword.value,
+                (
+                    f"class-definition@{node.lineno}:keyword:"
+                    f"{keyword.arg or '**'}:{index}"
+                ),
+            )
+        self._visit_block(node.body, f"class-definition@{node.lineno}:body")
+        for reverse_index, decorator in enumerate(reversed(node.decorator_list)):
+            if isinstance(decorator, ast.Call):
+                continue
+            application = ast.copy_location(
+                ast.Call(func=copy.deepcopy(decorator), args=[], keywords=[]),
+                decorator,
+            )
+            original_index = len(node.decorator_list) - reverse_index - 1
+            self._visit_with_context(
+                application,
+                (
+                    f"class-definition@{node.lineno}:decorator:"
+                    f"{original_index}:application"
+                ),
+            )
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         # Lambda defaults execute when the lambda is created; its body executes only
@@ -3545,6 +3626,15 @@ class _ModuleCollector(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         if self.function_depth and not self.include_nested:
             return
+        # Definition expressions execute in the enclosing scope. Traverse them
+        # before entering the class namespace so deferred lambdas/generator
+        # expressions receive the same lexical ownership as their evaluation.
+        for decorator_expression in node.decorator_list:
+            self.visit(decorator_expression)
+        for base in node.bases:
+            self.visit(base)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
         qualname = ".".join([*self.scope_stack, node.name])
         module_parts = list(Path(self.path).with_suffix("").parts)
         if module_parts and module_parts[-1] == "__init__":
@@ -3992,20 +4082,9 @@ class _ModuleCollector(ast.NodeVisitor):
                 head, dot, rest = decorator.partition(".")
                 resolved_head = self.aliases.get(head, head)
                 resolved = f"{resolved_head}.{rest}" if dot else resolved_head
-                facts.calls.add(resolved)
-                facts.ordered_calls.append(resolved)
-                facts.call_sites.append(
-                    {
-                        "raw_reference": decorator,
-                        "reference": resolved,
-                        "resolution": "decorator_import_alias",
-                        "line": getattr(node, "lineno", 0),
-                        "column": getattr(node, "col_offset", 0),
-                        "order": len(facts.call_sites),
-                        "control_context": ["decorator"],
-                        "awaited": False,
-                    }
-                )
+                # Keep decorator-derived behavioral/framework classification on the
+                # declared callable, while definition-time call edges belong to the
+                # enclosing execution component that actually invokes them.
                 _FactVisitor(facts, self.aliases)._classify_call(resolved)
                 leaf = decorator.lower().rsplit(".", 1)[-1]
                 if leaf in {"get", "post", "put", "patch", "delete", "route"}:
@@ -4055,6 +4134,14 @@ class _ModuleCollector(ast.NodeVisitor):
             if circuit_breaker.get("synchronization"):
                 facts.signals.add("concurrency")
         self.functions.append(facts)
+        # Defaults and decorator expressions execute in the enclosing scope, so any
+        # deferred expressions they create are nested under that scope rather than
+        # under the function body that has not run yet.
+        for decorator_expression in node.decorator_list:
+            self.visit(decorator_expression)
+        for value in [*node.args.defaults, *node.args.kw_defaults]:
+            if value is not None:
+                self.visit(value)
         if self.include_nested:
             self.function_depth += 1
             self.function_stack.append(node.name)
@@ -4382,6 +4469,65 @@ def _module_context_fingerprint(tree: ast.Module) -> str:
     ).hexdigest()
 
 
+def _function_definition_requires_initialization_analysis(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Return whether a definition contains review-worthy eager expressions.
+
+    Literal defaults do execute at definition time but do not currently yield scanner
+    evidence. Decorators always invoke an application step, while dynamic defaults can
+    contain calls, calculations, comprehensions, or other expressions already modeled
+    by ``_FactVisitor``.
+    """
+
+    if node.decorator_list:
+        return True
+    dynamic_nodes = (
+        ast.Call,
+        ast.Lambda,
+        ast.GeneratorExp,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.BoolOp,
+        ast.Compare,
+        ast.IfExp,
+        ast.NamedExpr,
+        ast.Subscript,
+    )
+    return any(
+        isinstance(value, dynamic_nodes)
+        for expression in [*node.args.defaults, *node.args.kw_defaults]
+        if expression is not None
+        for value in ast.walk(expression)
+    )
+
+
+def _definition_time_function_fingerprint_node(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    """Strip deferred body/type expressions from module-startup fingerprinting."""
+
+    normalized = copy.deepcopy(node)
+    normalized.body = []
+    normalized.returns = None
+    for argument in [
+        *normalized.args.posonlyargs,
+        *normalized.args.args,
+        *normalized.args.kwonlyargs,
+    ]:
+        argument.annotation = None
+    if normalized.args.vararg is not None:
+        normalized.args.vararg.annotation = None
+    if normalized.args.kwarg is not None:
+        normalized.args.kwarg.annotation = None
+    if hasattr(normalized, "type_params"):
+        normalized.type_params = []
+    return normalized
+
+
 def _module_initialization_facts(
     path: str,
     tree: ast.Module,
@@ -4390,16 +4536,11 @@ def _module_initialization_facts(
 ) -> FunctionFacts | None:
     executable: list[ast.stmt] = []
     for index, node in enumerate(tree.body):
-        if isinstance(
-            node,
-            (
-                ast.FunctionDef,
-                ast.AsyncFunctionDef,
-                ast.ClassDef,
-                ast.Import,
-                ast.ImportFrom,
-            ),
-        ):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _function_definition_requires_initialization_analysis(node):
+                executable.append(node)
+            continue
+        if isinstance(node, (ast.ClassDef, ast.Import, ast.ImportFrom)):
             continue
         if (
             index == 0
@@ -4418,9 +4559,17 @@ def _module_initialization_facts(
         executable.append(node)
     if not executable:
         return None
-    synthetic = ast.Module(body=executable, type_ignores=[])
+    fingerprint_synthetic = ast.Module(
+        body=[
+            _definition_time_function_fingerprint_node(node)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            else node
+            for node in executable
+        ],
+        type_ignores=[],
+    )
     fingerprint = hashlib.sha256(
-        ast.dump(synthetic, include_attributes=False).encode("utf-8")
+        ast.dump(fingerprint_synthetic, include_attributes=False).encode("utf-8")
     ).hexdigest()
     facts = FunctionFacts(
         name="<module>",

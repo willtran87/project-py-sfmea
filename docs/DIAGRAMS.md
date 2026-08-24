@@ -149,6 +149,10 @@ Static sequence and propagation projections keep deferred lambda and generator-e
 on distinct components. Only lambda defaults and a generator expression's outermost iterable are
 assigned to the constructing parent; eager comprehension edges follow iterable/filter/element
 order. A deferred component is an analysis boundary, not evidence that it is invoked or consumed.
+Function-definition edges likewise appear on module initialization or the enclosing callable:
+decorator factories and defaults do not appear as calls made by the later function body. Static
+sequence views preserve definition-expression and bare-decorator application context, but do not
+invent a target for the callable returned by a decorator factory.
 
 The cross-reference diagram projects each typed exception edge as a shared record node linked to
 its callee and caller. The record preserves exception type, selected-handler disposition, match

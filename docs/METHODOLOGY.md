@@ -168,6 +168,14 @@ The rules intentionally state failure at the functional boundary. A coding defec
 
 Scanner evidence includes source location, AST signals, structured call sites, lexical branch/loop/exception context, await status, approximate internal callers and transitive upstream paths, confidence-labeled unresolved external-call candidates, complexity, decorators, textual test references, dependency declarations, and optional function-level line and branch evidence derived from coverage.py JSON. Call references carry resolution provenance from lexical names, import aliases, parameter or variable annotations, and unambiguous constructor assignments. Nested call sites follow Python expression-evaluation order, and return/yield/raise contexts are retained. This is lightweight evidence, not a complete type system: aliases, protocols, dependency injection, higher-order calls, descriptors, and runtime dispatch can remain unresolved. Lexical context records where a call appears in syntax; it is not a control-flow graph, path-feasibility result, or runtime-ordering proof. Coverage input is accepted from one exact-byte, regular-file, non-link, identity-stable snapshot under 100 MB/100-level/2,000,000-node JSON limits, with 100,000-file and 4,096-character path bounds. Duplicate keys, non-finite values, repository escapes, unsafe aliases, and malformed coordinates cannot silently influence a component. Accepted byte and record provenance remains in scan settings, its SHA-256 is part of the immutable run-manifest inputs, and an input inside the analyzed repository reuses those same bytes for inventory evidence. External coverage remains external evidence rather than being added to repository accounting. These are useful for triage and traceability. They are not proof that a failure exists or that a control is effective. Python's runtime dispatch means the caller and interface evidence is deliberately conservative and incomplete.
 
+Function bodies are separated from definition-time execution. Decorator expressions and dynamic
+defaults are assigned to module initialization or the enclosing callable, in Python evaluation
+order; bare decorator application is represented in reverse order. Decorator-derived framework
+and entrypoint classification remains on the declared function without asserting that its body
+calls the decorator. Call-form decorators retain their factory call, but the returned callable is
+not resolved without runtime evidence. Annotation execution is not inferred because its semantics
+depend on Python version and future imports.
+
 Python source uses one exact identity-stable snapshot per selected file. The same immutable bytes
 drive PEP 263 decoding, AST construction, included-test reference indexing, and baseline hashing;
 the scanner does not reread a selected file after findings have been derived. Eligible textual test

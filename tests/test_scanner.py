@@ -4950,6 +4950,76 @@ class ScannerTests(unittest.TestCase):
             excluded_components["build_generator"]["ordered_calls"], ["source"]
         )
 
+    def test_function_definition_calls_belong_to_enclosing_execution(self) -> None:
+        (self.root / "definitions.py").write_text(
+            "def build_default():\n"
+            "    raise RuntimeError('definition failure')\n\n"
+            "def decorator_factory(label):\n"
+            "    return lambda function: function\n\n"
+            "def bare_decorator(function):\n"
+            "    return function\n\n"
+            "def runtime_call(value):\n"
+            "    return value\n\n"
+            "@decorator_factory('top-level')\n"
+            "def endpoint(value=build_default()):\n"
+            "    return runtime_call(value)\n\n"
+            "def enclosing():\n"
+            "    @bare_decorator\n"
+            "    def callback(value=build_default()):\n"
+            "        return runtime_call(value)\n"
+            "    return callback\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        components = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value["source"]["path"] == "definitions.py"
+        }
+        startup = components["<module initialization>"]
+        self.assertEqual(
+            startup["ordered_calls"], ["decorator_factory", "build_default"]
+        )
+        self.assertEqual(components["endpoint"]["ordered_calls"], ["runtime_call"])
+        self.assertEqual(
+            components["enclosing"]["ordered_calls"],
+            ["build_default", "bare_decorator"],
+        )
+        self.assertEqual(
+            components["enclosing.callback"]["ordered_calls"], ["runtime_call"]
+        )
+        self.assertEqual(components["endpoint"]["decorators"], ["decorator_factory"])
+
+        startup_contexts = [value["control_context"] for value in startup["call_sites"]]
+        self.assertTrue(
+            any("decorator:0:expression" in value[0] for value in startup_contexts)
+        )
+        self.assertTrue(any("default:0" in value[0] for value in startup_contexts))
+        enclosing_contexts = [
+            value["control_context"] for value in components["enclosing"]["call_sites"]
+        ]
+        self.assertTrue(
+            any("decorator:0:application" in value[0] for value in enclosing_contexts)
+        )
+
+        default_callers = set(components["build_default"]["called_by"])
+        self.assertEqual(
+            default_callers,
+            {"definitions.py:<module initialization>", "definitions.py:enclosing"},
+        )
+        self.assertFalse(
+            {"definitions.py:endpoint", "definitions.py:enclosing.callback"}
+            & default_callers
+        )
+        propagation_callers = {
+            value["caller_reference"]
+            for value in analysis["exception_propagation"]["edges"]
+            if value["callee_reference"] == "definitions.py:build_default"
+            and value["exception_type"] == "RuntimeError"
+        }
+        self.assertEqual(propagation_callers, default_callers)
+
     def test_exports(self) -> None:
         analysis = scan_repository(self.root)
         item = analysis["items"][0]
