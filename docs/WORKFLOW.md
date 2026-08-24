@@ -523,6 +523,15 @@ reverse bare-decorator applications. Top-level work belongs to module initializa
 class belongs to its enclosing function. Declarative model and exception components retain their
 contract meaning but do not duplicate these calls. Deferred method bodies are excluded from the
 startup fingerprint and execute only on later invocation.
+Annotation expressions are included only when their execution semantics are unambiguous from the
+source. Module/class annotations and function parameter/return annotations are definition-time
+evidence unless the module explicitly imports `annotations` from `__future__`; local-variable
+annotations are never executed and therefore never become call edges. Definition ordering places
+function annotations after defaults and before decorator application. Startup fingerprints strip
+deferred lambda bodies and generator filters/nested iterables/elements, retaining only lambda
+defaults and the generator's eagerly evaluated outer iterable. Ordinary generic subscriptions and
+`A | B` type unions remain contract metadata and do not independently create startup or arithmetic
+failure evidence.
 The analysis also carries `concurrency_model`, a machine-readable inventory of task spawn,
 join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
 relations. Use these records to choose runtime schedules and stress tests; they do not establish

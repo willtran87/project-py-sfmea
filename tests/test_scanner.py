@@ -5107,6 +5107,153 @@ class ScannerTests(unittest.TestCase):
         }
         self.assertEqual(propagation_callers, field_callers)
 
+    def test_annotation_calls_follow_python_execution_scope_and_future_imports(
+        self,
+    ) -> None:
+        (self.root / "annotations_eager.py").write_text(
+            "def annotation_value(label):\n"
+            "    raise RuntimeError(label)\n\n"
+            "def default_value():\n"
+            "    return 1\n\n"
+            "def runtime_call(value):\n"
+            "    return value\n\n"
+            "module_field: annotation_value('module')\n\n"
+            "def plain(value: annotation_value('parameter') = default_value()) -> annotation_value('return'):\n"
+            "    local: annotation_value('local')\n"
+            "    return runtime_call(value)\n\n"
+            "class Model:\n"
+            "    field: annotation_value('field')\n\n"
+            "def enclosing():\n"
+            "    def nested(value: annotation_value('nested')):\n"
+            "        return value\n"
+            "    return nested\n\n"
+            "def eager_lambda_annotation(value: (lambda: runtime_call(1))):\n"
+            "    return value\n\n"
+            "def local_annotation_only():\n"
+            "    local_callback: (lambda: runtime_call(0))\n"
+            "    return None\n",
+            encoding="utf-8",
+        )
+        (self.root / "annotations_deferred.py").write_text(
+            "from __future__ import annotations\n\n"
+            "def annotation_value(label):\n"
+            "    raise RuntimeError(label)\n\n"
+            "module_field: annotation_value('module')\n\n"
+            "def deferred(value: annotation_value('parameter')) -> annotation_value('return'):\n"
+            "    local: annotation_value('local')\n"
+            "    return value\n\n"
+            "class DeferredModel:\n"
+            "    field: annotation_value('field')\n\n"
+            "def deferred_lambda_annotation(value: (lambda: annotation_value('lambda'))):\n"
+            "    return value\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        eager = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value["source"]["path"] == "annotations_eager.py"
+        }
+        self.assertEqual(
+            eager["<module initialization>"]["ordered_calls"],
+            [
+                "annotation_value",
+                "default_value",
+                "annotation_value",
+                "annotation_value",
+                "annotation_value",
+            ],
+        )
+        self.assertEqual(eager["plain"]["ordered_calls"], ["runtime_call"])
+        self.assertEqual(eager["Model"]["ordered_calls"], [])
+        self.assertEqual(eager["enclosing"]["ordered_calls"], ["annotation_value"])
+        annotation_contexts = [
+            value["control_context"][0]
+            for value in eager["<module initialization>"]["call_sites"]
+            if value["reference"] == "annotation_value"
+        ]
+        self.assertTrue(any(":annotation:positional:value:" in value for value in annotation_contexts))
+        self.assertTrue(any(":annotation:return" in value for value in annotation_contexts))
+        self.assertTrue(any("module-annotation" in value for value in annotation_contexts))
+        self.assertTrue(any("class-definition" in value for value in annotation_contexts))
+        annotation_callers = set(eager["annotation_value"]["called_by"])
+        self.assertEqual(
+            annotation_callers,
+            {
+                "annotations_eager.py:<module initialization>",
+                "annotations_eager.py:enclosing",
+            },
+        )
+        propagation_callers = {
+            value["caller_reference"]
+            for value in analysis["exception_propagation"]["edges"]
+            if value["callee_reference"] == "annotations_eager.py:annotation_value"
+            and value["exception_type"] == "RuntimeError"
+        }
+        self.assertEqual(propagation_callers, annotation_callers)
+        eager_lambdas = [
+            value for value in eager.values() if value["kind"] == "lambda"
+        ]
+        self.assertEqual(len(eager_lambdas), 1)
+        self.assertEqual(eager_lambdas[0]["ordered_calls"], ["runtime_call"])
+
+        deferred = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value["source"]["path"] == "annotations_deferred.py"
+        }
+        self.assertNotIn("<module initialization>", deferred)
+        self.assertEqual(deferred["annotation_value"]["called_by"], [])
+        self.assertEqual(deferred["deferred"]["ordered_calls"], [])
+        self.assertEqual(deferred["DeferredModel"]["ordered_calls"], [])
+        self.assertFalse(any(value["kind"] == "lambda" for value in deferred.values()))
+
+    def test_startup_fingerprint_excludes_deferred_expression_bodies(self) -> None:
+        source_path = self.root / "startup_fingerprint.py"
+        original = (
+            "def source():\n"
+            "    return [1]\n\n"
+            "def runtime_call(value):\n"
+            "    return value\n\n"
+            "def callback_default(callback=lambda: runtime_call(1)):\n"
+            "    return callback\n\n"
+            "def generator_default(stream=(runtime_call(item) for item in source())):\n"
+            "    return stream\n"
+        )
+        source_path.write_text(original, encoding="utf-8")
+
+        def startup_fingerprint(analysis: dict[str, Any]) -> str:
+            return next(
+                item["scanner"]["source_fingerprint"]
+                for item in analysis["items"]
+                if item["source"]["path"] == "startup_fingerprint.py"
+                and item["component"]["qualname"] == "<module initialization>"
+            )
+
+        first = scan_repository(self.root)
+        first_fingerprint = startup_fingerprint(first)
+        changed_deferred_bodies = original.replace(
+            "runtime_call(1)", "runtime_call(2)"
+        ).replace("runtime_call(item)", "runtime_call(item + 1)")
+        source_path.write_text(changed_deferred_bodies, encoding="utf-8")
+        second = scan_repository(self.root)
+        self.assertEqual(startup_fingerprint(second), first_fingerprint)
+
+        changed_outer_iterable = changed_deferred_bodies.replace(
+            "for item in source()", "for item in alternate_source()"
+        )
+        source_path.write_text(changed_outer_iterable, encoding="utf-8")
+        third = scan_repository(self.root)
+        self.assertNotEqual(startup_fingerprint(third), first_fingerprint)
+        startup = next(
+            value
+            for value in third["components"]
+            if value["source"]["path"] == "startup_fingerprint.py"
+            and value["qualname"] == "<module initialization>"
+        )
+        self.assertEqual(startup["ordered_calls"], ["alternate_source"])
+
     def test_exports(self) -> None:
         analysis = scan_repository(self.root)
         item = analysis["items"][0]

@@ -156,6 +156,10 @@ invent a target for the callable returned by a decorator factory.
 Top-level class-construction edges also appear once on module initialization, in decorator/base/
 keyword/body/application order; nested classes use their enclosing callable. Declarative model and
 exception nodes do not repeat those sequence or propagation edges.
+Executable annotation edges appear in the same definition-time sequence, with module/class/
+parameter/return context. Local annotations and annotations explicitly postponed by a future import
+produce no sequence or cascade edge. Diagram identity for enclosing startup work is unaffected by
+changes confined to deferred lambda or generator bodies.
 
 The cross-reference diagram projects each typed exception edge as a shared record node linked to
 its callee and caller. The record preserves exception type, selected-handler disposition, match

@@ -5,6 +5,16 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Correct annotation and deferred-expression execution boundaries. Attribute scanner-visible eager
+  module, class, parameter, variadic, keyword-only, and return annotation calls to module startup
+  or the enclosing callable in Python definition order; never treat local-variable annotations as
+  executed calls; and honor explicit `from __future__ import annotations` across module, class,
+  function, and nested-definition analysis. Remove deferred lambda bodies and generator filters,
+  nested iterables, targets, and elements from enclosing startup fingerprints while retaining their
+  eager defaults/outer iterable. Keep generic subscriptions and `A | B` type composition as type
+  metadata rather than startup/calculation findings. Advance the fact cache to format 25 and add
+  caller, cascade, ordering, future-import, assurance-precision, and fingerprint-sensitivity
+  regressions.
 - Model scanner-visible class construction in its actual enclosing execution. Top-level class
   decorator expressions/applications, dynamic bases and metaclass keywords, field initializers,
   and method defaults now belong to module initialization in Python order; nested class work stays

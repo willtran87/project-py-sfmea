@@ -182,6 +182,17 @@ defaults are module-initialization evidence; nested class work belongs to the en
 Declarative model and exception-type components preserve contract semantics without duplicating
 those calls or exception cascades. Deferred method bodies are removed from startup fingerprints.
 
+Annotation execution is source-sensitive. In modules without an explicit postponed-annotations
+future import, scanner-visible module/class and function parameter/return annotation expressions
+are evaluated as definition-time evidence in Python order. Local-variable annotations are not
+evaluated and are excluded. An explicit `from __future__ import annotations` excludes annotation
+calls for the whole module. This is a source-grounded distinction, not an inference about an
+undeclared deployment interpreter. Enclosing startup fingerprints also normalize later lambda and
+generator-expression bodies while retaining their immediately evaluated construction inputs.
+Generic subscription syntax and annotation `A | B` unions remain type evidence rather than being
+misclassified as startup calculations; annotation calls and eagerly created deferred expressions
+remain modeled.
+
 Python source uses one exact identity-stable snapshot per selected file. The same immutable bytes
 drive PEP 263 decoding, AST construction, included-test reference indexing, and baseline hashing;
 the scanner does not reread a selected file after findings have been derived. Eligible textual test

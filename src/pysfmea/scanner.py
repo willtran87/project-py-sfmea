@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .adapters import build_adapter_run_ledger
 from .assurance import refresh_assurance_register
@@ -140,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-24"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-25"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -2090,10 +2090,16 @@ class _FactVisitor(ast.NodeVisitor):
         aliases: dict[str, str],
         *,
         allow_zero_argument_super: bool = False,
+        annotations_deferred: bool = False,
+        module_scope: bool = False,
     ) -> None:
         self.facts = facts
         self.aliases = aliases
         self.allow_zero_argument_super = allow_zero_argument_super
+        self.annotations_deferred = annotations_deferred
+        self.module_scope = module_scope
+        self.class_definition_depth = 0
+        self.annotation_depth = 0
         self.control_context: list[str] = []
         self.await_depth = 0
         self.value_context: list[dict[str, Any]] = []
@@ -2105,6 +2111,13 @@ class _FactVisitor(ast.NodeVisitor):
             self.visit(value)
         finally:
             self.control_context.pop()
+
+    def _visit_annotation_with_context(self, value: ast.AST, context: str) -> None:
+        self.annotation_depth += 1
+        try:
+            self._visit_with_context(value, context)
+        finally:
+            self.annotation_depth -= 1
 
     def _visit_block(self, values: list[ast.stmt], context: str) -> None:
         for index, value in enumerate(values):
@@ -2377,6 +2390,32 @@ class _FactVisitor(ast.NodeVisitor):
                     keyword_default,
                     f"{kind}@{node.lineno}:keyword-default:{index}",
                 )
+        if not self.annotations_deferred:
+            annotated_arguments = [
+                ("positional", argument)
+                for argument in [*node.args.posonlyargs, *node.args.args]
+            ]
+            if node.args.vararg is not None:
+                annotated_arguments.append(("var-positional", node.args.vararg))
+            annotated_arguments.extend(
+                ("keyword-only", argument) for argument in node.args.kwonlyargs
+            )
+            if node.args.kwarg is not None:
+                annotated_arguments.append(("var-keyword", node.args.kwarg))
+            for index, (argument_kind, argument) in enumerate(annotated_arguments):
+                if argument.annotation is not None:
+                    self._visit_annotation_with_context(
+                        argument.annotation,
+                        (
+                            f"{kind}@{node.lineno}:annotation:{argument_kind}:"
+                            f"{argument.arg}:{index}"
+                        ),
+                    )
+            if node.returns is not None:
+                self._visit_annotation_with_context(
+                    node.returns,
+                    f"{kind}@{node.lineno}:annotation:return",
+                )
         for reverse_index, decorator in enumerate(reversed(node.decorator_list)):
             if isinstance(decorator, ast.Call):
                 continue
@@ -2420,7 +2459,11 @@ class _FactVisitor(ast.NodeVisitor):
                     f"{keyword.arg or '**'}:{index}"
                 ),
             )
-        self._visit_block(node.body, f"class-definition@{node.lineno}:body")
+        self.class_definition_depth += 1
+        try:
+            self._visit_block(node.body, f"class-definition@{node.lineno}:body")
+        finally:
+            self.class_definition_depth -= 1
         for reverse_index, decorator in enumerate(reversed(node.decorator_list)):
             if isinstance(decorator, ast.Call):
                 continue
@@ -2901,6 +2944,11 @@ class _FactVisitor(ast.NodeVisitor):
             return
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
+        if self.annotation_depth and isinstance(node.op, ast.BitOr):
+            # ``A | B`` is type-union composition in an annotation, not evidence of
+            # a runtime arithmetic calculation failure mode.
+            self.generic_visit(node)
+            return
         self.facts.arithmetic_ops += 1
         self.facts.signals.add("calculation")
         self.generic_visit(node)
@@ -3386,7 +3434,20 @@ class _FactVisitor(ast.NodeVisitor):
             self._record_alias_binding(node.target, node.value, node.lineno)
             self._record_state_transition(node.target, node.value, node.lineno)
         self.visit(node.target)
-        self.visit(node.annotation)
+        # Local variable annotations are never evaluated. Module/class annotations
+        # are eager only when the source has not explicitly enabled postponed
+        # evaluation through ``from __future__ import annotations``.
+        if (
+            not self.annotations_deferred
+            and (self.module_scope or self.class_definition_depth)
+        ):
+            annotation_scope = (
+                "class" if self.class_definition_depth else "module"
+            )
+            self._visit_annotation_with_context(
+                node.annotation,
+                f"{annotation_scope}-annotation@{node.lineno}",
+            )
         if node.value is not None:
             sink_kind = (
                 "attribute"
@@ -3591,6 +3652,7 @@ class _ModuleCollector(ast.NodeVisitor):
         include_nested: bool,
         module_super_shadowed: bool,
         module_rebound_names: set[str],
+        annotations_deferred: bool,
     ) -> None:
         self.path = path
         self.include_private = include_private
@@ -3599,6 +3661,7 @@ class _ModuleCollector(ast.NodeVisitor):
         self.include_nested = include_nested
         self.module_super_shadowed = module_super_shadowed
         self.module_rebound_names = module_rebound_names
+        self.annotations_deferred = annotations_deferred
         self.class_stack: list[str] = []
         self.class_base_stack: list[list[str]] = []
         self.function_stack: list[str] = []
@@ -3797,6 +3860,18 @@ class _ModuleCollector(ast.NodeVisitor):
                         self.route_prefixes[target] = prefix.rstrip("/")
         self.generic_visit(node)
 
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # Collector traversal exists to discover nested deferred expressions. Local
+        # annotations and explicitly postponed annotations do not create values, so
+        # their lambda/generator bodies must not become components either.
+        if (
+            not self.annotations_deferred
+            and (self.class_stack or self.function_depth == 0)
+        ):
+            self.visit(node.annotation)
+        if node.value is not None:
+            self.visit(node.value)
+
     def visit_Lambda(self, node: ast.Lambda) -> None:
         if id(node) not in self.deferred_expression_names:
             self._collect_lambda(
@@ -3848,7 +3923,11 @@ class _ModuleCollector(ast.NodeVisitor):
             module_rebound_names=sorted(self.module_rebound_names),
             parameter_contracts=_parameter_contracts(node.args),
         )
-        _FactVisitor(facts, dict(self.aliases)).visit(node.body)
+        _FactVisitor(
+            facts,
+            dict(self.aliases),
+            annotations_deferred=self.annotations_deferred,
+        ).visit(node.body)
         self.functions.append(facts)
 
     def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
@@ -3908,7 +3987,11 @@ class _ModuleCollector(ast.NodeVisitor):
             is_generator=True,
             module_rebound_names=sorted(self.module_rebound_names),
         )
-        visitor = _FactVisitor(facts, dict(self.aliases))
+        visitor = _FactVisitor(
+            facts,
+            dict(self.aliases),
+            annotations_deferred=self.annotations_deferred,
+        )
         visitor._visit_comprehension(
             node.generators,
             [("element", node.elt)],
@@ -4112,6 +4195,7 @@ class _ModuleCollector(ast.NodeVisitor):
             facts,
             self.aliases,
             allow_zero_argument_super=zero_argument_super_enabled,
+            annotations_deferred=self.annotations_deferred,
         )
         visitor._visit_block(node.body, "")
         member_qualname = qualname
@@ -4143,6 +4227,20 @@ class _ModuleCollector(ast.NodeVisitor):
         for value in [*node.args.defaults, *node.args.kw_defaults]:
             if value is not None:
                 self.visit(value)
+        if not self.annotations_deferred:
+            for argument in [
+                *node.args.posonlyargs,
+                *node.args.args,
+                *node.args.kwonlyargs,
+            ]:
+                if argument.annotation is not None:
+                    self.visit(argument.annotation)
+            if node.args.vararg is not None and node.args.vararg.annotation is not None:
+                self.visit(node.args.vararg.annotation)
+            if node.args.kwarg is not None and node.args.kwarg.annotation is not None:
+                self.visit(node.args.kwarg.annotation)
+            if node.returns is not None:
+                self.visit(node.returns)
         if self.include_nested:
             self.function_depth += 1
             self.function_stack.append(node.name)
@@ -4470,6 +4568,15 @@ def _module_context_fingerprint(tree: ast.Module) -> str:
     ).hexdigest()
 
 
+def _module_uses_deferred_annotations(tree: ast.Module) -> bool:
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(alias.name == "annotations" for alias in node.names)
+        for node in tree.body
+    )
+
+
 def _definition_expression_requires_analysis(node: ast.AST) -> bool:
     dynamic_nodes = (
         ast.Call,
@@ -4484,13 +4591,28 @@ def _definition_expression_requires_analysis(node: ast.AST) -> bool:
         ast.Compare,
         ast.IfExp,
         ast.NamedExpr,
-        ast.Subscript,
     )
     return any(isinstance(value, dynamic_nodes) for value in ast.walk(node))
 
 
+def _annotation_expression_requires_analysis(node: ast.AST) -> bool:
+    """Admit annotation syntax only when it yields modeled execution evidence."""
+
+    evidence_nodes = (
+        ast.Call,
+        ast.Lambda,
+        ast.GeneratorExp,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+    )
+    return any(isinstance(value, evidence_nodes) for value in ast.walk(node))
+
+
 def _function_definition_requires_initialization_analysis(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    annotations_deferred: bool,
 ) -> bool:
     """Return whether a definition contains review-worthy eager expressions.
 
@@ -4507,10 +4629,38 @@ def _function_definition_requires_initialization_analysis(
             for expression in [*node.args.defaults, *node.args.kw_defaults]
             if expression is not None
         )
+        or (
+            not annotations_deferred
+            and any(
+                _annotation_expression_requires_analysis(annotation)
+                for annotation in [
+                    *(
+                        argument.annotation
+                        for argument in [
+                            *node.args.posonlyargs,
+                            *node.args.args,
+                            *node.args.kwonlyargs,
+                        ]
+                    ),
+                    node.args.vararg.annotation
+                    if node.args.vararg is not None
+                    else None,
+                    node.args.kwarg.annotation
+                    if node.args.kwarg is not None
+                    else None,
+                    node.returns,
+                ]
+                if annotation is not None
+            )
+        )
     )
 
 
-def _class_definition_requires_initialization_analysis(node: ast.ClassDef) -> bool:
+def _class_definition_requires_initialization_analysis(
+    node: ast.ClassDef,
+    *,
+    annotations_deferred: bool,
+) -> bool:
     """Return whether a class statement has scanner-visible import-time behavior."""
 
     if node.decorator_list or any(
@@ -4520,11 +4670,17 @@ def _class_definition_requires_initialization_analysis(node: ast.ClassDef) -> bo
         return True
     for index, statement in enumerate(node.body):
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if _function_definition_requires_initialization_analysis(statement):
+            if _function_definition_requires_initialization_analysis(
+                statement,
+                annotations_deferred=annotations_deferred,
+            ):
                 return True
             continue
         if isinstance(statement, ast.ClassDef):
-            if _class_definition_requires_initialization_analysis(statement):
+            if _class_definition_requires_initialization_analysis(
+                statement,
+                annotations_deferred=annotations_deferred,
+            ):
                 return True
             continue
         if isinstance(statement, ast.Pass):
@@ -4537,6 +4693,12 @@ def _class_definition_requires_initialization_analysis(node: ast.ClassDef) -> bo
         ):
             continue
         if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            if (
+                isinstance(statement, ast.AnnAssign)
+                and not annotations_deferred
+                and _annotation_expression_requires_analysis(statement.annotation)
+            ):
+                return True
             value = statement.value
             try:
                 ast.literal_eval(value) if value is not None else None
@@ -4549,42 +4711,93 @@ def _class_definition_requires_initialization_analysis(node: ast.ClassDef) -> bo
     return False
 
 
+class _DeferredExpressionFingerprintNormalizer(ast.NodeTransformer):
+    """Remove later-executed expression bodies from an enclosing fact digest."""
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        node.args.defaults = [self.visit(value) for value in node.args.defaults]
+        node.args.kw_defaults = [
+            self.visit(value) if value is not None else None
+            for value in node.args.kw_defaults
+        ]
+        node.body = ast.Constant(value="<deferred lambda body>")
+        return node
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> ast.AST:
+        if node.generators:
+            outer = node.generators[0]
+            outer.iter = self.visit(outer.iter)
+            outer.target = ast.Name(id="_", ctx=ast.Store())
+            outer.ifs = []
+            node.generators = [outer]
+        node.elt = ast.Constant(value="<deferred generator body>")
+        return node
+
+
+def _normalize_deferred_fingerprint_bodies(node: ast.AST) -> ast.AST:
+    return cast(ast.AST, _DeferredExpressionFingerprintNormalizer().visit(node))
+
+
+def _definition_time_statement_fingerprint_node(node: ast.stmt) -> ast.stmt:
+    return cast(
+        ast.stmt,
+        _normalize_deferred_fingerprint_bodies(copy.deepcopy(node)),
+    )
+
+
 def _definition_time_function_fingerprint_node(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    annotations_deferred: bool,
 ) -> ast.FunctionDef | ast.AsyncFunctionDef:
     """Strip deferred body/type expressions from module-startup fingerprinting."""
 
     normalized = copy.deepcopy(node)
     normalized.body = []
-    normalized.returns = None
-    for argument in [
-        *normalized.args.posonlyargs,
-        *normalized.args.args,
-        *normalized.args.kwonlyargs,
-    ]:
-        argument.annotation = None
-    if normalized.args.vararg is not None:
-        normalized.args.vararg.annotation = None
-    if normalized.args.kwarg is not None:
-        normalized.args.kwarg.annotation = None
+    if annotations_deferred:
+        normalized.returns = None
+        for argument in [
+            *normalized.args.posonlyargs,
+            *normalized.args.args,
+            *normalized.args.kwonlyargs,
+        ]:
+            argument.annotation = None
+        if normalized.args.vararg is not None:
+            normalized.args.vararg.annotation = None
+        if normalized.args.kwarg is not None:
+            normalized.args.kwarg.annotation = None
     if hasattr(normalized, "type_params"):
         normalized.type_params = []
-    return normalized
+    result = _normalize_deferred_fingerprint_bodies(normalized)
+    assert isinstance(result, (ast.FunctionDef, ast.AsyncFunctionDef))
+    return result
 
 
-def _definition_time_class_fingerprint_node(node: ast.ClassDef) -> ast.ClassDef:
+def _definition_time_class_fingerprint_node(
+    node: ast.ClassDef,
+    *,
+    annotations_deferred: bool,
+) -> ast.ClassDef:
     """Strip deferred method bodies from class-startup fingerprinting."""
 
     normalized = copy.deepcopy(node)
     normalized.body = [
-        _definition_time_function_fingerprint_node(statement)
+        _definition_time_function_fingerprint_node(
+            statement,
+            annotations_deferred=annotations_deferred,
+        )
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
-        else _definition_time_class_fingerprint_node(statement)
+        else _definition_time_class_fingerprint_node(
+            statement,
+            annotations_deferred=annotations_deferred,
+        )
         if isinstance(statement, ast.ClassDef)
         else statement
         for statement in normalized.body
     ]
-    return normalized
+    result = _normalize_deferred_fingerprint_bodies(normalized)
+    assert isinstance(result, ast.ClassDef)
+    return result
 
 
 def _module_initialization_facts(
@@ -4592,15 +4805,23 @@ def _module_initialization_facts(
     tree: ast.Module,
     aliases: dict[str, str],
     context_fingerprint: str,
+    *,
+    annotations_deferred: bool,
 ) -> FunctionFacts | None:
     executable: list[ast.stmt] = []
     for index, node in enumerate(tree.body):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if _function_definition_requires_initialization_analysis(node):
+            if _function_definition_requires_initialization_analysis(
+                node,
+                annotations_deferred=annotations_deferred,
+            ):
                 executable.append(node)
             continue
         if isinstance(node, ast.ClassDef):
-            if _class_definition_requires_initialization_analysis(node):
+            if _class_definition_requires_initialization_analysis(
+                node,
+                annotations_deferred=annotations_deferred,
+            ):
                 executable.append(node)
             continue
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -4613,6 +4834,13 @@ def _module_initialization_facts(
         ):
             continue
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            if (
+                isinstance(node, ast.AnnAssign)
+                and not annotations_deferred
+                and _annotation_expression_requires_analysis(node.annotation)
+            ):
+                executable.append(node)
+                continue
             value = node.value
             try:
                 ast.literal_eval(value) if value is not None else None
@@ -4624,11 +4852,17 @@ def _module_initialization_facts(
         return None
     fingerprint_synthetic = ast.Module(
         body=[
-            _definition_time_function_fingerprint_node(node)
+            _definition_time_function_fingerprint_node(
+                node,
+                annotations_deferred=annotations_deferred,
+            )
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            else _definition_time_class_fingerprint_node(node)
+            else _definition_time_class_fingerprint_node(
+                node,
+                annotations_deferred=annotations_deferred,
+            )
             if isinstance(node, ast.ClassDef)
-            else node
+            else _definition_time_statement_fingerprint_node(node)
             for node in executable
         ],
         type_ignores=[],
@@ -4660,7 +4894,12 @@ def _module_initialization_facts(
     # reachable entrypoint. Keeping a distinct signal prevents startup declarations from
     # dominating high-priority queues while preserving their complete candidate inventory.
     facts.signals.add("module_initialization")
-    visitor = _FactVisitor(facts, dict(aliases))
+    visitor = _FactVisitor(
+        facts,
+        dict(aliases),
+        annotations_deferred=annotations_deferred,
+        module_scope=True,
+    )
     visitor._visit_block(executable, "")
     return facts
 
@@ -11270,6 +11509,7 @@ def scan_repository(
             )
             continue
         parsed_python_paths.add(relative)
+        annotations_deferred = _module_uses_deferred_annotations(tree)
         collector = _ModuleCollector(
             relative,
             include_private=include_private,
@@ -11278,6 +11518,7 @@ def scan_repository(
             include_nested=include_nested,
             module_super_shadowed=_statements_bind_name(tree.body, "super"),
             module_rebound_names=_module_rebound_names(tree.body),
+            annotations_deferred=annotations_deferred,
         )
         collector.visit(tree)
         file_facts = list(collector.functions)
@@ -11286,6 +11527,7 @@ def scan_repository(
             tree,
             _module_aliases(tree, relative),
             _module_context_fingerprint(tree),
+            annotations_deferred=annotations_deferred,
         )
         if module_facts:
             file_facts.append(module_facts)

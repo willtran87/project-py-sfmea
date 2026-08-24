@@ -164,6 +164,13 @@ flowchart LR
   initialization; nested class work stays on its enclosing function. Declarative class-model and
   exception components retain schema/contract evidence without duplicating startup call edges or
   failure cascades
+- Annotation calls follow executable Python scope. Without explicit postponed annotations,
+  module/class annotations and function parameter/return annotations are ordered with definition
+  startup; local-variable annotations are never treated as calls. `from __future__ import
+  annotations` suppresses annotation execution edges throughout that module. Enclosing startup
+  fingerprints exclude later lambda/generator bodies while retaining eager defaults and the outer
+  generator iterable. Generic subscriptions and `A | B` unions remain type metadata, not false
+  startup/calculation findings
 - A bounded static concurrency model that records task spawn, join/wait, cancellation/timeout,
   synchronization, and awaited-completion operations; relates them through lexical order,
   await-before-next-operation, and conservative spawn-to-later-join candidates; and indexes the
