@@ -5,6 +5,13 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Preserve one source-ordered static sequence across internal calls, unresolved external candidates,
+  and unresolved dynamic targets instead of appending interface/dynamic evidence after the internal
+  walk. Reconciliation now reports external as well as dynamic interaction counts. Internal-call,
+  interprocedural-flow, resilience, and typed-exception resolution use the raw call spelling to
+  reject weak lexical/import targets shadowed by parameters, local assignments, or module rebinding
+  while retaining stronger receiver-type evidence. Advance
+  the fact cache to format 28 and add mixed-order plus direct-call rebinding regressions.
 - Resolve decorator-factory applications to a returned repository function or lambda only when the
   factory, its single unconditional direct return, and the returned synchronous undecorated component are all
   unique and unshadowed. Feed the resulting edge into callers, sequences, value flow, and fixed-point

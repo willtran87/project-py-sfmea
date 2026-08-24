@@ -140,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-27"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-28"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -7516,7 +7516,29 @@ def _resolve_internal_targets(
     called: str,
     by_file_name: dict[tuple[str, str], list[FunctionFacts]],
     by_full: dict[str, list[FunctionFacts]],
+    *,
+    raw_called: str = "",
+    call_resolution: str = "",
 ) -> list[FunctionFacts]:
+    raw_head = raw_called.partition(".")[0]
+    if (
+        call_resolution in {"import_alias", "lexical_name"}
+        and raw_head
+        and raw_head not in {"self", "cls", "super()", "super(<unresolved>)"}
+        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", raw_head)
+    ):
+        locally_bound_names = {
+            str(binding.get("target", ""))
+            for binding in caller.alias_bindings
+            if isinstance(binding, dict)
+            and str(binding.get("target_kind", "")) == "name"
+        }
+        if (
+            raw_head in caller.parameters
+            or raw_head in locally_bound_names
+            or raw_head in caller.module_rebound_names
+        ):
+            return []
     caller_class = caller.qualname.rsplit(".", 1)[0] if "." in caller.qualname else ""
     targets: list[FunctionFacts] = []
     if "." not in called:
@@ -7808,8 +7830,16 @@ def _internal_call_resolution(
     }
     for caller in facts_list:
         caller_ref = _component_ref(caller)
-        for called in caller.calls:
-            targets = _resolve_internal_targets(caller, called, by_file_name, by_full)
+        for site in caller.call_sites:
+            called = str(site.get("reference", ""))
+            targets = _resolve_internal_targets(
+                caller,
+                called,
+                by_file_name,
+                by_full,
+                raw_called=str(site.get("raw_reference", "")),
+                call_resolution=str(site.get("resolution", "")),
+            )
             for target in targets:
                 target_ref = _component_ref(target)
                 if target_ref != caller_ref:
@@ -7876,7 +7906,14 @@ def _interprocedural_data_flow(facts_list: list[FunctionFacts]) -> dict[str, Any
         caller_ref = _component_ref(caller)
         for site in caller.call_sites:
             called = str(site.get("reference", ""))
-            targets = _resolve_internal_targets(caller, called, by_file_name, by_full)
+            targets = _resolve_internal_targets(
+                caller,
+                called,
+                by_file_name,
+                by_full,
+                raw_called=str(site.get("raw_reference", "")),
+                call_resolution=str(site.get("resolution", "")),
+            )
             if not targets:
                 unresolved_sites += 1
                 continue
@@ -8612,6 +8649,8 @@ def _exception_propagation_model(
                     called,
                     by_file_name,
                     by_full,
+                    raw_called=str(site.get("raw_reference", "")),
+                    call_resolution=str(site.get("resolution", "")),
                 )
                 for target in targets:
                     target_reference = _component_ref(target)
@@ -8650,6 +8689,8 @@ def _exception_propagation_model(
                 str(site.get("reference", "")),
                 by_file_name,
                 by_full,
+                raw_called=str(site.get("raw_reference", "")),
+                call_resolution=str(site.get("resolution", "")),
             )
             resolution = (
                 "unique_static_target"
@@ -9248,7 +9289,12 @@ def _resilience_semantics_model(facts_list: list[FunctionFacts]) -> dict[str, An
                 )
 
             targets = _resolve_internal_targets(
-                caller=facts, called=called, by_file_name=by_file_name, by_full=by_full
+                caller=facts,
+                called=called,
+                by_file_name=by_file_name,
+                by_full=by_full,
+                raw_called=str(site.get("raw_reference", "")),
+                call_resolution=str(site.get("resolution", "")),
             )
             for target in targets:
                 target_reference = _component_ref(target)

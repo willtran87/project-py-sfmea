@@ -134,7 +134,9 @@ bounded and record their limits or truncation state in the diagram notice and
 metadata.
 
 Sequence diagrams preserve repeated call sites, source lines, lexical branch/loop/exception
-context, await status, evaluation order, resolution provenance, and confidence. Internal calls
+context, await status, evaluation order, resolution provenance, and confidence. Internal,
+external-candidate, and unresolved-dynamic static interactions use one call-site-ordered stream;
+the latter two are not moved behind the internal traversal. Internal calls
 that match more than one target are marked ambiguous and low confidence. Interface diagrams also
 expose configured contracts and confidence-labeled unresolved external-call candidates.
 Parameter/variable annotations, unambiguous constructor assignments, and a unique trustworthy

@@ -87,7 +87,7 @@ def sequence_model(
         if edge.get("kind") == "internal_call":
             adjacency[edge["source"]].append(edge["target"])
 
-    def ordered_targets(component_id: str) -> list[tuple[str, dict[str, Any]]]:
+    def ordered_operations(component_id: str) -> list[dict[str, Any]]:
         component = components.get(component_id, {})
         targets = adjacency.get(component_id, [])
         raw_sites = component.get("call_sites", [])
@@ -109,8 +109,14 @@ def sequence_model(
                     component.get("ordered_calls", component.get("calls", []))
                 )
             ]
-        records: list[tuple[str, dict[str, Any]]] = []
-        represented: set[str] = set()
+        external_candidates = [
+            value
+            for value in component.get("external_call_candidates", [])
+            if isinstance(value, dict)
+        ]
+        records: list[dict[str, Any]] = []
+        represented_targets: set[str] = set()
+        represented_external: set[int] = set()
         for site in sites:
             reference = str(site.get("reference", ""))
             leaf = reference.rsplit(".", 1)[-1]
@@ -122,40 +128,134 @@ def sequence_model(
                     "." + str(components.get(target, {}).get("qualname", ""))
                 )
             ]
-            for target in matches:
-                records.append((target, {**site, "_match_count": len(matches)}))
-                represented.add(target)
-        for target in targets:
-            if target not in represented:
-                records.append(
-                    (
-                        target,
+            if matches:
+                for target in matches:
+                    records.append(
                         {
+                            "kind": "internal",
+                            "target": target,
+                            "site": {**site, "_match_count": len(matches)},
+                        }
+                    )
+                    represented_targets.add(target)
+                continue
+            if site.get("dynamic_target"):
+                records.append({"kind": "dynamic", "site": site})
+                continue
+            for index, candidate in enumerate(external_candidates):
+                if str(candidate.get("reference", "")) == reference:
+                    records.append(
+                        {"kind": "external", "candidate": candidate, "site": site}
+                    )
+                    represented_external.add(index)
+        for target in targets:
+            if target not in represented_targets:
+                records.append(
+                    {
+                        "kind": "internal",
+                        "target": target,
+                        "site": {
                             "reference": components.get(target, {}).get("name", ""),
                             "order": 10_000,
                             "line": 0,
                             "control_context": [],
                             "awaited": False,
                         },
-                    )
+                    }
                 )
+        for index, candidate in enumerate(external_candidates):
+            if index in represented_external:
+                continue
+            records.append(
+                {
+                    "kind": "external",
+                    "candidate": candidate,
+                    "site": {
+                        "reference": str(candidate.get("reference", "")),
+                        "order": 10_000 + index,
+                        "line": 0,
+                        "control_context": [],
+                        "awaited": False,
+                    },
+                }
+            )
         return records
 
     interactions: list[dict[str, Any]] = []
     truncation_reasons: set[str] = set()
 
     def walk(component_id: str, depth: int, stack: tuple[str, ...]) -> None:
-        if depth >= max_depth:
-            if adjacency.get(component_id):
-                truncation_reasons.add("max_depth")
-            return
         if len(interactions) >= max_interactions:
             truncation_reasons.add("max_interactions")
             return
-        for target_id, call_site in ordered_targets(component_id):
+        for operation in ordered_operations(component_id):
             if len(interactions) >= max_interactions:
                 truncation_reasons.add("max_interactions")
                 return
+            call_site = operation["site"]
+            if operation["kind"] == "external":
+                candidate = operation["candidate"]
+                call = str(candidate.get("reference", ""))
+                external_id = (
+                    "EXTCALL-"
+                    + hashlib.sha256(call.encode("utf-8")).hexdigest()[:12].upper()
+                )
+                interactions.append(
+                    {
+                        "source": component_id,
+                        "target": external_id,
+                        "target_label": call,
+                        "label": call,
+                        "evidence": "static_external_candidate",
+                        "cycle": False,
+                        "depth": depth,
+                        "sequence_index": call_site.get("order", 0),
+                        "source_line": call_site.get("line", 0),
+                        "control_context": call_site.get("control_context", []),
+                        "awaited": bool(call_site.get("awaited")),
+                        "confidence": candidate.get("confidence", "medium"),
+                        "resolution": candidate.get("basis", "unresolved"),
+                    }
+                )
+                continue
+            if operation["kind"] == "dynamic":
+                reference = str(call_site.get("reference", "<dynamic call>"))
+                identity = "|".join(
+                    (
+                        component_id,
+                        reference,
+                        str(call_site.get("line", 0)),
+                        str(call_site.get("order", 0)),
+                    )
+                )
+                dynamic_id = (
+                    "DYNAMICCALL-"
+                    + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
+                )
+                interactions.append(
+                    {
+                        "source": component_id,
+                        "target": dynamic_id,
+                        "target_label": reference,
+                        "label": reference,
+                        "evidence": "static_dynamic_call",
+                        "cycle": False,
+                        "depth": depth,
+                        "sequence_index": call_site.get("order", 0),
+                        "source_line": call_site.get("line", 0),
+                        "control_context": call_site.get("control_context", []),
+                        "awaited": bool(call_site.get("awaited")),
+                        "confidence": "low",
+                        "resolution": call_site.get(
+                            "resolution", "unresolved_dynamic_call"
+                        ),
+                    }
+                )
+                continue
+            if depth >= max_depth:
+                truncation_reasons.add("max_depth")
+                continue
+            target_id = operation["target"]
             target = components.get(target_id, {})
             cycle = target_id in stack
             interactions.append(
@@ -184,100 +284,6 @@ def sequence_model(
                 walk(target_id, depth + 1, (*stack, target_id))
 
     walk(root["id"], 0, (root["id"],))
-    visited_component_ids = {root["id"]} | {
-        value[key] for value in interactions for key in ("source", "target")
-    }
-    seen_external: set[tuple[str, str, int]] = set()
-    external_limit_reached = False
-    for component_id in list(visited_component_ids):
-        component = components.get(component_id, {})
-        call_sites = component.get("call_sites", [])
-        for candidate in component.get("external_call_candidates", []):
-            call = str(candidate.get("reference", ""))
-            matching_sites = [
-                value
-                for value in call_sites
-                if isinstance(value, dict) and value.get("reference") == call
-            ] or [{"order": 0, "line": 0, "control_context": [], "awaited": False}]
-            for site in matching_sites:
-                if len(interactions) >= max_interactions:
-                    truncation_reasons.add("max_interactions")
-                    external_limit_reached = True
-                    break
-                external_id = (
-                    "EXTCALL-"
-                    + hashlib.sha256(str(call).encode("utf-8")).hexdigest()[:12].upper()
-                )
-                edge_key = (
-                    component_id,
-                    external_id,
-                    int(site.get("order", 0)),
-                )
-                if edge_key in seen_external:
-                    continue
-                seen_external.add(edge_key)
-                interactions.append(
-                    {
-                        "source": component_id,
-                        "target": external_id,
-                        "target_label": str(call),
-                        "label": str(call),
-                        "evidence": "static_external_candidate",
-                        "cycle": False,
-                        "depth": 0,
-                        "sequence_index": site.get("order", 0),
-                        "source_line": site.get("line", 0),
-                        "control_context": site.get("control_context", []),
-                        "awaited": bool(site.get("awaited")),
-                        "confidence": candidate.get("confidence", "medium"),
-                        "resolution": candidate.get("basis", "unresolved"),
-                    }
-                )
-            if len(interactions) >= max_interactions:
-                break
-        if external_limit_reached:
-            break
-    for component_id in list(visited_component_ids):
-        component = components.get(component_id, {})
-        call_sites = component.get("call_sites", [])
-        for site in call_sites if isinstance(call_sites, list) else []:
-            if not isinstance(site, dict) or not site.get("dynamic_target"):
-                continue
-            if len(interactions) >= max_interactions:
-                truncation_reasons.add("max_interactions")
-                break
-            reference = str(site.get("reference", "<dynamic call>"))
-            identity = "|".join(
-                (
-                    component_id,
-                    reference,
-                    str(site.get("line", 0)),
-                    str(site.get("order", 0)),
-                )
-            )
-            dynamic_id = (
-                "DYNAMICCALL-"
-                + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
-            )
-            interactions.append(
-                {
-                    "source": component_id,
-                    "target": dynamic_id,
-                    "target_label": reference,
-                    "label": reference,
-                    "evidence": "static_dynamic_call",
-                    "cycle": False,
-                    "depth": 0,
-                    "sequence_index": site.get("order", 0),
-                    "source_line": site.get("line", 0),
-                    "control_context": site.get("control_context", []),
-                    "awaited": bool(site.get("awaited")),
-                    "confidence": "low",
-                    "resolution": site.get("resolution", "unresolved_dynamic_call"),
-                }
-            )
-        if len(interactions) >= max_interactions:
-            break
     if include_runtime:
         included_ids = {root["id"]} | {
             value[key] for value in interactions for key in ("source", "target")
@@ -358,6 +364,10 @@ def sequence_model(
             value.get("evidence") == "static_dynamic_call"
             for value in interactions
         ),
+        "static_external_calls": sum(
+            value.get("evidence") == "static_external_candidate"
+            for value in interactions
+        ),
         "notice": (
             "Not observed does not mean unreachable, and runtime-only does not prove the static "
             "model is wrong; instrumentation scope and execution selection require review."
@@ -402,7 +412,8 @@ def sequence_model(
         "reconciliation": reconciliation,
         "notice": (
             "Static call-site order and control context are conservative possibilities, not a "
-            "path-sensitive execution proof; observed runtime edges prove only captured executions."
+            "path-sensitive execution proof; internal, external-candidate, and unresolved dynamic "
+            "calls share that order, while observed runtime edges prove only captured executions."
         ),
     }
 

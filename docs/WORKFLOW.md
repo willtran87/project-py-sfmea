@@ -488,6 +488,11 @@ This prevents same-named modules in sibling packages from being merged into fals
 data-flow edges, exception cascades, or sequences. If the analyzed source path does not contain
 enough package context for the requested relative level, the leading-dot reference is retained as
 unresolved rather than guessed as a top-level module.
+Normalized imported references retain their raw call spelling during internal resolution. If its
+head is a parameter, local name assignment, or module-rebound name, weak lexical/import resolution
+fails closed rather than linking the imported definition. Stronger annotation, constructor, and
+typed-alias receiver evidence remains eligible. The same decision feeds callers, value flow, resilience
+propagation, sequences, and typed exception cascades.
 For inheritance dispatch, an unshadowed zero-argument `super().method()` in a regular or class
 method is linked only when the declaring class has exactly one statically resolved direct base and
 that base declares the method. Imported direct bases are supported. Multiple inheritance,

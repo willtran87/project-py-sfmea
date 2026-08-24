@@ -2674,6 +2674,57 @@ class ScannerTests(unittest.TestCase):
             )
         )
 
+    def test_internal_calls_exclude_parameter_local_and_module_rebindings(
+        self,
+    ) -> None:
+        (self.root / "provider.py").write_text(
+            "def transmit(value):\n"
+            "    if value is None:\n"
+            "        raise ValueError('value required')\n"
+            "    return value\n",
+            encoding="utf-8",
+        )
+        (self.root / "consumer.py").write_text(
+            "from provider import transmit\n\n"
+            "def exact(value):\n"
+            "    return transmit(value)\n\n"
+            "def parameter(transmit, value):\n"
+            "    return transmit(value)\n\n"
+            "def local(value):\n"
+            "    transmit = lambda item: item\n"
+            "    return transmit(value)\n",
+            encoding="utf-8",
+        )
+        (self.root / "module_rebinding.py").write_text(
+            "from provider import transmit\n\n"
+            "transmit = runtime_transmit\n\n"
+            "def rebound(value):\n"
+            "    return transmit(value)\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        components = {
+            f"{value['source']['path']}:{value['qualname']}": value
+            for value in analysis["components"]
+        }
+        self.assertEqual(
+            components["provider.py:transmit"]["called_by"],
+            ["consumer.py:exact"],
+        )
+        provider_flows = {
+            value["caller_reference"]
+            for value in analysis["interprocedural_data_flow"]["edges"]
+            if value["callee_reference"] == "provider.py:transmit"
+        }
+        self.assertEqual(provider_flows, {"consumer.py:exact"})
+        provider_exceptions = {
+            value["caller_reference"]
+            for value in analysis["exception_propagation"]["edges"]
+            if value["callee_reference"] == "provider.py:transmit"
+        }
+        self.assertEqual(provider_exceptions, {"consumer.py:exact"})
+
     def test_call_result_dispatch_uses_only_unique_trustworthy_return_annotations(
         self,
     ) -> None:

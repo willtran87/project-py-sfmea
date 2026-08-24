@@ -137,7 +137,11 @@ flowchart LR
   constructor-assignment-aware call resolution with explicit provenance. Relative imports are
   anchored to their source package—including ancestor-relative and function-local forms—so
   same-named sibling modules do not create false cross-package callers or cascades; imports without
-  enough package context remain conservatively unresolved. Unshadowed zero-argument `super()`
+  enough package context remain conservatively unresolved. The raw call spelling remains available
+  after import normalization, so parameters, local assignments, and module assignments that shadow
+  an imported callable suppress false caller, flow, resilience, and exception-cascade links unless
+  stronger receiver-type evidence identifies the target.
+  Unshadowed zero-argument `super()`
   dispatch is resolved for exact direct single-inheritance targets; multiple inheritance, static
   methods, shadowed names, and explicit/dynamic `super(...)` stay unresolved rather than being
   flattened into ambiguous bare method calls. `factory().method()` is resolved only when the
@@ -1330,7 +1334,9 @@ sfmea sequence sfmea-analysis.json --entrypoint "src/api.py:create_payment"
 
 Runtime spans are mapped by `sfmea.component`, `code.function`,
 `code.function.name`, or an unambiguous span/function name. Sequence edges are
-labelled as static, static candidate, or observed. Static interactions retain call-site
+labelled as static, static candidate, static dynamic, or observed. Internal,
+external-candidate, and unresolved-dynamic static interactions share the scanner's call-site
+order instead of being grouped by evidence class. Static interactions retain call-site
 line, lexical branch/loop/exception context, await status, and ambiguity confidence;
 these are syntax facts, not a path-sensitive control-flow proof. Observed spans and edges
 retain explicit `observed`, `unavailable`, or `invalid` timing status and duration when

@@ -563,9 +563,11 @@ no unsupported operations or data types. The complete contract inventory is incl
 immutable run-manifest inputs. This integrity establishes attribution to accepted bytes, not that a
 contract is authoritative, deployed, compatible, or complete.
 
-All sequence interactions—including static internal, selected external, and observed
-runtime relationships—share the configured depth and interaction bounds. Truncated
-views identify the limiting condition. The review-package export collects the governed
+Static internal, selected external, and unresolved dynamic sequence interactions share one
+call-site-ordered projection. The interaction bound applies to every interaction; the depth bound
+limits recursive internal traversal, while reached components retain their external and dynamic
+boundary evidence. Observed runtime relationships are appended as observations rather than
+invented static ordering. Truncated views identify the limiting condition. The review-package export collects the governed
 source record and derived reports with per-file SHA-256 checksums; it is a portable
 review artifact, not an electronic-signature or document-control system.
 

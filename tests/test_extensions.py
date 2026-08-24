@@ -319,6 +319,21 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(candidates["db_collection.insert_one"]["confidence"], "medium")
 
         model = sequence_model(analysis, "flow.py:orchestrate")
+        self.assertEqual(
+            [value["label"] for value in model["interactions"]],
+            [
+                "client.send",
+                "db_collection.insert_one",
+                "httpx.get",
+                "normalize",
+                "normalize",
+            ],
+        )
+        self.assertEqual(
+            [value["sequence_index"] for value in model["interactions"]],
+            [0, 1, 2, 3, 4],
+        )
+        self.assertEqual(model["reconciliation"]["static_external_calls"], 3)
         send = next(
             value for value in model["interactions"] if value["label"] == "client.send"
         )
