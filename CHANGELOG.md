@@ -5,6 +5,16 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Resolve `factory().method()` dispatch when the factory maps to one unique, undecorated,
+  synchronous, non-generator repository function with one concrete return annotation. Retain the
+  producer component, raw annotation, normalized receiver type, and explicit static-authority
+  boundary on the call site, then feed the refined edge into callers, interprocedural data flow,
+  exception cascades, sequences, and interface discovery. Nullable annotations remain unresolved
+  so a possible `None` dereference is not hidden; `Any`, `Self`, `Never`, `NoReturn`, multi-type or
+  indeterminate unions, decorated/async/generator/method factories, local or module rebinding,
+  shadowed parameters, and ambiguous producers also remain unresolved. Correct union parsing so `Concrete | Any` cannot be narrowed to the
+  concrete member, publish return-type evidence on components, and invalidate stale facts through
+  cache format 21.
 - Evaluate bounded, exact-built-in ASCII f-strings during safe static control-flow analysis,
   including static expressions, `!s`/`!r`/`!a` conversions, and nested static format
   specifications. This removes calls, raises, sequences, and failure cascades from provably

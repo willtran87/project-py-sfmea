@@ -140,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-20"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-21"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -270,7 +270,21 @@ def _annotation_reference(node: ast.AST | None, aliases: dict[str, str]) -> str:
     if isinstance(node, (ast.Name, ast.Attribute)):
         reference = _resolve_alias_reference(_dotted_name(node), aliases)
         return (
-            "" if reference in {"None", "NoneType", "typing.Any", "Any"} else reference
+            ""
+            if reference
+            in {
+                "None",
+                "NoneType",
+                "typing.Any",
+                "Any",
+                "typing.Self",
+                "Self",
+                "typing.Never",
+                "Never",
+                "typing.NoReturn",
+                "NoReturn",
+            }
+            else reference
         )
     if isinstance(node, ast.Subscript):
         container = _dotted_name(node.value).rsplit(".", 1)[-1]
@@ -279,18 +293,74 @@ def _annotation_reference(node: ast.AST | None, aliases: dict[str, str]) -> str:
             if isinstance(value, ast.Tuple) and value.elts:
                 value = value.elts[0]
             return _annotation_reference(value, aliases)
+        if container == "Union":
+            members = (
+                list(node.slice.elts)
+                if isinstance(node.slice, ast.Tuple)
+                else [node.slice]
+            )
+            union_candidates: set[str] = set()
+            for member in members:
+                if isinstance(member, ast.Constant) and member.value is None:
+                    continue
+                candidate = _annotation_reference(member, aliases)
+                if not candidate:
+                    return ""
+                union_candidates.add(candidate)
+            return (
+                next(iter(union_candidates)) if len(union_candidates) == 1 else ""
+            )
         return ""
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-        candidates = {
-            value
-            for value in (
-                _annotation_reference(node.left, aliases),
-                _annotation_reference(node.right, aliases),
-            )
-            if value
-        }
-        return next(iter(candidates)) if len(candidates) == 1 else ""
+        union_candidates = set()
+        for member in (node.left, node.right):
+            if isinstance(member, ast.Constant) and member.value is None:
+                continue
+            candidate = _annotation_reference(member, aliases)
+            if not candidate:
+                return ""
+            union_candidates.add(candidate)
+        return next(iter(union_candidates)) if len(union_candidates) == 1 else ""
     return ""
+
+
+def _annotation_is_nullable(node: ast.AST | None) -> bool:
+    """Return whether an annotation explicitly admits ``None``."""
+
+    if node is None:
+        return False
+    if isinstance(node, ast.Constant):
+        if node.value is None:
+            return True
+        if isinstance(node.value, str):
+            try:
+                parsed = ast.parse(node.value, mode="eval").body
+            except SyntaxError:
+                return False
+            return _annotation_is_nullable(parsed)
+        return False
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        return _dotted_name(node).rsplit(".", 1)[-1] in {"None", "NoneType"}
+    if isinstance(node, ast.Subscript):
+        container = _dotted_name(node.value).rsplit(".", 1)[-1]
+        if container == "Optional":
+            return True
+        if container in {"Annotated", "ClassVar", "Final"}:
+            value = node.slice
+            if isinstance(value, ast.Tuple) and value.elts:
+                value = value.elts[0]
+            return _annotation_is_nullable(value)
+        if container == "Union":
+            members = (
+                list(node.slice.elts)
+                if isinstance(node.slice, ast.Tuple)
+                else [node.slice]
+            )
+            return any(_annotation_is_nullable(member) for member in members)
+        return False
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _annotation_is_nullable(node.left) or _annotation_is_nullable(node.right)
+    return False
 
 
 def _humanize(name: str) -> str:
@@ -364,6 +434,11 @@ class FunctionFacts:
     is_private: bool
     decorators: list[str]
     parameters: list[str]
+    return_annotation: str = ""
+    return_type_reference: str = ""
+    return_annotation_nullable: bool = False
+    is_generator: bool = False
+    module_rebound_names: list[str] = field(default_factory=list)
     parameter_contracts: list[dict[str, Any]] = field(default_factory=list)
     class_bases: list[str] = field(default_factory=list)
     class_declarations: list[dict[str, Any]] = field(default_factory=list)
@@ -799,6 +874,22 @@ def _function_scope_binds_name(
         node.body,
         name,
     )
+
+
+def _module_rebound_names(statements: list[ast.stmt]) -> set[str]:
+    """Return module names whose runtime value can differ from imports/definitions."""
+
+    names: set[str] = set()
+    for value in _walk_executable_nodes(statements):
+        if isinstance(value, ast.Name) and isinstance(value.ctx, (ast.Store, ast.Del)):
+            names.add(value.id)
+        elif isinstance(value, ast.ExceptHandler) and value.name:
+            names.add(value.name)
+        elif isinstance(value, (ast.MatchAs, ast.MatchStar)) and value.name:
+            names.add(value.name)
+        elif isinstance(value, ast.MatchMapping) and value.rest:
+            names.add(value.rest)
+    return names
 
 
 _STATIC_LITERAL_SCALARS = (type(None), bool, int, float, complex, str, bytes)
@@ -2271,6 +2362,25 @@ class _FactVisitor(ast.NodeVisitor):
             allow_zero_argument_super=self.allow_zero_argument_super,
         )
         resolved, resolution = self._resolve_with_provenance(raw)
+        call_result_receiver: dict[str, str] | None = None
+        if (
+            resolution == "unresolved_call_result_dispatch"
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Call)
+        ):
+            receiver_raw = _callable_reference(
+                node.func.value.func,
+                allow_zero_argument_super=self.allow_zero_argument_super,
+            )
+            receiver_reference, receiver_resolution = self._resolve_with_provenance(
+                receiver_raw
+            )
+            if receiver_reference and "(...)." not in receiver_reference:
+                call_result_receiver = {
+                    "raw_reference": receiver_raw,
+                    "reference": receiver_reference,
+                    "resolution": receiver_resolution,
+                }
         # Python evaluates the callable expression and arguments before invoking the
         # outer call. Recording after child traversal preserves that lexical order for
         # nested calls without claiming runtime path feasibility.
@@ -2340,6 +2450,11 @@ class _FactVisitor(ast.NodeVisitor):
                     )
                     + max(0, len(node.keywords) - MAX_FLOW_ARGUMENTS_PER_CALL),
                     "result_context": result_context,
+                    **(
+                        {"call_result_receiver": call_result_receiver}
+                        if call_result_receiver is not None
+                        else {}
+                    ),
                 }
             )
             self._classify_call(resolved)
@@ -3319,6 +3434,7 @@ class _ModuleCollector(ast.NodeVisitor):
         context_fingerprint: str,
         include_nested: bool,
         module_super_shadowed: bool,
+        module_rebound_names: set[str],
     ) -> None:
         self.path = path
         self.include_private = include_private
@@ -3326,6 +3442,7 @@ class _ModuleCollector(ast.NodeVisitor):
         self.context_fingerprint = context_fingerprint
         self.include_nested = include_nested
         self.module_super_shadowed = module_super_shadowed
+        self.module_rebound_names = module_rebound_names
         self.class_stack: list[str] = []
         self.class_base_stack: list[list[str]] = []
         self.function_stack: list[str] = []
@@ -3472,6 +3589,7 @@ class _ModuleCollector(ast.NodeVisitor):
             is_private=node.name.startswith("_"),
             decorators=[value for value in decorators if value],
             parameters=fields,
+            module_rebound_names=sorted(self.module_rebound_names),
             class_bases=[
                 _resolve_alias_reference(value, self.aliases)
                 for value in bases
@@ -3540,6 +3658,7 @@ class _ModuleCollector(ast.NodeVisitor):
             is_private=name.startswith("_"),
             decorators=[],
             parameters=parameters,
+            module_rebound_names=sorted(self.module_rebound_names),
             parameter_contracts=_parameter_contracts(node.args),
         )
         _FactVisitor(facts, dict(self.aliases)).visit(node.body)
@@ -3614,6 +3733,16 @@ class _ModuleCollector(ast.NodeVisitor):
             is_private=private,
             decorators=decorators,
             parameters=params,
+            return_annotation=(
+                ast.unparse(node.returns)[:500] if node.returns is not None else ""
+            ),
+            return_type_reference=_annotation_reference(node.returns, self.aliases),
+            return_annotation_nullable=_annotation_is_nullable(node.returns),
+            is_generator=any(
+                isinstance(value, (ast.Yield, ast.YieldFrom))
+                for value in _walk_executable_nodes(node.body)
+            ),
+            module_rebound_names=sorted(self.module_rebound_names),
             parameter_contracts=_parameter_contracts(node.args),
             class_bases=(
                 list(self.class_base_stack[-1])
@@ -6576,6 +6705,91 @@ def _resolve_internal_targets(
     return [unique[key] for key in sorted(unique)]
 
 
+def _refine_annotated_call_result_dispatch(facts_list: list[FunctionFacts]) -> None:
+    """Resolve call-result methods only from one trustworthy return annotation.
+
+    The producer must be one unique, undecorated synchronous function in the
+    analyzed repository. Methods remain conservative because dynamic dispatch can
+    override their return contract. Locally rebound producer names are likewise
+    excluded. The resulting reference is type evidence, not a runtime dispatch
+    proof, and retains the producer component and annotation as provenance.
+    """
+
+    by_file_name, by_full = _internal_resolution_indexes(facts_list)
+    for caller in facts_list:
+        rebound_names = {
+            str(binding.get("target", ""))
+            for binding in caller.alias_bindings
+            if isinstance(binding, dict)
+            and str(binding.get("target_kind", "")) == "name"
+        }
+        changed = False
+        for site in caller.call_sites:
+            if site.get("resolution") != "unresolved_call_result_dispatch":
+                continue
+            receiver = site.get("call_result_receiver")
+            if not isinstance(receiver, dict):
+                continue
+            producer_reference = str(receiver.get("reference", ""))
+            producer_raw = str(receiver.get("raw_reference", ""))
+            producer_head = producer_raw.partition(".")[0]
+            if (
+                not producer_reference
+                or not producer_head
+                or producer_head in caller.parameters
+                or producer_head in caller.symbol_types
+                or producer_head in rebound_names
+                or producer_head in caller.module_rebound_names
+            ):
+                continue
+            producers = _resolve_internal_targets(
+                caller,
+                producer_reference,
+                by_file_name,
+                by_full,
+            )
+            if len(producers) != 1:
+                continue
+            producer = producers[0]
+            if (
+                producer.kind not in {"function", "nested_function"}
+                or producer.is_async
+                or producer.is_generator
+                or producer.decorators
+                or not producer.return_type_reference
+                or producer.return_annotation_nullable
+            ):
+                continue
+            _prefix, separator, method = str(site.get("raw_reference", "")).partition(
+                "(...)."
+            )
+            if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", method):
+                continue
+            refined_reference = f"{producer.return_type_reference}.{method}"
+            site["reference"] = refined_reference
+            site["resolution"] = "annotated_call_result_return_type"
+            receiver["producer_component_reference"] = _component_ref(producer)
+            receiver["return_annotation"] = producer.return_annotation
+            receiver["return_type_reference"] = producer.return_type_reference
+            receiver["authority"] = (
+                "unique_undecorated_synchronous_function_return_annotation_"
+                "not_runtime_dispatch_proof"
+            )
+            _FactVisitor(caller, {})._classify_call(refined_reference)
+            changed = True
+        if changed:
+            caller.calls = {
+                str(site.get("reference", ""))
+                for site in caller.call_sites
+                if site.get("reference")
+            }
+            caller.ordered_calls = [
+                str(site["reference"])
+                for site in caller.call_sites
+                if site.get("reference")
+            ]
+
+
 def _internal_call_resolution(
     facts_list: list[FunctionFacts],
 ) -> tuple[dict[str, list[str]], dict[str, set[str]]]:
@@ -9405,6 +9619,7 @@ def _external_call_candidates(
                     "annotation",
                     "constructor_assignment",
                     "annotated_constructor_assignment",
+                    "annotated_call_result_return_type",
                 }
                 else "known_external_api"
             )
@@ -9421,6 +9636,7 @@ def _external_call_candidates(
                     "annotation",
                     "constructor_assignment",
                     "annotated_constructor_assignment",
+                    "annotated_call_result_return_type",
                 }
                 else "unresolved_receiver_interface_verb"
             )
@@ -10227,6 +10443,10 @@ def _component_dict(
         "is_async": facts.is_async,
         "decorators": facts.decorators,
         "parameters": facts.parameters,
+        "return_annotation": facts.return_annotation,
+        "return_type_reference": facts.return_type_reference,
+        "return_annotation_nullable": facts.return_annotation_nullable,
+        "is_generator": facts.is_generator,
         "parameter_contracts": copy.deepcopy(facts.parameter_contracts),
         "class_bases": list(facts.class_bases),
         "calls": sorted(facts.calls),
@@ -10671,6 +10891,7 @@ def scan_repository(
             context_fingerprint=_module_context_fingerprint(tree),
             include_nested=include_nested,
             module_super_shadowed=_statements_bind_name(tree.body, "super"),
+            module_rebound_names=_module_rebound_names(tree.body),
         )
         collector.visit(tree)
         file_facts = list(collector.functions)
@@ -10798,6 +11019,7 @@ def scan_repository(
             if _matches_pattern(_component_ref(facts), focus_patterns)
         ]
 
+    _refine_annotated_call_result_dispatch(facts_list)
     callers, resolved_calls = _internal_call_resolution(facts_list)
     facts_by_reference = {_component_ref(facts): facts for facts in facts_list}
     for reference, facts in facts_by_reference.items():

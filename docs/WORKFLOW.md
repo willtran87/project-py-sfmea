@@ -494,8 +494,12 @@ that base declares the method. Imported direct bases are supported. Multiple inh
 `staticmethod`, a locally shadowed `super`, explicit/dynamic `super(...)`, and missing base methods
 remain explicitly unresolved; they are not flattened to bare method names that could cross-link
 unrelated classes. Arbitrary call-result dispatch such as `factory().method()` follows the same
-fail-closed rule unless a future analyzer contributes concrete receiver-type evidence; the factory
-call and its evaluation order are still retained independently.
+fail-closed rule unless the factory resolves to one unique, undecorated synchronous non-generator
+repository function with one concrete non-null return annotation. Accepted sites retain the factory
+component, raw annotation, normalized receiver type, and static-only authority. `Any`, `Self`,
+`Never`, `NoReturn`, nullable, multi-type or indeterminate unions, decorators, async/generator/method
+factories, local or module rebinding, shadowed parameters, and ambiguous producers remain unresolved. The
+factory call and its evaluation order are always retained independently.
 The analysis also carries `concurrency_model`, a machine-readable inventory of task spawn,
 join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
 relations. Use these records to choose runtime schedules and stress tests; they do not establish

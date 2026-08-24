@@ -2674,6 +2674,188 @@ class ScannerTests(unittest.TestCase):
             )
         )
 
+    def test_call_result_dispatch_uses_only_unique_trustworthy_return_annotations(
+        self,
+    ) -> None:
+        (self.root / "models.py").write_text(
+            "class Client:\n"
+            "    def send(self, payload):\n"
+            "        if payload is None:\n"
+            "            raise ValueError('payload required')\n"
+            "        return payload\n\n"
+            "class Alternate:\n"
+            "    def send(self, payload):\n"
+            "        return payload\n",
+            encoding="utf-8",
+        )
+        (self.root / "factories.py").write_text(
+            "from typing import Any, Union\n"
+            "from models import Alternate, Client\n\n"
+            "def make_client() -> Client:\n"
+            "    return Client()\n\n"
+            "def maybe_client() -> Client | None:\n"
+            "    return Client()\n\n"
+            "def legacy_maybe_client() -> Union[Client, None]:\n"
+            "    return Client()\n\n"
+            "def ambiguous_client() -> Client | Alternate:\n"
+            "    return Client()\n\n"
+            "def any_client() -> Any:\n"
+            "    return Client()\n\n"
+            "def unsafe_union_client() -> Client | Any:\n"
+            "    return Client()\n\n"
+            "async def async_client() -> Client:\n"
+            "    return Client()\n\n"
+            "def generator_client() -> Client:\n"
+            "    yield Client()\n\n"
+            "def identity(value):\n"
+            "    return value\n\n"
+            "@identity\n"
+            "def decorated_client() -> Client:\n"
+            "    return Client()\n\n"
+            "class Factory:\n"
+            "    def method_client(self) -> Client:\n"
+            "        return Client()\n",
+            encoding="utf-8",
+        )
+        (self.root / "consumer.py").write_text(
+            "from factories import (\n"
+            "    Factory, ambiguous_client, any_client, async_client,\n"
+            "    decorated_client, legacy_maybe_client, make_client,\n"
+            "    generator_client, maybe_client, unsafe_union_client,\n"
+            ")\n\n"
+            "def exact(payload):\n"
+            "    return make_client().send(payload)\n\n"
+            "def nullable(payload):\n"
+            "    return maybe_client().send(payload)\n\n"
+            "def legacy_nullable(payload):\n"
+            "    return legacy_maybe_client().send(payload)\n\n"
+            "def ambiguous(payload):\n"
+            "    return ambiguous_client().send(payload)\n\n"
+            "def dynamic_any(payload):\n"
+            "    return any_client().send(payload)\n\n"
+            "def unsafe_union(payload):\n"
+            "    return unsafe_union_client().send(payload)\n\n"
+            "def asynchronous(payload):\n"
+            "    return async_client().send(payload)\n\n"
+            "def generator(payload):\n"
+            "    return generator_client().send(payload)\n\n"
+            "def decorated(payload):\n"
+            "    return decorated_client().send(payload)\n\n"
+            "def shadowed(make_client, payload):\n"
+            "    return make_client().send(payload)\n\n"
+            "def rebound(payload):\n"
+            "    make_client = lambda: None\n"
+            "    return make_client().send(payload)\n\n"
+            "def method_factory(factory: Factory, payload):\n"
+            "    return factory.method_client().send(payload)\n",
+            encoding="utf-8",
+        )
+        (self.root / "module_shadow.py").write_text(
+            "from factories import make_client\n\n"
+            "make_client = runtime_factory\n\n"
+            "def dispatch(payload):\n"
+            "    return make_client().send(payload)\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        components = {
+            f"{value['source']['path']}:{value['qualname']}": value
+            for value in analysis["components"]
+        }
+        factory = components["factories.py:make_client"]
+        self.assertEqual(factory["return_annotation"], "Client")
+        self.assertEqual(factory["return_type_reference"], "models.Client")
+        self.assertEqual(
+            components["factories.py:maybe_client"]["return_type_reference"],
+            "models.Client",
+        )
+        self.assertEqual(
+            components["factories.py:legacy_maybe_client"]["return_type_reference"],
+            "models.Client",
+        )
+        self.assertTrue(
+            components["factories.py:maybe_client"]["return_annotation_nullable"]
+        )
+        self.assertTrue(
+            components["factories.py:legacy_maybe_client"][
+                "return_annotation_nullable"
+            ]
+        )
+        for reference in (
+            "factories.py:ambiguous_client",
+            "factories.py:any_client",
+            "factories.py:unsafe_union_client",
+        ):
+            self.assertEqual(components[reference]["return_type_reference"], "")
+
+        site = next(
+            value
+            for value in components["consumer.py:exact"]["call_sites"]
+            if value["reference"] == "models.Client.send"
+        )
+        self.assertEqual(site["resolution"], "annotated_call_result_return_type")
+        self.assertEqual(
+            site["call_result_receiver"]["producer_component_reference"],
+            "factories.py:make_client",
+        )
+        self.assertEqual(
+            site["call_result_receiver"]["return_type_reference"],
+            "models.Client",
+        )
+        self.assertIn(
+            "not_runtime_dispatch_proof",
+            site["call_result_receiver"]["authority"],
+        )
+
+        unresolved = {
+            "consumer.py:ambiguous": "ambiguous_client(...).send",
+            "consumer.py:nullable": "maybe_client(...).send",
+            "consumer.py:legacy_nullable": "legacy_maybe_client(...).send",
+            "consumer.py:dynamic_any": "any_client(...).send",
+            "consumer.py:unsafe_union": "unsafe_union_client(...).send",
+            "consumer.py:asynchronous": "async_client(...).send",
+            "consumer.py:generator": "generator_client(...).send",
+            "consumer.py:decorated": "decorated_client(...).send",
+            "consumer.py:shadowed": "make_client(...).send",
+            "consumer.py:rebound": "make_client(...).send",
+            "consumer.py:method_factory": "factory.method_client(...).send",
+            "module_shadow.py:dispatch": "make_client(...).send",
+        }
+        for reference, call_reference in unresolved.items():
+            site = next(
+                value
+                for value in components[reference]["call_sites"]
+                if value["reference"] == call_reference
+            )
+            self.assertEqual(site["resolution"], "unresolved_call_result_dispatch")
+
+        self.assertEqual(
+            components["models.py:Client.send"]["called_by"],
+            ["consumer.py:exact"],
+        )
+        self.assertEqual(components["models.py:Alternate.send"]["called_by"], [])
+        resolved_consumers = {
+            value["caller_reference"]
+            for value in analysis["interprocedural_data_flow"]["edges"]
+            if value["callee_reference"] == "models.py:Client.send"
+        }
+        self.assertEqual(
+            resolved_consumers,
+            {"consumer.py:exact"},
+        )
+        self.assertTrue(
+            all(
+                any(
+                    value["caller_reference"] == reference
+                    and value["callee_reference"] == "models.py:Client.send"
+                    and value["exception_type"] == "ValueError"
+                    for value in analysis["exception_propagation"]["edges"]
+                )
+                for reference in resolved_consumers
+            )
+        )
+
     def test_alias_and_object_flow_resolves_typed_receiver_and_mutation(self) -> None:
         (self.root / "aliases.py").write_text(
             "class Client:\n"

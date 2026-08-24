@@ -137,8 +137,10 @@ Sequence diagrams preserve repeated call sites, source lines, lexical branch/loo
 context, await status, evaluation order, resolution provenance, and confidence. Internal calls
 that match more than one target are marked ambiguous and low confidence. Interface diagrams also
 expose configured contracts and confidence-labeled unresolved external-call candidates.
-Parameter/variable annotations and unambiguous constructor assignments can resolve receiver
-types, but this is not whole-program type inference. Static edges are reconciled with imported
+Parameter/variable annotations, unambiguous constructor assignments, and a unique trustworthy
+non-null repository-factory return annotation can resolve receiver types. Factory evidence excludes nullable,
+decorated, async, generator, method, locally/module-rebound, shadowed, ambiguous, or indeterminate producers and
+retains its static-only authority, but this is not whole-program type inference. Static edges are reconciled with imported
 runtime relations as corroborated/not-observed, and observed edges as
 statically-predicted/runtime-only; timing state and valid durations remain in the canonical
 model. These projections describe bounded syntax and observations; they are not path-sensitive

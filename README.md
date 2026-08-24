@@ -140,10 +140,13 @@ flowchart LR
   enough package context remain conservatively unresolved. Unshadowed zero-argument `super()`
   dispatch is resolved for exact direct single-inheritance targets; multiple inheritance, static
   methods, shadowed names, and explicit/dynamic `super(...)` stay unresolved rather than being
-  flattened into ambiguous bare method calls. Other call-result dispatch such as
-  `factory().method()` also remains unresolved without receiver-type evidence. Nested calls
-  preserve Python evaluation order. This improves receiver and interface identification without
-  claiming whole-program type inference
+  flattened into ambiguous bare method calls. `factory().method()` is resolved only when the
+  producer is one unique, undecorated synchronous non-generator repository function with one
+  concrete non-null return annotation; the producer and normalized annotation remain attached as
+  provenance. Nullable returns, `Any`, indeterminate or multi-type unions, decorated/async/generator/method
+  factories, local/module rebinding, and shadowed producers stay unresolved. Nested calls preserve Python
+  evaluation order. This improves receiver and interface identification without claiming
+  whole-program type inference or runtime dispatch proof
 - A bounded static concurrency model that records task spawn, join/wait, cancellation/timeout,
   synchronization, and awaited-completion operations; relates them through lexical order,
   await-before-next-operation, and conservative spawn-to-later-join candidates; and indexes the
