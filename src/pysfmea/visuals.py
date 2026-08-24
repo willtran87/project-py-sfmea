@@ -237,6 +237,47 @@ def sequence_model(
                 break
         if external_limit_reached:
             break
+    for component_id in list(visited_component_ids):
+        component = components.get(component_id, {})
+        call_sites = component.get("call_sites", [])
+        for site in call_sites if isinstance(call_sites, list) else []:
+            if not isinstance(site, dict) or not site.get("dynamic_target"):
+                continue
+            if len(interactions) >= max_interactions:
+                truncation_reasons.add("max_interactions")
+                break
+            reference = str(site.get("reference", "<dynamic call>"))
+            identity = "|".join(
+                (
+                    component_id,
+                    reference,
+                    str(site.get("line", 0)),
+                    str(site.get("order", 0)),
+                )
+            )
+            dynamic_id = (
+                "DYNAMICCALL-"
+                + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
+            )
+            interactions.append(
+                {
+                    "source": component_id,
+                    "target": dynamic_id,
+                    "target_label": reference,
+                    "label": reference,
+                    "evidence": "static_dynamic_call",
+                    "cycle": False,
+                    "depth": 0,
+                    "sequence_index": site.get("order", 0),
+                    "source_line": site.get("line", 0),
+                    "control_context": site.get("control_context", []),
+                    "awaited": bool(site.get("awaited")),
+                    "confidence": "low",
+                    "resolution": site.get("resolution", "unresolved_dynamic_call"),
+                }
+            )
+        if len(interactions) >= max_interactions:
+            break
     if include_runtime:
         included_ids = {root["id"]} | {
             value[key] for value in interactions for key in ("source", "target")
@@ -313,6 +354,10 @@ def sequence_model(
             else None
         ),
         "runtime_timing_statuses": dict(sorted(timing_statuses.items())),
+        "static_dynamic_calls": sum(
+            value.get("evidence") == "static_dynamic_call"
+            for value in interactions
+        ),
         "notice": (
             "Not observed does not mean unreachable, and runtime-only does not prove the static "
             "model is wrong; instrumentation scope and execution selection require review."
@@ -413,6 +458,8 @@ def export_sequence(
         suffix = (
             " [observed]"
             if interaction["evidence"] == "observed_runtime"
+            else " [static dynamic]"
+            if interaction["evidence"] == "static_dynamic_call"
             else " [static candidate]"
             if interaction["evidence"] == "static_external_candidate"
             else " [static]"
@@ -440,6 +487,7 @@ def export_sequence(
             "",
             "- `[static]`: conservative AST-resolved internal call relation.",
             "- `[static candidate]`: unresolved or known external call requiring interface review.",
+            "- `[static dynamic]`: a known invocation whose runtime callable target remains unresolved.",
             "- `[observed]`: imported runtime parent-child span relation.",
             "- `[runtime corroborated]`: the same component relation appears in static and imported runtime evidence.",
             "- `[runtime only]`: observed relation absent from the bounded static model; review instrumentation and dynamic dispatch.",

@@ -159,7 +159,13 @@ flowchart LR
   applications retain reverse application order. Call-form decorators retain both the factory
   call and an explicitly unresolved application of the returned callable, with the decorated
   object and rebinding context preserved without double-counting the factory or inventing a target.
-  Route/task/decorator metadata remains on the declared callable without becoming a body call edge
+  When one unshadowed synchronous undecorated repository factory has one unconditional direct return naming one
+  repository function or lambda, that application is resolved with exact producer/return/target
+  provenance and participates in caller and typed-exception cascades. Rebound, conditional,
+  multi-return, decorated, async, generator, external, or ambiguous results remain dynamic. Those
+  residual calls appear as low-confidence `static_dynamic_call` interactions in sequence JSON and
+  Mermaid rather than being omitted. Route/task/decorator metadata remains on the declared callable
+  without becoming a body call edge
 - Class construction follows the same single-owner rule. Top-level class decorators, dynamic
   bases/metaclasses, field initializers, and method defaults are ordered under module
   initialization; nested class work stays on its enclosing function. Declarative class-model and

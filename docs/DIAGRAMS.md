@@ -153,7 +153,10 @@ Function-definition edges likewise appear on module initialization or the enclos
 decorator factories and defaults do not appear as calls made by the later function body. Static
 sequence evidence preserves definition-expression and reverse application context. For a call-form
 decorator, the returned callable's application is retained as an unresolved call-result site rather
-than omitted or connected to an invented target.
+than omitted or connected to an invented target. If one safe direct-return repository factory maps
+to one repository function/lambda, normal internal-call sequence and cascade edges use that target
+with static provenance. All residual dynamic applications become explicit low-confidence
+`static_dynamic_call` participants/interactions in sequence JSON and Mermaid.
 Top-level class-construction edges also appear once on module initialization, in decorator/base/
 keyword/body/application order; nested classes use their enclosing callable. Declarative model and
 exception nodes do not repeat those sequence or propagation edges.

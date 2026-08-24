@@ -5,6 +5,14 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Resolve decorator-factory applications to a returned repository function or lambda only when the
+  factory, its single unconditional direct return, and the returned synchronous undecorated component are all
+  unique and unshadowed. Feed the resulting edge into callers, sequences, value flow, and fixed-point
+  typed exception cascades with producer/return/target provenance. Module-initialization facts now
+  retain module-rebinding evidence so unsafe factory resolution fails closed. Remaining dynamic
+  applications become low-confidence `static_dynamic_call` sequence interactions and Mermaid
+  participants instead of disappearing from visual output. Advance the fact cache to format 27 and
+  add positive cascade plus rebinding-negative and sequence-rendering regressions.
 - Close the remaining Python definition-time invocation and lazy-type boundaries. Call-form
   decorators now retain both the factory call and the reverse-order application of its returned
   callable as an explicitly unresolved call-result site, including decorated-object argument and

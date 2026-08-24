@@ -140,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-26"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-27"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -2546,7 +2546,7 @@ class _FactVisitor(ast.NodeVisitor):
             decorator.func,
             allow_zero_argument_super=self.allow_zero_argument_super,
         ) or ast.unparse(decorator.func)[:500]
-        factory_reference, _factory_resolution = self._resolve_with_provenance(factory_raw)
+        factory_reference, factory_resolution = self._resolve_with_provenance(factory_raw)
         raw_reference = f"{factory_raw or '<dynamic-decorator-factory>'}(...).__call__"
         reference = (
             f"{factory_reference or factory_raw or '<dynamic-decorator-factory>'}"
@@ -2582,6 +2582,11 @@ class _FactVisitor(ast.NodeVisitor):
                     "line": definition_line,
                 },
                 "dynamic_target": True,
+                "decorator_factory": {
+                    "raw_reference": factory_raw,
+                    "reference": factory_reference,
+                    "resolution": factory_resolution,
+                },
                 "authority": (
                     "python_decorator_factory_result_application_"
                     "without_runtime_target_resolution"
@@ -3463,6 +3468,7 @@ class _FactVisitor(ast.NodeVisitor):
                 {
                     "line": node.lineno,
                     "statement_kind": "return",
+                    "control_context": list(self.control_context),
                     **self._flow_value(node.value),
                 }
             )
@@ -5035,6 +5041,7 @@ def _module_initialization_facts(
     context_fingerprint: str,
     *,
     annotations_deferred: bool,
+    module_rebound_names: set[str],
 ) -> FunctionFacts | None:
     executable: list[ast.stmt] = []
     for index, node in enumerate(tree.body):
@@ -5119,6 +5126,7 @@ def _module_initialization_facts(
         is_private=False,
         decorators=[],
         parameters=[],
+        module_rebound_names=sorted(module_rebound_names),
     )
     # Import-time execution is review-worthy, but it is not automatically an externally
     # reachable entrypoint. Keeping a distinct signal prevents startup declarations from
@@ -7628,6 +7636,148 @@ def _refine_annotated_call_result_dispatch(facts_list: list[FunctionFacts]) -> N
             receiver["return_type_reference"] = producer.return_type_reference
             receiver["authority"] = (
                 "unique_undecorated_synchronous_function_return_annotation_"
+                "not_runtime_dispatch_proof"
+            )
+            _FactVisitor(caller, {})._classify_call(refined_reference)
+            changed = True
+        if changed:
+            caller.calls = {
+                str(site.get("reference", ""))
+                for site in caller.call_sites
+                if site.get("reference")
+            }
+            caller.ordered_calls = [
+                str(site["reference"])
+                for site in caller.call_sites
+                if site.get("reference")
+            ]
+
+
+def _refine_decorator_factory_results(facts_list: list[FunctionFacts]) -> None:
+    """Resolve one provably unique repository callable returned by a safe factory.
+
+    The refinement is intentionally narrow: both producer and returned callable must
+    be unique, synchronous, undecorated repository components; the producer must have
+    one explicit return; and returned names cannot be rebound. All other factory
+    applications retain their explicit unresolved dynamic call site.
+    """
+
+    by_file_name, by_full = _internal_resolution_indexes(facts_list)
+    for caller in facts_list:
+        caller_rebound_names = {
+            str(binding.get("target", ""))
+            for binding in caller.alias_bindings
+            if isinstance(binding, dict)
+            and str(binding.get("target_kind", "")) == "name"
+        }
+        changed = False
+        for site in caller.call_sites:
+            if site.get("resolution") != "unresolved_decorator_factory_result":
+                continue
+            factory = site.get("decorator_factory")
+            if not isinstance(factory, dict):
+                continue
+            producer_reference = str(factory.get("reference", ""))
+            producer_raw = str(factory.get("raw_reference", ""))
+            producer_head = producer_raw.partition(".")[0]
+            if (
+                not producer_reference
+                or not producer_head
+                or producer_head in caller.parameters
+                or producer_head in caller.symbol_types
+                or producer_head in caller_rebound_names
+                or producer_head in caller.module_rebound_names
+            ):
+                continue
+            producers = _resolve_internal_targets(
+                caller,
+                producer_reference,
+                by_file_name,
+                by_full,
+            )
+            if len(producers) != 1:
+                continue
+            producer = producers[0]
+            returns = [
+                value
+                for value in producer.return_values
+                if value.get("statement_kind") == "return"
+            ]
+            if (
+                producer.kind not in {"function", "nested_function"}
+                or producer.is_async
+                or producer.is_generator
+                or producer.decorators
+                or len(returns) != 1
+            ):
+                continue
+            returned = returns[0]
+            if returned.get("control_context"):
+                continue
+            expression = str(returned.get("expression", ""))
+            return_line = int(returned.get("line", 0) or 0)
+            candidates: list[FunctionFacts] = []
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expression):
+                if any(
+                    str(binding.get("target", "")) == expression
+                    and str(binding.get("target_kind", "")) == "name"
+                    for binding in producer.alias_bindings
+                    if isinstance(binding, dict)
+                ):
+                    continue
+                lexical_qualname = f"{producer.qualname}.{expression}"
+                candidates = [
+                    value
+                    for value in facts_list
+                    if value.path == producer.path
+                    and value.qualname == lexical_qualname
+                ]
+                if not candidates:
+                    candidates = [
+                        value
+                        for value in by_file_name.get((producer.path, expression), [])
+                        if value.qualname == expression
+                    ]
+            elif expression.startswith("lambda "):
+                candidates = [
+                    value
+                    for value in facts_list
+                    if value.path == producer.path
+                    and value.kind == "lambda"
+                    and value.line == return_line
+                    and value.qualname.startswith(producer.qualname + ".")
+                ]
+            if len(candidates) != 1:
+                continue
+            target = candidates[0]
+            if (
+                target.kind not in {"function", "nested_function", "lambda"}
+                or target.decorators
+                or target.is_async
+                or target.is_generator
+            ):
+                continue
+            modules = _module_suffixes(target.path)
+            refined_reference = (
+                f"{modules[0]}.{target.qualname}" if modules else target.qualname
+            )
+            resolved_targets = _resolve_internal_targets(
+                caller,
+                refined_reference,
+                by_file_name,
+                by_full,
+            )
+            if len(resolved_targets) != 1 or resolved_targets[0] is not target:
+                continue
+            site["reference"] = refined_reference
+            site["resolution"] = "unique_static_decorator_factory_return"
+            site["dynamic_target"] = False
+            factory["producer_component_reference"] = _component_ref(producer)
+            factory["returned_component_reference"] = _component_ref(target)
+            factory["return_expression"] = expression
+            factory["return_line"] = return_line
+            factory["authority"] = (
+                "unique_single_return_undecorated_synchronous_repository_callable_"
                 "not_runtime_dispatch_proof"
             )
             _FactVisitor(caller, {})._classify_call(refined_reference)
@@ -11758,6 +11908,7 @@ def scan_repository(
             _module_aliases(tree, relative),
             _module_context_fingerprint(tree),
             annotations_deferred=annotations_deferred,
+            module_rebound_names=_module_rebound_names(tree.body),
         )
         if module_facts:
             file_facts.append(module_facts)
@@ -11878,6 +12029,7 @@ def scan_repository(
         ]
 
     _refine_annotated_call_result_dispatch(facts_list)
+    _refine_decorator_factory_results(facts_list)
     callers, resolved_calls = _internal_call_resolution(facts_list)
     facts_by_reference = {_component_ref(facts): facts for facts in facts_list}
     for reference, facts in facts_by_reference.items():

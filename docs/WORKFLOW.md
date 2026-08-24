@@ -516,7 +516,12 @@ definition-time calls to the enclosing function. It follows decorator-expression
 order, and reverse bare-decorator application order. Framework endpoint/task metadata remains on
 the declared callable without becoming a body call edge. A call-form decorator records its factory
 call and then an explicitly unresolved reverse-order invocation of the returned callable, including
-the decorated-object argument and rebinding context. The returned target is not guessed.
+the decorated-object argument and rebinding context. One unique, unshadowed, synchronous,
+undecorated repository factory with one unconditional direct return can resolve to one named repository
+function or nested lambda. The exact producer, return, and target remain attached as static-only
+provenance; unsafe cases stay unresolved. Resolved applications feed callers and typed exception
+cascades. Residual applications are rendered as low-confidence static-dynamic sequence interactions
+instead of being silently absent.
 Class statements use the same ownership rule. The scanner orders decorator expressions, dynamic
 bases and metaclass keywords, executable class-body statements (including method defaults), and
 reverse bare-decorator applications. Top-level work belongs to module initialization; a nested

@@ -175,7 +175,13 @@ and entrypoint classification remains on the declared function without asserting
 calls the decorator. Call-form decorators retain their factory call and a separate reverse-order
 application site for the returned callable. That second site is explicitly unresolved, carries the
 decorated-object argument and rebinding context, and neither double-counts the factory nor invents
-a runtime target.
+a runtime target. A post-collection refinement resolves it only when the factory is one unshadowed,
+undecorated synchronous repository function with one unconditional direct return that names one undecorated
+synchronous repository function or same-line nested lambda. The call site retains the producer,
+return expression/line, returned component, and static-only authority. Conditional/multiple
+returns, rebinding, decorated or asynchronous callables, generators, external values, and ambiguity
+remain unresolved. Resolved edges participate in caller, data-flow, sequence, and typed-exception
+propagation; residual dynamic sites remain visible as low-confidence sequence interactions.
 
 Class construction is likewise assigned to one enclosing execution component. Top-level decorator
 expressions and applications, dynamic bases/metaclass keywords, class-body initializers, and method

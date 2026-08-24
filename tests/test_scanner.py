@@ -4954,8 +4954,10 @@ class ScannerTests(unittest.TestCase):
         (self.root / "definitions.py").write_text(
             "def build_default():\n"
             "    raise RuntimeError('definition failure')\n\n"
+            "def decorator_application(label):\n"
+            "    raise RuntimeError(label)\n\n"
             "def decorator_factory(label):\n"
-            "    return lambda function: function\n\n"
+            "    return lambda function: (decorator_application(label), function)[1]\n\n"
             "def bare_decorator(function):\n"
             "    return function\n\n"
             "def runtime_call(value):\n"
@@ -4978,12 +4980,19 @@ class ScannerTests(unittest.TestCase):
             if value["source"]["path"] == "definitions.py"
         }
         startup = components["<module initialization>"]
+        decorator_lambda = next(
+            value
+            for value in components.values()
+            if value["kind"] == "lambda"
+            and value["qualname"].startswith("decorator_factory.")
+        )
+        decorator_lambda_reference = f"definitions.{decorator_lambda['qualname']}"
         self.assertEqual(
             startup["ordered_calls"],
             [
                 "decorator_factory",
                 "build_default",
-                "decorator_factory(...).__call__",
+                decorator_lambda_reference,
             ],
         )
         self.assertEqual(components["endpoint"]["ordered_calls"], ["runtime_call"])
@@ -5004,9 +5013,15 @@ class ScannerTests(unittest.TestCase):
         factory_application = startup["call_sites"][-1]
         self.assertEqual(
             factory_application["resolution"],
-            "unresolved_decorator_factory_result",
+            "unique_static_decorator_factory_return",
         )
-        self.assertTrue(factory_application["dynamic_target"])
+        self.assertFalse(factory_application["dynamic_target"])
+        self.assertEqual(
+            factory_application["decorator_factory"][
+                "returned_component_reference"
+            ],
+            f"definitions.py:{decorator_lambda['qualname']}",
+        )
         self.assertEqual(
             factory_application["arguments"][0]["expression"], "endpoint"
         )
@@ -5042,6 +5057,25 @@ class ScannerTests(unittest.TestCase):
             and value["exception_type"] == "RuntimeError"
         }
         self.assertEqual(propagation_callers, default_callers)
+        self.assertEqual(
+            decorator_lambda["called_by"],
+            ["definitions.py:<module initialization>"],
+        )
+        decorator_failure_callers = set(components["decorator_application"]["called_by"])
+        self.assertEqual(
+            decorator_failure_callers,
+            {f"definitions.py:{decorator_lambda['qualname']}"},
+        )
+        self.assertTrue(
+            any(
+                value["caller_reference"]
+                == "definitions.py:<module initialization>"
+                and value["callee_reference"]
+                == f"definitions.py:{decorator_lambda['qualname']}"
+                and value["exception_type"] == "RuntimeError"
+                for value in analysis["exception_propagation"]["edges"]
+            )
+        )
 
     def test_class_definition_calls_have_one_enclosing_execution_owner(self) -> None:
         (self.root / "class_definitions.py").write_text(
@@ -5087,7 +5121,7 @@ class ScannerTests(unittest.TestCase):
                 "build_metaclass",
                 "field_value",
                 "method_default",
-                "class_decorator_factory(...).__call__",
+                "class_definitions.class_decorator",
                 "class_decorator",
             ],
         )
@@ -5112,7 +5146,12 @@ class ScannerTests(unittest.TestCase):
         factory_application = startup["call_sites"][-2]
         self.assertEqual(
             factory_application["resolution"],
-            "unresolved_decorator_factory_result",
+            "unique_static_decorator_factory_return",
+        )
+        self.assertFalse(factory_application["dynamic_target"])
+        self.assertEqual(
+            factory_application["reference"],
+            "class_definitions.class_decorator",
         )
         self.assertEqual(factory_application["arguments"][0]["expression"], "Service")
         self.assertEqual(

@@ -188,6 +188,79 @@ class ExtensionTests(unittest.TestCase):
         self.assertTrue(bounded["truncated"])
         self.assertIn("max_interactions", bounded["truncation_reasons"])
 
+    def test_sequence_retains_unresolved_decorator_factory_application(self) -> None:
+        (self.root / "dynamic_decorator.py").write_text(
+            "def first(function):\n"
+            "    return function\n\n"
+            "def second(function):\n"
+            "    return function\n\n"
+            "def direct_factory():\n"
+            "    return first\n\n"
+            "def replacement_factory():\n"
+            "    return second\n\n"
+            "def conditional_factory(flag):\n"
+            "    if flag:\n"
+            "        return first\n\n"
+            "def runtime_flag():\n"
+            "    return True\n\n"
+            "direct_factory = replacement_factory\n\n"
+            "@direct_factory()\n"
+            "def target():\n"
+            "    return None\n\n"
+            "@conditional_factory(runtime_flag())\n"
+            "def conditional_target():\n"
+            "    return None\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        startup = next(
+            value
+            for value in analysis["components"]
+            if value["source"]["path"] == "dynamic_decorator.py"
+            and value["qualname"] == "<module initialization>"
+        )
+        applications = [
+            value
+            for value in startup["call_sites"]
+            if value["resolution"] == "unresolved_decorator_factory_result"
+        ]
+        self.assertEqual(len(applications), 2)
+        self.assertTrue(all(value["dynamic_target"] for value in applications))
+
+        model = sequence_model(
+            analysis,
+            "dynamic_decorator.py:<module initialization>",
+        )
+        dynamic = [
+            value
+            for value in model["interactions"]
+            if value["evidence"] == "static_dynamic_call"
+        ]
+        self.assertEqual(len(dynamic), 2)
+        self.assertEqual(
+            {value["label"] for value in dynamic},
+            {
+                "direct_factory(...).__call__",
+                "conditional_factory(...).__call__",
+            },
+        )
+        self.assertEqual({value["confidence"] for value in dynamic}, {"low"})
+        self.assertEqual(
+            {value["resolution"] for value in dynamic},
+            {"unresolved_decorator_factory_result"},
+        )
+        self.assertEqual(model["reconciliation"]["static_dynamic_calls"], 2)
+        output = export_sequence(
+            analysis,
+            self.root / "dynamic-decorator-sequence.md",
+            "dynamic_decorator.py:<module initialization>",
+        ).read_text(encoding="utf-8")
+        self.assertIn("[static dynamic]", output)
+        self.assertIn(
+            "a known invocation whose runtime callable target remains unresolved",
+            output,
+        )
+
     def test_traceability_orders_comma_separated_requirement_links(self) -> None:
         analysis = copy.deepcopy(self.analysis)
         analysis["context"]["requirements"].extend(

@@ -52,6 +52,14 @@ bounds/defaults are inventoried as distinct deferred type-expression components 
 calls, cascades, and fingerprints. They are excluded from module/class startup evidence because
 Python evaluates them only when the corresponding lazy type attribute is requested.
 
+2026-08-24 decorator refinement: a unique unshadowed synchronous undecorated repository factory
+with one unconditional direct return can now connect its definition-time application to one returned repository
+function or nested lambda. The edge participates in callers, sequences, data flow, and typed
+exception cascades while retaining producer/return/target provenance and a static-only authority.
+Rebound, conditional, multi-return, decorated, async, generator, external, and ambiguous cases stay
+unresolved and appear as low-confidence static-dynamic sequence interactions rather than being
+omitted from visual output.
+
 The schema-backed enhancement workbench now accounts for the complete 56-item follow-on backlog,
 including evidence recipes, root-cause clusters, verification portfolios, disposition queues, and
 bounded system-surface candidates. Project evidence and named authority remain open by design.
