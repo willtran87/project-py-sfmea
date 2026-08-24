@@ -87,6 +87,27 @@ def sequence_model(
         if edge.get("kind") == "internal_call":
             adjacency[edge["source"]].append(edge["target"])
 
+    def target_call_references(target_id: str) -> set[str]:
+        target = components.get(target_id, {})
+        qualname = str(target.get("qualname", ""))
+        path = Path(str(target.get("source", {}).get("path", "")))
+        parts = list(path.with_suffix("").parts)
+        if parts and parts[-1] == "__init__":
+            parts.pop()
+        modules = [
+            ".".join(parts[index:])
+            for index in range(len(parts))
+            if parts[index:]
+        ]
+        return {
+            value
+            for value in (
+                qualname,
+                *(f"{module}.{qualname}" for module in modules if qualname),
+            )
+            if value
+        }
+
     def ordered_operations(component_id: str) -> list[dict[str, Any]]:
         component = components.get(component_id, {})
         targets = adjacency.get(component_id, [])
@@ -120,14 +141,24 @@ def sequence_model(
         for site in sites:
             reference = str(site.get("reference", ""))
             leaf = reference.rsplit(".", 1)[-1]
-            matches = [
-                target
-                for target in targets
-                if leaf == components.get(target, {}).get("name", "")
-                or reference.endswith(
-                    "." + str(components.get(target, {}).get("qualname", ""))
-                )
-            ]
+            explicit_target_ids = site.get("internal_target_component_ids")
+            if isinstance(explicit_target_ids, list):
+                matches = [
+                    str(target)
+                    for target in explicit_target_ids
+                    if str(target) in targets
+                ]
+            else:
+                exact_matches = [
+                    target
+                    for target in targets
+                    if reference in target_call_references(target)
+                ]
+                matches = exact_matches or [
+                    target
+                    for target in targets
+                    if leaf == components.get(target, {}).get("name", "")
+                ]
             if matches:
                 for target in matches:
                     records.append(
@@ -138,6 +169,8 @@ def sequence_model(
                         }
                     )
                     represented_targets.add(target)
+                continue
+            if isinstance(explicit_target_ids, list) and explicit_target_ids:
                 continue
             if site.get("dynamic_target"):
                 records.append({"kind": "dynamic", "site": site})

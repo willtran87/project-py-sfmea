@@ -140,7 +140,10 @@ flowchart LR
   enough package context remain conservatively unresolved. The raw call spelling remains available
   after import normalization, so parameters, local assignments, and module assignments that shadow
   an imported callable suppress false caller, flow, resilience, and exception-cascade links unless
-  stronger receiver-type evidence identifies the target.
+  stronger receiver-type evidence identifies the target. Each call site carries its exact resolved
+  internal component IDs/references or an explicit unresolved/ambiguous status. Downstream sequence
+  views therefore distinguish two raw names that normalize to the same reference instead of
+  reapplying an aggregate caller edge to both sites.
   Unshadowed zero-argument `super()`
   dispatch is resolved for exact direct single-inheritance targets; multiple inheritance, static
   methods, shadowed names, and explicit/dynamic `super(...)` stay unresolved rather than being
@@ -1337,7 +1340,8 @@ Runtime spans are mapped by `sfmea.component`, `code.function`,
 labelled as static, static candidate, static dynamic, or observed. Internal,
 external-candidate, and unresolved-dynamic static interactions share the scanner's call-site
 order instead of being grouped by evidence class. Static interactions retain call-site
-line, lexical branch/loop/exception context, await status, and ambiguity confidence;
+line, lexical branch/loop/exception context, await status, exact internal-target provenance, and
+ambiguity confidence;
 these are syntax facts, not a path-sensitive control-flow proof. Observed spans and edges
 retain explicit `observed`, `unavailable`, or `invalid` timing status and duration when
 valid. Sequence JSON, Mermaid, and HTML reconcile relation-level evidence as

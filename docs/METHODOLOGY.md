@@ -564,7 +564,9 @@ immutable run-manifest inputs. This integrity establishes attribution to accepte
 contract is authoritative, deployed, compatible, or complete.
 
 Static internal, selected external, and unresolved dynamic sequence interactions share one
-call-site-ordered projection. The interaction bound applies to every interaction; the depth bound
+call-site-ordered projection. Current analyses supply target component IDs on each call site;
+qualified-reference matching followed by conservative leaf fallback is used only when consuming
+older records without that provenance. The interaction bound applies to every interaction; the depth bound
 limits recursive internal traversal, while reached components retain their external and dynamic
 boundary evidence. Observed runtime relationships are appended as observations rather than
 invented static ordering. Truncated views identify the limiting condition. The review-package export collects the governed

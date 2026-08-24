@@ -281,6 +281,42 @@ class ExtensionTests(unittest.TestCase):
 
         self.assertEqual(sources, ["requirement:REQ-A", "requirement:REQ-Z"])
 
+    def test_sequence_uses_per_site_targets_after_shared_reference_normalization(
+        self,
+    ) -> None:
+        (self.root / "provider.py").write_text(
+            "def transmit(value):\n"
+            "    return value\n",
+            encoding="utf-8",
+        )
+        (self.root / "mixed.py").write_text(
+            "from provider import transmit as actual, transmit as substitute\n\n"
+            "def run(substitute, value):\n"
+            "    actual(value)\n"
+            "    return substitute(value)\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        model = sequence_model(analysis, "mixed.py:run")
+
+        self.assertEqual(
+            [value["label"] for value in model["interactions"]],
+            ["transmit", "provider.transmit"],
+        )
+        self.assertEqual(
+            [value["evidence"] for value in model["interactions"]],
+            ["static_ast", "static_external_candidate"],
+        )
+        self.assertEqual(
+            [value["sequence_index"] for value in model["interactions"]],
+            [0, 1],
+        )
+        self.assertEqual(
+            model["reconciliation"]["static_internal_relations"],
+            1,
+        )
+        self.assertEqual(model["reconciliation"]["static_external_calls"], 1)
+
     def test_sequence_retains_control_flow_await_and_interface_candidates(self) -> None:
         (self.root / "flow.py").write_text(
             "import httpx\n\n"
@@ -301,6 +337,8 @@ class ExtensionTests(unittest.TestCase):
             "class Beta:\n"
             "    def dispatch(self):\n"
             "        return 2\n\n"
+            "def qualified(alpha: Alpha):\n"
+            "    return alpha.dispatch()\n\n"
             "def ambiguous():\n"
             "    return dispatch()\n",
             encoding="utf-8",
@@ -373,6 +411,31 @@ class ExtensionTests(unittest.TestCase):
         ]
         self.assertEqual(len(ambiguous_calls), 2)
         self.assertEqual({value["confidence"] for value in ambiguous_calls}, {"low"})
+        qualified = sequence_model(analysis, "flow.py:qualified")
+        qualified_calls = [
+            value for value in qualified["interactions"] if value["label"] == "dispatch"
+        ]
+        self.assertEqual(len(qualified_calls), 1)
+        self.assertEqual(qualified_calls[0]["confidence"], "high")
+        self.assertEqual(
+            qualified_calls[0]["resolution"],
+            "static_internal_call",
+        )
+        legacy_analysis = copy.deepcopy(analysis)
+        for legacy_component in legacy_analysis["components"]:
+            for legacy_site in legacy_component.get("call_sites", []):
+                legacy_site.pop("internal_target_component_ids", None)
+                legacy_site.pop("internal_target_references", None)
+                legacy_site.pop("internal_resolution", None)
+        legacy_qualified = sequence_model(legacy_analysis, "flow.py:qualified")
+        self.assertEqual(
+            [
+                value["label"]
+                for value in legacy_qualified["interactions"]
+                if value["label"] == "dispatch"
+            ],
+            ["dispatch"],
+        )
         self.assertEqual(
             {value["resolution"] for value in ambiguous_calls},
             {"ambiguous_static_internal_call"},

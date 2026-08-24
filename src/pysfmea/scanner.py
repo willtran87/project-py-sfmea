@@ -140,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-28"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-29"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -7840,6 +7840,19 @@ def _internal_call_resolution(
                 raw_called=str(site.get("raw_reference", "")),
                 call_resolution=str(site.get("resolution", "")),
             )
+            target_references = sorted(_component_ref(target) for target in targets)
+            site["internal_target_references"] = target_references
+            site["internal_target_component_ids"] = [
+                stable_id("CMP", target.path, target.qualname, target.kind)
+                for target in sorted(targets, key=_component_ref)
+            ]
+            site["internal_resolution"] = (
+                "unique_static_target"
+                if len(targets) == 1
+                else "ambiguous_static_candidates"
+                if targets
+                else "unresolved_static_target"
+            )
             for target in targets:
                 target_ref = _component_ref(target)
                 if target_ref != caller_ref:
@@ -10569,7 +10582,7 @@ def _external_call_candidates(
     configured_prefixes: Iterable[str] = (),
     configured_receiver_hints: Iterable[str] = (),
     configured_method_hints: Iterable[str] = (),
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     interface_verbs = {
         "call",
         "connect",
@@ -10583,6 +10596,7 @@ def _external_call_candidates(
         "receive",
         "request",
         "send",
+        "transmit",
         "write",
     }
     provider_methods = {
@@ -10636,8 +10650,25 @@ def _external_call_candidates(
     }
     receiver_hints.update(value.casefold() for value in configured_receiver_hints)
     external_prefixes = tuple(EXTERNAL_PREFIXES) + tuple(configured_prefixes)
-    candidates: list[dict[str, str]] = []
-    for reference in sorted(facts.calls - resolved_calls):
+    site_resolution_available = any(
+        "internal_target_component_ids" in site for site in facts.call_sites
+    )
+    unresolved_sites = [
+        site
+        for site in facts.call_sites
+        if not site.get("internal_target_component_ids")
+    ]
+    unresolved_references = (
+        {
+            str(site.get("reference", ""))
+            for site in unresolved_sites
+            if site.get("reference")
+        }
+        if site_resolution_available
+        else facts.calls - resolved_calls
+    )
+    candidates: list[dict[str, Any]] = []
+    for reference in sorted(unresolved_references):
         root = reference.split(".", 1)[0]
         leaf = reference.rsplit(".", 1)[-1].casefold()
         receiver = reference.rsplit(".", 1)[0].casefold()
@@ -10646,7 +10677,9 @@ def _external_call_candidates(
             continue
         resolution_sources = {
             str(site.get("resolution", "lexical_name"))
-            for site in facts.call_sites
+            for site in (
+                unresolved_sites if site_resolution_available else facts.call_sites
+            )
             if site.get("reference") == reference
         }
         resolution = (

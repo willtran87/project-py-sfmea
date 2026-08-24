@@ -2685,13 +2685,16 @@ class ScannerTests(unittest.TestCase):
             encoding="utf-8",
         )
         (self.root / "consumer.py").write_text(
-            "from provider import transmit\n\n"
+            "from provider import transmit, transmit as actual\n\n"
             "def exact(value):\n"
             "    return transmit(value)\n\n"
             "def parameter(transmit, value):\n"
             "    return transmit(value)\n\n"
             "def local(value):\n"
             "    transmit = lambda item: item\n"
+            "    return transmit(value)\n\n"
+            "def mixed(transmit, value):\n"
+            "    actual(value)\n"
             "    return transmit(value)\n",
             encoding="utf-8",
         )
@@ -2710,20 +2713,39 @@ class ScannerTests(unittest.TestCase):
         }
         self.assertEqual(
             components["provider.py:transmit"]["called_by"],
-            ["consumer.py:exact"],
+            ["consumer.py:exact", "consumer.py:mixed"],
         )
         provider_flows = {
             value["caller_reference"]
             for value in analysis["interprocedural_data_flow"]["edges"]
             if value["callee_reference"] == "provider.py:transmit"
         }
-        self.assertEqual(provider_flows, {"consumer.py:exact"})
+        self.assertEqual(provider_flows, {"consumer.py:exact", "consumer.py:mixed"})
         provider_exceptions = {
             value["caller_reference"]
             for value in analysis["exception_propagation"]["edges"]
             if value["callee_reference"] == "provider.py:transmit"
         }
-        self.assertEqual(provider_exceptions, {"consumer.py:exact"})
+        self.assertEqual(
+            provider_exceptions,
+            {"consumer.py:exact", "consumer.py:mixed"},
+        )
+        mixed_sites = components["consumer.py:mixed"]["call_sites"]
+        self.assertEqual(
+            [value["internal_resolution"] for value in mixed_sites],
+            ["unique_static_target", "unresolved_static_target"],
+        )
+        self.assertEqual(len(mixed_sites[0]["internal_target_component_ids"]), 1)
+        self.assertEqual(mixed_sites[1]["internal_target_component_ids"], [])
+        self.assertEqual(
+            {
+                value["reference"]
+                for value in components["consumer.py:mixed"][
+                    "external_call_candidates"
+                ]
+            },
+            {"provider.transmit"},
+        )
 
     def test_call_result_dispatch_uses_only_unique_trustworthy_return_annotations(
         self,

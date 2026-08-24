@@ -493,6 +493,10 @@ head is a parameter, local name assignment, or module-rebound name, weak lexical
 fails closed rather than linking the imported definition. Stronger annotation, constructor, and
 typed-alias receiver evidence remains eligible. The same decision feeds callers, value flow, resilience
 propagation, sequences, and typed exception cascades.
+Every call site is then annotated with its resolved internal component references/IDs and a unique,
+ambiguous, or unresolved status. External-candidate classification is also site-aware before it is
+summarized by reference, so one resolved alias cannot hide a second shadowed alias that normalizes
+to the same name.
 For inheritance dispatch, an unshadowed zero-argument `super().method()` in a regular or class
 method is linked only when the declaring class has exactly one statically resolved direct base and
 that base declares the method. Imported direct bases are supported. Multiple inheritance,

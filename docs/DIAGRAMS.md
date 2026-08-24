@@ -136,7 +136,10 @@ metadata.
 Sequence diagrams preserve repeated call sites, source lines, lexical branch/loop/exception
 context, await status, evaluation order, resolution provenance, and confidence. Internal,
 external-candidate, and unresolved-dynamic static interactions use one call-site-ordered stream;
-the latter two are not moved behind the internal traversal. Internal calls
+the latter two are not moved behind the internal traversal. Per-site target IDs prevent aggregate
+caller edges from being reapplied to unresolved sites with the same normalized reference. Older
+analysis records without those IDs prefer exact qualified matches before conservative leaf-name
+fallback. Internal calls
 that match more than one target are marked ambiguous and low confidence. Interface diagrams also
 expose configured contracts and confidence-labeled unresolved external-call candidates.
 Parameter/variable annotations, unambiguous constructor assignments, and a unique trustworthy

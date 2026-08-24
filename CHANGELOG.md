@@ -5,6 +5,13 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Attach resolved internal component references and IDs to every call site, including explicit
+  unresolved/ambiguous status, so downstream sequences do not reconstruct site identity from an
+  aggregate caller edge. Preserve unresolved interface candidates when another raw name in the
+  same component normalizes to the same resolved reference, add `transmit` to the interface-verb
+  vocabulary, and prefer exact qualified targets before leaf-name fallback for older analyses.
+  Advance the fact cache to format 29 and add shared-reference shadowing, qualified-method, legacy
+  fallback, flow, cascade, and ordered-sequence regressions.
 - Preserve one source-ordered static sequence across internal calls, unresolved external candidates,
   and unresolved dynamic targets instead of appending interface/dynamic evidence after the internal
   walk. Reconciliation now reports external as well as dynamic interaction counts. Internal-call,
