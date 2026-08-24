@@ -5,6 +5,16 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Separate deferred Python execution from enclosing-function evidence. Named and inline lambdas
+  and generator-expression bodies are now distinct components, so their calls, exceptions,
+  sequences, data flow, and failure cascades are not falsely attributed to callable or generator
+  construction. Lambda defaults and a generator expression's outermost iterable remain on the
+  parent because Python evaluates them immediately; generator filters, nested iterables, and
+  yielded elements stay on the deferred component with exact lexical context and yield flow.
+  Traverse eager list/set/dict comprehensions in Python's iterable/filter/element order instead of
+  AST field order. Honor `include_nested` for the new components, retain immediate expressions when
+  nested components are excluded, invalidate stale facts through cache format 22, and add cascade,
+  ordering, context, and exclusion regressions.
 - Resolve `factory().method()` dispatch when the factory maps to one unique, undecorated,
   synchronous, non-generator repository function with one concrete return annotation. Retain the
   producer component, raw annotation, normalized receiver type, and explicit static-authority

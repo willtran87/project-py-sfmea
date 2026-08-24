@@ -140,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-21"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-22"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -2356,6 +2356,81 @@ class _FactVisitor(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         return
 
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        # Lambda defaults execute when the lambda is created; its body executes only
+        # when the resulting callable is invoked and belongs to a distinct component.
+        for index, value in enumerate(node.args.defaults):
+            self._visit_with_context(value, f"lambda@{node.lineno}:default:{index}")
+        for index, keyword_default in enumerate(node.args.kw_defaults):
+            if keyword_default is not None:
+                self._visit_with_context(
+                    keyword_default,
+                    f"lambda@{node.lineno}:keyword-default:{index}",
+                )
+
+    def _visit_comprehension(
+        self,
+        generators: list[ast.comprehension],
+        values: list[tuple[str, ast.AST]],
+        *,
+        kind: str,
+        line: int,
+        skip_outer_iterable: bool = False,
+    ) -> None:
+        for index, generator in enumerate(generators):
+            if not (skip_outer_iterable and index == 0):
+                self._visit_with_context(
+                    generator.iter,
+                    f"{kind}@{line}:generator:{index}:iterable",
+                )
+            self._visit_with_context(
+                generator.target,
+                f"{kind}@{line}:generator:{index}:target",
+            )
+            for condition_index, condition in enumerate(generator.ifs):
+                self._visit_with_context(
+                    condition,
+                    f"{kind}@{line}:generator:{index}:if:{condition_index}",
+                )
+            if generator.is_async:
+                self.facts.signals.add("concurrency")
+        for label, value in values:
+            self._visit_with_context(value, f"{kind}@{line}:{label}")
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        # Python evaluates only the outermost iterable when constructing a generator
+        # expression. The remaining clauses and element execute on later iteration and
+        # are analyzed in the generator-expression component.
+        if node.generators:
+            self._visit_with_context(
+                node.generators[0].iter,
+                f"genexpr@{node.lineno}:generator:0:outer-iterable",
+            )
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_comprehension(
+            node.generators,
+            [("element", node.elt)],
+            kind="listcomp",
+            line=node.lineno,
+        )
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._visit_comprehension(
+            node.generators,
+            [("element", node.elt)],
+            kind="setcomp",
+            line=node.lineno,
+        )
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._visit_comprehension(
+            node.generators,
+            [("key", node.key), ("value", node.value)],
+            kind="dictcomp",
+            line=node.lineno,
+        )
+
     def visit_Call(self, node: ast.Call) -> None:
         raw = _callable_reference(
             node.func,
@@ -3451,6 +3526,7 @@ class _ModuleCollector(ast.NodeVisitor):
         self.functions: list[FunctionFacts] = []
         self.class_declarations: list[dict[str, Any]] = []
         self.route_prefixes: dict[str, str] = {}
+        self.deferred_expression_names: dict[int, str] = {}
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -3630,7 +3706,27 @@ class _ModuleCollector(ast.NodeVisitor):
                         self.route_prefixes[target] = prefix.rstrip("/")
         self.generic_visit(node)
 
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        if id(node) not in self.deferred_expression_names:
+            self._collect_lambda(
+                f"<lambda>@L{node.lineno}C{node.col_offset}",
+                node,
+            )
+        for value in [*node.args.defaults, *node.args.kw_defaults]:
+            if value is not None:
+                self.visit(value)
+        name = self.deferred_expression_names.get(id(node), "")
+        if self.include_nested and name:
+            self.function_depth += 1
+            self.function_stack.append(name)
+            self.scope_stack.append(name)
+            self.visit(node.body)
+            self.scope_stack.pop()
+            self.function_stack.pop()
+            self.function_depth -= 1
+
     def _collect_lambda(self, name: str, node: ast.Lambda) -> None:
+        self.deferred_expression_names[id(node)] = name
         if self.function_depth and not self.include_nested:
             return
         if name.startswith("_") and not self.include_private:
@@ -3662,6 +3758,82 @@ class _ModuleCollector(ast.NodeVisitor):
             parameter_contracts=_parameter_contracts(node.args),
         )
         _FactVisitor(facts, dict(self.aliases)).visit(node.body)
+        self.functions.append(facts)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        name = f"<generator expression>@L{node.lineno}C{node.col_offset}"
+        self.deferred_expression_names[id(node)] = name
+        self._collect_generator_expression(name, node)
+        if node.generators:
+            self.visit(node.generators[0].iter)
+        if self.include_nested:
+            self.function_depth += 1
+            self.function_stack.append(name)
+            self.scope_stack.append(name)
+            for index, generator in enumerate(node.generators):
+                if index:
+                    self.visit(generator.iter)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            self.visit(node.elt)
+            self.scope_stack.pop()
+            self.function_stack.pop()
+            self.function_depth -= 1
+
+    def _collect_generator_expression(
+        self,
+        name: str,
+        node: ast.GeneratorExp,
+    ) -> None:
+        if self.function_depth and not self.include_nested:
+            return
+        parameters = sorted(
+            {
+                value.id
+                for generator in node.generators
+                for value in ast.walk(generator.target)
+                if isinstance(value, ast.Name) and isinstance(value.ctx, ast.Store)
+            }
+        )
+        fingerprint = hashlib.sha256(
+            ast.dump(node, include_attributes=False).encode("utf-8")
+        ).hexdigest()
+        facts = FunctionFacts(
+            name="<generator expression>",
+            qualname=".".join([*self.scope_stack, name]),
+            kind="generator_expression",
+            path=self.path,
+            line=node.lineno,
+            end_line=getattr(node, "end_lineno", node.lineno),
+            signature=f"generator expression ({', '.join(parameters)})",
+            source_fingerprint=fingerprint,
+            content_fingerprint=fingerprint,
+            context_fingerprint=self.context_fingerprint,
+            docstring="Generate deferred values from a generator expression.",
+            is_async=any(generator.is_async for generator in node.generators),
+            is_private=False,
+            decorators=[],
+            parameters=parameters,
+            is_generator=True,
+            module_rebound_names=sorted(self.module_rebound_names),
+        )
+        visitor = _FactVisitor(facts, dict(self.aliases))
+        visitor._visit_comprehension(
+            node.generators,
+            [("element", node.elt)],
+            kind="genexpr",
+            line=node.lineno,
+            skip_outer_iterable=True,
+        )
+        facts.return_values.append(
+            {
+                "line": node.lineno,
+                "statement_kind": "yield",
+                **visitor._flow_value(node.elt),
+            }
+        )
+        if facts.is_async:
+            facts.signals.add("concurrency")
         self.functions.append(facts)
 
     def _collect_function(

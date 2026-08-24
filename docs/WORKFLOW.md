@@ -500,6 +500,15 @@ component, raw annotation, normalized receiver type, and static-only authority. 
 `Never`, `NoReturn`, nullable, multi-type or indeterminate unions, decorators, async/generator/method
 factories, local or module rebinding, shadowed parameters, and ambiguous producers remain unresolved. The
 factory call and its evaluation order are always retained independently.
+Lambda bodies and generator-expression bodies are modeled as distinct deferred components. This
+prevents callback or iteration-time calls and exception cascades from being assigned to the
+enclosing function merely because it constructs a lambda or generator. Lambda defaults and the
+outermost generator iterable remain on the parent because Python evaluates them during
+construction. Generator filters, later iterables, and yielded elements remain on the deferred
+component; eager list/set/dict comprehensions retain iterable/filter/element evaluation order.
+`include_nested = false` excludes the deferred components without discarding the immediately
+evaluated parent expressions. These records do not prove later invocation, iteration count, or
+completion.
 The analysis also carries `concurrency_model`, a machine-readable inventory of task spawn,
 join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
 relations. Use these records to choose runtime schedules and stress tests; they do not establish

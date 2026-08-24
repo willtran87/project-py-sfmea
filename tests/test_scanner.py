@@ -4850,6 +4850,106 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(component["kind"], "lambda")
         self.assertIn("calculation", component["signals"])
 
+    def test_deferred_expressions_do_not_create_eager_parent_cascades(self) -> None:
+        (self.root / "deferred.py").write_text(
+            "def source():\n"
+            "    return [1]\n\n"
+            "def condition(value):\n"
+            "    return bool(value)\n\n"
+            "def deferred(value):\n"
+            "    raise ValueError('deferred failure')\n\n"
+            "def build_lambda():\n"
+            "    callback = lambda value=source(): deferred(value)\n"
+            "    return callback\n\n"
+            "def build_generator():\n"
+            "    return (deferred(value) for value in source() if condition(value))\n\n"
+            "def eager_list():\n"
+            "    return [deferred(value) for value in source() if condition(value)]\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        components = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value["source"]["path"] == "deferred.py"
+        }
+        self.assertEqual(components["build_lambda"]["ordered_calls"], ["source"])
+        self.assertEqual(components["build_generator"]["ordered_calls"], ["source"])
+        self.assertEqual(
+            components["eager_list"]["ordered_calls"],
+            ["source", "condition", "deferred"],
+        )
+        lambda_component = components["build_lambda.callback"]
+        self.assertEqual(lambda_component["kind"], "lambda")
+        self.assertEqual(lambda_component["ordered_calls"], ["deferred"])
+        generator_component = next(
+            value
+            for value in components.values()
+            if value["kind"] == "generator_expression"
+        )
+        self.assertTrue(
+            generator_component["qualname"].startswith(
+                "build_generator.<generator expression>@L"
+            )
+        )
+        self.assertEqual(
+            generator_component["ordered_calls"],
+            ["condition", "deferred"],
+        )
+        self.assertEqual(generator_component["return_values"][0]["statement_kind"], "yield")
+        lambda_default_site = components["build_lambda"]["call_sites"][0]
+        self.assertTrue(
+            any("lambda@" in value for value in lambda_default_site["control_context"])
+        )
+        generator_source_site = components["build_generator"]["call_sites"][0]
+        self.assertTrue(
+            any(
+                "outer-iterable" in value
+                for value in generator_source_site["control_context"]
+            )
+        )
+        deferred_callers = set(components["deferred"]["called_by"])
+        self.assertEqual(
+            deferred_callers,
+            {
+                "deferred.py:build_lambda.callback",
+                f"deferred.py:{generator_component['qualname']}",
+                "deferred.py:eager_list",
+            },
+        )
+        self.assertFalse(
+            {
+                "deferred.py:build_lambda",
+                "deferred.py:build_generator",
+            }
+            & deferred_callers
+        )
+        propagation_callers = {
+            value["caller_reference"]
+            for value in analysis["exception_propagation"]["edges"]
+            if value["callee_reference"] == "deferred.py:deferred"
+            and value["exception_type"] == "ValueError"
+        }
+        self.assertEqual(propagation_callers, deferred_callers)
+
+        excluded = scan_repository(self.root, include_nested=False)
+        excluded_components = {
+            value["qualname"]: value
+            for value in excluded["components"]
+            if value["source"]["path"] == "deferred.py"
+        }
+        self.assertFalse(
+            any(
+                value["kind"] in {"lambda", "generator_expression"}
+                for value in excluded_components.values()
+            )
+        )
+        self.assertEqual(excluded_components["build_lambda"]["ordered_calls"], ["source"])
+        self.assertEqual(
+            excluded_components["build_generator"]["ordered_calls"], ["source"]
+        )
+
     def test_exports(self) -> None:
         analysis = scan_repository(self.root)
         item = analysis["items"][0]

@@ -145,6 +145,10 @@ runtime relations as corroborated/not-observed, and observed edges as
 statically-predicted/runtime-only; timing state and valid durations remain in the canonical
 model. These projections describe bounded syntax and observations; they are not path-sensitive
 control-flow, reachability, schedule, receiver-type, or causal proofs.
+Static sequence and propagation projections keep deferred lambda and generator-expression bodies
+on distinct components. Only lambda defaults and a generator expression's outermost iterable are
+assigned to the constructing parent; eager comprehension edges follow iterable/filter/element
+order. A deferred component is an analysis boundary, not evidence that it is invoked or consumed.
 
 The cross-reference diagram projects each typed exception edge as a shared record node linked to
 its callee and caller. The record preserves exception type, selected-handler disposition, match

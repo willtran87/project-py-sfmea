@@ -147,6 +147,12 @@ flowchart LR
   factories, local/module rebinding, and shadowed producers stay unresolved. Nested calls preserve Python
   evaluation order. This improves receiver and interface identification without claiming
   whole-program type inference or runtime dispatch proof
+- Deferred lambda and generator-expression bodies are separate components rather than eager calls
+  of the enclosing function. Lambda defaults and a generator expression's outermost iterable stay
+  with the parent because construction evaluates them immediately; filters, nested iterables, and
+  yielded elements remain on the deferred component. Eager list/set/dict comprehensions record
+  iterable, filter, then element/key/value order. These are lexical static boundaries, not proof
+  that a callback is invoked, a generator is consumed, or a comprehension completes
 - A bounded static concurrency model that records task spawn, join/wait, cancellation/timeout,
   synchronization, and awaited-completion operations; relates them through lexical order,
   await-before-next-operation, and conservative spawn-to-later-join candidates; and indexes the
