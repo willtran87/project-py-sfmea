@@ -176,6 +176,12 @@ calls the decorator. Call-form decorators retain their factory call, but the ret
 not resolved without runtime evidence. Annotation execution is not inferred because its semantics
 depend on Python version and future imports.
 
+Class construction is likewise assigned to one enclosing execution component. Top-level decorator
+expressions and applications, dynamic bases/metaclass keywords, class-body initializers, and method
+defaults are module-initialization evidence; nested class work belongs to the enclosing callable.
+Declarative model and exception-type components preserve contract semantics without duplicating
+those calls or exception cascades. Deferred method bodies are removed from startup fingerprints.
+
 Python source uses one exact identity-stable snapshot per selected file. The same immutable bytes
 drive PEP 263 decoding, AST construction, included-test reference indexing, and baseline hashing;
 the scanner does not reread a selected file after findings have been derived. Eligible textual test

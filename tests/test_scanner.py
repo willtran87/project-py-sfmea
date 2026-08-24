@@ -5020,6 +5020,93 @@ class ScannerTests(unittest.TestCase):
         }
         self.assertEqual(propagation_callers, default_callers)
 
+    def test_class_definition_calls_have_one_enclosing_execution_owner(self) -> None:
+        (self.root / "class_definitions.py").write_text(
+            "def build_base():\n"
+            "    return object\n\n"
+            "def build_metaclass():\n"
+            "    return type\n\n"
+            "def field_value():\n"
+            "    raise RuntimeError('field initialization failure')\n\n"
+            "def method_default():\n"
+            "    raise ValueError('method definition failure')\n\n"
+            "def class_decorator(subject):\n"
+            "    return subject\n\n"
+            "def runtime_call(value):\n"
+            "    return value\n\n"
+            "@class_decorator\n"
+            "class Service(build_base(), metaclass=build_metaclass()):\n"
+            "    configured = field_value()\n\n"
+            "    def execute(self, value=method_default()):\n"
+            "        return runtime_call(value)\n\n"
+            "def enclosing():\n"
+            "    class Nested:\n"
+            "        configured = field_value()\n"
+            "    return Nested\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        components = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value["source"]["path"] == "class_definitions.py"
+        }
+        startup = components["<module initialization>"]
+        self.assertEqual(
+            startup["ordered_calls"],
+            [
+                "build_base",
+                "build_metaclass",
+                "field_value",
+                "method_default",
+                "class_decorator",
+            ],
+        )
+        self.assertEqual(components["Service"]["kind"], "class_model")
+        self.assertEqual(components["Service"]["ordered_calls"], [])
+        self.assertEqual(
+            components["Service.execute"]["ordered_calls"], ["runtime_call"]
+        )
+        self.assertEqual(components["enclosing"]["ordered_calls"], ["field_value"])
+        self.assertEqual(components["enclosing.Nested"]["ordered_calls"], [])
+
+        startup_contexts = [
+            value["control_context"][0] for value in startup["call_sites"]
+        ]
+        class_line = components["Service"]["source"]["line"]
+        self.assertIn(f"class-definition@{class_line}:base:0", startup_contexts)
+        self.assertIn(
+            f"class-definition@{class_line}:keyword:metaclass:0",
+            startup_contexts,
+        )
+        self.assertTrue(any(":body" in value for value in startup_contexts))
+        self.assertEqual(
+            startup_contexts[-1],
+            f"class-definition@{class_line}:decorator:0:application",
+        )
+
+        field_callers = set(components["field_value"]["called_by"])
+        self.assertEqual(
+            field_callers,
+            {
+                "class_definitions.py:<module initialization>",
+                "class_definitions.py:enclosing",
+            },
+        )
+        self.assertNotIn("class_definitions.py:Service", field_callers)
+        self.assertEqual(
+            components["method_default"]["called_by"],
+            ["class_definitions.py:<module initialization>"],
+        )
+        propagation_callers = {
+            value["caller_reference"]
+            for value in analysis["exception_propagation"]["edges"]
+            if value["callee_reference"] == "class_definitions.py:field_value"
+            and value["exception_type"] == "RuntimeError"
+        }
+        self.assertEqual(propagation_callers, field_callers)
+
     def test_exports(self) -> None:
         analysis = scan_repository(self.root)
         item = analysis["items"][0]

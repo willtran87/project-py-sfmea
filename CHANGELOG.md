@@ -5,6 +5,13 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Model scanner-visible class construction in its actual enclosing execution. Top-level class
+  decorator expressions/applications, dynamic bases and metaclass keywords, field initializers,
+  and method defaults now belong to module initialization in Python order; nested class work stays
+  on its enclosing function. Declarative model/exception components retain contract evidence but
+  no longer duplicate class-body calls or cascades. Normalize deferred method bodies out of startup
+  fingerprints, invalidate stale facts through cache format 24, and add ordering, ownership, and
+  exception-propagation regressions.
 - Attribute Python function-definition execution to the scope that actually performs it. Decorator
   factory expressions now execute before defaults, bare decorator applications execute afterward
   in reverse order, and nested definitions remain on their enclosing function. Top-level dynamic

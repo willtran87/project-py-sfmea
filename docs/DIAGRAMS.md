@@ -153,6 +153,9 @@ Function-definition edges likewise appear on module initialization or the enclos
 decorator factories and defaults do not appear as calls made by the later function body. Static
 sequence views preserve definition-expression and bare-decorator application context, but do not
 invent a target for the callable returned by a decorator factory.
+Top-level class-construction edges also appear once on module initialization, in decorator/base/
+keyword/body/application order; nested classes use their enclosing callable. Declarative model and
+exception nodes do not repeat those sequence or propagation edges.
 
 The cross-reference diagram projects each typed exception edge as a shared record node linked to
 its callee and caller. The record preserves exception type, selected-handler disposition, match

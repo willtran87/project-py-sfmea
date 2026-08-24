@@ -517,6 +517,12 @@ order, and reverse bare-decorator application order. Framework endpoint/task met
 the declared callable without becoming a runtime call edge. The callable returned by a decorator
 factory is not guessed, and annotation evaluation remains dependent on Python version and future
 imports rather than being claimed as a resolved call sequence.
+Class statements use the same ownership rule. The scanner orders decorator expressions, dynamic
+bases and metaclass keywords, executable class-body statements (including method defaults), and
+reverse bare-decorator applications. Top-level work belongs to module initialization; a nested
+class belongs to its enclosing function. Declarative model and exception components retain their
+contract meaning but do not duplicate these calls. Deferred method bodies are excluded from the
+startup fingerprint and execute only on later invocation.
 The analysis also carries `concurrency_model`, a machine-readable inventory of task spawn,
 join/wait, cancellation/timeout, synchronization, and awaited operations with conservative lexical
 relations. Use these records to choose runtime schedules and stress tests; they do not establish

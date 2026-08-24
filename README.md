@@ -159,6 +159,11 @@ flowchart LR
   applications retain reverse application order. Route/task/decorator metadata remains on the
   declared callable, but it no longer creates a false runtime call edge. A decorator returned by a
   factory remains unnamed unless runtime evidence identifies it
+- Class construction follows the same single-owner rule. Top-level class decorators, dynamic
+  bases/metaclasses, field initializers, and method defaults are ordered under module
+  initialization; nested class work stays on its enclosing function. Declarative class-model and
+  exception components retain schema/contract evidence without duplicating startup call edges or
+  failure cascades
 - A bounded static concurrency model that records task spawn, join/wait, cancellation/timeout,
   synchronization, and awaited-completion operations; relates them through lexical order,
   await-before-next-operation, and conservative spawn-to-later-join candidates; and indexes the

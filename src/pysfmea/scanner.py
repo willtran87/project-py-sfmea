@@ -140,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-23"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-24"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -3770,8 +3770,9 @@ class _ModuleCollector(ast.NodeVisitor):
             facts.signals.add("serialization")
         if is_exception_type:
             facts.signals.add("exception_type")
-        visitor = _FactVisitor(facts, dict(self.aliases))
-        visitor._visit_block(class_context, "")
+        # Class-body execution belongs to module initialization (or the enclosing
+        # function for a nested class). Keep this component focused on the declared
+        # data/exception contract so startup calls and cascades have one owner.
         self.functions.append(facts)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -4469,19 +4470,7 @@ def _module_context_fingerprint(tree: ast.Module) -> str:
     ).hexdigest()
 
 
-def _function_definition_requires_initialization_analysis(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
-) -> bool:
-    """Return whether a definition contains review-worthy eager expressions.
-
-    Literal defaults do execute at definition time but do not currently yield scanner
-    evidence. Decorators always invoke an application step, while dynamic defaults can
-    contain calls, calculations, comprehensions, or other expressions already modeled
-    by ``_FactVisitor``.
-    """
-
-    if node.decorator_list:
-        return True
+def _definition_expression_requires_analysis(node: ast.AST) -> bool:
     dynamic_nodes = (
         ast.Call,
         ast.Lambda,
@@ -4497,12 +4486,67 @@ def _function_definition_requires_initialization_analysis(
         ast.NamedExpr,
         ast.Subscript,
     )
-    return any(
-        isinstance(value, dynamic_nodes)
-        for expression in [*node.args.defaults, *node.args.kw_defaults]
-        if expression is not None
-        for value in ast.walk(expression)
+    return any(isinstance(value, dynamic_nodes) for value in ast.walk(node))
+
+
+def _function_definition_requires_initialization_analysis(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Return whether a definition contains review-worthy eager expressions.
+
+    Literal defaults do execute at definition time but do not currently yield scanner
+    evidence. Decorators always invoke an application step, while dynamic defaults can
+    contain calls, calculations, comprehensions, or other expressions already modeled
+    by ``_FactVisitor``.
+    """
+
+    return bool(
+        node.decorator_list
+        or any(
+            _definition_expression_requires_analysis(expression)
+            for expression in [*node.args.defaults, *node.args.kw_defaults]
+            if expression is not None
+        )
     )
+
+
+def _class_definition_requires_initialization_analysis(node: ast.ClassDef) -> bool:
+    """Return whether a class statement has scanner-visible import-time behavior."""
+
+    if node.decorator_list or any(
+        _definition_expression_requires_analysis(expression)
+        for expression in [*node.bases, *(value.value for value in node.keywords)]
+    ):
+        return True
+    for index, statement in enumerate(node.body):
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _function_definition_requires_initialization_analysis(statement):
+                return True
+            continue
+        if isinstance(statement, ast.ClassDef):
+            if _class_definition_requires_initialization_analysis(statement):
+                return True
+            continue
+        if isinstance(statement, ast.Pass):
+            continue
+        if (
+            index == 0
+            and isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        ):
+            continue
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            value = statement.value
+            try:
+                ast.literal_eval(value) if value is not None else None
+                continue
+            except (ValueError, TypeError):
+                pass
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            continue
+        return True
+    return False
 
 
 def _definition_time_function_fingerprint_node(
@@ -4528,6 +4572,21 @@ def _definition_time_function_fingerprint_node(
     return normalized
 
 
+def _definition_time_class_fingerprint_node(node: ast.ClassDef) -> ast.ClassDef:
+    """Strip deferred method bodies from class-startup fingerprinting."""
+
+    normalized = copy.deepcopy(node)
+    normalized.body = [
+        _definition_time_function_fingerprint_node(statement)
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+        else _definition_time_class_fingerprint_node(statement)
+        if isinstance(statement, ast.ClassDef)
+        else statement
+        for statement in normalized.body
+    ]
+    return normalized
+
+
 def _module_initialization_facts(
     path: str,
     tree: ast.Module,
@@ -4540,7 +4599,11 @@ def _module_initialization_facts(
             if _function_definition_requires_initialization_analysis(node):
                 executable.append(node)
             continue
-        if isinstance(node, (ast.ClassDef, ast.Import, ast.ImportFrom)):
+        if isinstance(node, ast.ClassDef):
+            if _class_definition_requires_initialization_analysis(node):
+                executable.append(node)
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
             continue
         if (
             index == 0
@@ -4563,6 +4626,8 @@ def _module_initialization_facts(
         body=[
             _definition_time_function_fingerprint_node(node)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            else _definition_time_class_fingerprint_node(node)
+            if isinstance(node, ast.ClassDef)
             else node
             for node in executable
         ],
