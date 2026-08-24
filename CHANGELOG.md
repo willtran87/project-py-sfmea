@@ -5,6 +5,14 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Evaluate bounded, exact-built-in ASCII f-strings during safe static control-flow analysis,
+  including static expressions, `!s`/`!r`/`!a` conversions, and nested static format
+  specifications. This removes calls, raises, sequences, and failure cascades from provably
+  impossible formatted-string branches without executing repository code. Dynamic or unsupported
+  values, collections, non-ASCII data, locale-sensitive formatting, exceptional formats, excessive
+  width/precision, and over-limit results remain conservative. Publish and tamper-validate the new
+  format-specification ceiling in `pysfmea-static-control-flow-model-3`, invalidate stale facts
+  through cache format 20, and add positive and adversarial regression coverage.
 - Resolve unshadowed zero-argument `super().method()` calls to an exact direct base method when
   static single-inheritance evidence is available. Preserve imported-base provenance and feed the
   corrected edge into caller, interprocedural data-flow, exception-cascade, and sequence models.

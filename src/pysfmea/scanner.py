@@ -126,6 +126,7 @@ MAX_HANDLER_OUTCOME_DEPTH = 100
 MAX_STATIC_EXPRESSION_DEPTH = 20
 MAX_STATIC_INTEGER_BITS = 4_096
 MAX_STATIC_SEQUENCE_LENGTH = 4_096
+MAX_STATIC_FORMAT_SPEC_LENGTH = 128
 MAX_STATIC_POWER_EXPONENT = 64
 MAX_STATIC_SHIFT = 1_024
 MAX_CONTROL_FLOW_DECISIONS_PER_COMPONENT = 10_000
@@ -139,7 +140,7 @@ MAX_RETRY_AMPLIFICATION = 1_000_000_000
 MAX_AUTHORIZATION_FLOW_EDGES = 100_000
 MAX_CONTRACT_SEMANTIC_RECORDS = 20_000
 MAX_ARCHITECTURE_MODEL_RECORDS = 100_000
-PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-19"
+PYTHON_FACT_CACHE_FORMAT = "pysfmea-python-fact-cache-20"
 CONFIG_NAMES = {"os.environ", "os.getenv", "dotenv", "argparse", "click", "typer"}
 FILESYSTEM_NAMES = {
     "open",
@@ -1029,6 +1030,84 @@ def _static_ascii_string_data(value: Any) -> bool:
     return True
 
 
+_STATIC_FORMAT_VALUE_TYPES = (type(None), bool, int, float, complex, str, bytes)
+
+
+def _static_format_spec_allowed(specification: str) -> bool:
+    """Bound built-in formatting before it can allocate a result."""
+
+    if (
+        len(specification) > MAX_STATIC_FORMAT_SPEC_LENGTH
+        or not specification.isascii()
+        or "\x00" in specification
+        or "n" in specification
+    ):
+        return False
+    return all(
+        int(digits) <= MAX_STATIC_SEQUENCE_LENGTH
+        for digits in re.findall(r"[0-9]+", specification)
+    )
+
+
+def _static_formatted_string_value(
+    node: ast.JoinedStr,
+    *,
+    depth: int,
+) -> tuple[bool, Any, str]:
+    """Evaluate a bounded exact-built-in ASCII f-string without project dispatch."""
+
+    parts: list[str] = []
+    length = 0
+    for segment in node.values:
+        if isinstance(segment, ast.Constant) and isinstance(segment.value, str):
+            rendered = segment.value
+        elif isinstance(segment, ast.FormattedValue):
+            known, value, _basis = _static_expression_value(
+                segment.value,
+                depth=depth + 1,
+            )
+            if (
+                not known
+                or type(value) not in _STATIC_FORMAT_VALUE_TYPES
+                or not _static_ascii_string_data(value)
+            ):
+                return False, None, "dynamic_or_unsupported_expression"
+            specification = ""
+            if segment.format_spec is not None:
+                spec_known, spec_value, _spec_basis = _static_expression_value(
+                    segment.format_spec,
+                    depth=depth + 1,
+                )
+                if not spec_known or type(spec_value) is not str:
+                    return False, None, "dynamic_or_unsupported_expression"
+                specification = spec_value
+            if not _static_format_spec_allowed(specification):
+                return False, None, "bounded_expression_operand_limit"
+            try:
+                if segment.conversion == -1:
+                    converted = value
+                elif segment.conversion == ord("s"):
+                    converted = str(value)
+                elif segment.conversion == ord("r"):
+                    converted = repr(value)
+                elif segment.conversion == ord("a"):
+                    converted = ascii(value)
+                else:
+                    return False, None, "dynamic_or_unsupported_expression"
+                rendered = format(converted, specification)
+            except (ArithmeticError, TypeError, ValueError):
+                return False, None, "exceptional_literal_expression"
+        else:
+            return False, None, "dynamic_or_unsupported_expression"
+        if not rendered.isascii():
+            return False, None, "dynamic_or_unsupported_expression"
+        length += len(rendered)
+        if length > MAX_STATIC_SEQUENCE_LENGTH:
+            return False, None, "bounded_expression_result_limit"
+        parts.append(rendered)
+    return _bounded_static_expression_result("".join(parts))
+
+
 def _static_builtin_method_call_value(
     node: ast.Call,
     *,
@@ -1099,6 +1178,8 @@ def _static_expression_value(
         return False, None, "bounded_expression_depth_limit"
     if isinstance(node, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
         return _static_collection_expression_value(node, depth=depth)
+    if isinstance(node, ast.JoinedStr):
+        return _static_formatted_string_value(node, depth=depth)
     if isinstance(node, ast.Call):
         return _static_builtin_method_call_value(node, depth=depth)
     if isinstance(node, ast.UnaryOp) and isinstance(
@@ -7565,6 +7646,7 @@ def _exception_propagation_model(
             "static_expression_depth": MAX_STATIC_EXPRESSION_DEPTH,
             "static_integer_bits": MAX_STATIC_INTEGER_BITS,
             "static_sequence_length": MAX_STATIC_SEQUENCE_LENGTH,
+            "static_format_spec_length": MAX_STATIC_FORMAT_SPEC_LENGTH,
             "static_power_exponent": MAX_STATIC_POWER_EXPONENT,
             "static_shift": MAX_STATIC_SHIFT,
             "finalizer_records": MAX_EXCEPTION_FINALIZER_RECORDS,
@@ -7600,7 +7682,7 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
                 )
     source_omitted += discovered - len(decisions)
     return {
-        "format": "pysfmea-static-control-flow-model-2",
+        "format": "pysfmea-static-control-flow-model-3",
         "summary": {
             "decisions_discovered": discovered,
             "decisions_embedded": len(decisions),
@@ -7628,11 +7710,12 @@ def _static_control_flow_model(facts_list: list[FunctionFacts]) -> dict[str, Any
             "expression_depth": MAX_STATIC_EXPRESSION_DEPTH,
             "integer_bits": MAX_STATIC_INTEGER_BITS,
             "sequence_length": MAX_STATIC_SEQUENCE_LENGTH,
+            "format_spec_length": MAX_STATIC_FORMAT_SPEC_LENGTH,
             "power_exponent": MAX_STATIC_POWER_EXPONENT,
             "shift": MAX_STATIC_SHIFT,
         },
         "limitations": [
-            "Only direct terminal statements, statically bounded empty/nonempty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, size-limited exact-built-in arithmetic, sequence, indexing/slicing, boolean-value, selected conditional-value, deterministic collection-unpacking, mapping-union, set-algebra, and allowlisted non-mutating ASCII-string/bytes method expressions, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; exceptional, oversized, unsupported, mutating, non-ASCII string method data, unordered sequence unpacking, starred method calls, or dynamic expressions, receivers, arguments, indices, predicates, and patterns retain conservative alternatives.",
+            "Only direct terminal statements, statically bounded empty/nonempty literal iteration, constant-true loops without an owned break, bounded try/finally path termination, literal truth, size-limited exact-built-in arithmetic, sequence, indexing/slicing, boolean-value, selected conditional-value, deterministic collection-unpacking, mapping-union, set-algebra, ASCII f-string formatting, and allowlisted non-mutating ASCII-string/bytes method expressions, safe literal comparisons, static boolean composition, short-circuit operands, resolved typing.TYPE_CHECKING guards, and bounded literal/singleton/OR/sequence/mapping/capture match patterns and guards are decided; exceptional, oversized, locale-sensitive, unsupported, mutating, non-ASCII string data, unordered sequence unpacking, starred method calls, or dynamic expressions, receivers, arguments, indices, predicates, and patterns retain conservative alternatives.",
             "A pruned branch is unreachable only if evaluation reaches and completes the recorded predicate; exceptions, process termination, and side effects while evaluating the predicate remain represented by its visited expression.",
             "Loop iteration counts and dynamic break feasibility beyond lexical ownership, except-star and complex exception feasibility, class patterns, dynamic mapping keys or user-defined mapping semantics, dynamic value patterns, dynamic imports, descriptors, and runtime value refinements are not inferred.",
         ],

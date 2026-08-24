@@ -5109,6 +5109,84 @@ class ScannerTests(unittest.TestCase):
             },
         )
 
+    def test_static_formatted_strings_prune_only_bounded_exact_ascii_paths(
+        self,
+    ) -> None:
+        (self.root / "formatted_paths.py").write_text(
+            "def live():\n"
+            "    return 'live'\n\n"
+            "def dead():\n"
+            "    return 'dead'\n\n"
+            "def composed():\n"
+            "    if f\"safe:{2 + 2}\" == 'safe:4':\n"
+            "        return live()\n"
+            "    return dead()\n\n"
+            "def integer_format():\n"
+            "    if f\"{255:04x}\" == '00ff':\n"
+            "        return live()\n"
+            "    return dead()\n\n"
+            "def nested_specification():\n"
+            "    if f\"{7:0{3}d}\" == '007':\n"
+            "        return live()\n"
+            "    return dead()\n\n"
+            "def converted():\n"
+            "    if f\"{'ready'!r}\" == \"'ready'\":\n"
+            "        return live()\n"
+            "    return dead()\n\n"
+            "def dynamic(value):\n"
+            "    if f\"{value}\" == 'ready':\n"
+            "        return dead()\n"
+            "    return live()\n\n"
+            "def oversized_width():\n"
+            "    if f\"{1:1000000d}\":\n"
+            "        return dead()\n"
+            "    return live()\n\n"
+            "def unicode_sensitive():\n"
+            "    if f\"{'ß'}\" == 'ß':\n"
+            "        return dead()\n"
+            "    return live()\n\n"
+            "def unsupported_collection():\n"
+            "    if f\"{[1, 2]}\" == '[1, 2]':\n"
+            "        return dead()\n"
+            "    return live()\n",
+            encoding="utf-8",
+        )
+
+        analysis = scan_repository(self.root)
+        components = {
+            value["qualname"]: value
+            for value in analysis["components"]
+            if value["source"]["path"] == "formatted_paths.py"
+        }
+        for name in ("composed", "integer_format", "nested_specification", "converted"):
+            self.assertEqual(set(components[name]["calls"]), {"live"})
+        for name in (
+            "dynamic",
+            "oversized_width",
+            "unicode_sensitive",
+            "unsupported_collection",
+        ):
+            self.assertEqual(set(components[name]["calls"]), {"dead", "live"})
+        decisions = {
+            value["component_reference"]: value
+            for value in analysis["static_control_flow_model"]["decisions"]
+            if value["component_reference"].startswith("formatted_paths.py:")
+            and value["kind"] == "if_statement"
+        }
+        for name in ("composed", "integer_format", "nested_specification", "converted"):
+            decision = decisions[f"formatted_paths.py:{name}"]
+            self.assertTrue(decision["decision"])
+            self.assertEqual(decision["basis"], "bounded_literal_expression")
+        self.assertFalse(
+            {
+                "formatted_paths.py:dynamic",
+                "formatted_paths.py:oversized_width",
+                "formatted_paths.py:unicode_sensitive",
+                "formatted_paths.py:unsupported_collection",
+            }
+            & decisions.keys()
+        )
+
     def test_static_control_flow_pruning_removes_impossible_runtime_evidence(
         self,
     ) -> None:
@@ -5874,7 +5952,7 @@ def try_handler_fallthrough():
         self.assertEqual(true_loop_handler["outcome_kinds"], ["reraise"])
 
         model = analysis["static_control_flow_model"]
-        self.assertEqual(model["format"], "pysfmea-static-control-flow-model-2")
+        self.assertEqual(model["format"], "pysfmea-static-control-flow-model-3")
         self.assertGreaterEqual(model["summary"]["decisions_discovered"], 40)
         self.assertEqual(
             model["summary"]["decisions_discovered"],
@@ -5883,6 +5961,7 @@ def try_handler_fallthrough():
         self.assertEqual(model["limits"]["expression_depth"], 20)
         self.assertEqual(model["limits"]["integer_bits"], 4_096)
         self.assertEqual(model["limits"]["sequence_length"], 4_096)
+        self.assertEqual(model["limits"]["format_spec_length"], 128)
         self.assertEqual(model["limits"]["power_exponent"], 64)
         self.assertEqual(model["limits"]["shift"], 1_024)
         bases = model["summary"]["decision_bases"]
@@ -6083,7 +6162,9 @@ def try_handler_fallthrough():
             {value["rule_id"] for value in validate_analysis(analysis)["findings"]},
         )
         tampered_limit = json.loads(json.dumps(analysis))
-        tampered_limit["static_control_flow_model"]["limits"]["power_exponent"] = 65
+        tampered_limit["static_control_flow_model"]["limits"][
+            "format_spec_length"
+        ] = 129
         self.assertIn(
             "analysis.invalid_static_control_flow_model",
             {

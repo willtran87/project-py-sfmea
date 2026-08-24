@@ -1025,7 +1025,7 @@ def validate_analysis(
         control_flow_valid = (
             control_flow_valid
             and control_flow_model.get("format")
-            == "pysfmea-static-control-flow-model-2"
+            == "pysfmea-static-control-flow-model-3"
             and isinstance(decisions, list)
             and isinstance(control_flow_summary, dict)
             and control_flow_model.get("limits")
@@ -1035,6 +1035,7 @@ def validate_analysis(
                 "expression_depth": 20,
                 "integer_bits": 4_096,
                 "sequence_length": 4_096,
+                "format_spec_length": 128,
                 "power_exponent": 64,
                 "shift": 1_024,
             }
