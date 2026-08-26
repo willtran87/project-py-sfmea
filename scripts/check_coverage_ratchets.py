@@ -21,6 +21,9 @@ THRESHOLDS = {
     "runtime.py": 90.0,
     "sandbox_policy.py": 85.0,
     "scanner.py": 80.0,
+    "test_generation.py": 80.0,
+    "test_generation_cli.py": 75.0,
+    "test_generation_schemas.py": 95.0,
     "visuals.py": 80.0,
 }
 

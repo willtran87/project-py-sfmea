@@ -700,6 +700,35 @@ non-empty evidence references. A scaffold name, generated strategy, textual test
 passing status alone does not satisfy an obligation. Record implemented test bindings and
 independently review as-run evidence where the assurance policy requires it.
 
+For a single accepted obligation with no planning gaps, the governed LLM path can implement the
+test without granting the model approval or evidence authority:
+
+```powershell
+$proposal = Join-Path $artifacts "generated-test.json"
+$stage = Join-Path $artifacts "generated-test-stage"
+$receipt = Join-Path $artifacts "generated-test-apply.json"
+
+sfmea assurance-test-generate $analysis VO-... --dry-run
+sfmea assurance-test-generate $analysis VO-... --endpoint $env:LLM_ENDPOINT `
+  --model $env:LLM_MODEL --api-key-env LLM_API_KEY --approve-source-egress `
+  --max-attempts 2 -o $proposal
+sfmea assurance-test-proposal-verify $proposal --analysis $analysis
+sfmea assurance-test-stage $proposal --analysis $analysis -o $stage
+sfmea assurance-test-stage-verify $stage $proposal --analysis $analysis
+sfmea assurance-test-apply $stage $proposal --analysis $analysis --approve `
+  --reviewer "Verification Engineer" --rationale "Reviewed exact generated source." `
+  --receipt $receipt
+```
+
+The packet is inventory-hash bound, source text is explicitly untrusted as instructions, likely
+embedded secrets block provider invocation, and live source egress requires a separate approval.
+The response may create one exact test file only. At most three total attempts are permitted, with
+bounded validator feedback retained in proposal provenance. Application refuses overwrite and
+atomically publishes the test with a named-review receipt. Register the exact file with origin
+`llm_generated`, execute it through the restricted assurance runner, adjudicate all criteria with
+an independent reviewer, then run `sfmea assurance-test-readiness`. All seven gates must pass;
+generation and publication are not evidence.
+
 For a high-value dependency or resilience obligation, generate and verify an explicit
 fault-injection plan before implementing the corresponding test:
 

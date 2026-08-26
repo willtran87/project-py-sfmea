@@ -118,6 +118,7 @@ from .qualification_report import (
     QUALIFICATION_REPORT_CHECKS,
     QUALIFICATION_REPORT_VERIFICATION_FORMAT,
 )
+from .review_package_schema import _review_package_manifest_schema
 from .schema_registry import SCHEMA_CATALOG_FILENAME, SCHEMA_FILENAMES
 from .sdk import (
     PLUGIN_MANIFEST_FORMAT,
@@ -134,6 +135,15 @@ from .synthesis import (
     SYNTHESIS_DRAFT_FORMAT,
     SYNTHESIS_FORMAT,
     SYNTHESIS_VERIFICATION_FORMAT,
+)
+from .test_generation_schemas import (
+    _assurance_test_generation_readiness_schema,
+    _assurance_test_proposal_apply_receipt_schema,
+    _assurance_test_proposal_apply_receipt_verification_schema,
+    _assurance_test_proposal_schema,
+    _assurance_test_proposal_stage_schema,
+    _assurance_test_proposal_stage_verification_schema,
+    _assurance_test_proposal_verification_schema,
 )
 from .workflow import MAX_TIMESTAMPED_ANALYSIS_CANDIDATES, WORKFLOW_STATUS_FORMAT
 
@@ -2782,104 +2792,6 @@ def _schema_bundle_verification_schema() -> dict[str, Any]:
             "notice": {"type": "string", "minLength": 1},
         },
         "additionalProperties": False,
-    }
-
-
-def _review_package_manifest_schema() -> dict[str, Any]:
-    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-    nonempty = {"type": "string", "minLength": 1, "maxLength": 4096}
-    return {
-        "$schema": JSON_SCHEMA_DRAFT,
-        "$id": _schema_id("review-package-manifest"),
-        "title": "PySFMEA review-package manifest",
-        "description": (
-            "Structural contract for checksum-manifested review packages. File-set, "
-            "digest, provenance, and governed-state semantics require verify-package."
-        ),
-        "type": "object",
-        "required": [
-            "format",
-            "generated_at",
-            "exporter",
-            "analysis_generator",
-            "analysis_schema_version",
-            "project",
-            "baseline_id",
-            "analysis_state_sha256",
-            "portable",
-            "source_analysis",
-            "files",
-        ],
-        "properties": {
-            "format": {"const": REVIEW_PACKAGE_FORMAT},
-            "generated_at": nonempty,
-            "exporter": {
-                "type": "object",
-                "required": ["name", "version"],
-                "properties": {
-                    "name": {"const": "PySFMEA"},
-                    "version": nonempty,
-                },
-                "additionalProperties": False,
-            },
-            "analysis_generator": {"type": "object"},
-            "analysis_schema_version": {"type": "string", "maxLength": 256},
-            "project": {"type": "string", "maxLength": 4096},
-            "baseline_id": {"type": "string", "maxLength": 4096},
-            "analysis_state_sha256": digest,
-            "capabilities": {
-                "type": "array",
-                "uniqueItems": True,
-                "items": {
-                    "enum": [
-                        "analysis_diagnostics_projection_v1",
-                        "assurance_register_projection",
-                        "assurance_work_queue_projection",
-                        "evidence_catalog_projection_v1",
-                        "guidance_traceability_projection_v1",
-                        "cross_reference_projection_v1",
-                        "interchange_artifacts_projection_v1",
-                        "package_provenance_projection_v1",
-                        "review_views_projection_v1",
-                        "sfta_projection_v1",
-                    ]
-                },
-            },
-            "schema_catalog": {
-                "type": "object",
-                "required": [
-                    "format",
-                    "path",
-                    "canonical_sha256",
-                    "schema_count",
-                ],
-                "properties": {
-                    "format": {"const": SCHEMA_CATALOG_FORMAT},
-                    "path": {"const": SCHEMA_CATALOG_FILENAME},
-                    "canonical_sha256": digest,
-                    "schema_count": {"type": "integer", "minimum": 1},
-                },
-                "additionalProperties": False,
-            },
-            "portable": {"type": "boolean"},
-            "source_analysis": {"type": "string", "maxLength": 32768},
-            "files": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 100,
-                "items": {
-                    "type": "object",
-                    "required": ["path", "bytes", "sha256"],
-                    "properties": {
-                        "path": nonempty,
-                        "bytes": {"type": "integer", "minimum": 0},
-                        "sha256": digest,
-                    },
-                    "additionalProperties": False,
-                },
-            },
-        },
-        "additionalProperties": True,
     }
 
 
@@ -9302,6 +9214,21 @@ _SCHEMA_BUILDERS = {
     "assurance-program-verification": _assurance_program_verification_schema,
     "assurance-scaffold": _assurance_scaffold_schema,
     "assurance-scaffold-verification": _assurance_scaffold_verification_schema,
+    "assurance-test-proposal": _assurance_test_proposal_schema,
+    "assurance-test-generation-readiness": _assurance_test_generation_readiness_schema,
+    "assurance-test-proposal-apply-receipt": (
+        _assurance_test_proposal_apply_receipt_schema
+    ),
+    "assurance-test-proposal-apply-receipt-verification": (
+        _assurance_test_proposal_apply_receipt_verification_schema
+    ),
+    "assurance-test-proposal-stage": _assurance_test_proposal_stage_schema,
+    "assurance-test-proposal-stage-verification": (
+        _assurance_test_proposal_stage_verification_schema
+    ),
+    "assurance-test-proposal-verification": (
+        _assurance_test_proposal_verification_schema
+    ),
     "assurance-work-queue": _assurance_work_queue_schema,
     "assurance-work-queue-verification": _assurance_work_queue_verification_schema,
     "detached-signature": _detached_signature_schema,
@@ -9376,6 +9303,13 @@ _SCHEMA_DESCRIPTIONS = {
     "assurance-program-verification": "System assurance program integrity, binding, trusted-evidence, timing/resilience, quality-gate, and governance verdicts.",
     "assurance-scaffold": "Analysis-bound executable pytest starting points, property strategies, contract cases, and generated-file identities.",
     "assurance-scaffold-verification": "Scaffold integrity, synthesized-design, generated-file, lifecycle, and exact analysis-binding verdict.",
+    "assurance-test-proposal": "Closed, source-bound, allowlisted LLM proposal for one accepted assurance-test obligation.",
+    "assurance-test-generation-readiness": "Proposal-to-publication-to-independent-evidence readiness gates for one generated test.",
+    "assurance-test-proposal-apply-receipt": "Human-reviewed atomic publication receipt for one generated assurance test.",
+    "assurance-test-proposal-apply-receipt-verification": "Receipt integrity, proposal, analysis, review attribution, and exact applied-file binding verdict.",
+    "assurance-test-proposal-stage": "Integrity-declaring isolated review-stage manifest for a verified generated test.",
+    "assurance-test-proposal-stage-verification": "Stage file-set, integrity, proposal, analysis, and exact-content binding verdict.",
+    "assurance-test-proposal-verification": "Proposal integrity, response-contract, exact-analysis, and source-binding verdict.",
     "assurance-work-queue": "Accepted-finding hardening states, blockers, eligibility, and next actions.",
     "assurance-work-queue-verification": "Work-queue integrity, analysis binding, and semantic-projection verdicts.",
     "detached-signature": "Detached Ed25519 package-signature envelope and subject binding.",

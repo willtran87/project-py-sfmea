@@ -74,6 +74,13 @@ Available names:
 | `assurance-program-verification` | Program integrity, binding, trusted-evidence, timing/resilience, quality-gate, relationship, and governance verdicts |
 | `assurance-scaffold` | Exact-analysis-bound pytest starting points, property strategies, contract cases, and generated-file identities |
 | `assurance-scaffold-verification` | Manifest, synthesized-design, generated-file, lifecycle, and exact analysis-binding verdict |
+| `assurance-test-generation-readiness` | Seven proposal-to-publication-to-independent-evidence readiness gates |
+| `assurance-test-proposal` | Closed, source-bound, one-file LLM assurance-test proposal and bounded repair provenance |
+| `assurance-test-proposal-apply-receipt` | Named-review atomic test-publication receipt |
+| `assurance-test-proposal-apply-receipt-verification` | Receipt integrity, proposal, analysis, attribution, and applied-byte binding verdict |
+| `assurance-test-proposal-stage` | Isolated staged-test file and integrity manifest |
+| `assurance-test-proposal-stage-verification` | Stage file-set, content, proposal, source, and analysis binding verdict |
+| `assurance-test-proposal-verification` | Proposal integrity, response contract, source, and optional exact-analysis binding verdict |
 | `assurance-work-queue` | Accepted-finding work states, blockers, automation eligibility, and next actions |
 | `assurance-work-queue-verification` | Queue integrity, analysis binding, and deterministic-projection verdicts |
 | `detached-signature` | Ed25519 signature envelope, signed statement, and package subject |

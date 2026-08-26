@@ -821,6 +821,18 @@ sealed synthesis workspace binds the original suggestion and analysis, records h
 requires a named reviewer and rationale for accept/reject. Accepted proposals remain unreviewed
 worksheet findings.
 
+LLM test implementation is a separate, narrower authority path. It operates on one accepted,
+planning-ready verification obligation and an inventory-hashed, byte-bounded source snapshot.
+Potential embedded secrets block provider invocation, and live source egress is an explicit
+operator decision. Closed response validation restricts output to one exact test path and rejects
+unsafe, placeholder, skipped, assertion-free, or non-exercising source. Validator-guided repair is
+limited to three total attempts and its outcome digests are retained. Model output is staged
+outside the repository; a named human review is required before coordinated atomic publication of
+the test and receipt. Assurance readiness additionally requires exact LLM-origin registration,
+restricted execution, observed stimulus, complete criterion results, artifact-integrity credit,
+and an independent sufficient-evidence decision. No stage grants the model disposition, approval,
+evidence-review, risk-acceptance, or compliance authority.
+
 Pull-request orchestration compares exact committed archives without checking out the working tree
 or executing repository code. Process plugins are explicit, semantic-versioned, bounded
 observation producers. Their separate process and reduced environment are not an operating-system

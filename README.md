@@ -1715,6 +1715,82 @@ same 100-level/500,000-node structure limit, checks the object/format/integrity 
 requires a usable obligation list before parameterization. Unsafe or ambiguous manifests stop
 collection with a bounded remediation message rather than being followed or buffered without limit.
 
+### Governed LLM test implementation
+
+PySFMEA can ask an OpenAI-compatible model to implement one accepted, planning-ready assurance
+obligation. The model receives a bounded packet containing the exact obligation, synthesized test
+design, component metadata, and inventory-hashed source context. Generation is blocked for an
+unaccepted or stale finding, unresolved planning gaps, or a potential embedded secret. Live use
+also requires explicit source-egress approval; offline recorded responses support review and
+qualification without a network call.
+
+```mermaid
+flowchart LR
+  A[Accepted obligation] --> B[Inspect bounded packet]
+  B --> C[LLM proposal]
+  C --> D[Closed-contract verification]
+  D --> E[Isolated stage]
+  E --> F[Named human approval]
+  F --> G[Atomic test + receipt]
+  G --> H[Register exact SHA-256]
+  H --> I[Restricted execution]
+  I --> J[Independent evidence review]
+  J --> K{7 readiness gates}
+```
+
+```powershell
+$proposal = Join-Path $artifacts "generated-test-proposal.json"
+$stage = Join-Path $artifacts "generated-test-stage"
+$receipt = Join-Path $artifacts "generated-test-apply.json"
+
+# Inspect exactly what could leave the workstation; this never invokes a provider.
+sfmea assurance-test-generate $analysis VO-... --dry-run
+
+# Live generation. Repairs are validator-guided and hard-limited to three total attempts.
+sfmea assurance-test-generate $analysis VO-... `
+  --endpoint $env:LLM_ENDPOINT --model $env:LLM_MODEL `
+  --api-key-env LLM_API_KEY --approve-source-egress --max-attempts 2 `
+  -o $proposal
+
+sfmea assurance-test-proposal-verify $proposal --analysis $analysis
+sfmea assurance-test-stage $proposal --analysis $analysis -o $stage
+sfmea assurance-test-stage-verify $stage $proposal --analysis $analysis
+
+# This is the only generation step that writes into the analyzed repository.
+sfmea assurance-test-apply $stage $proposal --analysis $analysis `
+  --reviewer "Verification Engineer" `
+  --rationale "Reviewed exact source, stimulus, mappings, and assertions." `
+  --approve --receipt $receipt
+sfmea assurance-test-apply-verify $receipt $proposal --analysis $analysis
+
+sfmea assurance-test-register $analysis VO-... `
+  --test-path tests/assurance/test_assurance_...py `
+  --author "model-name / reviewed by Verification Engineer" `
+  --origin llm_generated
+
+# After assurance-run and an independent sufficient evidence review:
+sfmea assurance-test-readiness $receipt $proposal --analysis $analysis
+```
+
+`--response-file` replaces the live provider with a strict recorded JSON response. A proposal may
+change only the obligation's exact `tests/**/*.py` allowlist entry; production edits, extra files,
+syntax errors, missing target invocation, placeholder assertions, skips, direct network clients,
+and shell/dynamic execution are rejected. Staging stays outside the repository. Application never
+overwrites an existing test and publishes the reviewed test and its integrity receipt as a
+coordinated pair with rollback on failure.
+
+The seven readiness gates require a still-valid proposal, verified human publication review,
+exact `llm_generated` registration, passing restricted execution, observed failure stimulus, all
+pre-existing acceptance criteria passing, and an independent sufficient-evidence decision. Model
+output, syntactic validity, a passing test, or the application receipt alone receives no assurance
+credit. System-safety assessment and risk acceptance remain human authorities.
+
+Before enabling a provider in a production assurance program, retain an independently labeled
+format-3 LLM quality corpus whose subject uses prompt version
+`sfmea-assurance-test-generation-1`. That corpus qualifies the named provider/model/prompt sample;
+the per-test readiness gates still supply the execution and effectiveness evidence and neither
+mechanism proves representativeness by itself.
+
 For high-value dependency, interface, timing, persistence, detection, and circuit-breaker
 obligations, PySFMEA provides governed executable fault-injection plugins. List them and create an
 obligation-bound starter plan:

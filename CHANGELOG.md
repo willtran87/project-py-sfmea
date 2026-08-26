@@ -5,6 +5,14 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Add a governed LLM assurance-test generation workflow: bounded source-grounded packets,
+  closed proposal validation, three-attempt repair provenance, isolated staging, explicit
+  human publication receipts, and seven fail-closed readiness gates covering registration,
+  restricted execution, observed failure stimulus, acceptance criteria, and independent evidence
+  review. Publish and validate every proposal, staging, receipt, verification, and readiness
+  artifact with versioned JSON Schemas; expose the workflow through dedicated CLI commands; add
+  provider prompt/version isolation, secret-egress checks, path and source integrity enforcement,
+  transactional publication rollback, coverage ratchets, end-to-end tests, and operator guidance.
 - Attach resolved internal component references and IDs to every call site, including explicit
   unresolved/ambiguous status, so downstream sequences do not reconstruct site identity from an
   aggregate caller edge. Preserve unresolved interface candidates when another raw name in the

@@ -219,6 +219,7 @@ from .synthesis import (
     verify_synthesis_apply_receipt_file,
     verify_synthesis_workspace_file,
 )
+from .test_generation_cli import add_test_generation_commands
 from .validation import review_queue, validate_analysis
 from .version import __version__
 from .visuals import export_coverage, export_sequence, export_traceability
@@ -1972,7 +1973,7 @@ def _parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="emit machine-readable verification"
     )
     assurance_scaffold_verify.set_defaults(handler=_assurance_scaffold_verify)
-
+    add_test_generation_commands(subparsers, _add_provider_arguments, _provider)
     assurance_test = subparsers.add_parser(
         "assurance-test-register",
         help="bind proposed or implemented test source to a verification obligation",
@@ -1988,7 +1989,6 @@ def _parser() -> argparse.ArgumentParser:
         "--status", choices=("proposed", "implemented"), default="implemented"
     )
     assurance_test.set_defaults(handler=_assurance_test_register)
-
     assurance_run = subparsers.add_parser(
         "assurance-run",
         help="execute one implemented assurance test in an approved Docker/Podman sandbox",
