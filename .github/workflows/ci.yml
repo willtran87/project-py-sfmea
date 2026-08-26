@@ -244,14 +244,14 @@ jobs:
           --report .ci-report/report.html
           --output .ci-report/browser-quality-verification.json
 
-      - name: Generate 5,000-record scale report fixture
+      - name: Generate 10,000-record scale report fixture
         run: |
-          python scripts/generate_scale_corpus.py .ci-scale-repository --modules 80 --functions-per-module 8
+          python scripts/generate_scale_corpus.py .ci-scale-repository --modules 160 --functions-per-module 8
           mkdir -p .ci-scale-report
           sfmea scan .ci-scale-repository --allow-ungoverned --no-cache --output .ci-scale-report/analysis.json.gz
-          sfmea report .ci-scale-report/analysis.json.gz --output .ci-scale-report/report.html --max-records 5000
+          sfmea report .ci-scale-report/analysis.json.gz --output .ci-scale-report/report.html --max-records 10000
 
-      - name: Exercise 5,000-record report in Chromium
+      - name: Exercise 10,000-record report in Chromium
         run: >-
           python scripts/report_browser_gate.py .ci-scale-report/report.html
           --analysis .ci-scale-report/analysis.json.gz
@@ -322,7 +322,7 @@ jobs:
       - name: Generate medium-scale self-contained report
         run: >-
           sfmea report scale-analysis.json.gz
-          --max-records 5000
+          --max-records 10000
           --output scale-report.html
 
       - name: Publish performance evidence

@@ -24,6 +24,7 @@ THRESHOLDS = {
     "test_generation.py": 80.0,
     "test_generation_cli.py": 75.0,
     "test_generation_quality.py": 75.0,
+    "test_generation_quality_campaign.py": 75.0,
     "test_generation_quality_evidence.py": 75.0,
     "test_generation_quality_schemas.py": 95.0,
     "test_generation_schemas.py": 95.0,

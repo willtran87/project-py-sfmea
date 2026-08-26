@@ -5,6 +5,15 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Add format-3 generated-test qualification campaigns. Exact format-2 artifact replay now combines
+  with frozen-before-outcome selection, repository/framework/domain population and floor gates,
+  repository decision balance and concentration controls, seeded-fault category binding, segment
+  metrics, 25-gate semantic replay, public schemas, a campaign template, CLI support, and an
+  independently enforced coverage ratchet.
+- Reconcile imported runtime parent-child edges with uniquely resolved static calls. Runtime-only
+  edges may retain bounded source call-site review candidates from an observed caller line or target
+  name while explicitly refusing to rewrite the static graph or claim causality. Double the CI
+  self-contained Chromium report tier to a 10,000-record cap and a 160-module generated fixture.
 - Refresh the generated-test governance diagrams and operator documentation to expose format-1
   declared gates separately from format-2 lifecycle loading, paired execution reconciliation,
   manifest/raw-artifact verification, 15 derived gates, and exact replay. Add a campaign sequence

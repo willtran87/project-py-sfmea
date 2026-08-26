@@ -38,6 +38,9 @@ from pysfmea.test_generation_quality import (
     evaluate_test_generation_quality_evidence,
     verify_test_generation_quality_result,
 )
+from pysfmea.test_generation_quality_campaign import (
+    evaluate_test_generation_quality_campaign,
+)
 from pysfmea.test_generation_quality_evidence import (
     build_fault_detection_evidence,
     export_fault_detection_evidence,
@@ -1046,6 +1049,10 @@ class GovernedTestGenerationTests(unittest.TestCase):
 
         fault_paths: dict[str, Path] = {}
         seeded_result_paths: dict[str, Path] = {}
+        fault_categories = {
+            "PROPOSE-EVIDENCE-1": "timeout",
+            "PROPOSE-EVIDENCE-2": "malformed_data",
+        }
         for sample_id in ("PROPOSE-EVIDENCE-1", "PROPOSE-EVIDENCE-2"):
             seeded_execution = {
                 "id": f"{sample_id}-SEEDED",
@@ -1064,7 +1071,7 @@ class GovernedTestGenerationTests(unittest.TestCase):
                 sample_id=sample_id,
                 baseline_execution_id=str(baseline_execution["id"]),
                 seeded_execution_id=str(seeded_execution["id"]),
-                fault_id=f"{sample_id}-FAULT",
+                fault_id=f"{fault_categories[sample_id]}:{sample_id}",
                 environment="locked-down qualification container",
                 evidence_root=self.root,
             )
@@ -1226,6 +1233,134 @@ class GovernedTestGenerationTests(unittest.TestCase):
             )
         self.assertTrue(
             json.loads(fault_verification.getvalue())["raw_artifacts_verified"]
+        )
+
+        campaign = copy.deepcopy(corpus)
+        campaign["format"] = "pysfmea-test-generation-quality-corpus-3"
+        campaign["governance"].update(  # type: ignore[union-attr]
+            {
+                "selection_frozen_at": "2026-01-10T09:00:00Z",
+                "outcomes_observed_at": "2026-01-11T18:00:00Z",
+            }
+        )
+        campaign["policy"].update(  # type: ignore[union-attr]
+            {
+                "min_repositories": 2,
+                "min_frameworks": 2,
+                "min_domains": 2,
+                "min_fault_categories": 2,
+                "min_samples_per_repository": 2,
+                "min_samples_per_framework": 2,
+                "min_samples_per_domain": 2,
+                "require_decision_balance_per_repository": True,
+                "max_single_repository_fraction": 0.5,
+            }
+        )
+        sample_metadata = {
+            "PROPOSE-EVIDENCE-1": ("repo-a", ["fastapi"], ["safety"], "timeout"),
+            "REFUSE-EVIDENCE-1": ("repo-a", ["fastapi"], ["safety"], None),
+            "PROPOSE-EVIDENCE-2": (
+                "repo-b",
+                ["flask"],
+                ["data"],
+                "malformed_data",
+            ),
+            "REFUSE-EVIDENCE-2": ("repo-b", ["flask"], ["data"], None),
+        }
+        for campaign_sample in campaign["samples"]:  # type: ignore[union-attr]
+            repository, frameworks, domains, fault_category = sample_metadata[
+                campaign_sample["id"]
+            ]
+            campaign_sample.update(
+                {
+                    "repository_id": repository,
+                    "frameworks": frameworks,
+                    "domains": domains,
+                    "fault_category": fault_category,
+                }
+            )
+        campaign_result = evaluate_test_generation_quality_campaign(
+            campaign, self.root
+        )
+        self.assertTrue(campaign_result["qualified"], campaign_result)
+        self.assertEqual(
+            campaign_result["status"], "qualified_stratified_artifact_sample"
+        )
+        self.assertEqual(len(campaign_result["gates"]), 25)
+        self.assertEqual(campaign_result["campaign"]["repositories"], 2)
+        self.assertEqual(campaign_result["campaign"]["fault_categories"], 2)
+        Draft202012Validator(
+            schema_document("assurance-test-generation-quality-corpus-v3")
+        ).validate(campaign)
+        Draft202012Validator(
+            schema_document("assurance-test-generation-quality-result-v3")
+        ).validate(campaign_result)
+        self.assertTrue(
+            verify_test_generation_quality_result(
+                campaign_result, campaign, evidence_root=self.root
+            )["valid"]
+        )
+        campaign_path = self.root / "campaign-quality-corpus.json"
+        campaign_result_path = self.root / "campaign-quality-result.json"
+        campaign_path.write_text(json.dumps(campaign), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-test-quality-evaluate",
+                        str(campaign_path),
+                        "--evidence-root",
+                        str(self.root),
+                        "--require-qualified",
+                        "-o",
+                        str(campaign_result_path),
+                    ]
+                ),
+                0,
+            )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-test-quality-verify",
+                        str(campaign_result_path),
+                        str(campaign_path),
+                        "--evidence-root",
+                        str(self.root),
+                    ]
+                ),
+                0,
+            )
+        category_mismatch = copy.deepcopy(campaign)
+        category_mismatch["samples"][0]["fault_category"] = "wrong"  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "does not bind"):
+            evaluate_test_generation_quality_campaign(category_mismatch, self.root)
+        late_selection = copy.deepcopy(campaign)
+        late_selection["governance"][  # type: ignore[index]
+            "selection_frozen_at"
+        ] = "2026-01-12T09:00:00Z"
+        late_result = evaluate_test_generation_quality_campaign(
+            late_selection, self.root
+        )
+        self.assertFalse(late_result["qualified"])
+        self.assertIn(
+            "selection_precedes_outcomes",
+            {gate["id"] for gate in late_result["gates"] if not gate["passed"]},
+        )
+        concentrated = copy.deepcopy(campaign)
+        for campaign_sample in concentrated["samples"]:  # type: ignore[union-attr]
+            campaign_sample["repository_id"] = "repo-a"
+        concentrated_result = evaluate_test_generation_quality_campaign(
+            concentrated, self.root
+        )
+        self.assertFalse(concentrated_result["qualified"])
+        self.assertIn(
+            "repository_concentration",
+            {
+                gate["id"]
+                for gate in concentrated_result["gates"]
+                if not gate["passed"]
+            },
         )
         duplicated = copy.deepcopy(corpus)
         duplicated["samples"][1]["artifacts"] = copy.deepcopy(  # type: ignore[index]

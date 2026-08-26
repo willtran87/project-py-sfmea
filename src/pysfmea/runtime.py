@@ -447,6 +447,93 @@ def _span_timing(start_time: str, end_time: str) -> tuple[str, int | None]:
     return "observed", end - start
 
 
+def _static_call_pairs(analysis: dict[str, Any]) -> set[tuple[str, str]]:
+    """Return component pairs that the static scanner resolved uniquely."""
+
+    components = [
+        component
+        for component in analysis.get("components", [])
+        if isinstance(component, dict) and component.get("id")
+    ]
+    references = {
+        f"{component.get('source', {}).get('path', '')}:{component.get('qualname', '')}": str(
+            component["id"]
+        )
+        for component in components
+    }
+    pairs: set[tuple[str, str]] = set()
+    for target in components:
+        target_id = str(target["id"])
+        for caller_reference in target.get("called_by", []):
+            caller_id = references.get(str(caller_reference), "")
+            if caller_id:
+                pairs.add((caller_id, target_id))
+    return pairs
+
+
+def _dynamic_call_site_candidates(
+    analysis: dict[str, Any],
+    parent: dict[str, Any],
+    child: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Correlate a runtime edge to unresolved static sites without claiming causality."""
+
+    source_id = str(parent.get("component_id", ""))
+    target_id = str(child.get("component_id", ""))
+    if not source_id or not target_id:
+        return []
+    components = {
+        str(component.get("id", "")): component
+        for component in analysis.get("components", [])
+        if isinstance(component, dict) and component.get("id")
+    }
+    source = components.get(source_id, {})
+    target = components.get(target_id, {})
+    attributes = child.get("attributes", {})
+    observed_line = (
+        attributes.get("sfmea.caller.callsite.line")
+        if isinstance(attributes, dict)
+        else None
+    )
+    try:
+        observed_line_number = int(observed_line) if observed_line is not None else None
+    except (TypeError, ValueError):
+        observed_line_number = None
+    target_names = {
+        str(target.get("name", "")).casefold(),
+        str(target.get("qualname", "")).rsplit(".", 1)[-1].casefold(),
+    } - {""}
+    candidates: list[dict[str, Any]] = []
+    for site in source.get("call_sites", []):
+        if not isinstance(site, dict):
+            continue
+        resolution = str(site.get("resolution", "unresolved"))
+        if resolution == "unique_static_target":
+            continue
+        reference = str(site.get("reference", ""))
+        leaf_match = reference.rsplit(".", 1)[-1].casefold() in target_names
+        line = site.get("line")
+        line_match = observed_line_number is not None and line == observed_line_number
+        if not leaf_match and not line_match:
+            continue
+        candidates.append(
+            {
+                "source_path": str(source.get("source", {}).get("path", "")),
+                "line": line if isinstance(line, int) else 0,
+                "reference": reference,
+                "static_resolution": resolution,
+                "target_component_id": target_id,
+                "correlation": (
+                    "observed_callsite_line" if line_match else "target_name_heuristic"
+                ),
+                "claim": "review_candidate_not_static_target",
+            }
+        )
+        if len(candidates) >= 20:
+            break
+    return candidates
+
+
 def import_runtime_trace(
     analysis: dict[str, Any], source: str | Path, *, label: str = ""
 ) -> dict[str, Any]:
@@ -525,22 +612,38 @@ def import_runtime_trace(
         raise ValueError("runtime trace contains no recognizable spans")
     instrumentation = _instrumentation_coverage(payload, lookup, normalized)
     by_key = {(span["trace_id"], span["span_id"]): span for span in normalized}
+    static_pairs = _static_call_pairs(analysis)
     edges = []
     for span in normalized:
         parent = by_key.get((span["trace_id"], span["parent_span_id"]))
         if not parent:
             continue
+        source_component_id = str(parent["component_id"])
+        target_component_id = str(span["component_id"])
+        mapped_pair = bool(source_component_id and target_component_id)
+        static_alignment = (
+            "corroborated_static"
+            if (source_component_id, target_component_id) in static_pairs
+            else ("runtime_only" if mapped_pair else "unmapped")
+        )
+        candidates = (
+            _dynamic_call_site_candidates(analysis, parent, span)
+            if static_alignment == "runtime_only"
+            else []
+        )
         edges.append(
             {
                 "trace_id": span["trace_id"],
                 "source_span_id": parent["span_id"],
                 "target_span_id": span["span_id"],
-                "source_component_id": parent["component_id"],
-                "target_component_id": span["component_id"],
+                "source_component_id": source_component_id,
+                "target_component_id": target_component_id,
                 "source_name": parent["name"],
                 "target_name": span["name"],
                 "operation": span["name"],
                 "evidence": "observed_runtime",
+                "static_alignment": static_alignment,
+                "dynamic_call_site_candidates": candidates,
                 "start_time": span["start_time"],
                 "end_time": span["end_time"],
                 "timing_status": span["timing_status"],
@@ -586,9 +689,20 @@ def import_runtime_trace(
             status: sum(span["timing_status"] == status for span in normalized)
             for status in sorted({span["timing_status"] for span in normalized})
         },
+        "edge_alignment": {
+            status: sum(edge["static_alignment"] == status for edge in edges)
+            for status in ("corroborated_static", "runtime_only", "unmapped")
+        },
+        "dynamic_call_site_candidate_count": sum(
+            len(edge["dynamic_call_site_candidates"]) for edge in edges
+        ),
         "instrumentation": instrumentation,
         "duplicate": False,
-        "notice": "Observed traces demonstrate captured executions only; they do not prove path completeness.",
+        "notice": (
+            "Observed traces demonstrate captured executions only; they do not prove path "
+            "completeness or causality. Dynamic call-site correlations remain review candidates "
+            "and do not rewrite static target resolution."
+        ),
     }
     history = analysis.get("history")
     if history is not None and not isinstance(history, list):

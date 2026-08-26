@@ -370,7 +370,7 @@ sfmea schema --verify-bundle .release-contracts --json
 ```
 
 Also run the checked-in dynamic-Python corpus, focused mutation ratchet, deterministic scale scan,
-and 5,000-record Chromium gate described in `docs/QUALITY_GATES.md`. Retain their machine-readable
+and 10,000-record Chromium gate described in `docs/QUALITY_GATES.md`. Retain their machine-readable
 receipts with release evidence. These controls are non-regression evidence; they do not substitute
 for independently labeled repository qualification or a governed LLM review corpus.
 
@@ -413,7 +413,7 @@ python scripts/benchmark_scan.py .release-scale --repeats 2 --reuse-facts `
   --max-median-seconds 60 --max-peak-bytes 536870912 --max-rss-bytes 1073741824 `
   --min-source-files 81 --min-components 640 --min-candidates 320 `
   --analysis-output scale-analysis.json.gz -o benchmark-performance.json
-sfmea report scale-analysis.json.gz --max-records 5000 -o scale-report.html
+sfmea report scale-analysis.json.gz --max-records 10000 -o scale-report.html
 python scripts/check_module_size_ratchets.py
 ```
 

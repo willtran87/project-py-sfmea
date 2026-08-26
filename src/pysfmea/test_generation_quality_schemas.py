@@ -8,6 +8,8 @@ from typing import Any
 from .test_generation import TEST_GENERATION_PROMPT_VERSION
 from .test_generation_quality import (
     MAX_QUALITY_SAMPLES,
+    TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT,
+    TEST_GENERATION_CAMPAIGN_RESULT_FORMAT,
     TEST_GENERATION_EVIDENCE_CORPUS_FORMAT,
     TEST_GENERATION_EVIDENCE_RESULT_FORMAT,
     TEST_GENERATION_FAULT_EVIDENCE_FORMAT,
@@ -325,6 +327,206 @@ def _assurance_test_generation_quality_result_v2_schema() -> dict[str, Any]:
                     },
                     "additionalProperties": False,
                 },
+            },
+        },
+        "additionalProperties": False,
+    }
+    return schema
+
+
+def _assurance_test_generation_quality_corpus_v3_schema() -> dict[str, Any]:
+    schema = copy.deepcopy(_assurance_test_generation_quality_corpus_v2_schema())
+    text = {"type": "string", "minLength": 1, "maxLength": 20_000}
+    count = {"type": "integer", "minimum": 1, "maximum": MAX_QUALITY_SAMPLES}
+    rate = {"type": "number", "minimum": 0, "maximum": 1}
+    schema["$id"] = _schema_id("assurance-test-generation-quality-corpus-v3")
+    schema["title"] = (
+        "PySFMEA stratified artifact-backed LLM test-generation quality corpus"
+    )
+    schema["properties"]["format"] = {
+        "const": TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT
+    }
+    governance = schema["properties"]["governance"]
+    governance["required"].extend(["selection_frozen_at", "outcomes_observed_at"])
+    governance["properties"].update(
+        {
+            "selection_frozen_at": {"type": "string", "format": "date-time"},
+            "outcomes_observed_at": {"type": "string", "format": "date-time"},
+        }
+    )
+    policy = schema["properties"]["policy"]
+    campaign_counts = [
+        "min_repositories",
+        "min_frameworks",
+        "min_domains",
+        "min_fault_categories",
+        "min_samples_per_repository",
+        "min_samples_per_framework",
+        "min_samples_per_domain",
+    ]
+    policy["required"].extend(
+        [
+            *campaign_counts,
+            "require_decision_balance_per_repository",
+            "max_single_repository_fraction",
+        ]
+    )
+    policy["properties"].update(
+        {
+            **{name: count for name in campaign_counts},
+            "require_decision_balance_per_repository": {"type": "boolean"},
+            "max_single_repository_fraction": rate,
+        }
+    )
+    sample = schema["properties"]["samples"]["items"]
+    sample["required"].extend(
+        ["repository_id", "frameworks", "domains", "fault_category"]
+    )
+    label_array = {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "uniqueItems": True,
+        "items": text,
+    }
+    sample["properties"].update(
+        {
+            "repository_id": text,
+            "frameworks": label_array,
+            "domains": label_array,
+            "fault_category": {"anyOf": [text, {"type": "null"}]},
+        }
+    )
+    return schema
+
+
+def _assurance_test_generation_quality_result_v3_schema() -> dict[str, Any]:
+    schema = copy.deepcopy(_assurance_test_generation_quality_result_v2_schema())
+    campaign_corpus_schema = _assurance_test_generation_quality_corpus_v3_schema()
+    text = {"type": "string", "minLength": 1, "maxLength": 20_000}
+    rate = {"type": "number", "minimum": 0, "maximum": 1}
+    schema["$id"] = _schema_id("assurance-test-generation-quality-result-v3")
+    schema["title"] = (
+        "PySFMEA stratified artifact-backed LLM test-generation qualification result"
+    )
+    schema["properties"]["format"] = {
+        "const": TEST_GENERATION_CAMPAIGN_RESULT_FORMAT
+    }
+    schema["properties"]["status"] = {
+        "enum": ["qualified_stratified_artifact_sample", "not_qualified"]
+    }
+    schema["properties"]["governance"] = copy.deepcopy(
+        campaign_corpus_schema["properties"]["governance"]
+    )
+    schema["properties"]["policy"] = copy.deepcopy(
+        campaign_corpus_schema["properties"]["policy"]
+    )
+    schema["properties"]["gates"]["minItems"] = 25
+    schema["properties"]["gates"]["maxItems"] = 25
+    schema["required"].append("campaign")
+    segment = {
+        "type": "object",
+        "required": [
+            "id",
+            "samples",
+            "expected_proposed",
+            "expected_refused",
+            "actual_proposed",
+            "actual_refused",
+            "decision_accuracy",
+            "fault_categories",
+        ],
+        "properties": {
+            "id": text,
+            **{
+                name: {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_QUALITY_SAMPLES,
+                }
+                for name in [
+                    "samples",
+                    "expected_proposed",
+                    "expected_refused",
+                    "actual_proposed",
+                    "actual_refused",
+                ]
+            },
+            "decision_accuracy": rate,
+            "fault_categories": {
+                "type": "array",
+                "maxItems": MAX_QUALITY_SAMPLES,
+                "uniqueItems": True,
+                "items": text,
+            },
+        },
+        "additionalProperties": False,
+    }
+    segment_array = {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": MAX_QUALITY_SAMPLES,
+        "items": segment,
+    }
+    schema["properties"]["campaign"] = {
+        "type": "object",
+        "required": [
+            "design",
+            "selection_frozen_at",
+            "outcomes_observed_at",
+            "repositories",
+            "frameworks",
+            "domains",
+            "fault_categories",
+            "max_single_repository_fraction",
+            "fault_category_population",
+            "segments",
+        ],
+        "properties": {
+            "design": {"const": "stratified_artifact_replay"},
+            "selection_frozen_at": {"type": "string", "format": "date-time"},
+            "outcomes_observed_at": {"type": "string", "format": "date-time"},
+            **{
+                name: {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": MAX_QUALITY_SAMPLES,
+                }
+                for name in [
+                    "repositories",
+                    "frameworks",
+                    "domains",
+                    "fault_categories",
+                ]
+            },
+            "max_single_repository_fraction": rate,
+            "fault_category_population": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": MAX_QUALITY_SAMPLES,
+                "items": {
+                    "type": "object",
+                    "required": ["id", "samples"],
+                    "properties": {
+                        "id": text,
+                        "samples": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": MAX_QUALITY_SAMPLES,
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "segments": {
+                "type": "object",
+                "required": ["repositories", "frameworks", "domains"],
+                "properties": {
+                    "repositories": segment_array,
+                    "frameworks": segment_array,
+                    "domains": segment_array,
+                },
+                "additionalProperties": False,
             },
         },
         "additionalProperties": False,

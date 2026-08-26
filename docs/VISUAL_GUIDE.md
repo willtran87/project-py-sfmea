@@ -137,11 +137,14 @@ flowchart TB
         C["Independent generated-test corpus"] --> Q{"Evidence mode"}
         Q -- "Format 1" --> D14["14 declared gates"]
         Q -- "Format 2" --> ART["Exact analysis + proposal + receipt"]
+        Q -- "Format 3" --> STRAT["Predeclared strata + chronology"]
         ART --> RUN["Baseline pass + seeded fail; same test"]
         RUN --> RAW["Root confinement + manifest seal + raw size/SHA-256"]
         RAW --> D15["15 artifact-backed, derived gates"]
+        STRAT --> D25["25 replayed campaign gates"]
         D14 --> S["Content-sealed result"]
         D15 --> S
+        D25 --> S
         S --> V["Exact-corpus semantic replay"]
     end
     R --> D{"Human promotion decision"}
@@ -230,7 +233,7 @@ circuit-breaker expectations.
 | Triage incomplete work | Workflow status and queue | `sfmea status`, `sfmea queue` | Analysis owner |
 | Plan hardening tests | Assurance register/work queue | `sfmea assurance` | Verification team |
 | Inspect generated-test evidence | HTML LLM-generated test governance card plus external proposal/receipt | `sfmea report`, `sfmea assurance-test-readiness` | Verification and independent evidence reviewers |
-| Qualify generated-test automation | Content-sealed generated-test quality result bound to its exact corpus, with paired raw-evidence replay for format 2 | `sfmea assurance-test-fault-evidence`, `sfmea assurance-test-fault-evidence-verify`, `sfmea assurance-test-quality-evaluate`, `sfmea assurance-test-quality-verify` | Independent model-evaluation authority |
+| Qualify generated-test automation | Content-sealed generated-test quality result bound to its exact corpus, with paired raw-evidence replay and format-3 campaign strata | `sfmea assurance-test-fault-evidence`, `sfmea assurance-test-fault-evidence-verify`, `sfmea assurance-test-quality-evaluate`, `sfmea assurance-test-quality-verify` | Independent model-evaluation authority |
 | Review source coverage | Inventory and coverage views | `sfmea inventory`, `sfmea coverage` | Tool and software assurance |
 | Audit NASA/FAA relationships | Citation trace | `sfmea citations` | Safety and compliance reviewers |
 | Transfer a frozen review set | Verified ZIP package | `sfmea package`, `sfmea verify-package` | Independent recipient |

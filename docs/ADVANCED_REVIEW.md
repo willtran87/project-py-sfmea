@@ -18,7 +18,7 @@ flowchart TB
     subgraph TESTS["Generated-test governance"]
         direction LR
         T["Generated-test proposal"] --> E["Human publication + per-test evidence gates"]
-        C["Independent generated-test corpus"] --> M["14 declared or 15 artifact-backed, derived gates"]
+        C["Independent generated-test corpus"] --> M["14 declared, 15 artifact-backed, or 25 stratified gates"]
         F["Paired manifests + raw artifacts"] --> M
         E --> D{"Human automation decision"}
         M --> D

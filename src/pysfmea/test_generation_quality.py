@@ -32,8 +32,11 @@ TEST_GENERATION_QUALITY_CORPUS_FORMAT = "pysfmea-test-generation-quality-corpus-
 TEST_GENERATION_QUALITY_RESULT_FORMAT = "pysfmea-test-generation-quality-result-1"
 TEST_GENERATION_EVIDENCE_CORPUS_FORMAT = "pysfmea-test-generation-quality-corpus-2"
 TEST_GENERATION_EVIDENCE_RESULT_FORMAT = "pysfmea-test-generation-quality-result-2"
+TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT = "pysfmea-test-generation-quality-corpus-3"
+TEST_GENERATION_CAMPAIGN_RESULT_FORMAT = "pysfmea-test-generation-quality-result-3"
 MAX_QUALITY_CORPUS_BYTES = 8_000_000
 MAX_QUALITY_RESULT_BYTES = 32_000_000
+MAX_QUALITY_RESULT_NODES = 1_000_000
 MAX_QUALITY_ANALYSIS_BYTES = 100_000_000
 MAX_QUALITY_SAMPLES = 10_000
 MAX_TEXT = 20_000
@@ -139,7 +142,7 @@ def load_test_generation_quality_result(source: str | Path) -> dict[str, Any]:
         label="test-generation quality result",
         max_bytes=MAX_QUALITY_RESULT_BYTES,
         max_depth=30,
-        max_nodes=100_000,
+        max_nodes=MAX_QUALITY_RESULT_NODES,
     )
     if not isinstance(document.value, dict):
         raise ValueError("test-generation quality result root must be an object")
@@ -683,6 +686,15 @@ def verify_test_generation_quality_result(
 ) -> dict[str, Any]:
     """Verify result integrity, exact corpus binding, and deterministic semantic replay."""
 
+    if corpus.get("format") == TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT:
+        from .test_generation_quality_campaign import (
+            verify_test_generation_quality_campaign_result,
+        )
+
+        return verify_test_generation_quality_campaign_result(
+            result, corpus, evidence_root=evidence_root
+        )
+
     errors: list[str] = []
     evidence_backed = corpus.get("format") == TEST_GENERATION_EVIDENCE_CORPUS_FORMAT
     expected_fields = _EVIDENCE_RESULT_FIELDS if evidence_backed else _RESULT_FIELDS
@@ -738,6 +750,6 @@ def export_test_generation_quality_result(
     return atomic_publish_text(
         destination,
         json.dumps(result, indent=2, ensure_ascii=False) + "\n",
-        max_bytes=2_000_000,
+        max_bytes=MAX_QUALITY_RESULT_BYTES,
         label="test-generation quality result",
     )

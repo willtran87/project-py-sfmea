@@ -140,8 +140,10 @@ from .test_generation_quality_schemas import (
     _assurance_test_generation_fault_evidence_schema,
     _assurance_test_generation_quality_corpus_schema,
     _assurance_test_generation_quality_corpus_v2_schema,
+    _assurance_test_generation_quality_corpus_v3_schema,
     _assurance_test_generation_quality_result_schema,
     _assurance_test_generation_quality_result_v2_schema,
+    _assurance_test_generation_quality_result_v3_schema,
 )
 from .test_generation_schemas import (
     _assurance_test_generation_readiness_schema,
@@ -9235,6 +9237,12 @@ _SCHEMA_BUILDERS = {
     "assurance-test-generation-quality-result-v2": (
         _assurance_test_generation_quality_result_v2_schema
     ),
+    "assurance-test-generation-quality-corpus-v3": (
+        _assurance_test_generation_quality_corpus_v3_schema
+    ),
+    "assurance-test-generation-quality-result-v3": (
+        _assurance_test_generation_quality_result_v3_schema
+    ),
     "assurance-test-generation-fault-evidence": (
         _assurance_test_generation_fault_evidence_schema
     ),
@@ -9331,6 +9339,8 @@ _SCHEMA_DESCRIPTIONS = {
     "assurance-test-generation-quality-result": "Recomputed subject-bound generated-test quality metrics and qualification gates.",
     "assurance-test-generation-quality-corpus-v2": "Artifact-backed provider/model/prompt corpus whose outcome claims are derived from exact retained lifecycle evidence.",
     "assurance-test-generation-quality-result-v2": "Replayed artifact-derived generated-test quality metrics, evidence manifest, and qualification gates.",
+    "assurance-test-generation-quality-corpus-v3": "Stratified artifact-backed generated-test campaign with chronology, repository, framework, domain, concentration, and fault-category controls.",
+    "assurance-test-generation-quality-result-v3": "Replayed artifact-derived generated-test metrics with segment populations, semantic fault diversity, and campaign-design qualification gates.",
     "assurance-test-generation-fault-evidence": "Content-sealed paired baseline/seeded execution record reconciled to one exact generated test, both manifests, and every retained raw artifact.",
     "assurance-test-proposal-apply-receipt": "Human-reviewed atomic publication receipt for one generated assurance test.",
     "assurance-test-proposal-apply-receipt-verification": "Receipt integrity, proposal, analysis, review attribution, and exact applied-file binding verdict.",

@@ -25,6 +25,7 @@ from .test_generation import (
     verify_test_proposal_stage,
 )
 from .test_generation_quality import (
+    TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT,
     TEST_GENERATION_EVIDENCE_CORPUS_FORMAT,
     evaluate_test_generation_quality,
     evaluate_test_generation_quality_evidence,
@@ -32,6 +33,9 @@ from .test_generation_quality import (
     load_test_generation_quality_corpus,
     load_test_generation_quality_result,
     verify_test_generation_quality_result,
+)
+from .test_generation_quality_campaign import (
+    evaluate_test_generation_quality_campaign,
 )
 from .test_generation_quality_evidence import (
     build_fault_detection_evidence,
@@ -417,16 +421,23 @@ def _fault_evidence_verify(args: argparse.Namespace) -> int:
 
 def _quality_evaluate(args: argparse.Namespace) -> int:
     corpus = load_test_generation_quality_corpus(args.corpus)
-    evidence_backed = corpus.get("format") == TEST_GENERATION_EVIDENCE_CORPUS_FORMAT
+    corpus_format = corpus.get("format")
+    evidence_backed = corpus_format in {
+        TEST_GENERATION_EVIDENCE_CORPUS_FORMAT,
+        TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT,
+    }
     if evidence_backed and not args.evidence_root:
-        raise ValueError("format-2 quality corpus requires --evidence-root")
+        raise ValueError("format-2/3 quality corpus requires --evidence-root")
     if not evidence_backed and args.evidence_root:
-        raise ValueError("--evidence-root is supported only for format-2 quality corpora")
-    result = (
-        evaluate_test_generation_quality_evidence(corpus, args.evidence_root)
-        if evidence_backed
-        else evaluate_test_generation_quality(corpus)
-    )
+        raise ValueError(
+            "--evidence-root is supported only for format-2/3 quality corpora"
+        )
+    if corpus_format == TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT:
+        result = evaluate_test_generation_quality_campaign(corpus, args.evidence_root)
+    elif evidence_backed:
+        result = evaluate_test_generation_quality_evidence(corpus, args.evidence_root)
+    else:
+        result = evaluate_test_generation_quality(corpus)
     output = export_test_generation_quality_result(result, args.output)
     print(
         f"Test-generation quality: {result['status']} "
@@ -439,9 +450,12 @@ def _quality_evaluate(args: argparse.Namespace) -> int:
 def _quality_verify(args: argparse.Namespace) -> int:
     result = load_test_generation_quality_result(args.result)
     corpus = load_test_generation_quality_corpus(args.corpus)
-    evidence_backed = corpus.get("format") == TEST_GENERATION_EVIDENCE_CORPUS_FORMAT
+    evidence_backed = corpus.get("format") in {
+        TEST_GENERATION_EVIDENCE_CORPUS_FORMAT,
+        TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT,
+    }
     if evidence_backed and not args.evidence_root:
-        raise ValueError("format-2 quality corpus requires --evidence-root")
+        raise ValueError("format-2/3 quality corpus requires --evidence-root")
     verification = verify_test_generation_quality_result(
         result, corpus, evidence_root=args.evidence_root
     )

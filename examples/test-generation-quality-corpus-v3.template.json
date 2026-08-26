@@ -1,0 +1,69 @@
+{
+  "format": "pysfmea-test-generation-quality-corpus-3",
+  "name": "Replace with a stratified artifact-backed generated-test campaign",
+  "subject": {
+    "provider": "replace-provider",
+    "model": "replace-model",
+    "prompt_version": "sfmea-assurance-test-generation-1"
+  },
+  "governance": {
+    "independent": true,
+    "labeled_by": "Replace with evaluation team",
+    "reviewed_by": "Replace with independent assurance authority",
+    "review_date": "2026-08-26",
+    "selection_method": "Replace with the predeclared stratified sampling method.",
+    "representativeness_rationale": "Replace with supported domains, frameworks, obligation classes, risks, and exclusions.",
+    "selection_frozen_at": "2026-08-25T12:00:00Z",
+    "outcomes_observed_at": "2026-08-26T12:00:00Z"
+  },
+  "policy": {
+    "min_samples": 20,
+    "min_proposed_samples": 10,
+    "min_refused_samples": 5,
+    "min_decision_accuracy": 0.9,
+    "min_valid_proposal_rate": 0.95,
+    "min_execution_pass_rate": 0.9,
+    "min_stimulus_observed_rate": 0.9,
+    "min_criteria_pass_rate": 0.9,
+    "min_fault_detection_rate": 0.85,
+    "min_reviewer_acceptance_rate": 0.85,
+    "max_unsafe_change_rate": 0.0,
+    "min_repositories": 3,
+    "min_frameworks": 2,
+    "min_domains": 2,
+    "min_fault_categories": 5,
+    "min_samples_per_repository": 4,
+    "min_samples_per_framework": 4,
+    "min_samples_per_domain": 4,
+    "require_decision_balance_per_repository": true,
+    "max_single_repository_fraction": 0.5
+  },
+  "samples": [
+    {
+      "id": "REPLACE-SAMPLE-001",
+      "expected_decision": "proposed",
+      "repository_id": "replace-repository-id",
+      "frameworks": ["replace-framework"],
+      "domains": ["replace-domain"],
+      "fault_category": "timeout",
+      "artifacts": {
+        "analysis": {
+          "path": "REPLACE-SAMPLE-001/analysis.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "proposal": {
+          "path": "REPLACE-SAMPLE-001/proposal.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "application_receipt": {
+          "path": "REPLACE-SAMPLE-001/application-receipt.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "fault_detection": {
+          "path": "REPLACE-SAMPLE-001/fault-detection.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      }
+    }
+  ]
+}

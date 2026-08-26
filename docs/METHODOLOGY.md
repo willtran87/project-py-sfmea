@@ -581,6 +581,13 @@ not evidence of unreachability, while a runtime-only edge may reflect dynamic di
 static view, or instrumentation mapping. The reconciliation is discovery evidence, not causal or
 path-completeness proof.
 
+The trace importer also classifies every mapped edge against uniquely resolved static pairs. A
+runtime-only edge can be correlated to an unresolved call site using an observed caller line or a
+bounded target-name heuristic. The retained candidate includes source, line, original reference,
+static resolution, observed target, and correlation method, and is explicitly not promoted into a
+static target. This provides a governed review bridge for dynamic dispatch while keeping the
+producer assertion, heuristic inference, and static fact distinct.
+
 Runtime JSON may carry a closed instrumentation manifest with scenario, producer, clock domain,
 sampling policy, expected components, expected relationships, dropped spans, and a completeness
 declaration. Import maps references through the same collision-aware component lookup. Component

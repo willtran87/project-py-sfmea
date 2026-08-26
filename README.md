@@ -37,8 +37,8 @@ flowchart LR
 - [Platform support and qualification evidence](docs/PLATFORM_SUPPORT.md)
 - [Product confidence gates](docs/QUALITY_GATES.md) — mutation, scale, maintainability,
   model-quality, and qualification-readiness boundaries
-- [Generated-test qualification campaigns](docs/GENERATED_TEST_CAMPAIGNS.md) — independent
-  format-2 sampling, raw-evidence retention, replay, and acceptance checklist
+- [Generated-test qualification campaigns](docs/GENERATED_TEST_CAMPAIGNS.md) — independent,
+  stratified format-3 sampling, raw-evidence retention, replay, and acceptance checklist
 - [Service threat model and residual-risk register](docs/THREAT_MODEL.md)
 - [Advanced review workflows](docs/ADVANCED_REVIEW.md) — saved views, accessibility,
   LLM synthesis, PR analysis, and the plugin SDK
@@ -1359,6 +1359,13 @@ source baseline, timestamp, mapping counts, mapping method, and audit event. Rei
 the same trace is idempotent. Code-file plus function attributes resolve otherwise
 ambiguous span names, and the CLI reports mapped and unmapped totals.
 
+Each imported parent-child edge now records `corroborated_static`, `runtime_only`, or `unmapped`
+alignment. For a runtime-only mapped edge, an instrumenter may supply
+`sfmea.caller.callsite.line` on the child span. PySFMEA correlates that line—or a bounded target-name
+heuristic—to unresolved scanner call sites and retains explicit review candidates. These records
+are labelled `review_candidate_not_static_target`: they connect dynamic evidence to source review
+without changing the static call graph or claiming causality.
+
 A trace object may include a closed `sfmea_instrumentation` manifest containing a scenario ID,
 producer, clock domain, sampling policy, expected component references, expected source-to-target
 relationships, dropped-span count, and completeness declaration. Import reconciles component
@@ -1745,11 +1752,15 @@ flowchart TB
     Q["Independent generated-test corpus"] --> QMODE{"Evidence mode"}
     QMODE -- "Format 1: declared" --> Q14["14 declared gates"]
     QMODE -- "Format 2: artifact-backed" --> QART["Root-confined analysis, proposal, receipt"]
+    QMODE -- "Format 3: stratified campaign" --> QSTRAT["Predeclared repository/framework/domain strata"]
     QART --> QEXE["Distinct baseline + seeded execution records"]
     QEXE --> QRAW["Manifest seals + raw artifact size/SHA-256"]
     QRAW --> Q15["15 artifact-backed, derived gates"]
+    QSTRAT --> QFAULT["Fault-category binding + concentration controls"]
+    QFAULT --> Q25["25 artifact-backed campaign gates"]
     Q14 --> QREPLAY["Content seal + exact-corpus replay"]
     Q15 --> QREPLAY
+    Q25 --> QREPLAY
   end
   K --> P{"Human promotion decision"}
   QREPLAY --> P
@@ -1868,6 +1879,22 @@ producer/model/prompt metadata must match the corpus subject, and duplicate evid
 increase sample credit; actor authentication and sample representativeness remain external. Use the
 [generated-test campaign runbook](docs/GENERATED_TEST_CAMPAIGNS.md) to structure repository
 selection, independent labeling, evidence retention, acceptance, and change-triggered requalification.
+
+For promotion decisions, prefer format 3. It retains format 2's exact artifact replay and adds
+pre-outcome selection timestamps, minimum repository/framework/domain populations, per-stratum
+sample floors, repository decision balance, a maximum repository concentration, and fault-category
+diversity. A proposed sample's declared category must bind its retained seeded `fault_id` (for
+example, `timeout:MUTATION-001`); refused samples cannot claim a category. The result exposes all
+segment populations and 25 gates without treating declared strata as proof of representativeness.
+
+```powershell
+Copy-Item examples/test-generation-quality-corpus-v3.template.json `
+  (Join-Path $evidenceRoot "corpus.json")
+sfmea assurance-test-quality-evaluate (Join-Path $evidenceRoot "corpus.json") `
+  --evidence-root $evidenceRoot --require-qualified -o campaign-quality-result.json
+sfmea assurance-test-quality-verify campaign-quality-result.json `
+  (Join-Path $evidenceRoot "corpus.json") --evidence-root $evidenceRoot
+```
 
 For high-value dependency, interface, timing, persistence, detection, and circuit-breaker
 obligations, PySFMEA provides governed executable fault-injection plugins. List them and create an
@@ -2645,7 +2672,7 @@ Strict typing covers the complete `pysfmea` package and the release-gate scripts
 mutation gate targets plan verification, outcome and false-pass verdicts, and sandbox command
 policy, runtime-corroboration scoring, and governed LLM-corpus projection. Its aggregate and
 per-function ratchets prevent cross-function masking while keeping
-surviving mutants visible as test-oracle debt. CI also loads the 5,000-record deterministic scale
+surviving mutants visible as test-oracle debt. CI also loads the 10,000-record deterministic scale
 report in Chromium and exercises a retained dynamic-Python boundary corpus. Coverage has both a
 complete-package floor and higher module-specific floors for critical boundaries.
 

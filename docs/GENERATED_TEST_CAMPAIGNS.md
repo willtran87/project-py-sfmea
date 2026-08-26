@@ -1,8 +1,8 @@
 # Generated-test qualification campaigns
 
 Use this runbook when deciding whether a specific provider, model, and PySFMEA prompt version is
-ready for a supervised test-generation pilot. It operationalizes the artifact-backed format-2
-corpus; it does not authorize autonomous publication or replace the seven readiness gates applied
+ready for a supervised test-generation pilot. It operationalizes the stratified, artifact-backed
+format-3 corpus; it does not authorize autonomous publication or replace the seven readiness gates applied
 to every generated test. Those per-test gates still require the closed proposal's import-qualified
 target binding, named publication review, exact registration, restricted execution, observed
 stimulus, complete criteria, intact evidence, and independent evidence review.
@@ -40,7 +40,7 @@ sequenceDiagram
     participant Analysis as Governed analysis
     participant Baseline as Baseline evidence directory
     participant Seeded as Seeded evidence directory
-    participant Evaluator as Format-2 evaluator
+    participant Evaluator as Format-3 evaluator
 
     Reviewer->>Builder: Build(sample, baseline ID, seeded ID, evidence root)
     Builder->>Analysis: Resolve both executions and exact test SHA-256
@@ -54,15 +54,17 @@ sequenceDiagram
     Evaluator->>Analysis: Replay lifecycle and execution bindings
     Evaluator->>Baseline: Replay manifest and raw artifact verification
     Evaluator->>Seeded: Replay manifest and raw artifact verification
-    Evaluator-->>Reviewer: 15 derived gates or fail-closed error
+    Evaluator-->>Reviewer: 25 derived campaign gates or fail-closed error
 ```
 
 ## Independent campaign workflow
 
 1. Freeze the provider, model, prompt version, generation settings, repository revision, and
-   environment. Select repositories and obligations before observing generation outcomes.
+   environment. Record `selection_frozen_at` before `outcomes_observed_at`; select repositories and
+   obligations before observing generation outcomes.
 2. Record the selection method and representativeness rationale. Include proposed and refused
-   cases, multiple repositories, domains, and frameworks appropriate to the intended use.
+   cases, multiple repositories, domains, and frameworks appropriate to the intended use. Declare
+   minimum populations, per-stratum floors, decision balance, and repository concentration limits.
 3. Have a labeler define the expected proposal/refusal decision and seeded fault independently of
    the model. Keep labeler, evidence producer, and final reviewer roles separate where required.
 4. Retain the exact analysis, proposal, application receipt, execution manifests, and raw run
@@ -71,14 +73,17 @@ sequenceDiagram
 
    ```powershell
    sfmea assurance-test-fault-evidence SAMPLE-001/analysis.json SAMPLE-001 `
-     EXEC-BASELINE-001 EXEC-SEEDED-001 --fault-id MUTATION-001 `
+     EXEC-BASELINE-001 EXEC-SEEDED-001 --fault-id timeout:MUTATION-001 `
      --environment "locked qualification container" `
      --evidence-root . -o SAMPLE-001/fault.json
    sfmea assurance-test-fault-evidence-verify SAMPLE-001/fault.json `
      --analysis SAMPLE-001/analysis.json --evidence-root . --json
    ```
 
-6. Complete `corpus.json` with root-relative, content-addressed artifact references, then evaluate
+6. Copy `examples/test-generation-quality-corpus-v3.template.json`. Complete `corpus.json` with
+   root-relative, content-addressed artifact references and reviewed repository, framework, domain,
+   and fault-category labels. A proposed sample's category must equal its seeded fault ID or prefix
+   it with `category:`; refused samples use `null`. Then evaluate
    and replay the exact result:
 
    ```powershell
@@ -87,14 +92,19 @@ sequenceDiagram
    sfmea assurance-test-quality-verify result.json corpus.json --evidence-root .
    ```
 
-7. Review all 15 gates, segment populations, refusals, unsafe attempts, and failed samples. Record
-   the human promotion decision outside the evaluator. Preserve unsuccessful evidence; replacing
+7. Review all 25 gates, segment populations, category populations, refusals, unsafe attempts, and
+   failed samples. Record the human promotion decision outside the evaluator. Preserve unsuccessful evidence; replacing
    it after seeing outcomes invalidates the campaign design.
 
 ## Acceptance checklist
 
 - [ ] The subject exactly identifies provider, model, and prompt version.
 - [ ] Sample selection predates observed outcomes and covers the declared intended use.
+- [ ] Repository, framework, and domain populations and per-stratum floors meet policy; no single
+      repository exceeds the concentration limit.
+- [ ] Every repository contains both expected proposal and refusal cases when balance is required.
+- [ ] Proposed samples cover the required seeded-fault categories and each category binds the
+      retained seeded fault ID; refused samples claim no fault category.
 - [ ] Proposed and refused populations meet the declared minimums.
 - [ ] Labeler and reviewer identities and dates are retained; required independence is satisfied.
 - [ ] Every reference is relative to one evidence root and matches its exact bytes.
@@ -102,7 +112,7 @@ sequenceDiagram
 - [ ] Baseline passes, seeded execution fails, both bind the same generated test, and every raw
       artifact verifies at its recorded size and SHA-256.
 - [ ] Duplicate artifact bundles do not increase sample credit.
-- [ ] Evaluation and exact-corpus replay agree, and all 15 gates pass before promotion.
+- [ ] Evaluation and exact-corpus replay agree, and all 25 gates pass before promotion.
 - [ ] Per-test planning, review, restricted execution, evidence review, and publication authority
       remain enforced after subject qualification.
 
@@ -113,3 +123,7 @@ does not prove that the repositories are representative, authenticate human iden
 reviewer competence, demonstrate test semantic adequacy beyond the supplied stimuli/faults, or
 grant certification or publication authority. Add new independent samples when the model, prompt,
 tool version, target frameworks, domains, or intended use materially changes.
+
+Corpus ingestion is bounded to 8 MB, 30 levels, 300,000 JSON nodes, and 10,000 samples. Replayed
+result ingestion/publication is bounded to 32 MB, 30 levels, and 1,000,000 nodes so the expanded
+artifact manifest and segment projections remain usable without becoming unbounded inputs.

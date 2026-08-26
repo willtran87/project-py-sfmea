@@ -654,7 +654,9 @@ passing; a schema-valid failed gate remains preserved as trustworthy negative ev
 Sequence views reconcile bounded static and imported runtime relations. Treat
 `runtime_corroborated` as supporting execution evidence, `not_observed` as an instrumentation or
 test-selection question rather than proof of unreachability, and `runtime_only` as a prompt to
-review dynamic dispatch, mapping, and static bounds. Guidance governance metrics similarly
+review dynamic dispatch, mapping, and static bounds. Imported edges expose static-alignment counts;
+optional `sfmea.caller.callsite.line` attributes correlate runtime-only edges to unresolved source
+sites as review candidates without rewriting the static graph. Guidance governance metrics similarly
 distinguish maintainer curation from independent project or regulatory approval.
 
 ### Repository accounting states
@@ -717,10 +719,13 @@ flowchart TB
     C["Independent generated-test corpus"] --> QMODE{"Evidence mode"}
     QMODE -- "Format 1" --> Q14["14 declared gates"]
     QMODE -- "Format 2" --> QART["Exact lifecycle artifacts"]
+    QMODE -- "Format 3" --> QSTRAT["Predeclared campaign strata"]
     QART --> QRAW["Paired executions + manifests + raw artifacts"]
     QRAW --> Q15["15 artifact-backed, derived gates"]
+    QSTRAT --> Q25["25 replayed campaign gates"]
     Q14 --> QREPLAY["Content integrity + corpus replay"]
     Q15 --> QREPLAY
+    Q25 --> QREPLAY
   end
   R --> D{"Human promotion decision"}
   QREPLAY --> D
@@ -774,13 +779,19 @@ execution, stimulus, criteria, seeded-fault, reviewer-acceptance, and unsafe-cha
 qualifies only the retained sample and exact subject. It does not replace any per-test readiness
 gate or authorize automatic publication.
 
-Prefer format 2 for promotion decisions. Run the same commands with
+Format 2 provides exact artifact replay. Run the same commands with
 `examples/test-generation-quality-corpus-v2.template.json` and `--evidence-root PATH`. Each sample
 then names exact analysis/proposal artifacts and, for proposed tests, the publication receipt and a
 content-sealed paired baseline/seeded-fault record. The evaluator derives the outcome fields,
 replays lifecycle verification against the current exact repository bytes, and adds an artifact-
 derived-claims gate. Refused samples must not attach execution artifacts. Missing, linked, escaping,
 oversized, stale, digest-mismatched, subject-mismatched, or duplicate evidence fails closed.
+
+Prefer format 3 for promotion decisions. Its
+`examples/test-generation-quality-corpus-v3.template.json` adds pre-outcome selection timestamps,
+repository/framework/domain strata, per-stratum sample floors, repository concentration and
+decision-balance limits, and seeded-fault category diversity. All format-2 controls remain active;
+the evaluator publishes segment metrics and requires all 25 gates to pass.
 
 Build—not hand-author—the paired fault record after both runs are retained in the analysis:
 

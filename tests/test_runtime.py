@@ -199,6 +199,54 @@ class RuntimeNormalizationTests(unittest.TestCase):
             edge = analysis["runtime_evidence"]["edges"][0]
             self.assertEqual(edge["timing_status"], "observed")
             self.assertEqual(edge["duration_ns"], 8)
+            self.assertEqual(edge["static_alignment"], "runtime_only")
+            self.assertEqual(record["edge_alignment"]["runtime_only"], 1)
+
+    def test_runtime_edge_correlates_unresolved_dynamic_call_site(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "dispatch.py").write_text(
+                "def target():\n"
+                "    return 1\n\n"
+                "def dispatch(fn):\n"
+                "    return fn()\n",
+                encoding="utf-8",
+            )
+            analysis = scan_repository(root)
+            components = {item["name"]: item for item in analysis["components"]}
+            call_line = components["dispatch"]["call_sites"][0]["line"]
+            trace = root / "dynamic.json"
+            trace.write_text(
+                json.dumps(
+                    {
+                        "spans": [
+                            {
+                                "trace_id": "T",
+                                "span_id": "P",
+                                "name": "dispatch",
+                            },
+                            {
+                                "trace_id": "T",
+                                "span_id": "C",
+                                "parent_span_id": "P",
+                                "name": "target",
+                                "attributes": {
+                                    "sfmea.caller.callsite.line": call_line
+                                },
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            record = import_runtime_trace(analysis, trace)
+            edge = analysis["runtime_evidence"]["edges"][0]
+            self.assertEqual(edge["static_alignment"], "runtime_only")
+            self.assertEqual(record["dynamic_call_site_candidate_count"], 1)
+            candidate = edge["dynamic_call_site_candidates"][0]
+            self.assertEqual(candidate["reference"], "fn")
+            self.assertEqual(candidate["correlation"], "observed_callsite_line")
+            self.assertEqual(candidate["claim"], "review_candidate_not_static_target")
 
     def test_instrumentation_manifest_reconciles_expected_scope(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

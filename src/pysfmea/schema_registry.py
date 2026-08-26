@@ -32,6 +32,8 @@ SCHEMA_FILENAMES = {
     "assurance-test-generation-quality-result": "pysfmea-assurance-test-generation-quality-result.schema.json",
     "assurance-test-generation-quality-corpus-v2": "pysfmea-assurance-test-generation-quality-corpus-v2.schema.json",
     "assurance-test-generation-quality-result-v2": "pysfmea-assurance-test-generation-quality-result-v2.schema.json",
+    "assurance-test-generation-quality-corpus-v3": "pysfmea-assurance-test-generation-quality-corpus-v3.schema.json",
+    "assurance-test-generation-quality-result-v3": "pysfmea-assurance-test-generation-quality-result-v3.schema.json",
     "assurance-test-generation-fault-evidence": "pysfmea-assurance-test-generation-fault-evidence.schema.json",
     "assurance-test-proposal-stage": "pysfmea-assurance-test-proposal-stage.schema.json",
     "assurance-test-proposal-stage-verification": "pysfmea-assurance-test-proposal-stage-verification.schema.json",
