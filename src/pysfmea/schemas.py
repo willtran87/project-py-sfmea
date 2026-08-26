@@ -136,6 +136,10 @@ from .synthesis import (
     SYNTHESIS_FORMAT,
     SYNTHESIS_VERIFICATION_FORMAT,
 )
+from .test_generation_quality_schemas import (
+    _assurance_test_generation_quality_corpus_schema,
+    _assurance_test_generation_quality_result_schema,
+)
 from .test_generation_schemas import (
     _assurance_test_generation_readiness_schema,
     _assurance_test_proposal_apply_receipt_schema,
@@ -9216,6 +9220,12 @@ _SCHEMA_BUILDERS = {
     "assurance-scaffold-verification": _assurance_scaffold_verification_schema,
     "assurance-test-proposal": _assurance_test_proposal_schema,
     "assurance-test-generation-readiness": _assurance_test_generation_readiness_schema,
+    "assurance-test-generation-quality-corpus": (
+        _assurance_test_generation_quality_corpus_schema
+    ),
+    "assurance-test-generation-quality-result": (
+        _assurance_test_generation_quality_result_schema
+    ),
     "assurance-test-proposal-apply-receipt": (
         _assurance_test_proposal_apply_receipt_schema
     ),
@@ -9305,6 +9315,8 @@ _SCHEMA_DESCRIPTIONS = {
     "assurance-scaffold-verification": "Scaffold integrity, synthesized-design, generated-file, lifecycle, and exact analysis-binding verdict.",
     "assurance-test-proposal": "Closed, source-bound, allowlisted LLM proposal for one accepted assurance-test obligation.",
     "assurance-test-generation-readiness": "Proposal-to-publication-to-independent-evidence readiness gates for one generated test.",
+    "assurance-test-generation-quality-corpus": "Independently labeled provider/model/prompt corpus for generated-test validity, execution, effectiveness, and safety.",
+    "assurance-test-generation-quality-result": "Recomputed subject-bound generated-test quality metrics and qualification gates.",
     "assurance-test-proposal-apply-receipt": "Human-reviewed atomic publication receipt for one generated assurance test.",
     "assurance-test-proposal-apply-receipt-verification": "Receipt integrity, proposal, analysis, review attribution, and exact applied-file binding verdict.",
     "assurance-test-proposal-stage": "Integrity-declaring isolated review-stage manifest for a verified generated test.",

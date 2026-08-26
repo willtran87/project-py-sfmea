@@ -5,6 +5,14 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Strengthen governed LLM test implementation with exact import-qualified target binding inside
+  the named test, rejecting local lookalikes, wrong modules, rebound aliases, and collection-only
+  calls. Add a subject-bound, independently governed test-generation quality corpus and evaluator
+  with expected and actual proposal/refusal populations plus validity, execution, stimulus,
+  criteria, seeded-fault, reviewer, and unsafe-change gates. Content-seal results and support exact-
+  corpus semantic replay. Surface LLM-origin registration and internal
+  evidence readiness in the self-contained HTML assurance view while keeping proposal/publication
+  receipts explicitly external.
 - Add a governed LLM assurance-test generation workflow: bounded source-grounded packets,
   closed proposal validation, three-attempt repair provenance, isolated staging, explicit
   human publication receipts, and seven fail-closed readiness gates covering registration,

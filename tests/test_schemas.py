@@ -92,6 +92,8 @@ class SchemaCatalogTests(unittest.TestCase):
                 "assurance-program-verification",
                 "assurance-scaffold",
                 "assurance-scaffold-verification",
+                "assurance-test-generation-quality-corpus",
+                "assurance-test-generation-quality-result",
                 "assurance-test-generation-readiness",
                 "assurance-test-proposal",
                 "assurance-test-proposal-apply-receipt",

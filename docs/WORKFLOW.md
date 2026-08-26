@@ -722,12 +722,30 @@ sfmea assurance-test-apply $stage $proposal --analysis $analysis --approve `
 
 The packet is inventory-hash bound, source text is explicitly untrusted as instructions, likely
 embedded secrets block provider invocation, and live source egress requires a separate approval.
-The response may create one exact test file only. At most three total attempts are permitted, with
+The response may create one exact test file only. Its named test must import and invoke the exact
+analyzed target identity; wrong modules, local lookalikes, rebound aliases, and collection-only
+calls are rejected. At most three total attempts are permitted, with
 bounded validator feedback retained in proposal provenance. Application refuses overwrite and
 atomically publishes the test with a named-review receipt. Register the exact file with origin
 `llm_generated`, execute it through the restricted assurance runner, adjudicate all criteria with
 an independent reviewer, then run `sfmea assurance-test-readiness`. All seven gates must pass;
 generation and publication are not evidence.
+
+Before promoting a provider/model/prompt beyond supervised pilots, independently label the
+generated-test-specific corpus template and enforce its declared thresholds:
+
+```powershell
+sfmea assurance-test-quality-evaluate `
+  examples/test-generation-quality-corpus.json `
+  --require-qualified -o test-generation-quality-result.json
+sfmea assurance-test-quality-verify test-generation-quality-result.json `
+  examples/test-generation-quality-corpus.json
+```
+
+The evaluator requires both expected and actual proposal/refusal populations, content-seals the
+result for exact-corpus replay, and recomputes
+decision, validity, binding, execution, stimulus, criteria, seeded-fault, reviewer-acceptance, and
+unsafe-change metrics. Passing qualifies only the retained sample and exact subject.
 
 For a high-value dependency or resilience obligation, generate and verify an explicit
 fault-injection plan before implementing the corresponding test:

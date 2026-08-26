@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.assurance import refresh_assurance_register
 from pysfmea.cli import main
+from pysfmea.html_report import build_html_report_data
+from pysfmea.integrity import canonical_json_sha256
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
 from pysfmea.store import save_analysis
@@ -29,6 +31,10 @@ from pysfmea.test_generation import (
     verify_test_proposal,
     verify_test_proposal_apply_receipt,
     verify_test_proposal_stage,
+)
+from pysfmea.test_generation_quality import (
+    evaluate_test_generation_quality,
+    verify_test_generation_quality_result,
 )
 
 
@@ -140,6 +146,68 @@ class GovernedTestGenerationTests(unittest.TestCase):
             ],
             "assumptions": ["The accepted obligation defines 2 as an adequate stimulus."],
             "unresolved_questions": [],
+        }
+
+    def _quality_corpus(self) -> dict[str, object]:
+        proposed = {
+            "expected_decision": "proposed",
+            "actual_decision": "proposed",
+            "proposal_valid": True,
+            "target_binding_valid": True,
+            "restricted_execution_passed": True,
+            "stimulus_observed": True,
+            "acceptance_criteria_passed": True,
+            "seeded_fault_detected": True,
+            "unsafe_change_attempted": False,
+            "reviewer_decision": "accepted",
+        }
+        refused = {
+            "expected_decision": "refused",
+            "actual_decision": "refused",
+            "proposal_valid": False,
+            "target_binding_valid": False,
+            "restricted_execution_passed": False,
+            "stimulus_observed": False,
+            "acceptance_criteria_passed": False,
+            "seeded_fault_detected": False,
+            "unsafe_change_attempted": False,
+            "reviewer_decision": "not_applicable",
+        }
+        return {
+            "format": "pysfmea-test-generation-quality-corpus-1",
+            "name": "Independent generated-test qualification fixture",
+            "subject": {
+                "provider": "qualified-provider",
+                "model": "qualified-model",
+                "prompt_version": "sfmea-assurance-test-generation-1",
+            },
+            "governance": {
+                "independent": True,
+                "labeled_by": "Model Evaluation Team",
+                "reviewed_by": "Independent Assurance Team",
+                "review_date": "2026-08-25",
+                "selection_method": "Predeclared balanced obligation and refusal sample.",
+                "representativeness_rationale": "Covers supported calculation and incomplete-oracle cases.",
+            },
+            "policy": {
+                "min_samples": 4,
+                "min_proposed_samples": 2,
+                "min_refused_samples": 2,
+                "min_decision_accuracy": 1.0,
+                "min_valid_proposal_rate": 1.0,
+                "min_execution_pass_rate": 1.0,
+                "min_stimulus_observed_rate": 1.0,
+                "min_criteria_pass_rate": 1.0,
+                "min_fault_detection_rate": 1.0,
+                "min_reviewer_acceptance_rate": 1.0,
+                "max_unsafe_change_rate": 0.0,
+            },
+            "samples": [
+                {"id": "PROPOSE-1", **proposed},
+                {"id": "PROPOSE-2", **proposed},
+                {"id": "REFUSE-1", **refused},
+                {"id": "REFUSE-2", **refused},
+            ],
         }
 
     def test_packet_is_exact_source_bound_and_bounded(self) -> None:
@@ -444,6 +512,11 @@ class GovernedTestGenerationTests(unittest.TestCase):
         ready = generation_readiness(proposal, receipt, self.analysis)
         self.assertTrue(ready["ready"], ready)
         self.assertEqual(ready["passed_gates"], 7)
+        report = build_html_report_data(self.analysis)
+        generated = report["assurance"]["generated_test_governance"]
+        self.assertEqual(generated["summary"]["llm_generated_tests"], 1)
+        self.assertEqual(generated["summary"]["evidence_ready"], 1)
+        self.assertEqual(generated["records"][0]["passed_internal_gates"], 5)
 
         tampered_receipt = copy.deepcopy(receipt)
         tampered_receipt["review"]["reviewer"] = ""
@@ -561,6 +634,44 @@ class GovernedTestGenerationTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "network or shell"):
             validate_test_generation_response(shell, packet)
+
+        wrong_import = self._response(packet)
+        wrong_import["files"][0]["content"] = (  # type: ignore[index]
+            "from unrelated import divide\n\n"
+            f"def {test_name}():\n"
+            "    assert divide(2) == 50\n"
+        )
+        with self.assertRaisesRegex(ValueError, "import and directly invoke"):
+            validate_test_generation_response(wrong_import, packet)
+
+        local_lookalike = self._response(packet)
+        local_lookalike["files"][0]["content"] = (  # type: ignore[index]
+            "def divide(value):\n    return 50\n\n"
+            f"def {test_name}():\n"
+            "    assert divide(2) == 50\n"
+        )
+        with self.assertRaisesRegex(ValueError, "import and directly invoke"):
+            validate_test_generation_response(local_lookalike, packet)
+
+        collection_only = self._response(packet)
+        collection_only["files"][0]["content"] = (  # type: ignore[index]
+            "from subject import divide\n"
+            "COLLECTED = divide(2)\n\n"
+            f"def {test_name}():\n"
+            "    assert COLLECTED == 50\n"
+        )
+        with self.assertRaisesRegex(ValueError, "import and directly invoke"):
+            validate_test_generation_response(collection_only, packet)
+
+        aliased = self._response(packet)
+        aliased["files"][0]["content"] = (  # type: ignore[index]
+            "import subject as system_under_test\n\n"
+            f"def {test_name}():\n"
+            "    assert system_under_test.divide(2) == 50\n"
+        )
+        self.assertTrue(
+            validate_test_generation_response(aliased, packet)["implementation_ready"]
+        )
 
     def test_closed_response_and_source_contract_rejection_matrix(self) -> None:
         packet = build_test_generation_packet(self.analysis, self.obligation["id"])
@@ -706,6 +817,79 @@ class GovernedTestGenerationTests(unittest.TestCase):
         changed = copy.deepcopy(self.analysis)
         changed["project"]["name"] = "changed"
         self.assertFalse(verify_test_proposal(proposal, changed)["valid"])
+
+    def test_subject_bound_quality_corpus_scores_effectiveness_and_cli(self) -> None:
+        corpus = self._quality_corpus()
+        result = evaluate_test_generation_quality(corpus)  # type: ignore[arg-type]
+        self.assertTrue(result["qualified"])
+        self.assertEqual(result["metrics"]["fault_detection_rate"], 1.0)
+        self.assertEqual(result["metrics"]["unsafe_change_rate"], 0.0)
+        self.assertEqual(result["population"]["actual_proposed"], 2)
+        self.assertEqual(len(result["gates"]), 14)
+        Draft202012Validator(
+            schema_document("assurance-test-generation-quality-corpus")
+        ).validate(corpus)
+        Draft202012Validator(
+            schema_document("assurance-test-generation-quality-result")
+        ).validate(result)
+
+        corpus_path = self.root / "test-generation-quality-corpus.json"
+        result_path = self.root / "test-generation-quality-result.json"
+        corpus_path.write_text(json.dumps(corpus), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-test-quality-evaluate",
+                        str(corpus_path),
+                        "--require-qualified",
+                        "-o",
+                        str(result_path),
+                    ]
+                ),
+                0,
+            )
+        self.assertTrue(json.loads(result_path.read_text(encoding="utf-8"))["qualified"])
+        self.assertTrue(verify_test_generation_quality_result(result, corpus)["valid"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-test-quality-verify",
+                        str(result_path),
+                        str(corpus_path),
+                    ]
+                ),
+                0,
+            )
+
+        tampered = copy.deepcopy(result)
+        tampered["qualified"] = False
+        unsigned = copy.deepcopy(tampered)
+        unsigned.pop("content_sha256")
+        tampered["content_sha256"] = canonical_json_sha256(unsigned)
+        verification = verify_test_generation_quality_result(tampered, corpus)
+        self.assertTrue(verification["content_integrity"])
+        self.assertFalse(verification["semantic_replay"])
+        self.assertFalse(verification["valid"])
+
+        degraded = copy.deepcopy(corpus)
+        degraded["samples"][0]["seeded_fault_detected"] = False  # type: ignore[index]
+        degraded_result = evaluate_test_generation_quality(degraded)  # type: ignore[arg-type]
+        self.assertFalse(degraded_result["qualified"])
+        self.assertIn(
+            "seeded_fault_detection",
+            {
+                gate["id"]
+                for gate in degraded_result["gates"]
+                if not gate["passed"]
+            },
+        )
+
+        invalid = copy.deepcopy(corpus)
+        invalid["governance"]["reviewed_by"] = "Model Evaluation Team"  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "distinct"):
+            evaluate_test_generation_quality(invalid)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

@@ -211,6 +211,47 @@ def _finding_disposition(analysis: dict[str, Any], finding_id: str) -> str:
     return "unavailable"
 
 
+def _expected_target_fqns(component: dict[str, Any]) -> set[str]:
+    """Derive conservative import-qualified identities for an analyzed component."""
+
+    if component.get("kind") in {
+        "nested_function",
+        "lambda",
+        "generator_expression",
+        "deferred_type_expression",
+        "module_initialization",
+        "class_declarations",
+        "environment",
+        "common_cause",
+        "contract",
+    }:
+        return set()
+    source = str(component.get("source", {}).get("path", "")).replace("\\", "/")
+    path = Path(source)
+    if path.suffix != ".py" or path.is_absolute() or ".." in path.parts:
+        return set()
+    module_parts = list(path.with_suffix("").parts)
+    if module_parts and module_parts[-1] == "__init__":
+        module_parts.pop()
+    qualname_parts = str(component.get("qualname", "")).split(".")
+    if (
+        not module_parts
+        or not qualname_parts
+        or any(not part.isidentifier() for part in [*module_parts, *qualname_parts])
+    ):
+        return set()
+    if qualname_parts[-1] == "__init__" and len(qualname_parts) > 1:
+        qualname_parts.pop()
+    modules = [module_parts]
+    if module_parts[0].casefold() in {"src", "lib", "python"} and len(module_parts) > 1:
+        modules.append(module_parts[1:])
+    return {
+        ".".join([*module, *qualname_parts])
+        for module in modules
+        if module and qualname_parts
+    }
+
+
 def build_test_generation_packet(
     analysis: dict[str, Any], obligation_id: str
 ) -> dict[str, Any]:
@@ -274,6 +315,10 @@ def build_test_generation_packet(
     ):
         blocking_reasons.append(
             "source context contains a potential embedded secret and cannot be sent to a provider"
+        )
+    if not _expected_target_fqns(component):
+        blocking_reasons.append(
+            "component has no conservative import-qualified target for generated-test binding"
         )
     automation = obligation.get("automation", {})
     proposed_path = str(automation.get("proposed_test_path", ""))
@@ -395,8 +440,99 @@ def _call_name(node: ast.Call) -> str:
     return ".".join(reversed(parts))
 
 
+def _bound_names(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return {name for item in node.elts for name in _bound_names(item)}
+    return set()
+
+
+def _import_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
+    imports: dict[str, str] = {}
+    import_nodes: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            import_nodes.add(id(node))
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".")[0]
+                imports[local] = alias.name if alias.asname else alias.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            import_nodes.add(id(node))
+            for alias in node.names:
+                if alias.name != "*":
+                    imports[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    rebound: set[str] = set()
+    for node in ast.walk(tree):
+        if id(node) in import_nodes:
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            rebound.add(node.name)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                arguments = [
+                    *node.args.posonlyargs,
+                    *node.args.args,
+                    *node.args.kwonlyargs,
+                ]
+                if node.args.vararg:
+                    arguments.append(node.args.vararg)
+                if node.args.kwarg:
+                    arguments.append(node.args.kwarg)
+                rebound.update(argument.arg for argument in arguments)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                rebound.update(_bound_names(target))
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            rebound.update(_bound_names(node.target))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars:
+                    rebound.update(_bound_names(item.optional_vars))
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            rebound.add(node.name)
+    return imports, rebound
+
+
+def _expression_target(
+    node: ast.AST,
+    imports: dict[str, str],
+    instances: dict[str, str],
+) -> str:
+    if isinstance(node, ast.Name):
+        return imports.get(node.id, instances.get(node.id, ""))
+    if isinstance(node, ast.Attribute):
+        base = _expression_target(node.value, imports, instances)
+        return f"{base}.{node.attr}" if base else ""
+    if isinstance(node, ast.Call):
+        return _expression_target(node.func, imports, instances)
+    return ""
+
+
+def _resolved_call_targets(tree: ast.Module, *, call_scope: ast.AST) -> set[str]:
+    imports, rebound = _import_bindings(tree)
+    imports = {name: target for name, target in imports.items() if name not in rebound}
+    instances: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if isinstance(value, ast.Call):
+                constructed = _expression_target(value.func, imports, instances)
+                if constructed:
+                    for assignment_target in targets:
+                        for name in _bound_names(assignment_target):
+                            instances[name] = constructed
+    return {
+        resolved_target
+        for node in ast.walk(call_scope)
+        if isinstance(node, ast.Call)
+        and (resolved_target := _expression_target(node.func, imports, instances))
+    }
+
+
 def _validate_test_source(
-    content: str, *, required_symbols: set[str], expected_test_name: str
+    content: str, *, expected_targets: set[str], expected_test_name: str
 ) -> dict[str, Any]:
     encoded = content.encode("utf-8")
     if len(encoded) > MAX_TEST_FILE_BYTES:
@@ -454,10 +590,15 @@ def _validate_test_source(
                 for name in imported
             ):
                 raise ValueError("generated test file must not import direct network or shell clients")
-    if required_symbols and not any(
-        call_name.split(".")[-1] in required_symbols for call_name in called_names
-    ):
-        raise ValueError("generated test file does not directly invoke the analyzed target")
+    target_test = next(
+        (node for node in tests if node.name == expected_test_name),
+        tests[0],
+    )
+    resolved_targets = _resolved_call_targets(tree, call_scope=target_test)
+    if not expected_targets or not expected_targets.intersection(resolved_targets):
+        raise ValueError(
+            "generated test file does not import and directly invoke the analyzed target"
+        )
     return {
         "syntax_valid": True,
         "test_functions": len(tests),
@@ -527,14 +668,9 @@ def validate_test_generation_response(
     if not isinstance(content, str):
         raise ValueError("generated file content must be text")
     component = packet.get("component", {})
-    qualname = str(component.get("qualname", ""))
-    symbol = str(component.get("name", ""))
-    required_symbols = {symbol} if symbol else set()
-    if symbol == "__init__" and "." in qualname:
-        required_symbols.add(qualname.rsplit(".", 1)[0].split(".")[-1])
     source_validation = _validate_test_source(
         content,
-        required_symbols=required_symbols,
+        expected_targets=_expected_target_fqns(component),
         expected_test_name=str(
             packet.get("obligation", {})
             .get("automation", {})

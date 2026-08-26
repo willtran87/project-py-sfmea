@@ -1779,6 +1779,10 @@ and shell/dynamic execution are rejected. Staging stays outside the repository. 
 overwrites an existing test and publishes the reviewed test and its integrity receipt as a
 coordinated pair with rollback on failure.
 
+Target invocation is import-qualified, not name-matched: the generated test must import the
+analyzed module/class/function identity and call it inside the obligation's named test. Wrong-module
+lookalikes, local replacements, rebound import aliases, and collection-time-only calls fail closed.
+
 The seven readiness gates require a still-valid proposal, verified human publication review,
 exact `llm_generated` registration, passing restricted execution, observed failure stimulus, all
 pre-existing acceptance criteria passing, and an independent sufficient-evidence decision. Model
@@ -1790,6 +1794,29 @@ format-3 LLM quality corpus whose subject uses prompt version
 `sfmea-assurance-test-generation-1`. That corpus qualifies the named provider/model/prompt sample;
 the per-test readiness gates still supply the execution and effectiveness evidence and neither
 mechanism proves representativeness by itself.
+
+For generated code, use the specific corpus template at
+[`examples/test-generation-quality-corpus.template.json`](examples/test-generation-quality-corpus.template.json).
+It measures proposal/refusal decision accuracy, closed-proposal validity, exact target binding,
+restricted execution, stimulus observation, criteria completion, seeded-fault detection,
+independent reviewer acceptance, and unsafe-change attempts:
+
+```powershell
+sfmea assurance-test-quality-evaluate test-generation-quality-corpus.json `
+  --require-qualified -o test-generation-quality-result.json
+sfmea assurance-test-quality-verify test-generation-quality-result.json `
+  test-generation-quality-corpus.json
+sfmea schema assurance-test-generation-quality-corpus `
+  -o assurance-test-generation-quality-corpus.schema.json
+sfmea schema assurance-test-generation-quality-result `
+  -o assurance-test-generation-quality-result.schema.json
+```
+
+Results are content-sealed and can be replayed against the exact corpus; both expected and actual
+proposal/refusal populations must clear their gates. The self-contained HTML assurance view reports
+current `llm_generated` registration and the five
+analysis-resident execution/effectiveness gates. Exact proposal and human-publication receipts stay
+separate so the report cannot imply that unavailable external artifacts were verified.
 
 For high-value dependency, interface, timing, persistence, detection, and circuit-breaker
 obligations, PySFMEA provides governed executable fault-injection plugins. List them and create an

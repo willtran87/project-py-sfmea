@@ -24,6 +24,13 @@ from .test_generation import (
     verify_test_proposal_apply_receipt,
     verify_test_proposal_stage,
 )
+from .test_generation_quality import (
+    evaluate_test_generation_quality,
+    export_test_generation_quality_result,
+    load_test_generation_quality_corpus,
+    load_test_generation_quality_result,
+    verify_test_generation_quality_result,
+)
 
 ProviderFactory = Callable[[argparse.Namespace], TestGenerationProvider]
 
@@ -136,6 +143,27 @@ def add_test_generation_commands(
     readiness.add_argument("--analysis", required=True)
     readiness.add_argument("--json", action="store_true")
     readiness.set_defaults(handler=_readiness)
+
+    quality = subparsers.add_parser(
+        "assurance-test-quality-evaluate",
+        help="score an independently labeled provider/model/prompt test-generation corpus",
+    )
+    quality.add_argument("corpus")
+    quality.add_argument("-o", "--output", required=True)
+    quality.add_argument(
+        "--require-qualified",
+        action="store_true",
+        help="return a failing exit status unless every declared quality gate passes",
+    )
+    quality.set_defaults(handler=_quality_evaluate)
+
+    quality_verify = subparsers.add_parser(
+        "assurance-test-quality-verify",
+        help="verify a test-generation quality result against its exact corpus",
+    )
+    quality_verify.add_argument("result")
+    quality_verify.add_argument("corpus")
+    quality_verify.set_defaults(handler=_quality_verify)
 
 
 def _generate(args: argparse.Namespace) -> int:
@@ -301,3 +329,28 @@ def _readiness(args: argparse.Namespace) -> int:
                 print(f"  {gate['remediation']}")
         print(result["notice"])
     return int(not result["ready"])
+
+
+def _quality_evaluate(args: argparse.Namespace) -> int:
+    corpus = load_test_generation_quality_corpus(args.corpus)
+    result = evaluate_test_generation_quality(corpus)
+    output = export_test_generation_quality_result(result, args.output)
+    print(
+        f"Test-generation quality: {result['status']} "
+        f"({sum(gate['passed'] for gate in result['gates'])}/{len(result['gates'])} gates): {output}"
+    )
+    print(result["notice"])
+    return int(args.require_qualified and not result["qualified"])
+
+
+def _quality_verify(args: argparse.Namespace) -> int:
+    result = load_test_generation_quality_result(args.result)
+    corpus = load_test_generation_quality_corpus(args.corpus)
+    verification = verify_test_generation_quality_result(result, corpus)
+    print(
+        "Test-generation quality result: "
+        + ("valid" if verification["valid"] else "invalid")
+    )
+    for error in verification["errors"]:
+        print(f"  {error}")
+    return int(not verification["valid"])

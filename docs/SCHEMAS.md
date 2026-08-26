@@ -75,6 +75,8 @@ Available names:
 | `assurance-scaffold` | Exact-analysis-bound pytest starting points, property strategies, contract cases, and generated-file identities |
 | `assurance-scaffold-verification` | Manifest, synthesized-design, generated-file, lifecycle, and exact analysis-binding verdict |
 | `assurance-test-generation-readiness` | Seven proposal-to-publication-to-independent-evidence readiness gates |
+| `assurance-test-generation-quality-corpus` | Independently labeled provider/model/prompt generated-test qualification samples and policy |
+| `assurance-test-generation-quality-result` | Content-sealed, exact-corpus-replayable validity, execution, effectiveness, reviewer, and unsafe-change quality gates |
 | `assurance-test-proposal` | Closed, source-bound, one-file LLM assurance-test proposal and bounded repair provenance |
 | `assurance-test-proposal-apply-receipt` | Named-review atomic test-publication receipt |
 | `assurance-test-proposal-apply-receipt-verification` | Receipt integrity, proposal, analysis, attribution, and applied-byte binding verdict |
