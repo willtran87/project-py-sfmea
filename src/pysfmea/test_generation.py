@@ -448,10 +448,35 @@ def _bound_names(node: ast.AST) -> set[str]:
     return set()
 
 
-def _import_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
+def _lexical_scope_nodes(scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.AST]:
+    """Return nodes evaluated in *scope* without entering deferred child scopes."""
+
+    pending: list[ast.AST] = list(reversed(scope.body))
+    nodes: list[ast.AST] = []
+    while pending:
+        node = pending.pop()
+        nodes.append(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(reversed(list(ast.iter_child_nodes(node))))
+    return nodes
+
+
+def _import_bindings(
+    scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[dict[str, str], set[str]]:
+    """Resolve imports and rebindings in one lexical scope only.
+
+    Unrelated helpers must not invalidate a target test's import, while bindings in
+    the module or target test still fail closed. Nested functions/classes are
+    deferred scopes and therefore cannot prove that the target test exercises the
+    analyzed component.
+    """
+
     imports: dict[str, str] = {}
     import_nodes: set[int] = set()
-    for node in ast.walk(tree):
+    nodes = _lexical_scope_nodes(scope)
+    for node in nodes:
         if isinstance(node, ast.Import):
             import_nodes.add(id(node))
             for alias in node.names:
@@ -463,27 +488,16 @@ def _import_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
                 if alias.name != "*":
                     imports[alias.asname or alias.name] = f"{node.module}.{alias.name}"
     rebound: set[str] = set()
-    for node in ast.walk(tree):
+    for node in nodes:
         if id(node) in import_nodes:
             continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             rebound.add(node.name)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                arguments = [
-                    *node.args.posonlyargs,
-                    *node.args.args,
-                    *node.args.kwonlyargs,
-                ]
-                if node.args.vararg:
-                    arguments.append(node.args.vararg)
-                if node.args.kwarg:
-                    arguments.append(node.args.kwarg)
-                rebound.update(argument.arg for argument in arguments)
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
                 rebound.update(_bound_names(target))
-        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
             rebound.update(_bound_names(node.target))
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
@@ -491,6 +505,17 @@ def _import_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
                     rebound.update(_bound_names(item.optional_vars))
         elif isinstance(node, ast.ExceptHandler) and node.name:
             rebound.add(node.name)
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        arguments = [
+            *scope.args.posonlyargs,
+            *scope.args.args,
+            *scope.args.kwonlyargs,
+        ]
+        if scope.args.vararg:
+            arguments.append(scope.args.vararg)
+        if scope.args.kwarg:
+            arguments.append(scope.args.kwarg)
+        rebound.update(argument.arg for argument in arguments)
     return imports, rebound
 
 
@@ -510,10 +535,23 @@ def _expression_target(
 
 
 def _resolved_call_targets(tree: ast.Module, *, call_scope: ast.AST) -> set[str]:
-    imports, rebound = _import_bindings(tree)
-    imports = {name: target for name, target in imports.items() if name not in rebound}
+    if not isinstance(call_scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return set()
+    imports, module_rebound = _import_bindings(tree)
+    imports = {
+        name: target for name, target in imports.items() if name not in module_rebound
+    }
+    local_imports, local_rebound = _import_bindings(call_scope)
+    imports.update(local_imports)
+    imports = {
+        name: target for name, target in imports.items() if name not in local_rebound
+    }
     instances: dict[str, str] = {}
-    for node in ast.walk(tree):
+    relevant_nodes = [
+        *_lexical_scope_nodes(tree),
+        *_lexical_scope_nodes(call_scope),
+    ]
+    for node in relevant_nodes:
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             value = node.value
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -525,7 +563,7 @@ def _resolved_call_targets(tree: ast.Module, *, call_scope: ast.AST) -> set[str]
                             instances[name] = constructed
     return {
         resolved_target
-        for node in ast.walk(call_scope)
+        for node in _lexical_scope_nodes(call_scope)
         if isinstance(node, ast.Call)
         and (resolved_target := _expression_target(node.func, imports, instances))
     }

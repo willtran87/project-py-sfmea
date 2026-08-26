@@ -137,8 +137,11 @@ from .synthesis import (
     SYNTHESIS_VERIFICATION_FORMAT,
 )
 from .test_generation_quality_schemas import (
+    _assurance_test_generation_fault_evidence_schema,
     _assurance_test_generation_quality_corpus_schema,
+    _assurance_test_generation_quality_corpus_v2_schema,
     _assurance_test_generation_quality_result_schema,
+    _assurance_test_generation_quality_result_v2_schema,
 )
 from .test_generation_schemas import (
     _assurance_test_generation_readiness_schema,
@@ -9226,6 +9229,15 @@ _SCHEMA_BUILDERS = {
     "assurance-test-generation-quality-result": (
         _assurance_test_generation_quality_result_schema
     ),
+    "assurance-test-generation-quality-corpus-v2": (
+        _assurance_test_generation_quality_corpus_v2_schema
+    ),
+    "assurance-test-generation-quality-result-v2": (
+        _assurance_test_generation_quality_result_v2_schema
+    ),
+    "assurance-test-generation-fault-evidence": (
+        _assurance_test_generation_fault_evidence_schema
+    ),
     "assurance-test-proposal-apply-receipt": (
         _assurance_test_proposal_apply_receipt_schema
     ),
@@ -9317,6 +9329,9 @@ _SCHEMA_DESCRIPTIONS = {
     "assurance-test-generation-readiness": "Proposal-to-publication-to-independent-evidence readiness gates for one generated test.",
     "assurance-test-generation-quality-corpus": "Independently labeled provider/model/prompt corpus for generated-test validity, execution, effectiveness, and safety.",
     "assurance-test-generation-quality-result": "Recomputed subject-bound generated-test quality metrics and qualification gates.",
+    "assurance-test-generation-quality-corpus-v2": "Artifact-backed provider/model/prompt corpus whose outcome claims are derived from exact retained lifecycle evidence.",
+    "assurance-test-generation-quality-result-v2": "Replayed artifact-derived generated-test quality metrics, evidence manifest, and qualification gates.",
+    "assurance-test-generation-fault-evidence": "Content-sealed paired baseline/seeded-fault outcome record bound to one exact generated test.",
     "assurance-test-proposal-apply-receipt": "Human-reviewed atomic publication receipt for one generated assurance test.",
     "assurance-test-proposal-apply-receipt-verification": "Receipt integrity, proposal, analysis, review attribution, and exact applied-file binding verdict.",
     "assurance-test-proposal-stage": "Integrity-declaring isolated review-stage manifest for a verified generated test.",

@@ -714,7 +714,7 @@ flowchart TB
     E --> R{"7 readiness gates"}
   end
   subgraph QUAL["Exact provider/model/prompt"]
-    C["Independent generated-test corpus"] --> G{"14 quality gates"}
+    C["Independent generated-test corpus"] --> G{"14 declared or 15 artifact-backed gates"}
     G --> V["Content integrity + corpus replay"]
   end
   R --> D{"Human promotion decision"}
@@ -768,6 +768,14 @@ result for exact-corpus replay, and recomputes 14 population, decision, validity
 execution, stimulus, criteria, seeded-fault, reviewer-acceptance, and unsafe-change gates. Passing
 qualifies only the retained sample and exact subject. It does not replace any per-test readiness
 gate or authorize automatic publication.
+
+Prefer format 2 for promotion decisions. Run the same commands with
+`examples/test-generation-quality-corpus-v2.template.json` and `--evidence-root PATH`. Each sample
+then names exact analysis/proposal artifacts and, for proposed tests, the publication receipt and a
+content-sealed paired baseline/seeded-fault record. The evaluator derives the outcome fields,
+replays lifecycle verification against the current exact repository bytes, and adds an artifact-
+derived-claims gate. Refused samples must not attach execution artifacts. Missing, linked, escaping,
+oversized, stale, digest-mismatched, subject-mismatched, or duplicate evidence fails closed.
 
 For a high-value dependency or resilience obligation, generate and verify an explicit
 fault-injection plan before implementing the corresponding test:

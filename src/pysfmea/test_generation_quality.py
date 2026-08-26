@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from datetime import date
 from pathlib import Path
@@ -12,12 +13,24 @@ from .file_publication import atomic_publish_text
 from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_document
 from .model import utc_now
-from .test_generation import TEST_GENERATION_PROMPT_VERSION
+from .test_generation import (
+    TEST_GENERATION_PROMPT_VERSION,
+    generation_readiness,
+    verify_test_proposal,
+    verify_test_proposal_apply_receipt,
+)
 from .version import __version__
 
 TEST_GENERATION_QUALITY_CORPUS_FORMAT = "pysfmea-test-generation-quality-corpus-1"
 TEST_GENERATION_QUALITY_RESULT_FORMAT = "pysfmea-test-generation-quality-result-1"
+TEST_GENERATION_EVIDENCE_CORPUS_FORMAT = "pysfmea-test-generation-quality-corpus-2"
+TEST_GENERATION_EVIDENCE_RESULT_FORMAT = "pysfmea-test-generation-quality-result-2"
+TEST_GENERATION_FAULT_EVIDENCE_FORMAT = (
+    "pysfmea-test-generation-fault-detection-evidence-1"
+)
 MAX_QUALITY_CORPUS_BYTES = 8_000_000
+MAX_QUALITY_RESULT_BYTES = 32_000_000
+MAX_QUALITY_ANALYSIS_BYTES = 100_000_000
 MAX_QUALITY_SAMPLES = 10_000
 MAX_TEXT = 20_000
 _ROOT_FIELDS = {"format", "name", "subject", "governance", "policy", "samples"}
@@ -73,6 +86,26 @@ _RESULT_FIELDS = {
     "notice",
     "content_sha256",
 }
+_EVIDENCE_SAMPLE_FIELDS = {"id", "expected_decision", "artifacts"}
+_EVIDENCE_ARTIFACT_FIELDS = {
+    "analysis",
+    "proposal",
+    "application_receipt",
+    "fault_detection",
+}
+_ARTIFACT_REFERENCE_FIELDS = {"path", "sha256"}
+_FAULT_EVIDENCE_FIELDS = {
+    "format",
+    "sample_id",
+    "test_sha256",
+    "environment",
+    "baseline",
+    "seeded",
+    "content_sha256",
+}
+_FAULT_RUN_FIELDS = {"execution_id", "status", "evidence_sha256"}
+_SEEDED_RUN_FIELDS = {*_FAULT_RUN_FIELDS, "fault_id"}
+_EVIDENCE_RESULT_FIELDS = {*_RESULT_FIELDS, "evidence"}
 
 
 def _text(value: Any, label: str) -> str:
@@ -112,13 +145,122 @@ def load_test_generation_quality_result(source: str | Path) -> dict[str, Any]:
     document = load_bounded_json_document(
         source,
         label="test-generation quality result",
-        max_bytes=2_000_000,
+        max_bytes=MAX_QUALITY_RESULT_BYTES,
         max_depth=30,
         max_nodes=100_000,
     )
     if not isinstance(document.value, dict):
         raise ValueError("test-generation quality result root must be an object")
     return document.value
+
+
+def _artifact_document(
+    evidence_root: str | Path,
+    reference: Any,
+    *,
+    label: str,
+    max_bytes: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not isinstance(reference, dict) or set(reference) != _ARTIFACT_REFERENCE_FIELDS:
+        raise ValueError(f"{label} reference must match the closed contract")
+    relative = Path(_text(reference.get("path"), f"{label} path"))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"{label} path must be a safe relative path")
+    declared = reference.get("sha256")
+    if (
+        not isinstance(declared, str)
+        or len(declared) != 64
+        or any(value not in "0123456789abcdef" for value in declared)
+    ):
+        raise ValueError(f"{label} sha256 must be a lowercase SHA-256 digest")
+    root = Path(evidence_root).expanduser().absolute().resolve()
+    candidate = root / relative
+    resolved = candidate.resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"{label} path escapes the evidence root")
+    document = load_bounded_json_document(
+        candidate,
+        label=label,
+        max_bytes=max_bytes,
+        max_depth=100,
+        max_nodes=2_000_000,
+    )
+    actual = hashlib.sha256(document.raw).hexdigest()
+    if actual != declared:
+        raise ValueError(f"{label} bytes do not match the declared SHA-256")
+    if not isinstance(document.value, dict):
+        raise ValueError(f"{label} root must be an object")
+    return document.value, {
+        "path": relative.as_posix(),
+        "sha256": actual,
+        "bytes": len(document.raw),
+    }
+
+
+def _fault_detected(
+    value: dict[str, Any], *, sample_id: str, test_sha256: str
+) -> bool:
+    if set(value) != _FAULT_EVIDENCE_FIELDS:
+        raise ValueError("fault-detection evidence must match the closed root contract")
+    unsigned = copy.deepcopy(value)
+    declared = unsigned.pop("content_sha256", "")
+    if declared != canonical_json_sha256(unsigned):
+        raise ValueError("fault-detection evidence content digest does not match")
+    if (
+        value.get("format") != TEST_GENERATION_FAULT_EVIDENCE_FORMAT
+        or value.get("sample_id") != sample_id
+        or value.get("test_sha256") != test_sha256
+    ):
+        raise ValueError("fault-detection evidence identity does not match the sample")
+    _text(value.get("environment"), "fault-detection environment")
+    baseline = value.get("baseline")
+    seeded = value.get("seeded")
+    if not isinstance(baseline, dict) or set(baseline) != _FAULT_RUN_FIELDS:
+        raise ValueError("fault-detection baseline must match the closed contract")
+    if not isinstance(seeded, dict) or set(seeded) != _SEEDED_RUN_FIELDS:
+        raise ValueError("fault-detection seeded run must match the closed contract")
+    for label, run in (("baseline", baseline), ("seeded", seeded)):
+        _text(run.get("execution_id"), f"fault-detection {label} execution id")
+        digest = run.get("evidence_sha256")
+        if not isinstance(digest, str) or len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            raise ValueError(
+                f"fault-detection {label} evidence must have a lowercase SHA-256"
+            )
+    _text(seeded.get("fault_id"), "fault-detection fault id")
+    if (
+        baseline.get("execution_id") == seeded.get("execution_id")
+        or baseline.get("evidence_sha256") == seeded.get("evidence_sha256")
+    ):
+        raise ValueError(
+            "fault-detection baseline and seeded runs require distinct identities and evidence"
+        )
+    if baseline.get("status") not in {"passed", "failed"} or seeded.get(
+        "status"
+    ) not in {"passed", "failed"}:
+        raise ValueError("fault-detection statuses must be passed or failed")
+    return bool(baseline["status"] == "passed" and seeded["status"] == "failed")
+
+
+def _unsafe_attempt(proposal: dict[str, Any]) -> bool:
+    safety_markers = (
+        "allowlist",
+        "network or shell",
+        "dynamic or shell",
+        "escapes",
+        "unsafe",
+        "overwrite",
+    )
+    records = proposal.get("generation", {}).get("attempt_records", [])
+    return any(
+        isinstance(record, dict)
+        and any(
+            marker in str(record.get("validation_error", "")).casefold()
+            for marker in safety_markers
+        )
+        for record in records
+    )
 
 
 def evaluate_test_generation_quality(corpus: dict[str, Any]) -> dict[str, Any]:
@@ -418,13 +560,246 @@ def evaluate_test_generation_quality(corpus: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def evaluate_test_generation_quality_evidence(
+    corpus: dict[str, Any], evidence_root: str | Path
+) -> dict[str, Any]:
+    """Derive qualification claims from exact retained lifecycle artifacts."""
+
+    if (
+        set(corpus) != _ROOT_FIELDS
+        or corpus.get("format") != TEST_GENERATION_EVIDENCE_CORPUS_FORMAT
+    ):
+        raise ValueError(
+            "artifact-backed quality corpus must match the closed root contract"
+        )
+    source_samples = corpus.get("samples")
+    if (
+        not isinstance(source_samples, list)
+        or not source_samples
+        or len(source_samples) > MAX_QUALITY_SAMPLES
+    ):
+        raise ValueError(
+            "artifact-backed quality corpus requires a bounded non-empty samples array"
+        )
+    derived_samples: list[dict[str, Any]] = []
+    artifact_records: list[dict[str, Any]] = []
+    sample_ids: set[str] = set()
+    evidence_fingerprints: set[str] = set()
+    subject = corpus.get("subject")
+    if not isinstance(subject, dict) or set(subject) != _SUBJECT_FIELDS:
+        raise ValueError("quality corpus subject must match the closed contract")
+    normalized_subject = {
+        field: _text(subject.get(field), f"subject {field}") for field in _SUBJECT_FIELDS
+    }
+    if normalized_subject["prompt_version"] != TEST_GENERATION_PROMPT_VERSION:
+        raise ValueError("quality corpus prompt version does not match test generation")
+    for index, sample in enumerate(source_samples, start=1):
+        if not isinstance(sample, dict) or set(sample) != _EVIDENCE_SAMPLE_FIELDS:
+            raise ValueError(
+                f"artifact-backed quality sample {index} must match the closed contract"
+            )
+        sample_id = _text(sample.get("id"), f"quality sample {index} id")
+        if sample_id in sample_ids:
+            raise ValueError("quality sample ids must be unique")
+        sample_ids.add(sample_id)
+        expected = sample.get("expected_decision")
+        if expected not in {"proposed", "refused"}:
+            raise ValueError(f"quality sample {index} has an invalid expected decision")
+        artifacts = sample.get("artifacts")
+        if not isinstance(artifacts, dict) or set(artifacts) != _EVIDENCE_ARTIFACT_FIELDS:
+            raise ValueError(
+                f"artifact-backed quality sample {index} artifacts must match the closed contract"
+            )
+        evidence_identity = canonical_json_sha256(
+            {
+                kind: (
+                    reference.get("sha256")
+                    if isinstance(reference, dict)
+                    else None
+                )
+                for kind, reference in sorted(artifacts.items())
+            }
+        )
+        if evidence_identity in evidence_fingerprints:
+            raise ValueError(
+                "artifact-backed quality samples must have unique evidence identities"
+            )
+        evidence_fingerprints.add(evidence_identity)
+        analysis, analysis_record = _artifact_document(
+            evidence_root,
+            artifacts.get("analysis"),
+            label=f"quality sample {sample_id} analysis",
+            max_bytes=MAX_QUALITY_ANALYSIS_BYTES,
+        )
+        proposal, proposal_record = _artifact_document(
+            evidence_root,
+            artifacts.get("proposal"),
+            label=f"quality sample {sample_id} proposal",
+            max_bytes=3_000_000,
+        )
+        for kind, record in (
+            ("analysis", analysis_record),
+            ("proposal", proposal_record),
+        ):
+            artifact_records.append({"sample_id": sample_id, "kind": kind, **record})
+        actual = proposal.get("response", {}).get("decision")
+        if actual not in {"proposed", "refused"}:
+            raise ValueError(
+                f"quality sample {sample_id} proposal has no valid provider decision"
+            )
+        producer = proposal.get("producer")
+        if not isinstance(producer, dict) or any(
+            producer.get(field) != normalized_subject[field]
+            for field in _SUBJECT_FIELDS
+        ):
+            raise ValueError(
+                f"quality sample {sample_id} proposal subject does not match the corpus"
+            )
+        unsafe_attempted = _unsafe_attempt(proposal)
+        if actual == "refused":
+            if artifacts.get("application_receipt") is not None or artifacts.get(
+                "fault_detection"
+            ) is not None:
+                raise ValueError(
+                    f"refused quality sample {sample_id} must not reference execution artifacts"
+                )
+            derived_samples.append(
+                {
+                    "id": sample_id,
+                    "expected_decision": expected,
+                    "actual_decision": actual,
+                    "proposal_valid": False,
+                    "target_binding_valid": False,
+                    "restricted_execution_passed": False,
+                    "stimulus_observed": False,
+                    "acceptance_criteria_passed": False,
+                    "seeded_fault_detected": False,
+                    "unsafe_change_attempted": unsafe_attempted,
+                    "reviewer_decision": "not_applicable",
+                }
+            )
+            continue
+        receipt, receipt_record = _artifact_document(
+            evidence_root,
+            artifacts.get("application_receipt"),
+            label=f"quality sample {sample_id} application receipt",
+            max_bytes=2_000_000,
+        )
+        fault, fault_record = _artifact_document(
+            evidence_root,
+            artifacts.get("fault_detection"),
+            label=f"quality sample {sample_id} fault-detection evidence",
+            max_bytes=2_000_000,
+        )
+        for kind, record in (
+            ("application_receipt", receipt_record),
+            ("fault_detection", fault_record),
+        ):
+            artifact_records.append({"sample_id": sample_id, "kind": kind, **record})
+        proposal_verification = verify_test_proposal(
+            proposal, analysis, allow_lifecycle_advance=True
+        )
+        receipt_verification = verify_test_proposal_apply_receipt(
+            receipt, proposal, analysis
+        )
+        readiness = generation_readiness(proposal, receipt, analysis)
+        gates = {str(gate["id"]): bool(gate["passed"]) for gate in readiness["gates"]}
+        receipt_test_sha = str(receipt.get("file", {}).get("sha256", ""))
+        fault_detected = _fault_detected(
+            fault, sample_id=sample_id, test_sha256=receipt_test_sha
+        )
+        derived_samples.append(
+            {
+                "id": sample_id,
+                "expected_decision": expected,
+                "actual_decision": actual,
+                "proposal_valid": bool(proposal_verification["valid"]),
+                "target_binding_valid": bool(
+                    proposal_verification["checks"].get("response_contract")
+                    and proposal_verification["checks"].get("source_binding")
+                ),
+                "restricted_execution_passed": gates.get(
+                    "restricted_execution_passed", False
+                ),
+                "stimulus_observed": gates.get("failure_stimulus_observed", False),
+                "acceptance_criteria_passed": gates.get(
+                    "acceptance_criteria_passed", False
+                ),
+                "seeded_fault_detected": fault_detected,
+                "unsafe_change_attempted": unsafe_attempted,
+                "reviewer_decision": (
+                    "accepted"
+                    if gates.get("independent_evidence_review", False)
+                    and receipt_verification["valid"]
+                    else "rejected"
+                ),
+            }
+        )
+    replay_corpus = copy.deepcopy(corpus)
+    replay_corpus["format"] = TEST_GENERATION_QUALITY_CORPUS_FORMAT
+    replay_corpus["samples"] = derived_samples
+    result = evaluate_test_generation_quality(replay_corpus)
+    result["format"] = TEST_GENERATION_EVIDENCE_RESULT_FORMAT
+    result["corpus"] = {
+        "name": result["corpus"]["name"],
+        "sha256": canonical_json_sha256(corpus),
+    }
+    result["evidence"] = {
+        "mode": "artifact_derived",
+        "artifacts": len(artifact_records),
+        "manifest_sha256": canonical_json_sha256(
+            sorted(
+                artifact_records,
+                key=lambda value: (str(value["sample_id"]), str(value["kind"])),
+            )
+        ),
+        "records": artifact_records,
+    }
+    result["gates"].append(
+        {
+            "id": "artifact_derived_claims",
+            "passed": True,
+            "value": len(artifact_records),
+            "operator": ">=",
+            "threshold": len(source_samples) * 2,
+        }
+    )
+    result["qualified"] = all(bool(gate["passed"]) for gate in result["gates"])
+    result["status"] = (
+        "qualified_artifact_sample" if result["qualified"] else "not_qualified"
+    )
+    result["evidence_fingerprint_sha256"] = canonical_json_sha256(
+        {
+            "corpus_sha256": result["corpus"]["sha256"],
+            "manifest_sha256": result["evidence"]["manifest_sha256"],
+            "derived_samples": sorted(
+                derived_samples, key=lambda value: str(value["id"])
+            ),
+        }
+    )
+    result["notice"] = (
+        "This result derives claims from content-addressed proposal, publication, "
+        "execution/review, and paired baseline/seeded-fault evidence for only the "
+        "named provider/model/prompt sample. It does not authenticate actors, prove "
+        "representativeness, or constitute general model, tool, safety, or certification approval."
+    )
+    result.pop("content_sha256", None)
+    result["content_sha256"] = canonical_json_sha256(result)
+    return result
+
+
 def verify_test_generation_quality_result(
-    result: dict[str, Any], corpus: dict[str, Any]
+    result: dict[str, Any],
+    corpus: dict[str, Any],
+    *,
+    evidence_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Verify result integrity, exact corpus binding, and deterministic semantic replay."""
 
     errors: list[str] = []
-    structure_valid = set(result) == _RESULT_FIELDS
+    evidence_backed = corpus.get("format") == TEST_GENERATION_EVIDENCE_CORPUS_FORMAT
+    expected_fields = _EVIDENCE_RESULT_FIELDS if evidence_backed else _RESULT_FIELDS
+    structure_valid = set(result) == expected_fields
     if not structure_valid:
         errors.append("quality result fields do not match the closed contract")
     unsigned = copy.deepcopy(result)
@@ -439,13 +814,20 @@ def verify_test_generation_quality_result(
     ) == canonical_json_sha256(corpus)
     if not corpus_binding:
         errors.append("quality result does not bind the supplied corpus")
-    replayed = evaluate_test_generation_quality(corpus)
+    if evidence_backed and evidence_root is None:
+        errors.append("artifact-backed quality verification requires an evidence root")
+        replayed = None
+    elif evidence_backed:
+        assert evidence_root is not None
+        replayed = evaluate_test_generation_quality_evidence(corpus, evidence_root)
+    else:
+        replayed = evaluate_test_generation_quality(corpus)
     comparable_result = copy.deepcopy(result)
-    comparable_replay = copy.deepcopy(replayed)
+    comparable_replay = copy.deepcopy(replayed) if replayed is not None else {}
     for candidate in (comparable_result, comparable_replay):
         candidate.pop("generated_at", None)
         candidate.pop("content_sha256", None)
-    semantic_replay = comparable_result == comparable_replay
+    semantic_replay = replayed is not None and comparable_result == comparable_replay
     if not semantic_replay:
         errors.append("quality result does not match semantic replay")
     return {

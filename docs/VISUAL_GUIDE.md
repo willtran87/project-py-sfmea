@@ -134,7 +134,7 @@ flowchart TB
         EXT --> R
     end
     subgraph SUBJECT["Subject qualification"]
-        C["Independent generated-test corpus"] --> Q{"14 quality gates"}
+        C["Independent generated-test corpus"] --> Q{"14 declared / 15 artifact-backed gates"}
         Q --> S["Content-sealed result"]
         S --> V["Exact-corpus semantic replay"]
     end

@@ -5,6 +5,11 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Add format-2 artifact-backed generated-test qualification. Exact bounded analysis, proposal,
+  application-receipt, and paired baseline/seeded-fault records now drive derived validity,
+  target-binding, execution, stimulus, criteria, fault-detection, and reviewer outcomes with a
+  fifteenth evidence gate and exact semantic replay. Refine target-call analysis to ignore unrelated
+  helper shadowing while rejecting deferred, uncalled nested-body calls and target-scope rebinding.
 - Strengthen governed LLM test implementation with exact import-qualified target binding inside
   the named test, rejecting local lookalikes, wrong modules, rebound aliases, and collection-only
   calls. Add a subject-bound, independently governed test-generation quality corpus and evaluator

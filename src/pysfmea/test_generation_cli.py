@@ -25,7 +25,9 @@ from .test_generation import (
     verify_test_proposal_stage,
 )
 from .test_generation_quality import (
+    TEST_GENERATION_EVIDENCE_CORPUS_FORMAT,
     evaluate_test_generation_quality,
+    evaluate_test_generation_quality_evidence,
     export_test_generation_quality_result,
     load_test_generation_quality_corpus,
     load_test_generation_quality_result,
@@ -151,6 +153,10 @@ def add_test_generation_commands(
     quality.add_argument("corpus")
     quality.add_argument("-o", "--output", required=True)
     quality.add_argument(
+        "--evidence-root",
+        help="root containing exact artifact references required by format-2 corpora",
+    )
+    quality.add_argument(
         "--require-qualified",
         action="store_true",
         help="return a failing exit status unless every declared quality gate passes",
@@ -163,6 +169,10 @@ def add_test_generation_commands(
     )
     quality_verify.add_argument("result")
     quality_verify.add_argument("corpus")
+    quality_verify.add_argument(
+        "--evidence-root",
+        help="root containing exact artifact references required by format-2 corpora",
+    )
     quality_verify.set_defaults(handler=_quality_verify)
 
 
@@ -333,7 +343,16 @@ def _readiness(args: argparse.Namespace) -> int:
 
 def _quality_evaluate(args: argparse.Namespace) -> int:
     corpus = load_test_generation_quality_corpus(args.corpus)
-    result = evaluate_test_generation_quality(corpus)
+    evidence_backed = corpus.get("format") == TEST_GENERATION_EVIDENCE_CORPUS_FORMAT
+    if evidence_backed and not args.evidence_root:
+        raise ValueError("format-2 quality corpus requires --evidence-root")
+    if not evidence_backed and args.evidence_root:
+        raise ValueError("--evidence-root is supported only for format-2 quality corpora")
+    result = (
+        evaluate_test_generation_quality_evidence(corpus, args.evidence_root)
+        if evidence_backed
+        else evaluate_test_generation_quality(corpus)
+    )
     output = export_test_generation_quality_result(result, args.output)
     print(
         f"Test-generation quality: {result['status']} "
@@ -346,7 +365,12 @@ def _quality_evaluate(args: argparse.Namespace) -> int:
 def _quality_verify(args: argparse.Namespace) -> int:
     result = load_test_generation_quality_result(args.result)
     corpus = load_test_generation_quality_corpus(args.corpus)
-    verification = verify_test_generation_quality_result(result, corpus)
+    evidence_backed = corpus.get("format") == TEST_GENERATION_EVIDENCE_CORPUS_FORMAT
+    if evidence_backed and not args.evidence_root:
+        raise ValueError("format-2 quality corpus requires --evidence-root")
+    verification = verify_test_generation_quality_result(
+        result, corpus, evidence_root=args.evidence_root
+    )
     print(
         "Test-generation quality result: "
         + ("valid" if verification["valid"] else "invalid")

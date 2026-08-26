@@ -843,6 +843,11 @@ execution, stimulus observation, criteria completion, seeded-fault detection, in
 acceptance, and unsafe-change attempts. Results are content-sealed, bind the exact corpus digest,
 and can be semantically replayed. Passing qualifies only that retained sample and subject; it does
 not prove corpus representativeness, authorize publication, or waive any test-specific gate.
+The compatible format-2 corpus replaces manually asserted outcome booleans with safe relative
+references to exact analysis, proposal, publication, and paired baseline/seeded-fault artifacts.
+PySFMEA rechecks their byte identities and lifecycle semantics, derives the scored claims, and adds
+a fifteenth artifact-derived-claims gate. This strengthens traceability but still does not
+authenticate named actors or prove that the selected sample represents deployment use.
 
 Pull-request orchestration compares exact committed archives without checking out the working tree
 or executing repository code. Process plugins are explicit, semantic-versioned, bounded

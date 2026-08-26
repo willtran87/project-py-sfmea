@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from .test_generation import TEST_GENERATION_PROMPT_VERSION
 from .test_generation_quality import (
     MAX_QUALITY_SAMPLES,
+    TEST_GENERATION_EVIDENCE_CORPUS_FORMAT,
+    TEST_GENERATION_EVIDENCE_RESULT_FORMAT,
+    TEST_GENERATION_FAULT_EVIDENCE_FORMAT,
     TEST_GENERATION_QUALITY_CORPUS_FORMAT,
     TEST_GENERATION_QUALITY_RESULT_FORMAT,
 )
@@ -224,6 +228,141 @@ def _assurance_test_generation_quality_result_schema() -> dict[str, Any]:
         "$schema": JSON_SCHEMA_DRAFT,
         "$id": _schema_id("assurance-test-generation-quality-result"),
         "title": "PySFMEA LLM test-generation qualification result",
+        "type": "object",
+        "required": list(properties),
+        "properties": properties,
+        "additionalProperties": False,
+    }
+
+
+def _assurance_test_generation_quality_corpus_v2_schema() -> dict[str, Any]:
+    schema = copy.deepcopy(_assurance_test_generation_quality_corpus_schema())
+    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    reference = {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "properties": {
+            "path": {"type": "string", "minLength": 1, "maxLength": 20_000},
+            "sha256": digest,
+        },
+        "additionalProperties": False,
+    }
+    schema["$id"] = _schema_id("assurance-test-generation-quality-corpus-v2")
+    schema["title"] = "PySFMEA artifact-backed LLM test-generation quality corpus"
+    schema["properties"]["format"] = {
+        "const": TEST_GENERATION_EVIDENCE_CORPUS_FORMAT
+    }
+    schema["properties"]["samples"]["items"] = {
+        "type": "object",
+        "required": ["id", "expected_decision", "artifacts"],
+        "properties": {
+            "id": {"type": "string", "minLength": 1, "maxLength": 20_000},
+            "expected_decision": {"enum": ["proposed", "refused"]},
+            "artifacts": {
+                "type": "object",
+                "required": [
+                    "analysis",
+                    "proposal",
+                    "application_receipt",
+                    "fault_detection",
+                ],
+                "properties": {
+                    "analysis": reference,
+                    "proposal": reference,
+                    "application_receipt": {"anyOf": [reference, {"type": "null"}]},
+                    "fault_detection": {"anyOf": [reference, {"type": "null"}]},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": False,
+    }
+    return schema
+
+
+def _assurance_test_generation_quality_result_v2_schema() -> dict[str, Any]:
+    schema = copy.deepcopy(_assurance_test_generation_quality_result_schema())
+    text = {"type": "string", "minLength": 1, "maxLength": 20_000}
+    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    schema["$id"] = _schema_id("assurance-test-generation-quality-result-v2")
+    schema["title"] = "PySFMEA artifact-backed LLM test-generation qualification result"
+    schema["required"].append("evidence")
+    schema["properties"]["format"] = {
+        "const": TEST_GENERATION_EVIDENCE_RESULT_FORMAT
+    }
+    schema["properties"]["status"] = {
+        "enum": ["qualified_artifact_sample", "not_qualified"]
+    }
+    schema["properties"]["gates"]["minItems"] = 15
+    schema["properties"]["gates"]["maxItems"] = 15
+    schema["properties"]["evidence"] = {
+        "type": "object",
+        "required": ["mode", "artifacts", "manifest_sha256", "records"],
+        "properties": {
+            "mode": {"const": "artifact_derived"},
+            "artifacts": {"type": "integer", "minimum": 1},
+            "manifest_sha256": digest,
+            "records": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": MAX_QUALITY_SAMPLES * 4,
+                "items": {
+                    "type": "object",
+                    "required": ["sample_id", "kind", "path", "sha256", "bytes"],
+                    "properties": {
+                        "sample_id": text,
+                        "kind": {
+                            "enum": [
+                                "analysis",
+                                "proposal",
+                                "application_receipt",
+                                "fault_detection",
+                            ]
+                        },
+                        "path": text,
+                        "sha256": digest,
+                        "bytes": {"type": "integer", "minimum": 1},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "additionalProperties": False,
+    }
+    return schema
+
+
+def _assurance_test_generation_fault_evidence_schema() -> dict[str, Any]:
+    text = {"type": "string", "minLength": 1, "maxLength": 20_000}
+    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    run_properties = {
+        "execution_id": text,
+        "status": {"enum": ["passed", "failed"]},
+        "evidence_sha256": digest,
+    }
+    properties = {
+        "format": {"const": TEST_GENERATION_FAULT_EVIDENCE_FORMAT},
+        "sample_id": text,
+        "test_sha256": digest,
+        "environment": text,
+        "baseline": {
+            "type": "object",
+            "required": list(run_properties),
+            "properties": run_properties,
+            "additionalProperties": False,
+        },
+        "seeded": {
+            "type": "object",
+            "required": [*run_properties, "fault_id"],
+            "properties": {**run_properties, "fault_id": text},
+            "additionalProperties": False,
+        },
+        "content_sha256": digest,
+    }
+    return {
+        "$schema": JSON_SCHEMA_DRAFT,
+        "$id": _schema_id("assurance-test-generation-fault-evidence"),
+        "title": "PySFMEA paired baseline and seeded-fault detection evidence",
         "type": "object",
         "required": list(properties),
         "properties": properties,

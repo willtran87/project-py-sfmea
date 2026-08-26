@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import sys
@@ -33,7 +34,9 @@ from pysfmea.test_generation import (
     verify_test_proposal_stage,
 )
 from pysfmea.test_generation_quality import (
+    TEST_GENERATION_FAULT_EVIDENCE_FORMAT,
     evaluate_test_generation_quality,
+    evaluate_test_generation_quality_evidence,
     verify_test_generation_quality_result,
 )
 
@@ -673,6 +676,53 @@ class GovernedTestGenerationTests(unittest.TestCase):
             validate_test_generation_response(aliased, packet)["implementation_ready"]
         )
 
+        unrelated_shadow = self._response(packet)
+        unrelated_shadow["files"][0]["content"] = (  # type: ignore[index]
+            "from subject import divide\n\n"
+            "def unrelated_helper(divide):\n"
+            "    return divide\n\n"
+            f"def {test_name}():\n"
+            "    assert divide(2) == 50\n"
+        )
+        self.assertTrue(
+            validate_test_generation_response(unrelated_shadow, packet)[
+                "implementation_ready"
+            ]
+        )
+
+        local_import = self._response(packet)
+        local_import["files"][0]["content"] = (  # type: ignore[index]
+            f"def {test_name}():\n"
+            "    from subject import divide\n"
+            "    assert divide(2) == 50\n"
+        )
+        self.assertTrue(
+            validate_test_generation_response(local_import, packet)[
+                "implementation_ready"
+            ]
+        )
+
+        nested_only = self._response(packet)
+        nested_only["files"][0]["content"] = (  # type: ignore[index]
+            "from subject import divide\n\n"
+            f"def {test_name}():\n"
+            "    def never_called():\n"
+            "        return divide(2)\n"
+            "    assert 1 == 1\n"
+        )
+        with self.assertRaisesRegex(ValueError, "import and directly invoke"):
+            validate_test_generation_response(nested_only, packet)
+
+        local_rebind = self._response(packet)
+        local_rebind["files"][0]["content"] = (  # type: ignore[index]
+            "from subject import divide\n\n"
+            f"def {test_name}():\n"
+            "    divide = lambda value: 50\n"
+            "    assert divide(2) == 50\n"
+        )
+        with self.assertRaisesRegex(ValueError, "import and directly invoke"):
+            validate_test_generation_response(local_rebind, packet)
+
     def test_closed_response_and_source_contract_rejection_matrix(self) -> None:
         packet = build_test_generation_packet(self.analysis, self.obligation["id"])
         test_name = self.obligation["automation"]["proposed_test_name"]
@@ -890,6 +940,223 @@ class GovernedTestGenerationTests(unittest.TestCase):
         invalid["governance"]["reviewed_by"] = "Model Evaluation Team"  # type: ignore[index]
         with self.assertRaisesRegex(ValueError, "distinct"):
             evaluate_test_generation_quality(invalid)  # type: ignore[arg-type]
+
+    def test_artifact_backed_quality_derives_claims_and_replays(self) -> None:
+        packet = build_test_generation_packet(self.analysis, self.obligation["id"])
+        proposal = create_test_proposal(
+            self.analysis,
+            self.obligation["id"],
+            RecordedTestGenerationProvider(
+                self._response(packet),
+                name="qualified-provider",
+                model="qualified-model",
+            ),
+        )
+        staged = stage_test_proposal(
+            proposal,
+            self.analysis,
+            self.root.parent / f"{self.root.name}-quality-stage",
+        )
+        receipt_path = self.root / "application-receipt.json"
+        receipt = apply_test_proposal(
+            staged,
+            proposal,
+            self.analysis,
+            reviewer="Publication Reviewer",
+            rationale="Reviewed the exact generated source and obligation mappings.",
+            approved=True,
+            receipt_path=receipt_path,
+        )
+        self.obligation["automation"].update(
+            {
+                "implementation_status": "implemented",
+                "implementation_origin": "llm_generated",
+                "implemented_test_path": receipt["file"]["path"],
+                "test_sha256": receipt["file"]["sha256"],
+            }
+        )
+        execution = {
+            "id": "EXEC-EVIDENCE-QUALITY",
+            "obligation_id": self.obligation["id"],
+            "baseline_id": receipt["baseline_id"],
+            "test": {"sha256": receipt["file"]["sha256"]},
+            "status": "passed",
+            "initiated_by": "Execution Operator",
+            "stimulus_observed": True,
+            "acceptance_criteria": [
+                {"index": index, "text": text, "result": "pass"}
+                for index, text in enumerate(
+                    self.obligation["acceptance_criteria"], start=1
+                )
+            ],
+            "reviews": [
+                {
+                    "reviewer": "Independent Evidence Reviewer",
+                    "decision": "sufficient",
+                    "artifact_integrity_valid": True,
+                    "baseline_current": True,
+                }
+            ],
+        }
+        self.analysis["assurance"]["executions"].append(execution)
+        self.obligation["executions"].append(execution["id"])
+
+        proposed_analysis_path = self.root / "proposed-analysis.json"
+        proposed_proposal_path = self.root / "proposed-proposal.json"
+        save_analysis(proposed_analysis_path, self.analysis)
+        proposed_proposal_path.write_text(json.dumps(proposal), encoding="utf-8")
+
+        refused_analysis_path = self.root / "refused-analysis.json"
+        save_analysis(refused_analysis_path, self.analysis)
+
+        def reference(path: Path) -> dict[str, str]:
+            return {
+                "path": path.relative_to(self.root).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+
+        proposed_artifacts = {
+            "analysis": reference(proposed_analysis_path),
+            "proposal": reference(proposed_proposal_path),
+            "application_receipt": reference(receipt_path),
+        }
+        samples = []
+        for sample_id in ("PROPOSE-EVIDENCE-1", "PROPOSE-EVIDENCE-2"):
+            fault_path = self.root / f"{sample_id}.fault.json"
+            fault = {
+                "format": TEST_GENERATION_FAULT_EVIDENCE_FORMAT,
+                "sample_id": sample_id,
+                "test_sha256": receipt["file"]["sha256"],
+                "environment": "locked-down qualification container",
+                "baseline": {
+                    "execution_id": f"{sample_id}-BASELINE",
+                    "status": "passed",
+                    "evidence_sha256": "1" * 64,
+                },
+                "seeded": {
+                    "execution_id": f"{sample_id}-SEEDED",
+                    "status": "failed",
+                    "evidence_sha256": "2" * 64,
+                    "fault_id": f"{sample_id}-FAULT",
+                },
+            }
+            fault["content_sha256"] = canonical_json_sha256(fault)
+            fault_path.write_text(json.dumps(fault), encoding="utf-8")
+            samples.append(
+                {
+                    "id": sample_id,
+                    "expected_decision": "proposed",
+                    "artifacts": {
+                        **proposed_artifacts,
+                        "fault_detection": reference(fault_path),
+                    },
+                }
+            )
+        refusal_response = {
+            "decision": "refused",
+            "rationale": "The supplied evidence does not support a defensible oracle.",
+            "files": [],
+            "oracle_mappings": [],
+            "criterion_mappings": [],
+            "assumptions": [],
+            "unresolved_questions": ["Which independent oracle establishes correctness?"],
+        }
+        for sample_id in ("REFUSE-EVIDENCE-1", "REFUSE-EVIDENCE-2"):
+            sample_refusal = copy.deepcopy(refusal_response)
+            sample_refusal["unresolved_questions"] = [
+                f"Which independent oracle establishes correctness for {sample_id}?"
+            ]
+            refused_proposal = create_test_proposal(
+                self.analysis,
+                self.obligation["id"],
+                RecordedTestGenerationProvider(
+                    sample_refusal,
+                    name="qualified-provider",
+                    model="qualified-model",
+                ),
+            )
+            refused_proposal_path = self.root / f"{sample_id}.proposal.json"
+            refused_proposal_path.write_text(
+                json.dumps(refused_proposal), encoding="utf-8"
+            )
+            samples.append(
+                {
+                    "id": sample_id,
+                    "expected_decision": "refused",
+                    "artifacts": {
+                        "analysis": reference(refused_analysis_path),
+                        "proposal": reference(refused_proposal_path),
+                        "application_receipt": None,
+                        "fault_detection": None,
+                    },
+                }
+            )
+        corpus = self._quality_corpus()
+        corpus["format"] = "pysfmea-test-generation-quality-corpus-2"
+        corpus["samples"] = samples
+        result = evaluate_test_generation_quality_evidence(corpus, self.root)
+        self.assertTrue(result["qualified"], result)
+        self.assertEqual(result["status"], "qualified_artifact_sample")
+        self.assertEqual(len(result["gates"]), 15)
+        self.assertEqual(result["evidence"]["artifacts"], 12)
+        Draft202012Validator(
+            schema_document("assurance-test-generation-quality-corpus-v2")
+        ).validate(corpus)
+        Draft202012Validator(
+            schema_document("assurance-test-generation-quality-result-v2")
+        ).validate(result)
+        Draft202012Validator(
+            schema_document("assurance-test-generation-fault-evidence")
+        ).validate(fault)
+        self.assertTrue(
+            verify_test_generation_quality_result(
+                result, corpus, evidence_root=self.root
+            )["valid"]
+        )
+        corpus_path = self.root / "artifact-quality-corpus.json"
+        result_path = self.root / "artifact-quality-result.json"
+        corpus_path.write_text(json.dumps(corpus), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-test-quality-evaluate",
+                        str(corpus_path),
+                        "--evidence-root",
+                        str(self.root),
+                        "--require-qualified",
+                        "-o",
+                        str(result_path),
+                    ]
+                ),
+                0,
+            )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-test-quality-verify",
+                        str(result_path),
+                        str(corpus_path),
+                        "--evidence-root",
+                        str(self.root),
+                    ]
+                ),
+                0,
+            )
+        duplicated = copy.deepcopy(corpus)
+        duplicated["samples"][1]["artifacts"] = copy.deepcopy(  # type: ignore[index]
+            duplicated["samples"][0]["artifacts"]  # type: ignore[index]
+        )
+        with self.assertRaisesRegex(ValueError, "unique evidence identities"):
+            evaluate_test_generation_quality_evidence(duplicated, self.root)
+        mislabeled = copy.deepcopy(corpus)
+        mislabeled["subject"]["model"] = "different-model"  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "subject does not match"):
+            evaluate_test_generation_quality_evidence(mislabeled, self.root)
+        proposed_proposal_path.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "declared SHA-256"):
+            evaluate_test_generation_quality_evidence(corpus, self.root)
 
 
 if __name__ == "__main__":

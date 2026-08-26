@@ -87,7 +87,8 @@ class DocumentationLinksTests(unittest.TestCase):
                 self.assertIn("exact", content.casefold())
         for name in ("README.md", "docs/WORKFLOW.md", "docs/VISUAL_GUIDE.md"):
             with self.subTest(quality_gates=name):
-                self.assertIn("14 quality gates", documents[name])
+                self.assertIn("14 declared", documents[name])
+                self.assertIn("15 artifact-backed", documents[name])
                 self.assertIn("7", documents[name])
         self.assertIn("Fourteen gates", documents["docs/METHODOLOGY.md"])
         for command in (
