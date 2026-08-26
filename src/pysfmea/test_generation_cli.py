@@ -7,7 +7,9 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from .evidence_signing import sign_json_evidence, verify_json_evidence_signature
 from .json_ingestion import load_bounded_json_document
+from .signing import passphrase_from_environment
 from .store import load_analysis
 from .test_generation import (
     RecordedTestGenerationProvider,
@@ -23,6 +25,11 @@ from .test_generation import (
     verify_test_proposal,
     verify_test_proposal_apply_receipt,
     verify_test_proposal_stage,
+)
+from .test_generation_campaign_plan import (
+    create_test_generation_campaign_plan,
+    export_test_generation_campaign_plan,
+    verify_test_generation_campaign_plan,
 )
 from .test_generation_quality import (
     TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT,
@@ -159,7 +166,9 @@ def add_test_generation_commands(
         "assurance-test-fault-evidence",
         help="seal paired baseline/seeded-fault evidence after raw artifact verification",
     )
-    fault_evidence.add_argument("analysis", help="analysis JSON containing both executions")
+    fault_evidence.add_argument(
+        "analysis", help="analysis JSON containing both executions"
+    )
     fault_evidence.add_argument("sample_id")
     fault_evidence.add_argument("baseline_execution_id")
     fault_evidence.add_argument("seeded_execution_id")
@@ -207,6 +216,46 @@ def add_test_generation_commands(
         help="root containing exact artifact references required by format-2 corpora",
     )
     quality_verify.set_defaults(handler=_quality_verify)
+
+    campaign_plan = subparsers.add_parser(
+        "assurance-test-campaign-plan",
+        help="seal format-3 sampling design and thresholds before outcomes",
+    )
+    campaign_plan.add_argument("corpus")
+    campaign_plan.add_argument("--producer", required=True)
+    campaign_plan.add_argument("-o", "--output", required=True)
+    campaign_plan.set_defaults(handler=_campaign_plan)
+
+    campaign_plan_verify = subparsers.add_parser(
+        "assurance-test-campaign-plan-verify",
+        help="reconcile a sealed campaign plan with a completed format-3 corpus",
+    )
+    campaign_plan_verify.add_argument("plan")
+    campaign_plan_verify.add_argument("--corpus")
+    campaign_plan_verify.add_argument("--json", action="store_true")
+    campaign_plan_verify.set_defaults(handler=_campaign_plan_verify)
+
+    evidence_sign = subparsers.add_parser(
+        "assurance-evidence-sign",
+        help="authenticate exact bounded JSON assurance evidence with Ed25519",
+    )
+    evidence_sign.add_argument("artifact")
+    evidence_sign.add_argument("--private-key", required=True)
+    evidence_sign.add_argument("--signer", required=True)
+    evidence_sign.add_argument("--passphrase-env")
+    evidence_sign.add_argument("-o", "--output")
+    evidence_sign.add_argument("--force", action="store_true")
+    evidence_sign.set_defaults(handler=_evidence_sign)
+
+    evidence_signature_verify = subparsers.add_parser(
+        "assurance-evidence-signature-verify",
+        help="verify JSON assurance evidence against an explicitly trusted Ed25519 key",
+    )
+    evidence_signature_verify.add_argument("artifact")
+    evidence_signature_verify.add_argument("signature")
+    evidence_signature_verify.add_argument("--public-key", required=True)
+    evidence_signature_verify.add_argument("--json", action="store_true")
+    evidence_signature_verify.set_defaults(handler=_evidence_signature_verify)
 
 
 def _generate(args: argparse.Namespace) -> int:
@@ -399,7 +448,9 @@ def _fault_evidence_verify(args: argparse.Namespace) -> int:
         max_nodes=100_000,
     )
     if not isinstance(document.value, dict):
-        raise ValueError("generated-test fault-detection evidence root must be an object")
+        raise ValueError(
+            "generated-test fault-detection evidence root must be an object"
+        )
     evidence = document.value
     result = verify_fault_detection_evidence(
         evidence,
@@ -466,3 +517,73 @@ def _quality_verify(args: argparse.Namespace) -> int:
     for error in verification["errors"]:
         print(f"  {error}")
     return int(not verification["valid"])
+
+
+def _evidence_sign(args: argparse.Namespace) -> int:
+    output = sign_json_evidence(
+        args.artifact,
+        args.private_key,
+        args.signer,
+        destination=args.output,
+        passphrase=passphrase_from_environment(args.passphrase_env),
+        overwrite=args.force,
+    )
+    print(f"Authenticated exact JSON assurance evidence: {output}")
+    print(
+        "Reviewer authorization and key ownership remain external governance controls."
+    )
+    return 0
+
+
+def _campaign_plan(args: argparse.Namespace) -> int:
+    corpus = load_test_generation_quality_corpus(args.corpus)
+    plan = create_test_generation_campaign_plan(corpus, producer=args.producer)
+    output = export_test_generation_campaign_plan(plan, args.output)
+    print(f"Sealed pre-outcome generated-test campaign design: {output}")
+    print(plan["notice"])
+    return 0
+
+
+def _campaign_plan_verify(args: argparse.Namespace) -> int:
+    document = load_bounded_json_document(
+        args.plan,
+        label="generated-test campaign plan",
+        max_bytes=10_000_000,
+        max_depth=100,
+        max_nodes=250_000,
+    )
+    if not isinstance(document.value, dict):
+        raise ValueError("generated-test campaign plan must be an object")
+    corpus = load_test_generation_quality_corpus(args.corpus) if args.corpus else None
+    result = verify_test_generation_campaign_plan(document.value, corpus)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Generated-test campaign plan: {'valid' if result['valid'] else 'invalid'}"
+        )
+        for name, passed in result["checks"].items():
+            state = "not checked" if passed is None else "pass" if passed else "fail"
+            print(f"- {name}: {state}")
+        for error in result["errors"]:
+            print(f"- error: {error}")
+        print(result["notice"])
+    return int(not result["valid"])
+
+
+def _evidence_signature_verify(args: argparse.Namespace) -> int:
+    result = verify_json_evidence_signature(
+        args.artifact, args.signature, args.public_key
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"JSON assurance evidence signature: {'valid' if result['valid'] else 'invalid'}"
+        )
+        for name, passed in result["checks"].items():
+            print(f"- {name}: {'pass' if passed else 'fail'}")
+        for error in result["errors"]:
+            print(f"- error: {error}")
+        print(result["notice"])
+    return int(not result["valid"])

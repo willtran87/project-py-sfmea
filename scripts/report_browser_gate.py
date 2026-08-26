@@ -25,6 +25,44 @@ DEFAULT_MAX_LOAD_SECONDS = 10.0
 DEFAULT_MAX_JS_HEAP_BYTES = 256 * 1024 * 1024
 
 
+def _validate_analysis_population(
+    analysis: dict[str, Any] | None,
+    *,
+    min_components: int | None,
+    min_failure_modes: int | None,
+) -> None:
+    for value, label in (
+        (min_components, "min_components"),
+        (min_failure_modes, "min_failure_modes"),
+    ):
+        if value is not None and (isinstance(value, bool) or value < 1):
+            raise ValueError(f"{label} must be a positive integer")
+    if min_components is None and min_failure_modes is None:
+        return
+    if analysis is None:
+        raise ValueError("population thresholds require --analysis")
+    summary = analysis.get("summary")
+    if not isinstance(summary, dict):
+        raise ValueError("analysis summary is unavailable for population qualification")
+    observed_components = summary.get("components")
+    observed_failure_modes = summary.get("candidate_failure_modes")
+    if min_components is not None and (
+        not isinstance(observed_components, int) or observed_components < min_components
+    ):
+        raise ValueError(
+            f"analysis population has {observed_components!r} components; "
+            f"at least {min_components} are required"
+        )
+    if min_failure_modes is not None and (
+        not isinstance(observed_failure_modes, int)
+        or observed_failure_modes < min_failure_modes
+    ):
+        raise ValueError(
+            f"analysis population has {observed_failure_modes!r} candidate failure modes; "
+            f"at least {min_failure_modes} are required"
+        )
+
+
 def browser_quality_gate(
     report: str | Path,
     *,
@@ -33,6 +71,8 @@ def browser_quality_gate(
     max_load_seconds: float | None = DEFAULT_MAX_LOAD_SECONDS,
     max_js_heap_bytes: int | None = DEFAULT_MAX_JS_HEAP_BYTES,
     manual_evidence: str | Path | None = None,
+    min_components: int | None = None,
+    min_failure_modes: int | None = None,
 ) -> dict[str, Any]:
     if max_bytes is not None and (isinstance(max_bytes, bool) or max_bytes <= 0):
         raise ValueError("max_bytes must be a positive integer")
@@ -44,6 +84,11 @@ def browser_quality_gate(
         raise ValueError("max_js_heap_bytes must be a positive integer")
     path = Path(report).expanduser().resolve()
     current = load_analysis(analysis) if analysis else None
+    _validate_analysis_population(
+        current,
+        min_components=min_components,
+        min_failure_modes=min_failure_modes,
+    )
     integrity = verify_html_report_file(path, analysis=current)
     try:
         from playwright.sync_api import (  # type: ignore[import-not-found,unused-ignore]
@@ -103,8 +148,8 @@ def browser_quality_gate(
                     ),
                 )
                 page.on("pageerror", lambda error: page_errors.append(str(error)))
-            # Measure document load/render readiness, excluding one-time Playwright and
-            # browser-process startup overhead that is unrelated to report performance.
+                # Measure document load/render readiness, excluding one-time Playwright and
+                # browser-process startup overhead that is unrelated to report performance.
                 started = time.perf_counter()
                 page.goto(path.as_uri(), wait_until="domcontentloaded")
                 page.locator("#topTitle").wait_for(state="visible")
@@ -123,7 +168,7 @@ def browser_quality_gate(
                     "nodes => nodes.map(node => node.dataset.view)"
                 )
                 accessibility = page.evaluate(
-                """() => {
+                    """() => {
                     const ids = [...document.querySelectorAll('[id]')].map(node => node.id);
                     const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
                     const controls = [...document.querySelectorAll('input, select, textarea')];
@@ -168,9 +213,9 @@ def browser_quality_gate(
                         skip_link_target: document.querySelector('.skip-link')?.getAttribute('href') || '',
                     };
                 }"""
-            )
+                )
                 focus_indicator = page.evaluate(
-                """() => {
+                    """() => {
                     const control = document.querySelector('#nav button');
                     control.focus();
                     const style = getComputedStyle(control);
@@ -182,20 +227,22 @@ def browser_quality_gate(
                         visible: style.outlineStyle !== 'none' || style.boxShadow !== 'none',
                     };
                 }"""
-            )
+                )
                 page.locator('#nav button[data-view="failure-modes"]').click()
                 selected_priority = page.locator("#priorityFilter").evaluate(
-                """node => {
+                    """node => {
                     const option = [...node.options].find(value => value.value);
                     if (!option) return '';
                     node.value = option.value;
                     node.dispatchEvent(new Event('change', {bubbles: true}));
                     return option.value;
                 }"""
-            )
+                )
                 page.locator("#savedViewName").fill("Browser qualification view")
                 page.locator("#saveView").click()
-                saved_before_reload = page.locator("#savedViewSelect option").count() > 1
+                saved_before_reload = (
+                    page.locator("#savedViewSelect option").count() > 1
+                )
                 page.locator("#shareView").click()
                 share_hash = page.evaluate("location.hash")
                 page.reload(wait_until="domcontentloaded")
@@ -205,21 +252,21 @@ def browser_quality_gate(
                 )
                 saved_after_reload = page.locator("#savedViewSelect option").count() > 1
                 saved_view_checks = {
-                "selected_priority": selected_priority,
-                "saved_before_reload": saved_before_reload,
-                "saved_after_reload": saved_after_reload,
-                "share_hash": share_hash,
-                "share_state_bounded": share_hash.startswith("#failure-modes")
-                and len(share_hash) <= 1_000,
-                "passed": saved_before_reload
-                and saved_after_reload
-                and share_hash.startswith("#failure-modes")
-                and len(share_hash) <= 1_000,
+                    "selected_priority": selected_priority,
+                    "saved_before_reload": saved_before_reload,
+                    "saved_after_reload": saved_after_reload,
+                    "share_hash": share_hash,
+                    "share_state_bounded": share_hash.startswith("#failure-modes")
+                    and len(share_hash) <= 1_000,
+                    "passed": saved_before_reload
+                    and saved_after_reload
+                    and share_hash.startswith("#failure-modes")
+                    and len(share_hash) <= 1_000,
                 }
                 for view in views:
                     page.locator(f'#nav button[data-view="{view}"]').click()
                     page.wait_for_function(
-                        "view => document.querySelector(`.view[data-view=\"${view}\"]`)"
+                        'view => document.querySelector(`.view[data-view="${view}"]`)'
                         ".dataset.renderState === 'ready'",
                         arg=view,
                     )
@@ -504,6 +551,16 @@ def main(argv: list[str] | None = None) -> int:
         "--manual-evidence",
         help="sealed exact-report accessibility evidence; when supplied it must qualify",
     )
+    parser.add_argument(
+        "--min-components",
+        type=int,
+        help="require the bound analysis to contain at least this many components",
+    )
+    parser.add_argument(
+        "--min-failure-modes",
+        type=int,
+        help="require at least this many candidate failure modes in the bound analysis",
+    )
     parser.add_argument("-o", "--output")
     args = parser.parse_args(argv)
     try:
@@ -514,6 +571,8 @@ def main(argv: list[str] | None = None) -> int:
             max_load_seconds=args.max_load_seconds,
             max_js_heap_bytes=args.max_js_heap_bytes,
             manual_evidence=args.manual_evidence,
+            min_components=args.min_components,
+            min_failure_modes=args.min_failure_modes,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"report browser gate failed: {exc}", file=sys.stderr)

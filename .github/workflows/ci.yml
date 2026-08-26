@@ -244,17 +244,19 @@ jobs:
           --report .ci-report/report.html
           --output .ci-report/browser-quality-verification.json
 
-      - name: Generate 10,000-record scale report fixture
+      - name: Generate 12,000-record scale report fixture
         run: |
-          python scripts/generate_scale_corpus.py .ci-scale-repository --modules 160 --functions-per-module 8
+          python scripts/generate_scale_corpus.py .ci-scale-repository --modules 180 --functions-per-module 8
           mkdir -p .ci-scale-report
           sfmea scan .ci-scale-repository --allow-ungoverned --no-cache --output .ci-scale-report/analysis.json.gz
-          sfmea report .ci-scale-report/analysis.json.gz --output .ci-scale-report/report.html --max-records 10000
+          sfmea report .ci-scale-report/analysis.json.gz --output .ci-scale-report/report.html --max-records 12000
 
-      - name: Exercise 10,000-record report in Chromium
+      - name: Exercise 12,000-record report in Chromium
         run: >-
           python scripts/report_browser_gate.py .ci-scale-report/report.html
           --analysis .ci-scale-report/analysis.json.gz
+          --min-components 1400
+          --min-failure-modes 11000
           --max-bytes 104857600
           --max-load-seconds 20
           --max-js-heap-bytes 536870912

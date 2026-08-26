@@ -92,6 +92,8 @@ class SchemaCatalogTests(unittest.TestCase):
                 "assurance-program-verification",
                 "assurance-scaffold",
                 "assurance-scaffold-verification",
+                "assurance-test-generation-campaign-plan",
+                "assurance-test-generation-campaign-plan-verification",
                 "assurance-test-generation-fault-evidence",
                 "assurance-test-generation-quality-corpus",
                 "assurance-test-generation-quality-corpus-v2",
@@ -130,6 +132,8 @@ class SchemaCatalogTests(unittest.TestCase):
                 "fault-injection-plan-verification",
                 "golden-corpus",
                 "html-report-verification",
+                "json-evidence-signature",
+                "json-evidence-signature-verification",
                 "plugin-manifest",
                 "plugin-request",
                 "plugin-response",
@@ -568,9 +572,7 @@ class SchemaCatalogTests(unittest.TestCase):
             pre_synthesis.pop(SCHEMA_FILENAMES[name])
         legacy_verification = verify_schema_bundle_documents(pre_synthesis)
         self.assertTrue(legacy_verification["valid"])
-        self.assertEqual(
-            legacy_verification["schema_count"], len(SCHEMA_FILENAMES) - 2
-        )
+        self.assertEqual(legacy_verification["schema_count"], len(SCHEMA_FILENAMES) - 2)
 
         pre_onboarding = json.loads(json.dumps(documents))
         onboarding_names = {

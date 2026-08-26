@@ -14,6 +14,8 @@ Keep the corpus and all referenced bytes beneath one immutable evidence root:
 ```text
 test-generation-evidence/
 ├── corpus.json
+├── campaign-plan.json
+├── campaign-plan.json.sig.json
 ├── SAMPLE-001/
 │   ├── analysis.json
 │   ├── proposal.json
@@ -36,12 +38,17 @@ artifact. `fault.json` binds one passing baseline and one failing seeded run to 
 sequenceDiagram
     autonumber
     actor Reviewer
+    participant Plan as Campaign-plan sealer
+    participant Key as Trusted-key verifier
     participant Builder as Fault-evidence builder
     participant Analysis as Governed analysis
     participant Baseline as Baseline evidence directory
     participant Seeded as Seeded evidence directory
     participant Evaluator as Format-3 evaluator
 
+    Reviewer->>Plan: Seal subject, strata, policy, sample IDs (no outcomes)
+    Plan-->>Key: Authenticate exact campaign-plan.json
+    Key-->>Reviewer: Trusted-key signature verdict
     Reviewer->>Builder: Build(sample, baseline ID, seeded ID, evidence root)
     Builder->>Analysis: Resolve both executions and exact test SHA-256
     Analysis-->>Builder: Baseline passed; seeded failed; distinct IDs
@@ -54,14 +61,29 @@ sequenceDiagram
     Evaluator->>Analysis: Replay lifecycle and execution bindings
     Evaluator->>Baseline: Replay manifest and raw artifact verification
     Evaluator->>Seeded: Replay manifest and raw artifact verification
-    Evaluator-->>Reviewer: 25 derived campaign gates or fail-closed error
+    Evaluator-->>Plan: Reconcile completed corpus to sealed design and chronology
+    Evaluator-->>Reviewer: Plan verdict + 25 derived campaign gates or fail-closed error
 ```
 
 ## Independent campaign workflow
 
 1. Freeze the provider, model, prompt version, generation settings, repository revision, and
    environment. Record `selection_frozen_at` before `outcomes_observed_at`; select repositories and
-   obligations before observing generation outcomes.
+   obligations before observing generation outcomes. Seal the outcome-free design projection, then
+   authenticate those exact bytes with a qualification key before running generation:
+
+   ```powershell
+   sfmea assurance-test-campaign-plan corpus.json --producer "qualification-runner" `
+     -o campaign-plan.json
+   sfmea assurance-evidence-sign campaign-plan.json --private-key qualification-private.pem `
+     --signer "Independent qualification authority"
+   sfmea assurance-evidence-signature-verify campaign-plan.json `
+     campaign-plan.json.sig.json --public-key qualification-public.pem
+   ```
+
+   The content seal detects edits. The signature proves possession of the matching key; the
+   organization still owns trusted-key distribution, authorization, revocation, and independent
+   timestamping when declared timestamps are not sufficient.
 2. Record the selection method and representativeness rationale. Include proposed and refused
    cases, multiple repositories, domains, and frameworks appropriate to the intended use. Declare
    minimum populations, per-stratum floors, decision balance, and repository concentration limits.
@@ -87,6 +109,7 @@ sequenceDiagram
    and replay the exact result:
 
    ```powershell
+   sfmea assurance-test-campaign-plan-verify campaign-plan.json --corpus corpus.json
    sfmea assurance-test-quality-evaluate corpus.json --evidence-root . `
      --require-qualified -o result.json
    sfmea assurance-test-quality-verify result.json corpus.json --evidence-root .
@@ -100,6 +123,8 @@ sequenceDiagram
 
 - [ ] The subject exactly identifies provider, model, and prompt version.
 - [ ] Sample selection predates observed outcomes and covers the declared intended use.
+- [ ] The outcome-free campaign plan was sealed, authenticated, and reconciles exactly to the
+      completed corpus design; trusted-key authority is documented outside PySFMEA.
 - [ ] Repository, framework, and domain populations and per-stratum floors meet policy; no single
       repository exceeds the concentration limit.
 - [ ] Every repository contains both expected proposal and refusal cases when balance is required.

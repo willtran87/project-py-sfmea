@@ -370,7 +370,7 @@ sfmea schema --verify-bundle .release-contracts --json
 ```
 
 Also run the checked-in dynamic-Python corpus, focused mutation ratchet, deterministic scale scan,
-and 10,000-record Chromium gate described in `docs/QUALITY_GATES.md`. Retain their machine-readable
+and 12,000-record-cap Chromium gate described in `docs/QUALITY_GATES.md`. Retain their machine-readable
 receipts with release evidence. These controls are non-regression evidence; they do not substitute
 for independently labeled repository qualification or a governed LLM review corpus.
 

@@ -25,6 +25,13 @@ from .assurance import (
     ASSURANCE_WORK_QUEUE_VERIFICATION_FORMAT,
     ASSURANCE_WORK_STATES,
 )
+from .assurance_evidence_schemas import (
+    ASSURANCE_EVIDENCE_SCHEMA_DESCRIPTIONS,
+    json_evidence_signature_schema,
+    json_evidence_signature_verification_schema,
+    test_generation_campaign_plan_schema,
+    test_generation_campaign_plan_verification_schema,
+)
 from .assurance_synthesis import (
     ASSURANCE_SCAFFOLD_GENERATED_FILE_ROLES,
     ASSURANCE_TEST_DESIGNS_FORMAT,
@@ -9262,6 +9269,27 @@ _SCHEMA_BUILDERS = {
     "assurance-work-queue": _assurance_work_queue_schema,
     "assurance-work-queue-verification": _assurance_work_queue_verification_schema,
     "detached-signature": _detached_signature_schema,
+    "json-evidence-signature": lambda: json_evidence_signature_schema(
+        _schema_id("json-evidence-signature"), JSON_SCHEMA_DRAFT
+    ),
+    "json-evidence-signature-verification": lambda: (
+        json_evidence_signature_verification_schema(
+            _schema_id("json-evidence-signature-verification"), JSON_SCHEMA_DRAFT
+        )
+    ),
+    "assurance-test-generation-campaign-plan": lambda: (
+        test_generation_campaign_plan_schema(
+            _schema_id("assurance-test-generation-campaign-plan"),
+            JSON_SCHEMA_DRAFT,
+            _assurance_test_generation_quality_corpus_v3_schema(),
+        )
+    ),
+    "assurance-test-generation-campaign-plan-verification": lambda: (
+        test_generation_campaign_plan_verification_schema(
+            _schema_id("assurance-test-generation-campaign-plan-verification"),
+            JSON_SCHEMA_DRAFT,
+        )
+    ),
     "evaluation-result": _evaluation_result_schema,
     "diagram": _diagram_schema,
     "diagram-bundle": _diagram_bundle_schema,
@@ -9350,6 +9378,7 @@ _SCHEMA_DESCRIPTIONS = {
     "assurance-work-queue": "Accepted-finding hardening states, blockers, eligibility, and next actions.",
     "assurance-work-queue-verification": "Work-queue integrity, analysis binding, and semantic-projection verdicts.",
     "detached-signature": "Detached Ed25519 package-signature envelope and subject binding.",
+    **ASSURANCE_EVIDENCE_SCHEMA_DESCRIPTIONS,
     "diagram": "Canonical renderer-neutral diagram model.",
     "diagram-bundle": "Generated, state-bound and digest-declaring diagram bundle.",
     "diagram-bundle-verification": "Diagram verification success and rejection verdicts.",

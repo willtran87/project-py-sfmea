@@ -1243,6 +1243,12 @@ The `detached-signature` public schema defines the complete envelope and can be 
 `sfmea schema detached-signature`. Structural validity does not replace cryptographic
 verification against the exact package and a separately trusted public key.
 
+The same trusted-key pattern is available for any bounded JSON assurance artifact through
+`assurance-evidence-sign` and `assurance-evidence-signature-verify`. It binds exact bytes, canonical
+JSON semantics, artifact format, filename, and size. Export the `json-evidence-signature` and
+`json-evidence-signature-verification` schemas for offline consumers. This authenticates an artifact
+to the supplied key; human authority and approval remain external.
+
 For offline CI integrations, `sfmea schema --bundle DIRECTORY` atomically exports the catalog
 and every contract in one operation. `sfmea schema --verify-bundle DIRECTORY` independently
 checks the complete known profile, root-level regular-file boundary, JSON structure, identities,
@@ -1373,6 +1379,35 @@ expectations against mapped spans and relationship expectations against mapped p
 with separate resolved, observed, missing, unknown, and percentage metrics. A complete result is still a
 producer declaration for one scenario—not proof of instrumentation correctness or operational
 representativeness.
+
+Applications that do not already emit OTLP can use the opt-in recorder without adding a runtime
+service. It supports nested sync/async context managers and decorators, records monotonic timing and
+exception status, preserves application exceptions, accounts for dropped spans, and atomically
+exports the exact import contract:
+
+```python
+from pysfmea.runtime_instrumentation import RuntimeTraceRecorder
+
+trace = RuntimeTraceRecorder(
+    "checkout-integration",
+    "pytest",
+    expected_components=["checkout", "charge"],
+    expected_relationships=[("checkout", "charge")],
+)
+
+@trace.trace("charge")
+def charge() -> None:
+    ...
+
+with trace.span("checkout", callsite_line=42):
+    charge()
+
+trace.export(".artifacts/runtime-trace.json")
+```
+
+Instrumentation is explicit and local; PySFMEA does not monkey-patch or automatically execute the
+repository. `declared_complete=True` remains the producer's scenario declaration and is reconciled
+against expected components, relationships, sampling policy, and dropped spans during import.
 
 Trace ingestion requires a regular non-symbolic-link file, applies the 100 MB limit to bytes
 consumed from an inspected/opened/final identity-stable stream, and strictly decodes duplicate-free
@@ -1887,9 +1922,21 @@ diversity. A proposed sample's declared category must bind its retained seeded `
 example, `timeout:MUTATION-001`); refused samples cannot claim a category. The result exposes all
 segment populations and 25 gates without treating declared strata as proof of representativeness.
 
+Seal the outcome-free projection before generation, authenticate it with a trusted campaign key,
+then reconcile it to the completed corpus. These are separate steps so a post-outcome corpus cannot
+silently rewrite the declared sample, strata, subject, or thresholds:
+
 ```powershell
 Copy-Item examples/test-generation-quality-corpus-v3.template.json `
   (Join-Path $evidenceRoot "corpus.json")
+sfmea assurance-test-campaign-plan (Join-Path $evidenceRoot "corpus.json") `
+  --producer "qualification-runner" -o campaign-plan.json
+sfmea assurance-evidence-sign campaign-plan.json --private-key qualification-private.pem `
+  --signer "Independent qualification authority"
+sfmea assurance-evidence-signature-verify campaign-plan.json `
+  campaign-plan.json.sig.json --public-key qualification-public.pem
+sfmea assurance-test-campaign-plan-verify campaign-plan.json `
+  --corpus (Join-Path $evidenceRoot "corpus.json")
 sfmea assurance-test-quality-evaluate (Join-Path $evidenceRoot "corpus.json") `
   --evidence-root $evidenceRoot --require-qualified -o campaign-quality-result.json
 sfmea assurance-test-quality-verify campaign-quality-result.json `
@@ -2672,8 +2719,9 @@ Strict typing covers the complete `pysfmea` package and the release-gate scripts
 mutation gate targets plan verification, outcome and false-pass verdicts, and sandbox command
 policy, runtime-corroboration scoring, and governed LLM-corpus projection. Its aggregate and
 per-function ratchets prevent cross-function masking while keeping
-surviving mutants visible as test-oracle debt. CI also loads the 10,000-record deterministic scale
-report in Chromium and exercises a retained dynamic-Python boundary corpus. Coverage has both a
+surviving mutants visible as test-oracle debt. CI also loads the 12,000-record-cap deterministic
+scale report in Chromium after enforcing 1,400-component and 11,000-failure-mode floors, and
+exercises a retained dynamic-Python boundary corpus. Coverage has both a
 complete-package floor and higher module-specific floors for critical boundaries.
 
 Project policies and maintenance references:

@@ -5,6 +5,14 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Add pre-outcome generated-test campaign plans that strip all outcome artifacts, seal the exact
+  subject/sample/strata/policy design, and reconcile it to a completed format-3 corpus. Add generic
+  detached Ed25519 authentication for bounded JSON assurance artifacts, trusted-key verification,
+  public schemas, CLI workflows, and explicit external authority boundaries.
+- Add a first-party opt-in Python runtime recorder with nested sync/async decorators and context
+  managers, monotonic timing, exception status, dropped-span accounting, completeness manifests,
+  atomic export, and direct round-trip through the existing runtime importer. Raise the Chromium
+  regression tier to a 12,000-record cap with enforced 1,400-component and 11,000-failure-mode floors.
 - Add format-3 generated-test qualification campaigns. Exact format-2 artifact replay now combines
   with frozen-before-outcome selection, repository/framework/domain population and floor gates,
   repository decision balance and concentration controls, seeded-fault category binding, segment
