@@ -53,6 +53,92 @@ def _grade(score: float) -> str:
     return "F"
 
 
+def _runtime_corroboration(
+    components: list[dict[str, Any]], runtime_evidence: Any
+) -> dict[str, Any]:
+    """Measure observed scope without treating one imported trace as complete coverage."""
+
+    evidence = runtime_evidence if isinstance(runtime_evidence, dict) else {}
+    component_ids = {
+        str(component.get("id", ""))
+        for component in components
+        if component.get("id")
+    }
+    static_pairs: set[tuple[str, str]] = set()
+    call_sites = 0
+    unresolved_call_sites = 0
+    for component in components:
+        source_id = str(component.get("id", ""))
+        sites = component.get("call_sites", [])
+        if not isinstance(sites, list):
+            continue
+        for site in sites:
+            if not isinstance(site, dict):
+                continue
+            call_sites += 1
+            targets = site.get("internal_target_component_ids", [])
+            resolved_targets = {
+                str(value)
+                for value in targets
+                if isinstance(value, str) and value in component_ids
+            } if isinstance(targets, list) else set()
+            static_pairs.update((source_id, target) for target in resolved_targets)
+            if not resolved_targets:
+                unresolved_call_sites += 1
+    runtime_pairs: set[tuple[str, str]] = set()
+    observed_components: set[str] = set()
+    raw_edges = evidence.get("edges", [])
+    edges = raw_edges if isinstance(raw_edges, list) else []
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source_id = str(edge.get("source_component_id", ""))
+        target_id = str(edge.get("target_component_id", ""))
+        if source_id in component_ids:
+            observed_components.add(source_id)
+        if target_id in component_ids:
+            observed_components.add(target_id)
+        if source_id in component_ids and target_id in component_ids:
+            runtime_pairs.add((source_id, target_id))
+    raw_spans = evidence.get("spans", [])
+    spans = raw_spans if isinstance(raw_spans, list) else []
+    for span in spans:
+        if isinstance(span, dict) and str(span.get("component_id", "")) in component_ids:
+            observed_components.add(str(span["component_id"]))
+    corroborated = static_pairs & runtime_pairs
+    component_percent = _percent(len(observed_components), len(component_ids))
+    static_edge_percent = (
+        _percent(len(corroborated), len(static_pairs)) if static_pairs else None
+    )
+    score = round(
+        (
+            component_percent
+            if static_edge_percent is None
+            else (component_percent + static_edge_percent) / 2
+        ),
+        1,
+    )
+    return {
+        "score": score,
+        "components": {
+            "eligible": len(component_ids),
+            "observed": len(observed_components),
+            "percent": component_percent,
+        },
+        "static_edges": len(static_pairs),
+        "corroborated_static_edges": len(corroborated),
+        "static_edge_observation_percent": static_edge_percent,
+        "runtime_edges": len(runtime_pairs),
+        "runtime_only_edges": len(runtime_pairs - static_pairs),
+        "call_sites": call_sites,
+        "unresolved_call_sites": unresolved_call_sites,
+        "unresolved_call_site_percent": _percent(unresolved_call_sites, call_sites),
+        "authority": (
+            "observed_scope_ratio_not_runtime_completeness_causality_or_reachability_proof"
+        ),
+    }
+
+
 def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
     """Return bounded reconciliation, workload, evidence, and next-action diagnostics."""
 
@@ -340,7 +426,16 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
         )
         if len(architecture_mapping_candidates) >= 500:
             break
-    runtime_imports = len(analysis.get("runtime_evidence", {}).get("imports", []))
+    runtime_evidence = analysis.get("runtime_evidence", {})
+    runtime_import_records = (
+        runtime_evidence.get("imports", [])
+        if isinstance(runtime_evidence, dict)
+        else []
+    )
+    runtime_imports = (
+        len(runtime_import_records) if isinstance(runtime_import_records, list) else 0
+    )
+    runtime_corroboration = _runtime_corroboration(code_components, runtime_evidence)
     external_call_candidates = sum(
         len(value.get("external_call_candidates", []))
         for value in code_components
@@ -500,7 +595,12 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
     elif interface_summary.get("server_routes"):
         interface_score = 0.0
     evidence_score = round(
-        (test_percent + coverage_percent + (100.0 if runtime_imports else 0.0)) / 3,
+        (
+            test_percent
+            + coverage_percent
+            + (float(runtime_corroboration["score"]) if runtime_imports else 0.0)
+        )
+        / 3,
         1,
     )
     scalability_score = 100.0
@@ -664,6 +764,18 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
             "No runtime trace is available to corroborate static relationships or timing.",
             "sfmea trace-import ANALYSIS runtime-trace.json",
         )
+    elif float(runtime_corroboration["score"]) < 70:
+        action(
+            "expand_runtime_instrumentation",
+            "P1",
+            (
+                f"Imported traces cover {runtime_corroboration['components']['percent']:.1f}% "
+                f"of eligible components and corroborate "
+                f"{runtime_corroboration['corroborated_static_edges']} of "
+                f"{runtime_corroboration['static_edges']} static edges."
+            ),
+            "expand predeclared trace scenarios and instrumentation scope, then re-import exact evidence",
+        )
     if with_tests and not test_evidence_analysis.get("dimensions", {}).get(
         "fault_injection_or_resilience", {}
     ).get("files", 0):
@@ -780,6 +892,7 @@ def analysis_diagnostics(analysis: dict[str, Any]) -> dict[str, Any]:
             "components_with_coverage": with_coverage,
             "coverage_evidence_percent": _percent(with_coverage, len(code_components)),
             "runtime_imports": runtime_imports,
+            "runtime_corroboration": runtime_corroboration,
             "external_call_candidates": external_call_candidates,
             "circuit_breaker_controls": circuit_breaker_controls,
             "components_with_governed_mappings": with_mapping,

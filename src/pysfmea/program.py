@@ -28,6 +28,7 @@ from .json_ingestion import (
 )
 from .llm_quality import project_llm_quality_corpus
 from .model import utc_now
+from .program_visuals import program_topology_svg
 from .report import analysis_state_sha256
 from .store import load_analysis
 from .version import __version__
@@ -804,6 +805,8 @@ def _llm_corpus_evidence_fingerprint(
                 "provider": str(evaluation.get("provider", "")),
                 "model": str(evaluation.get("model", "")),
                 "prompt_version": str(evaluation.get("prompt_version", "")),
+                "producer": str(evaluation.get("producer", "")),
+                "reviewer": str(evaluation.get("reviewer", "")),
             },
         )
     except ValueError:
@@ -3071,10 +3074,11 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 not in {
                     "pysfmea-llm-quality-corpus-1",
                     "pysfmea-llm-quality-corpus-2",
+                    "pysfmea-llm-quality-corpus-3",
                 }
                 or not isinstance(subject_bound_value, bool)
                 or subject_bound_value
-                != (corpus_format == "pysfmea-llm-quality-corpus-2")
+                != (corpus_format in {"pysfmea-llm-quality-corpus-2", "pysfmea-llm-quality-corpus-3"})
             ):
                 _finding(
                     findings,
@@ -3876,69 +3880,6 @@ def _markdown_cell(value: Any) -> str:
     return "".join(f"\\{char}" if char in "\\|*_[]<>`" else char for char in normalized)
 
 
-def _program_topology_svg(result: dict[str, Any]) -> str:
-    summary = result.get("summary", {})
-    repositories = [str(value) for value in summary.get("repository_ids", [])][:40]
-    positions = {
-        repository_id: (45 + (index % 4) * 260, 45 + (index // 4) * 110)
-        for index, repository_id in enumerate(repositories)
-    }
-    height = max(150, 95 + ((len(repositories) + 3) // 4) * 110)
-    edges: list[tuple[str, str, str, str]] = []
-    seen_edges: set[tuple[str, str, str]] = set()
-    for relationship in result.get("relationships", []):
-        source = str(relationship.get("source_repository", ""))
-        target = str(relationship.get("target_repository", ""))
-        kind = str(relationship.get("kind", ""))
-        key = (source, target, kind)
-        if source in positions and target in positions and key not in seen_edges:
-            seen_edges.add(key)
-            edges.append((source, target, kind, str(relationship.get("id", ""))))
-        if len(edges) >= 100:
-            break
-
-    def svg_text(value: Any) -> str:
-        return escape(str(value), quote=True)
-
-    edge_svg = "".join(
-        (
-            f'<line x1="{positions[source][0] + 100}" y1="{positions[source][1] + 28}" '
-            f'x2="{positions[target][0] + 100}" y2="{positions[target][1] + 28}" '
-            'marker-end="url(#arrow)" class="edge">'
-            f"<title>{svg_text(identifier)}: {svg_text(source)} {svg_text(kind)} {svg_text(target)}</title></line>"
-        )
-        for source, target, kind, identifier in edges
-    )
-    node_svg = "".join(
-        (
-            f'<g class="node"><rect x="{x}" y="{y}" width="200" height="56" rx="9" />'
-            f"<title>{svg_text(repository_id)}</title>"
-            f'<text x="{x + 100}" y="{y + 34}" text-anchor="middle">'
-            f"{svg_text(repository_id[:28] + ('…' if len(repository_id) > 28 else ''))}</text></g>"
-        )
-        for repository_id, (x, y) in positions.items()
-    )
-    if not repositories:
-        node_svg = '<text x="35" y="70" class="empty-svg">No bound repositories to visualize.</text>'
-    truncated = (
-        len(summary.get("repository_ids", [])) > len(repositories)
-        or len(seen_edges) >= 100
-    )
-    note = (
-        '<p class="diagram-note">The visual is bounded to 40 repositories and 100 unique repository-level edges; use the relationship table for the complete contract.</p>'
-        if truncated
-        else ""
-    )
-    return (
-        f'<div class="topology" tabindex="0"><svg viewBox="0 0 1080 {height}" '
-        'role="img" aria-labelledby="topology-title topology-description">'
-        '<title id="topology-title">System assurance repository topology</title>'
-        '<desc id="topology-description">Directed repository-level relationships derived from the verified assurance program.</desc>'
-        '<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L8,3 z" /></marker></defs>'
-        f"{edge_svg}{node_svg}</svg></div>{note}"
-    )
-
-
 def program_verification_markdown(result: dict[str, Any]) -> str:
     """Render a compact human review view from a machine verification result."""
 
@@ -4098,7 +4039,7 @@ table{{width:100%;border-collapse:collapse}} th,td{{padding:10px;text-align:left
 <main id="main"><section id="overview"><h2>Executive assurance state</h2><div class="metrics">
 {metric(f"{summary.get('bound_repositories', 0)} / {summary.get('repositories', 0)}", "bound repositories")}{metric(summary.get("relationships", 0), "relationships")}{metric(summary.get("requirements", 0), "external requirements")}{metric(f"{summary.get('trusted_evidence', 0)} / {summary.get('external_evidence', 0)}", "credited evidence")}{metric(summary.get("verified_evidence", 0), "verified evidence")}{metric(summary.get("duplicate_evidence", 0), "duplicate evidence")}{metric(f"{summary.get('validated_approvals', 0)} / {summary.get('approvals', 0)}", "validated approvals")}{metric(summary.get("credited_program_approvals", 0), "program approvals")}{metric(len(summary.get("conflicting_program_roles", [])), "conflicting roles")}{metric(validation.get("repositories", 0), "validation repositories")}{metric(llm.get("samples", 0), "LLM evaluation samples")}
 </div></section>
-<section id="topology"><h2>System topology</h2>{_program_topology_svg(result)}</section>
+<section id="topology"><h2>System topology</h2>{program_topology_svg(result)}</section>
 <section id="checks"><h2>Verification checks</h2><table><thead><tr><th>Check</th><th>State</th></tr></thead><tbody>{check_rows}</tbody></table></section>
 <section id="quality"><h2>Validation and model quality</h2><div class="metrics">{metric(validation.get("macro_recall"), "macro recall")}{metric(validation.get("macro_precision"), "macro precision")}{metric(validation.get("micro_recall"), "micro recall")}{metric(validation.get("micro_precision"), "micro precision")}{metric(validation.get("credited_cohorts", validation.get("cohorts", 0)), "credited validation cohorts")}{metric(validation.get("duplicate_evidence", 0), "duplicate validation evidence")}{metric(validation.get("macro_call_resolution_recall"), "macro call-resolution recall")}{metric(validation.get("macro_call_resolution_precision"), "macro call-resolution precision")}{metric(validation.get("micro_call_resolution_recall"), "micro call-resolution recall")}{metric(validation.get("micro_call_resolution_precision"), "micro call-resolution precision")}{metric(validation.get("macro_semantic_output_recall"), "macro semantic-output recall")}{metric(validation.get("macro_semantic_output_precision"), "macro semantic-output precision")}{metric(validation.get("micro_semantic_output_recall"), "micro semantic-output recall")}{metric(validation.get("micro_semantic_output_precision"), "micro semantic-output precision")}{metric(validation.get("semantic_output_cohorts", 0), "semantic validation cohorts")}{metric(validation.get("semantic_count_backed_cohorts", 0), "count-backed semantic cohorts")}{metric(validation.get("semantic_cases", 0), "exact semantic cases")}{metric(validation.get("count_backed_cohorts", 0), "count-backed cohorts")}{metric(validation.get("verified_evaluation_artifacts", 0), "verified evaluation artifacts")}{metric(validation.get("evaluation_artifact_bytes", 0), "evaluation artifact bytes")}{metric(validation.get("call_count_backed_cohorts", 0), "count-backed call cohorts")}{metric(validation.get("cases", 0), "labelled failure-mode cases")}{metric(validation.get("call_cases", 0), "labelled call-site cases")}{metric(validation.get("independently_reviewed", 0), "independent cohorts")}{metric(llm.get("grounding"), "LLM grounding")}{metric(llm.get("citation_accuracy"), "LLM citation accuracy")}{metric(llm.get("unsupported_claim_rate"), "unsupported claim rate")}{metric(llm.get("claim_count"), "LLM claims")}{metric(llm.get("unsupported_claim_count"), "unsupported LLM claims")}{metric(llm.get("credited_evaluations", llm.get("evaluations", 0)), "credited LLM evaluations")}{metric(llm.get("duplicate_evidence", 0), "duplicate LLM evidence")}{metric(llm.get("count_backed_evaluations", 0), "count-backed LLM evaluations")}{metric(llm.get("verified_corpus_artifacts", 0), "verified LLM corpus artifacts")}{metric(llm.get("subject_bound_evaluations", 0), "subject-bound LLM evaluations")}{metric(llm.get("semantic_fingerprinted_evaluations", 0), "semantic LLM fingerprints")}{metric(llm.get("corpus_artifact_bytes", 0), "LLM corpus bytes")}{metric(llm.get("aggregation_method", "unavailable"), "LLM aggregation")}{metric(llm.get("independently_reviewed", 0), "independent LLM evaluations")}</div></section>
 <section id="relationships"><h2>Cross-repository relationships, timing, and resilience</h2><table><thead><tr><th>ID</th><th>Source</th><th>Target</th><th>Kind</th><th>Timing</th><th>Resilience</th><th>Deadline ms</th><th>Observed max ms</th><th>Recovery ms</th><th>Evidence</th></tr></thead><tbody>{relationship_rows}</tbody></table></section>

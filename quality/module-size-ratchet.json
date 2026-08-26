@@ -1,0 +1,17 @@
+{
+  "format": "pysfmea-module-size-ratchet-1",
+  "watched_maximum_lines": {
+    "scanner.py": 12693,
+    "cross_reference.py": 11351,
+    "schemas.py": 9825,
+    "cli.py": 5704,
+    "program.py": 5458,
+    "enhancements.py": 5264,
+    "validation.py": 4186,
+    "report.py": 3897,
+    "diagrams.py": 3271
+  },
+  "maximum_unlisted_module_lines": 3000,
+  "maximum_top_five_percent": 46.0,
+  "minimum_module_count": 61
+}

@@ -740,9 +740,12 @@ records bind an exact-byte artifact path; program verification safely replays th
 recomputes every count and rate, and enforces per-file and aggregate bounds. The
 result measures the supplied provider/model/prompt/corpus tuple only; corpus representativeness,
 reviewer competence, identity authentication, and provider drift remain external controls.
-Corpus format 2 places that provider/model/prompt tuple inside the retained labeled artifact and
-requires an exact match to converter and program provenance. Format 1 remains replayable legacy
-evidence but has no defensible subject binding and is rejected by the default subject gate.
+Corpus format 2 places that provider/model/prompt tuple inside the retained labeled artifact.
+Format 3 additionally binds the declared labeling and independent-review process; current
+conversion grants independent-review credit only to format 3 with matching producer/reviewer
+provenance and a non-future review date. Formats 1 and 2 remain replayable legacy evidence, but
+format 1 has no defensible subject binding. None of the formats authenticates a person or proves
+sample representativeness.
 
 Governance policy requires every configured role to approve the exact named program, uses
 timezone-qualified decision timestamps, refuses one reviewer identity exercising multiple

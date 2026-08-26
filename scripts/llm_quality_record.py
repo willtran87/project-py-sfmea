@@ -45,6 +45,8 @@ def quality_record(
             "provider": provider.strip(),
             "model": model.strip(),
             "prompt_version": prompt_version.strip(),
+            "producer": producer.strip(),
+            "reviewer": reviewer.strip(),
         },
     )
     raw_digest = hashlib.sha256(raw).hexdigest()
@@ -65,7 +67,7 @@ def quality_record(
         "corpus_format": projection.corpus_format,
         "subject_bound": projection.subject_bound,
         "evidence_fingerprint_sha256": projection.evidence_fingerprint_sha256,
-        "independent_reviewed": True,
+        "independent_reviewed": projection.independent_reviewed,
         "producer": producer.strip(),
         "reviewer": reviewer.strip(),
     }

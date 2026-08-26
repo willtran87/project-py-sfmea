@@ -293,9 +293,11 @@ requires both count backing and artifact replay; verdicts state whether aggregat
 `count-backed`, `legacy-sample-weighted`, or unavailable. Unsupported-claim rate is aggregated by
 claims rather than samples.
 `pysfmea-llm-quality-corpus-2` additionally binds a closed provider/model/prompt-version subject.
-Program verification reconciles that subject to the evaluation record and reports subject-bound
-coverage. Version-1 corpora remain consumable for compatibility but cannot satisfy the default
-`require_llm_subject_binding` policy.
+Format 3 also binds an independent-review declaration, labeling/review identities, review date,
+selection method, and representativeness rationale. Current conversion grants independent-review
+credit only to format 3 when its identities match the converter provenance. Formats 1 and 2 remain
+consumable for compatibility; format 1 cannot satisfy the default `require_llm_subject_binding`
+policy. These records do not authenticate identities or establish representativeness.
 Validation aggregation uses `corpus_sha256` as its evidence-credit identity. Replayed LLM
 aggregation uses `evidence_fingerprint_sha256`, canonically derived from corpus format, bound
 subject, and normalized ID-sorted samples; display metadata, byte formatting, and sample ordering

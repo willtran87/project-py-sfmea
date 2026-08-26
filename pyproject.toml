@@ -34,6 +34,7 @@ dev = [
   "hypothesis>=6.138",
   "jsonschema>=4.23",
   "pytest>=8",
+  "pytest-timeout>=2.4",
   "ruff>=0.9",
 ]
 quality = [
@@ -93,7 +94,11 @@ strict = true
 files = [
   "src/pysfmea",
   "scripts/check_coverage_ratchets.py",
+  "scripts/check_mutation_ratchet.py",
+  "scripts/check_module_size_ratchets.py",
   "scripts/benchmark_scan.py",
+  "scripts/generate_scale_corpus.py",
+  "scripts/qualification_readiness.py",
   "scripts/report_browser_gate.py",
 ]
 warn_unused_configs = true
@@ -110,6 +115,8 @@ only_mutate = [
   "src/pysfmea/sandbox_policy.py",
   "src/pysfmea/readiness.py",
   "src/pysfmea/scan_cache.py",
+  "src/pysfmea/diagnostics.py",
+  "src/pysfmea/llm_quality.py",
 ]
 pytest_add_cli_args_test_selection = [
   "tests/test_fault_injection.py",
@@ -117,6 +124,9 @@ pytest_add_cli_args_test_selection = [
   "tests/test_sandbox_policy.py",
   "tests/test_readiness.py",
   "tests/test_scan_cache.py",
+  "tests/test_diagnostics.py",
+  "tests/test_llm_quality_mutation.py",
 ]
 mutate_only_covered_lines = true
 max_stack_depth = 12
+pytest_add_cli_args = ["--timeout=30"]

@@ -25,6 +25,7 @@ python -m coverage run --branch -m pytest -q
 python -m coverage report
 python -m coverage json
 python scripts/check_coverage_ratchets.py coverage.json
+python scripts/check_module_size_ratchets.py
 python -m mypy
 python -m bandit -q -r src/pysfmea -c pyproject.toml -ll
 python -m pip_audit . --strict --progress-spinner off
@@ -37,6 +38,10 @@ Windows across supported Python versions. Separate jobs build and install the wh
 branch coverage with critical-module ratchets, type-check extracted subsystem boundaries, scan
 source and dependencies, publish a dependency SBOM, run property tests, and mutation-test the
 critical fault-plan, outcome, and sandbox-policy verdict logic.
+The focused mutation job consumes mutmut 3 native metadata and enforces checked-in aggregate and
+independently partitioned per-function population, score, survivor, invalid, and skipped ratchets.
+Do not raise survivor or module-size ceilings merely
+to pass CI; add tests or subsystem extractions and move the baselines downward.
 
 ## Engineering invariants
 

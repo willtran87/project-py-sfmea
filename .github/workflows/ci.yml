@@ -36,7 +36,11 @@ jobs:
           cache: pip
 
       - name: Install development environment
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,signing]"
+        run: |
+          python -m pip install --upgrade pip uv==0.11.19
+          uv lock --check
+          uv export --frozen --all-extras --no-emit-project --no-hashes --output-file .ci-constraints.txt
+          python -m pip install -c .ci-constraints.txt -e ".[dev,signing]"
 
       - name: Compile package
         run: python -m compileall -q src
@@ -88,12 +92,17 @@ jobs:
           cache: pip
 
       - name: Build source and wheel distributions
-        run: python -m pip install --upgrade pip build && python -m build
+        run: |
+          python -m pip install --upgrade pip uv==0.11.19
+          uv lock --check
+          uv export --frozen --all-extras --no-emit-project --no-hashes --output-file .ci-constraints.txt
+          python -m pip install -c .ci-constraints.txt build setuptools
+          python -m build --no-isolation
 
       - name: Install and smoke-test wheel
         run: |
           python -m venv .package-smoke
-          .package-smoke/bin/python -m pip install dist/*.whl
+          .package-smoke/bin/python -m pip install -c .ci-constraints.txt dist/*.whl
           .package-smoke/bin/sfmea --version
           .package-smoke/bin/sfmea schema --list
 
@@ -121,13 +130,20 @@ jobs:
           cache: pip
 
       - name: Install quality environment
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,signing,quality]"
+        run: |
+          python -m pip install --upgrade pip uv==0.11.19
+          uv lock --check
+          uv export --frozen --all-extras --no-emit-project --no-hashes --output-file .ci-constraints.txt
+          python -m pip install -c .ci-constraints.txt -e ".[dev,signing,quality]"
 
       - name: Enforce branch coverage
         run: python -m coverage run --branch -m pytest -q && python -m coverage report && python -m coverage xml && python -m coverage json
 
       - name: Enforce critical-module coverage ratchets
         run: python scripts/check_coverage_ratchets.py coverage.json
+
+      - name: Prevent concentrated module growth
+        run: python scripts/check_module_size_ratchets.py
 
       - name: Enforce strict complete-package typing
         run: python -m mypy
@@ -168,7 +184,11 @@ jobs:
           cache: pip
 
       - name: Install browser quality environment
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[browser]"
+        run: |
+          python -m pip install --upgrade pip uv==0.11.19
+          uv lock --check
+          uv export --frozen --all-extras --no-emit-project --no-hashes --output-file .ci-constraints.txt
+          python -m pip install -c .ci-constraints.txt -e ".[browser]"
 
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
@@ -224,11 +244,35 @@ jobs:
           --report .ci-report/report.html
           --output .ci-report/browser-quality-verification.json
 
+      - name: Generate 5,000-record scale report fixture
+        run: |
+          python scripts/generate_scale_corpus.py .ci-scale-repository --modules 80 --functions-per-module 8
+          mkdir -p .ci-scale-report
+          sfmea scan .ci-scale-repository --allow-ungoverned --no-cache --output .ci-scale-report/analysis.json.gz
+          sfmea report .ci-scale-report/analysis.json.gz --output .ci-scale-report/report.html --max-records 5000
+
+      - name: Exercise 5,000-record report in Chromium
+        run: >-
+          python scripts/report_browser_gate.py .ci-scale-report/report.html
+          --analysis .ci-scale-report/analysis.json.gz
+          --max-bytes 104857600
+          --max-load-seconds 20
+          --max-js-heap-bytes 536870912
+          --output .ci-scale-report/browser-quality.json
+
+      - name: Verify scale browser quality evidence
+        run: >-
+          sfmea report-browser-verify .ci-scale-report/browser-quality.json
+          --report .ci-scale-report/report.html
+          --output .ci-scale-report/browser-quality-verification.json
+
       - name: Publish browser quality evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pysfmea-browser-report-quality
-          path: .ci-report/*
+          path: |
+            .ci-report/*
+            .ci-scale-report/*
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
@@ -249,27 +293,51 @@ jobs:
           cache: pip
 
       - name: Install benchmark environment
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+        run: |
+          python -m pip install --upgrade pip uv==0.11.19
+          uv lock --check
+          uv export --frozen --all-extras --no-emit-project --no-hashes --output-file .ci-constraints.txt
+          python -m pip install -c .ci-constraints.txt -e ".[dev]"
+
+      - name: Generate deterministic medium-scale repository
+        run: >-
+          python scripts/generate_scale_corpus.py .ci-scale-repository
+          --modules 80
+          --functions-per-module 8
 
       - name: Enforce scanner runtime and traced-memory budgets
         run: >-
-          python scripts/benchmark_scan.py benchmarks/python_sfmea_corpus/repository
+          python scripts/benchmark_scan.py .ci-scale-repository
           --repeats 2
           --reuse-facts
           --max-median-seconds 60
           --max-peak-bytes 536870912
+          --max-rss-bytes 1073741824
+          --min-source-files 81
+          --min-components 640
+          --min-candidates 320
+          --analysis-output scale-analysis.json.gz
           --output scan-performance.json
+
+      - name: Generate medium-scale self-contained report
+        run: >-
+          sfmea report scale-analysis.json.gz
+          --max-records 5000
+          --output scale-report.html
 
       - name: Publish performance evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pysfmea-performance-evidence
-          path: scan-performance.json
+          path: |
+            scan-performance.json
+            scale-analysis.json.gz
+            scale-report.html
           if-no-files-found: error
           retention-days: 30
 
   mutation:
-    name: Focused fault-plugin mutation gate
+    name: Focused mutation-score ratchet
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -284,14 +352,43 @@ jobs:
           cache: pip
 
       - name: Install mutation environment
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,signing,quality]"
+        run: |
+          python -m pip install --upgrade pip uv==0.11.19
+          uv lock --check
+          uv export --frozen --all-extras --no-emit-project --no-hashes --output-file .ci-constraints.txt
+          python -m pip install -c .ci-constraints.txt -e ".[dev,signing,quality]"
 
-      - name: Reject surviving critical policy mutations
+      - name: Run focused critical-policy mutations
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=TERM 30m mutmut run \
+            "pysfmea.fault_injection.x_assert_fault_injection_result__mutmut_*" \
+            "pysfmea.fault_injection.x__expected_outcomes__mutmut_*" \
+            "pysfmea.fault_injection.x_verify_fault_injection_plan__mutmut_*" \
+            "pysfmea.runtime.x__span_timing__mutmut_*" \
+            "pysfmea.runtime.x__component_from_span__mutmut_*" \
+            "pysfmea.sandbox_policy.x_sandbox_command__mutmut_*" \
+            "pysfmea.diagnostics.x__runtime_corroboration__mutmut_*" \
+            "pysfmea.llm_quality.x_project_llm_quality_corpus__mutmut_*"
+          printf '%s\n' "$?" > mutation-run-exit-code.txt
+          exit 0
+
+      - name: Enforce focused mutation-quality non-regression
         run: >-
-          mutmut run
-          "pysfmea.fault_injection.x_assert_fault_injection_result__mutmut_*"
-          "pysfmea.fault_injection.x__expected_outcomes__mutmut_*"
-          "pysfmea.fault_injection.x_verify_fault_injection_plan__mutmut_*"
-          "pysfmea.runtime.x__span_timing__mutmut_*"
-          "pysfmea.runtime.x__component_from_span__mutmut_*"
-          "pysfmea.sandbox_policy.x_sandbox_command__mutmut_*"
+          python scripts/check_mutation_ratchet.py mutants
+          --policy quality/mutation-ratchet.json
+          --runner-exit-code-file mutation-run-exit-code.txt
+          --output mutation-quality.json
+
+      - name: Publish mutation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pysfmea-mutation-quality
+          path: |
+            mutants/**/*.meta
+            mutation-quality.json
+            mutation-run-exit-code.txt
+          if-no-files-found: warn
+          retention-days: 30

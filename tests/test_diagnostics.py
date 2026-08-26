@@ -161,6 +161,53 @@ class AnalysisDiagnosticsTests(unittest.TestCase):
                 domain["basis"], "Static client-endpoint reconciliation coverage"
             )
 
+    def test_runtime_score_measures_observed_scope_not_import_presence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "service.py").write_text(
+                "def caller():\n    return callee()\n\ndef callee():\n    return 1\n",
+                encoding="utf-8",
+            )
+            analysis = scan_repository(root)
+            caller = next(
+                value for value in analysis["components"] if value["name"] == "caller"
+            )
+            callee = next(
+                value for value in analysis["components"] if value["name"] == "callee"
+            )
+            analysis["runtime_evidence"] = {
+                "imports": [{"id": "TRACE-PARTIAL"}],
+                "spans": [{"component_id": caller["id"]}],
+                "edges": [],
+            }
+            partial = analysis_diagnostics(analysis)
+            corroboration = partial["evidence"]["runtime_corroboration"]
+            self.assertEqual(corroboration["static_edges"], 1)
+            self.assertEqual(corroboration["corroborated_static_edges"], 0)
+            self.assertLess(corroboration["score"], 70)
+            self.assertIn(
+                "expand_runtime_instrumentation",
+                {value["id"] for value in partial["recommended_actions"]},
+            )
+
+            analysis["runtime_evidence"]["spans"].append(
+                {"component_id": callee["id"]}
+            )
+            analysis["runtime_evidence"]["edges"].append(
+                {
+                    "source_component_id": caller["id"],
+                    "target_component_id": callee["id"],
+                }
+            )
+            complete = analysis_diagnostics(analysis)
+            corroboration = complete["evidence"]["runtime_corroboration"]
+            self.assertEqual(corroboration["score"], 100.0)
+            self.assertEqual(corroboration["corroborated_static_edges"], 1)
+            self.assertNotIn(
+                "expand_runtime_instrumentation",
+                {value["id"] for value in complete["recommended_actions"]},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

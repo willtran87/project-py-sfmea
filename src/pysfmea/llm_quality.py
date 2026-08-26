@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Mapping
 
 from .integrity import canonical_json_sha256
 
 LEGACY_CORPUS_FORMAT = "pysfmea-llm-quality-corpus-1"
-CORPUS_FORMAT = "pysfmea-llm-quality-corpus-2"
-SUPPORTED_CORPUS_FORMATS = {LEGACY_CORPUS_FORMAT, CORPUS_FORMAT}
+SUBJECT_BOUND_CORPUS_FORMAT = "pysfmea-llm-quality-corpus-2"
+CORPUS_FORMAT = "pysfmea-llm-quality-corpus-3"
+SUPPORTED_CORPUS_FORMATS = {
+    LEGACY_CORPUS_FORMAT,
+    SUBJECT_BOUND_CORPUS_FORMAT,
+    CORPUS_FORMAT,
+}
 MAX_SAMPLES = 100_000
 
 
@@ -19,6 +25,8 @@ class LlmQualityProjection:
 
     corpus_format: str
     subject_bound: bool
+    review_governance_bound: bool
+    independent_reviewed: bool
     sample_count: int
     grounded_sample_count: int
     citation_correct_sample_count: int
@@ -52,12 +60,14 @@ def project_llm_quality_corpus(
     if schema_version not in SUPPORTED_CORPUS_FORMATS:
         raise ValueError("LLM quality corpus schema_version is missing or unsupported")
     allowed_root = {"schema_version", "name", "purpose", "samples"}
-    if schema_version == CORPUS_FORMAT:
+    if schema_version in {SUBJECT_BOUND_CORPUS_FORMAT, CORPUS_FORMAT}:
         allowed_root.add("subject")
+    if schema_version == CORPUS_FORMAT:
+        allowed_root.add("governance")
     if set(corpus) - allowed_root:
         raise ValueError("LLM quality corpus contains unsupported fields")
 
-    subject_bound = schema_version == CORPUS_FORMAT
+    subject_bound = schema_version in {SUBJECT_BOUND_CORPUS_FORMAT, CORPUS_FORMAT}
     subject: dict[str, str] | None = None
     if subject_bound:
         raw_subject = corpus.get("subject")
@@ -75,6 +85,7 @@ def project_llm_quality_corpus(
             raise ValueError(
                 "LLM quality corpus subject must exactly match provider, model, and prompt version"
             )
+        assert isinstance(raw_subject, dict)
         subject = {key: raw_subject[key].strip() for key in sorted(expected_keys)}
         if expected_subject is not None and subject != {
             key: str(expected_subject.get(key, "")).strip() for key in expected_keys
@@ -82,6 +93,61 @@ def project_llm_quality_corpus(
             raise ValueError(
                 "LLM quality corpus subject must exactly match provider, model, and prompt version"
             )
+
+    review_governance_bound = schema_version == CORPUS_FORMAT
+    independent_reviewed = False
+    if review_governance_bound:
+        governance = corpus.get("governance")
+        governance_fields = {
+            "independent",
+            "labeled_by",
+            "reviewed_by",
+            "review_date",
+            "selection_method",
+            "representativeness_rationale",
+        }
+        if not isinstance(governance, dict) or set(governance) != governance_fields:
+            raise ValueError(
+                "LLM quality corpus governance must match the closed format-3 contract"
+            )
+        if governance.get("independent") is not True:
+            raise ValueError("LLM quality corpus governance must assert independent review")
+        for field in governance_fields - {"independent"}:
+            value = governance.get(field)
+            if not isinstance(value, str) or not value.strip() or len(value) > 20_000:
+                raise ValueError(f"LLM quality corpus governance {field} is invalid")
+        placeholder_values = [
+            *(str(value) for value in (subject or {}).values()),
+            *(str(governance[field]) for field in governance_fields - {"independent"}),
+        ]
+        if any(
+            marker in value.casefold()
+            for value in placeholder_values
+            for marker in ("replace with", "replace-", "placeholder")
+        ):
+            raise ValueError("LLM quality corpus format-3 placeholders must be replaced")
+        if str(governance["labeled_by"]).strip().casefold() == str(
+            governance["reviewed_by"]
+        ).strip().casefold():
+            raise ValueError(
+                "LLM quality corpus requires distinct labeling and review identities"
+            )
+        try:
+            reviewed_on = date.fromisoformat(str(governance["review_date"]))
+        except ValueError as exc:
+            raise ValueError("LLM quality corpus review_date must use YYYY-MM-DD") from exc
+        if reviewed_on > date.today():
+            raise ValueError("LLM quality corpus review_date must not be in the future")
+        if expected_subject is not None and (
+            str(governance["labeled_by"]).strip()
+            != str(expected_subject.get("producer", "")).strip()
+            or str(governance["reviewed_by"]).strip()
+            != str(expected_subject.get("reviewer", "")).strip()
+        ):
+            raise ValueError(
+                "LLM quality corpus governance identities must match producer and reviewer"
+            )
+        independent_reviewed = True
 
     samples = corpus.get("samples")
     if not isinstance(samples, list) or not samples or len(samples) > MAX_SAMPLES:
@@ -158,6 +224,8 @@ def project_llm_quality_corpus(
     return LlmQualityProjection(
         corpus_format=schema_version,
         subject_bound=subject_bound,
+        review_governance_bound=review_governance_bound,
+        independent_reviewed=independent_reviewed,
         sample_count=len(samples),
         grounded_sample_count=grounded,
         citation_correct_sample_count=citations_correct,

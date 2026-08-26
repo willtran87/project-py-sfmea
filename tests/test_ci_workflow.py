@@ -33,7 +33,8 @@ def test_hidden_browser_evidence_is_explicitly_uploaded() -> None:
     )
     assert upload is not None
     body = upload.group("body")
-    assert "path: .ci-report/*" in body
+    assert ".ci-report/*" in body
+    assert ".ci-scale-report/*" in body
     assert "include-hidden-files: true" in body
     assert "if-no-files-found: error" in body
 
@@ -50,6 +51,8 @@ def test_mutation_sandbox_copies_the_complete_package() -> None:
         "src/pysfmea/sandbox_policy.py",
         "src/pysfmea/readiness.py",
         "src/pysfmea/scan_cache.py",
+        "src/pysfmea/diagnostics.py",
+        "src/pysfmea/llm_quality.py",
     }
 
 
@@ -64,6 +67,8 @@ def test_mutation_gate_targets_mutmut_3_mangled_names() -> None:
         "x__span_timing__mutmut_",
         "x__component_from_span__mutmut_",
         "x_sandbox_command__mutmut_",
+        "x__runtime_corroboration__mutmut_",
+        "x_project_llm_quality_corpus__mutmut_",
     }
 
     for function in expected_functions:
@@ -71,6 +76,7 @@ def test_mutation_gate_targets_mutmut_3_mangled_names() -> None:
     assert '"mutmut>=3.7,<4"' in (ROOT / "pyproject.toml").read_text(
         encoding="utf-8"
     )
+    assert "timeout --signal=TERM 30m mutmut run" in workflow
 
 
 def test_temporary_repository_fixtures_use_canonical_roots() -> None:

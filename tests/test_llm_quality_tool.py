@@ -118,6 +118,7 @@ class LlmQualityToolTests(unittest.TestCase):
         self.assertEqual(record["unsupported_claim_count"], 1)
         self.assertEqual(record["corpus_format"], "pysfmea-llm-quality-corpus-2")
         self.assertTrue(record["subject_bound"])
+        self.assertFalse(record["independent_reviewed"])
         self.assertEqual(len(record["corpus_sha256"]), 64)
         self.assertEqual(len(record["evidence_fingerprint_sha256"]), 64)
         self.assertEqual(record["corpus_artifact"]["sha256"], record["corpus_sha256"])
@@ -192,6 +193,79 @@ class LlmQualityToolTests(unittest.TestCase):
             self.assertEqual(record["corpus_artifact"]["path"], "evidence/corpus.json")
             self.assertEqual(
                 record["corpus_artifact"]["sha256"], record["corpus_sha256"]
+            )
+            self.assertFalse(record["independent_reviewed"])
+
+    def test_format_three_binds_review_governance_before_granting_credit(self) -> None:
+        corpus = {
+            "schema_version": "pysfmea-llm-quality-corpus-3",
+            "subject": {
+                "provider": "provider",
+                "model": "model",
+                "prompt_version": "prompt",
+            },
+            "governance": {
+                "independent": True,
+                "labeled_by": "Model Evaluation Team",
+                "reviewed_by": "Independent Assurance Team",
+                "review_date": "2026-08-25",
+                "selection_method": "Risk-stratified samples selected before model execution.",
+                "representativeness_rationale": "Covers supported prompts and risk domains.",
+            },
+            "samples": [
+                {
+                    "id": "S-1",
+                    "grounded": True,
+                    "citations_correct": True,
+                    "claim_count": 1,
+                    "unsupported_claim_count": 0,
+                }
+            ],
+        }
+        record = quality_record(
+            corpus,
+            raw=json.dumps(corpus).encode(),
+            evaluation_id="LLM-V3-1",
+            provider="provider",
+            model="model",
+            prompt_version="prompt",
+            producer="Model Evaluation Team",
+            reviewer="Independent Assurance Team",
+        )
+        self.assertEqual(record["corpus_format"], "pysfmea-llm-quality-corpus-3")
+        self.assertTrue(record["subject_bound"])
+        self.assertTrue(record["independent_reviewed"])
+
+        corpus["governance"]["reviewed_by"] = "Different Reviewer"
+        with self.assertRaisesRegex(ValueError, "identities must match"):
+            quality_record(
+                corpus,
+                raw=json.dumps(corpus).encode(),
+                evaluation_id="LLM-V3-2",
+                provider="provider",
+                model="model",
+                prompt_version="prompt",
+                producer="Model Evaluation Team",
+                reviewer="Independent Assurance Team",
+            )
+
+    def test_public_format_three_template_cannot_mint_review_credit(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+        corpus = json.loads(
+            (repository / "examples" / "llm-quality-corpus.template.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "placeholders must be replaced"):
+            quality_record(
+                corpus,
+                raw=json.dumps(corpus).encode(),
+                evaluation_id="LLM-TEMPLATE-1",
+                provider="replace-provider",
+                model="replace-model",
+                prompt_version="replace-prompt-version",
+                producer="Replace with labeling team identity",
+                reviewer="Replace with independent review authority",
             )
 
     def test_invalid_claims_and_nonindependent_review_fail_closed(self) -> None:

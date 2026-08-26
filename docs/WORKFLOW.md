@@ -816,9 +816,11 @@ without an available matching artifact receives no credit under the default poli
 LLM records carry grounded/citation-correct sample counts and total/unsupported claim counts plus
 an exact-byte `corpus_artifact`. Enable `require_llm_count_backing` and
 `require_llm_corpus_artifacts` (the template defaults) to require sample-level replay. Use
-`pysfmea-llm-quality-corpus-2` and include a closed `subject` object matching the converter's
-provider, model, and prompt version. `require_llm_subject_binding` rejects substituted or legacy
-subjects. The program
+`pysfmea-llm-quality-corpus-3` and include a closed `subject` plus the declared independent
+labeling/review governance shown in the public template. The subject must match the converter's
+provider, model, and prompt version; governance identities must match its producer and reviewer.
+`require_llm_subject_binding` rejects substituted or format-1 subjects. Formats 1 and 2 remain
+readable, but current conversion grants them no independent-review credit. The program
 aggregates grounding and citation decisions over samples and unsupported claims over total claims;
 legacy records remain readable with an explicit `legacy-sample-weighted` aggregation label only
 when those gates are disabled.

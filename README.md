@@ -34,6 +34,8 @@ flowchart LR
 - [NASA/FAA guidance coverage audit](docs/GAP_AUDIT.md)
 - [Product enhancement resolution](docs/ENHANCEMENT_RESOLUTION.md)
 - [Platform support and qualification evidence](docs/PLATFORM_SUPPORT.md)
+- [Product confidence gates](docs/QUALITY_GATES.md) — mutation, scale, maintainability,
+  model-quality, and qualification-readiness boundaries
 - [Service threat model and residual-risk register](docs/THREAT_MODEL.md)
 - [Advanced review workflows](docs/ADVANCED_REVIEW.md) — saved views, accessibility,
   LLM synthesis, PR analysis, and the plugin SDK
@@ -1430,7 +1432,7 @@ every requested component before committing, and acceptance rolls back completel
 materialization fails. Proposed suggestions become stale after a baseline change.
 
 For model qualification evidence, independently label a closed
-`pysfmea-llm-quality-corpus-2` sample set with grounding, citation correctness, claim count, and
+`pysfmea-llm-quality-corpus-3` sample set with grounding, citation correctness, claim count, and
 unsupported-claim count, then create the assurance-program record:
 
 The corpus must include a closed `subject` object whose `provider`, `model`, and `prompt_version`
@@ -1439,11 +1441,19 @@ from being attributed to another.
 
 ```json
 {
-  "schema_version": "pysfmea-llm-quality-corpus-2",
+  "schema_version": "pysfmea-llm-quality-corpus-3",
   "subject": {
     "provider": "approved-provider",
     "model": "approved-model",
     "prompt_version": "pysfmea-discovery-v1"
+  },
+  "governance": {
+    "independent": true,
+    "labeled_by": "Model evaluation team",
+    "reviewed_by": "Independent assurance team",
+    "review_date": "2026-08-25",
+    "selection_method": "Risk-stratified samples selected before model execution.",
+    "representativeness_rationale": "Supported prompts and declared risk domains are covered."
   },
   "samples": [
     {
@@ -1466,12 +1476,13 @@ python scripts/llm_quality_record.py llm-quality-corpus.json `
   -o llm-evaluation.json
 ```
 
+Start from [`examples/llm-quality-corpus.template.json`](examples/llm-quality-corpus.template.json).
 The utility preserves decision and claim counts and binds the exact retained corpus bytes. Program
 verification replays the closed sample contract; grounding and citation accuracy aggregate by
 sample, while unsupported-claim rate aggregates by total claims. It does not determine whether the
 sample set is representative or authenticate the reviewers.
-Version-1 corpora remain readable as explicit legacy evidence but cannot satisfy
-`require_llm_subject_binding`.
+Formats 1 and 2 remain readable as explicit legacy evidence. The converter grants them no
+independent-review credit; format 1 also cannot satisfy `require_llm_subject_binding`.
 
 Assurance-program aggregation credits each validation corpus once. For LLM evidence, the converter
 also emits `evidence_fingerprint_sha256` over the corpus format, bound subject, and normalized
@@ -2235,6 +2246,14 @@ evaluation result, then list those relative paths in a closed campaign manifest.
 [`examples/qualification-campaign.json`](examples/qualification-campaign.json) and validate the
 contract with `sfmea schema qualification-campaign-manifest`.
 
+The checked-in file is deliberately incomplete and contains placeholders. Preflight a populated
+copy before running the expensive campaign:
+
+```powershell
+python scripts/qualification_readiness.py qualification-campaign.json `
+  --require-ready -o qualification-readiness.json
+```
+
 ```powershell
 sfmea qualification-build qualification-campaign.json `
   -o qualification-result.json --require-eligible
@@ -2443,7 +2462,10 @@ than a generic SFMEA failure taxonomy.
 Install the development tools and run the same core checks as CI:
 
 ```powershell
-python -m pip install -e ".[dev,signing]"
+python -m pip install uv==0.11.19
+uv lock --check
+uv export --frozen --all-extras --no-emit-project --no-hashes -o .dev-constraints.txt
+python -m pip install -c .dev-constraints.txt -e ".[dev,signing]"
 python -m compileall -q src
 python -m ruff check src tests
 python -m pytest -q
@@ -2467,8 +2489,10 @@ python -m pip_audit . --format cyclonedx-json --output pysfmea-build.cdx.json `
 Strict typing covers the complete `pysfmea` package and the release-gate scripts configured in
 `pyproject.toml`; a newly added module is therefore included automatically. The focused Linux
 mutation gate targets plan verification, outcome and false-pass verdicts, and sandbox command
-policy. Coverage has both a complete-package floor and higher module-specific floors for these
-critical boundaries.
+policy. Its aggregate and per-function ratchets prevent cross-function masking while keeping
+surviving mutants visible as test-oracle debt. CI also loads the 5,000-record deterministic scale
+report in Chromium and exercises a retained dynamic-Python boundary corpus. Coverage has both a
+complete-package floor and higher module-specific floors for critical boundaries.
 
 Project policies and maintenance references:
 

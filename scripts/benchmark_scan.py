@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import os
 import platform
 import statistics
 import sys
@@ -15,10 +17,30 @@ from typing import Any
 
 from pysfmea.file_publication import atomic_publish_text
 from pysfmea.scanner import scan_repository
+from pysfmea.store import save_analysis
 from pysfmea.version import __version__
 
 FORMAT = "pysfmea-scan-performance-1"
 MAX_REPEATS = 20
+
+
+def _process_peak_rss_bytes() -> int | None:
+    """Return process high-water RSS where the standard library exposes it."""
+
+    if os.name == "nt":
+        return None
+    try:
+        import resource
+
+        getrusage = getattr(resource, "getrusage", None)
+        rusage_self = getattr(resource, "RUSAGE_SELF", None)
+        if not callable(getrusage) or rusage_self is None:
+            return None
+        value = int(getrusage(rusage_self).ru_maxrss)
+    except (ImportError, OSError, ValueError):
+        return None
+    multiplier = 1 if platform.system() == "Darwin" else 1024
+    return value * multiplier if value > 0 else None
 
 
 def benchmark_repository(
@@ -28,6 +50,11 @@ def benchmark_repository(
     reuse_facts: bool = False,
     max_median_seconds: float | None = None,
     max_peak_bytes: int | None = None,
+    max_rss_bytes: int | None = None,
+    min_source_files: int | None = None,
+    min_components: int | None = None,
+    min_candidates: int | None = None,
+    analysis_output: str | Path | None = None,
 ) -> dict[str, Any]:
     if not isinstance(repeats, int) or isinstance(repeats, bool) or not 1 <= repeats <= MAX_REPEATS:
         raise ValueError(f"repeats must be between 1 and {MAX_REPEATS}")
@@ -37,6 +64,16 @@ def benchmark_repository(
         isinstance(max_peak_bytes, bool) or max_peak_bytes <= 0
     ):
         raise ValueError("max_peak_bytes must be a positive integer")
+    for label, value in (
+        ("max_rss_bytes", max_rss_bytes),
+        ("min_source_files", min_source_files),
+        ("min_components", min_components),
+        ("min_candidates", min_candidates),
+    ):
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value <= 0
+        ):
+            raise ValueError(f"{label} must be a positive integer")
     root = Path(repository).expanduser().resolve()
     if not root.is_dir():
         raise ValueError(f"repository path is not a directory: {root}")
@@ -65,6 +102,7 @@ def benchmark_repository(
                 "run": index + 1,
                 "elapsed_seconds": round(elapsed_ns / 1_000_000_000, 6),
                 "peak_traced_bytes": peak_bytes,
+                "process_peak_rss_bytes": _process_peak_rss_bytes(),
                 "phases_seconds": telemetry.get("phases_seconds", {}),
                 "fact_cache": telemetry.get("fact_cache", {}),
             }
@@ -121,6 +159,15 @@ def benchmark_repository(
         else None
     )
     maximum_peak_bytes = max(peaks)
+    rss_samples = [
+        int(value["process_peak_rss_bytes"])
+        for value in runs
+        if isinstance(value.get("process_peak_rss_bytes"), int)
+    ]
+    maximum_rss_bytes = max(rss_samples) if rss_samples else None
+    source_files = baseline.get("source_snapshot_files")
+    component_count = len(last_analysis.get("components", []))
+    candidate_count = len(last_analysis.get("items", []))
     budget_checks = {
         "median_seconds": (
             None
@@ -130,9 +177,25 @@ def benchmark_repository(
         "peak_traced_bytes": (
             None if max_peak_bytes is None else maximum_peak_bytes <= max_peak_bytes
         ),
+        "process_peak_rss_bytes": (
+            None
+            if max_rss_bytes is None
+            else maximum_rss_bytes is not None and maximum_rss_bytes <= max_rss_bytes
+        ),
+        "minimum_source_files": (
+            None
+            if min_source_files is None
+            else isinstance(source_files, int) and source_files >= min_source_files
+        ),
+        "minimum_components": (
+            None if min_components is None else component_count >= min_components
+        ),
+        "minimum_candidates": (
+            None if min_candidates is None else candidate_count >= min_candidates
+        ),
     }
     budgets_passed = all(value is not False for value in budget_checks.values())
-    return {
+    result: dict[str, Any] = {
         "format": FORMAT,
         "tool": {"name": "PySFMEA", "version": __version__},
         "environment": {
@@ -154,14 +217,18 @@ def benchmark_repository(
             "test_evidence_snapshot_bytes": baseline.get(
                 "test_evidence_snapshot_bytes"
             ),
-            "components": len(last_analysis.get("components", [])),
-            "candidates": len(last_analysis.get("items", [])),
+            "components": component_count,
+            "candidates": candidate_count,
         },
         "runs": runs,
         "budgets": {
             "configured": {
                 "max_median_seconds": max_median_seconds,
                 "max_peak_traced_bytes": max_peak_bytes,
+                "max_process_peak_rss_bytes": max_rss_bytes,
+                "minimum_source_files": min_source_files,
+                "minimum_components": min_components,
+                "minimum_candidates": min_candidates,
             },
             "checks": budget_checks,
             "passed": budgets_passed,
@@ -183,6 +250,7 @@ def benchmark_repository(
             "minimum_seconds": durations[0],
             "maximum_seconds": durations[-1],
             "maximum_peak_traced_bytes": maximum_peak_bytes,
+            "maximum_process_peak_rss_bytes": maximum_rss_bytes,
             "phase_medians_seconds": {
                 name: round(statistics.median(values), 6)
                 for name, values in phase_samples.items()
@@ -194,10 +262,25 @@ def benchmark_repository(
         },
         "notice": (
             "This record characterizes one machine, repository, configuration, and Python "
-            "runtime. tracemalloc measures traced Python allocations, not total process memory; "
+            "runtime. tracemalloc measures traced Python allocations. Process RSS is a platform "
+            "high-water mark and may include allocations retained from earlier repeats; "
             "thresholds require an independently approved environment-specific baseline."
         ),
     }
+    if analysis_output is not None:
+        destination = Path(analysis_output).expanduser().resolve()
+        save_analysis(destination, last_analysis, compact=True)
+        digest = hashlib.sha256()
+        with destination.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        result["retained_analysis"] = {
+            "path": str(destination),
+            "bytes": destination.stat().st_size,
+            "sha256": digest.hexdigest(),
+            "outside_timed_scan": True,
+        }
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -219,6 +302,18 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         help="fail when peak traced Python allocations exceed this CI budget",
     )
+    parser.add_argument(
+        "--max-rss-bytes",
+        type=int,
+        help="fail when the supported process RSS high-water mark exceeds this budget",
+    )
+    parser.add_argument("--min-source-files", type=int)
+    parser.add_argument("--min-components", type=int)
+    parser.add_argument("--min-candidates", type=int)
+    parser.add_argument(
+        "--analysis-output",
+        help="retain the final governed analysis outside the timed scan interval",
+    )
     parser.add_argument("-o", "--output")
     args = parser.parse_args(argv)
     result = benchmark_repository(
@@ -227,6 +322,11 @@ def main(argv: list[str] | None = None) -> int:
         reuse_facts=args.reuse_facts,
         max_median_seconds=args.max_median_seconds,
         max_peak_bytes=args.max_peak_bytes,
+        max_rss_bytes=args.max_rss_bytes,
+        min_source_files=args.min_source_files,
+        min_components=args.min_components,
+        min_candidates=args.min_candidates,
+        analysis_output=args.analysis_output,
     )
     rendered = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
     if args.output:

@@ -346,7 +346,10 @@ release scripts.
 ## 2. Run release validation
 
 ```powershell
-python -m pip install -e ".[dev,signing,quality]"
+python -m pip install uv==0.11.19
+uv lock --check
+uv export --frozen --all-extras --no-emit-project --no-hashes -o .release-constraints.txt
+python -m pip install -c .release-constraints.txt -e ".[dev,signing,quality,browser]"
 python -m compileall -q src
 python -m ruff check src tests
 python -m pytest -q
@@ -354,6 +357,7 @@ python -m coverage run --branch -m pytest -q
 python -m coverage report
 python -m coverage json
 python scripts/check_coverage_ratchets.py coverage.json
+python scripts/check_module_size_ratchets.py
 python -m mypy
 python -m bandit -q -r src/pysfmea -c pyproject.toml -ll
 python -m pip_audit . --strict --progress-spinner off
@@ -364,6 +368,11 @@ sfmea schema --list --json
 sfmea schema --bundle .release-contracts --force
 sfmea schema --verify-bundle .release-contracts --json
 ```
+
+Also run the checked-in dynamic-Python corpus, focused mutation ratchet, deterministic scale scan,
+and 5,000-record Chromium gate described in `docs/QUALITY_GATES.md`. Retain their machine-readable
+receipts with release evidence. These controls are non-regression evidence; they do not substitute
+for independently labeled repository qualification or a governed LLM review corpus.
 
 Validate each public schema with a Draft 2020-12 validator and retain the catalog SHA-256 values
 with the release evidence. Run the golden evaluation corpus and review unsupported-verification
@@ -398,8 +407,14 @@ sfmea assurance benchmark-analysis.json --format work-json -o benchmark-assuranc
 sfmea assurance-work-verify benchmark-assurance-work.json --analysis benchmark-analysis.json --json
 sfmea package benchmark-analysis.json -o benchmark-review-package --json
 sfmea verify-package benchmark-review-package --json
-python scripts/benchmark_scan.py benchmarks\python_sfmea_corpus\repository `
-  --repeats 5 -o benchmark-performance.json
+python scripts/generate_scale_corpus.py .release-scale `
+  --modules 80 --functions-per-module 8
+python scripts/benchmark_scan.py .release-scale --repeats 2 --reuse-facts `
+  --max-median-seconds 60 --max-peak-bytes 536870912 --max-rss-bytes 1073741824 `
+  --min-source-files 81 --min-components 640 --min-candidates 320 `
+  --analysis-output scale-analysis.json.gz -o benchmark-performance.json
+sfmea report scale-analysis.json.gz --max-records 5000 -o scale-report.html
+python scripts/check_module_size_ratchets.py
 ```
 
 Confirm the golden result includes clean exhaustive call-resolution metrics overall and by
@@ -411,6 +426,11 @@ When a release claims representative scanner performance, retain the preselected
 snapshots, independently labeled corpora, analyses, and full evaluation outputs. Build and
 completely verify the governed campaign; integrity-only verification is insufficient for a release
 claim.
+
+Before the expensive build, run `python scripts/qualification_readiness.py
+qualification-campaign.json --require-ready`. A passing preflight confirms only that the declared
+population and retained files are executable; it does not establish independent authority or
+representativeness. Retain its JSON record with the campaign.
 
 ```powershell
 sfmea qualification-build qualification-campaign.json `

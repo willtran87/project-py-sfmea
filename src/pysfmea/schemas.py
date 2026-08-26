@@ -4463,6 +4463,7 @@ def _assurance_program_schema() -> dict[str, Any]:
                             "enum": [
                                 "pysfmea-llm-quality-corpus-1",
                                 "pysfmea-llm-quality-corpus-2",
+                                "pysfmea-llm-quality-corpus-3",
                             ]
                         },
                         "subject_bound": {"type": "boolean"},
