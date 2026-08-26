@@ -76,6 +76,7 @@ class DocumentationLinksTests(unittest.TestCase):
             name: (ROOT / name).read_text(encoding="utf-8")
             for name in (
                 "README.md",
+                "docs/GENERATED_TEST_CAMPAIGNS.md",
                 "docs/WORKFLOW.md",
                 "docs/VISUAL_GUIDE.md",
                 "docs/METHODOLOGY.md",
@@ -90,6 +91,9 @@ class DocumentationLinksTests(unittest.TestCase):
                 self.assertIn("14 declared", documents[name])
                 self.assertIn("15 artifact-backed", documents[name])
                 self.assertIn("7", documents[name])
+                self.assertIn("evidence mode", documents[name].casefold())
+                self.assertIn("manifest", documents[name].casefold())
+                self.assertIn("raw artifact", documents[name].casefold())
         self.assertIn("Fourteen gates", documents["docs/METHODOLOGY.md"])
         for command in (
             "assurance-test-fault-evidence",
@@ -104,6 +108,15 @@ class DocumentationLinksTests(unittest.TestCase):
         self.assertIn('subgraph PERTEST["Per-test evidence"]', visual)
         self.assertIn('subgraph SUBJECT["Subject qualification"]', visual)
         self.assertIn('D{"Human promotion decision"}', visual)
+        campaign = documents["docs/GENERATED_TEST_CAMPAIGNS.md"]
+        self.assertIn("sequenceDiagram", campaign)
+        self.assertIn("execution.json", campaign)
+        self.assertIn("every artifact size and SHA-256", campaign)
+        self.assertIn("15 derived gates or fail-closed error", campaign)
+        schemas = (ROOT / "docs" / "SCHEMAS.md").read_text(encoding="utf-8")
+        self.assertIn("`assurance-test-generation-quality-corpus-v2`", schemas)
+        self.assertIn("`assurance-test-generation-quality-result-v2`", schemas)
+        self.assertIn("`assurance-test-generation-fault-evidence`", schemas)
 
     def test_diagram_documentation_lists_every_generated_category(self) -> None:
         content = (ROOT / "docs" / "DIAGRAMS.md").read_text(encoding="utf-8")

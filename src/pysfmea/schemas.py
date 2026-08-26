@@ -9331,7 +9331,7 @@ _SCHEMA_DESCRIPTIONS = {
     "assurance-test-generation-quality-result": "Recomputed subject-bound generated-test quality metrics and qualification gates.",
     "assurance-test-generation-quality-corpus-v2": "Artifact-backed provider/model/prompt corpus whose outcome claims are derived from exact retained lifecycle evidence.",
     "assurance-test-generation-quality-result-v2": "Replayed artifact-derived generated-test quality metrics, evidence manifest, and qualification gates.",
-    "assurance-test-generation-fault-evidence": "Content-sealed paired baseline/seeded-fault outcome record bound to one exact generated test.",
+    "assurance-test-generation-fault-evidence": "Content-sealed paired baseline/seeded execution record reconciled to one exact generated test, both manifests, and every retained raw artifact.",
     "assurance-test-proposal-apply-receipt": "Human-reviewed atomic publication receipt for one generated assurance test.",
     "assurance-test-proposal-apply-receipt-verification": "Receipt integrity, proposal, analysis, review attribution, and exact applied-file binding verdict.",
     "assurance-test-proposal-stage": "Integrity-declaring isolated review-stage manifest for a verified generated test.",

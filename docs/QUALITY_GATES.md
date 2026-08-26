@@ -23,9 +23,15 @@ flowchart LR
   Z --> R
   X["Independent repositories, labels, reviewers"] --> Q["Qualification campaign"]
   R --> Q
-  G["Independent generated-test corpus"] --> T["14 declared / 15 artifact-backed gates + replay"]
-  R --> T
-  T --> A["Human automation-promotion decision"]
+  G["Independent generated-test corpus"] --> LMODE{"Evidence mode"}
+  LMODE -- "Format 1" --> L14["14 declared gates"]
+  LMODE -- "Format 2" --> LART["Lifecycle + paired execution artifacts"]
+  LART --> LRAW["Manifest seals + raw size/SHA-256"]
+  LRAW --> L15["15 artifact-backed, derived gates"]
+  R --> L14
+  R --> L15
+  L14 --> A["Human automation-promotion decision"]
+  L15 --> A
 ```
 
 ## Enforced controls

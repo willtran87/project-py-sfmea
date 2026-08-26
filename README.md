@@ -1742,11 +1742,17 @@ flowchart TB
     J --> K{"7 per-test readiness gates"}
   end
   subgraph MODEL["Provider/model/prompt qualification lane"]
-    Q["Independent generated-test corpus"] --> R["14 declared or 15 artifact-backed gates"]
-    R --> S["Content seal + exact-corpus replay"]
+    Q["Independent generated-test corpus"] --> QMODE{"Evidence mode"}
+    QMODE -- "Format 1: declared" --> Q14["14 declared gates"]
+    QMODE -- "Format 2: artifact-backed" --> QART["Root-confined analysis, proposal, receipt"]
+    QART --> QEXE["Distinct baseline + seeded execution records"]
+    QEXE --> QRAW["Manifest seals + raw artifact size/SHA-256"]
+    QRAW --> Q15["15 artifact-backed, derived gates"]
+    Q14 --> QREPLAY["Content seal + exact-corpus replay"]
+    Q15 --> QREPLAY
   end
   K --> P{"Human promotion decision"}
-  S --> P
+  QREPLAY --> P
   P --> U["Supervised production use"]
 ```
 

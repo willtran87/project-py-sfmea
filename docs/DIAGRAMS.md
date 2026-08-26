@@ -46,6 +46,11 @@ flowchart LR
 - Custom diagrams use the same validated renderer-neutral model.
 - Every bounded view reports truncation, omissions, and interpretation limits.
 
+The Mermaid workflow views in the README, visual guide, quality-gate guide, and generated-test
+campaign runbook explain operator and governance sequences. They are documentation views, not
+analysis-generated evidence. The canonical categories below are the diagrams produced from an
+exact governed analysis and embedded in the self-contained report.
+
 ## Generate diagram models
 
 ```powershell

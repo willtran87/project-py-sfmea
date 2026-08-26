@@ -714,11 +714,16 @@ flowchart TB
     E --> R{"7 readiness gates"}
   end
   subgraph QUAL["Exact provider/model/prompt"]
-    C["Independent generated-test corpus"] --> G{"14 declared or 15 artifact-backed gates"}
-    G --> V["Content integrity + corpus replay"]
+    C["Independent generated-test corpus"] --> QMODE{"Evidence mode"}
+    QMODE -- "Format 1" --> Q14["14 declared gates"]
+    QMODE -- "Format 2" --> QART["Exact lifecycle artifacts"]
+    QART --> QRAW["Paired executions + manifests + raw artifacts"]
+    QRAW --> Q15["15 artifact-backed, derived gates"]
+    Q14 --> QREPLAY["Content integrity + corpus replay"]
+    Q15 --> QREPLAY
   end
   R --> D{"Human promotion decision"}
-  V --> D
+  QREPLAY --> D
 ```
 
 ```powershell

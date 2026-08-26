@@ -3,7 +3,9 @@
 Use this runbook when deciding whether a specific provider, model, and PySFMEA prompt version is
 ready for a supervised test-generation pilot. It operationalizes the artifact-backed format-2
 corpus; it does not authorize autonomous publication or replace the seven readiness gates applied
-to every generated test.
+to every generated test. Those per-test gates still require the closed proposal's import-qualified
+target binding, named publication review, exact registration, restricted execution, observed
+stimulus, complete criteria, intact evidence, and independent evidence review.
 
 ## Campaign layout
 
@@ -29,6 +31,31 @@ test-generation-evidence/
 The analysis assurance register names each execution directory and exact generated-test SHA-256.
 Each `execution.json` manifest is content sealed and records the size and SHA-256 of every raw
 artifact. `fault.json` binds one passing baseline and one failing seeded run to the same test.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Reviewer
+    participant Builder as Fault-evidence builder
+    participant Analysis as Governed analysis
+    participant Baseline as Baseline evidence directory
+    participant Seeded as Seeded evidence directory
+    participant Evaluator as Format-2 evaluator
+
+    Reviewer->>Builder: Build(sample, baseline ID, seeded ID, evidence root)
+    Builder->>Analysis: Resolve both executions and exact test SHA-256
+    Analysis-->>Builder: Baseline passed; seeded failed; distinct IDs
+    Builder->>Baseline: Verify root confinement and execution.json seal
+    Baseline-->>Builder: Verify every artifact size and SHA-256
+    Builder->>Seeded: Verify root confinement and execution.json seal
+    Seeded-->>Builder: Verify every artifact size and SHA-256
+    Builder-->>Reviewer: Publish content-sealed fault.json
+    Reviewer->>Evaluator: Evaluate exact corpus under the same evidence root
+    Evaluator->>Analysis: Replay lifecycle and execution bindings
+    Evaluator->>Baseline: Replay manifest and raw artifact verification
+    Evaluator->>Seeded: Replay manifest and raw artifact verification
+    Evaluator-->>Reviewer: 15 derived gates or fail-closed error
+```
 
 ## Independent campaign workflow
 

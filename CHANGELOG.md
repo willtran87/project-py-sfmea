@@ -5,6 +5,10 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Refresh the generated-test governance diagrams and operator documentation to expose format-1
+  declared gates separately from format-2 lifecycle loading, paired execution reconciliation,
+  manifest/raw-artifact verification, 15 derived gates, and exact replay. Add a campaign sequence
+  view and keep public schema descriptions aligned with the executable evidence contract.
 - Reconcile generated-test fault-detection qualification to exact analysis-linked baseline and
   seeded execution manifests plus every retained raw artifact. Add fail-closed evidence-root
   confinement, paired-test/status/manifest checks, standalone build/replay CLI commands, tamper

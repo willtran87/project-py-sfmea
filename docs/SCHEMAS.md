@@ -76,8 +76,10 @@ Available names:
 | `assurance-scaffold-verification` | Manifest, synthesized-design, generated-file, lifecycle, and exact analysis-binding verdict |
 | `assurance-test-generation-readiness` | Seven proposal-to-publication-to-independent-evidence readiness gates |
 | `assurance-test-generation-quality-corpus` | Independently labeled provider/model/prompt generated-test qualification samples and policy |
+| `assurance-test-generation-quality-corpus-v2` | Artifact-backed samples that reference exact analysis, proposal, receipt, and paired fault-evidence bytes |
 | `assurance-test-generation-fault-evidence` | Content-sealed baseline/seeded execution identities whose exact manifests and raw artifacts are reconciled during format-2 evaluation |
 | `assurance-test-generation-quality-result` | Content-sealed, exact-corpus-replayable validity, execution, effectiveness, reviewer, and unsafe-change quality gates |
+| `assurance-test-generation-quality-result-v2` | Content-sealed artifact-derived metrics, evidence manifest, 15 gates, and exact format-2 corpus replay binding |
 | `assurance-test-proposal` | Closed, source-bound, one-file LLM assurance-test proposal and bounded repair provenance |
 | `assurance-test-proposal-apply-receipt` | Named-review atomic test-publication receipt |
 | `assurance-test-proposal-apply-receipt-verification` | Receipt integrity, proposal, analysis, attribution, and applied-byte binding verdict |

@@ -83,6 +83,12 @@ approval for a scanned repository.
 
 ## Authority boundary
 
+Generated-test format 2 now reconciles each fault-detection claim to two distinct analysis-linked
+execution records, the same exact generated-test digest, passing baseline and failing seeded
+statuses, content-sealed manifests, a confined evidence root, and every retained raw artifact's
+recorded size and SHA-256. The campaign result derives 15 artifact-backed gates and replays this
+chain against the exact corpus; digest-only or unavailable evidence receives no credit.
+
 No test above authorizes a risk decision. A passing tool suite establishes regression
 evidence for the implemented software only. Project teams must independently establish
 system context, hazard consequences, applicability, control adequacy, test oracles,
