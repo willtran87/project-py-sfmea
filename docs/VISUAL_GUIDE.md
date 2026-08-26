@@ -10,8 +10,11 @@ record. Use it for orientation; use the [operator workflow](WORKFLOW.md) for exa
 flowchart LR
     C["System context"] --> S["Static scan"]
     R["Python repository"] --> S
-    E["Optional coverage, contracts, and traces"] --> S
+    E["Optional coverage and contracts"] --> S
+    X["Controlled runtime scenario"] --> RX["Recorder or OTLP export"]
+    RX --> I["Bounded trace import"]
     S --> A["Governed analysis"]
+    I --> A
     A --> H["Human review"]
     H --> F["Accepted failure modes"]
     F --> O["Verification obligations"]
@@ -39,7 +42,8 @@ flowchart TB
     API["OpenAPI, JSON Schema, and protobuf"] --> IF["Interface inventory"]
     TST["Tests and coverage"] --> EV["Attribution evidence"]
     CFG["sfmea.toml"] --> CTX["System context"]
-    RUN["Optional runtime spans"] --> OBS["Observed relationships and timing"]
+    RUN["Controlled scenario"] --> REC["First-party recorder or OTLP"]
+    REC --> OBS["Observed relationships and timing"]
 
     AST --> CMP["Components and call sites"]
     AST --> SIG["Failure-relevant signals"]
@@ -137,14 +141,17 @@ flowchart TB
         C["Independent generated-test corpus"] --> Q{"Evidence mode"}
         Q -- "Format 1" --> D14["14 declared gates"]
         Q -- "Format 2" --> ART["Exact analysis + proposal + receipt"]
-        Q -- "Format 3" --> STRAT["Predeclared strata + chronology"]
+        Q -- "Format 3" --> PLAN["Outcome-free campaign plan"]
+        PLAN --> KEY["Detached signature + trusted key"]
+        KEY --> STRAT["Predeclared strata + chronology"]
         ART --> RUN["Baseline pass + seeded fail; same test"]
         RUN --> RAW["Root confinement + manifest seal + raw size/SHA-256"]
         RAW --> D15["15 artifact-backed, derived gates"]
         STRAT --> D25["25 replayed campaign gates"]
+        D25 --> MATCH["Completed corpus matches sealed plan"]
         D14 --> S["Content-sealed result"]
         D15 --> S
-        D25 --> S
+        MATCH --> S
         S --> V["Exact-corpus semantic replay"]
     end
     R --> D{"Human promotion decision"}
@@ -160,7 +167,9 @@ with `sfmea assurance-test-readiness`. Model qualification uses
 `sfmea assurance-test-quality-evaluate` and `sfmea assurance-test-quality-verify`. Paired fault
 credit is prepared with `sfmea assurance-test-fault-evidence` and independently replayed with
 `sfmea assurance-test-fault-evidence-verify`; both commands reconcile the exact execution manifests
-and raw artifacts rather than trusting declared pass/fail strings.
+and raw artifacts rather than trusting declared pass/fail strings. Format-3 promotion should also
+use `sfmea assurance-test-campaign-plan` before outcomes exist, authenticate the exact plan with
+`sfmea assurance-evidence-sign`, and reconcile the completed corpus to that plan before evaluation.
 
 ## Evidence trust ladder
 
@@ -168,7 +177,11 @@ and raw artifacts rather than trusting declared pass/fail strings.
 flowchart LR
     D["Declared claim"] --> B{"Exact bytes bound?"}
     B -- No --> U["Uncredited"]
-    B -- Yes --> R{"Claims replay and reconcile?"}
+    B -- Yes --> A{"Authentication required?"}
+    A -- Yes --> K{"Trusted key verifies exact bytes?"}
+    K -- No --> X["Blocking finding"]
+    K -- Yes --> R{"Claims replay and reconcile?"}
+    A -- No --> R
     R -- No --> X["Blocking finding"]
     R -- Yes --> I{"Independent review required?"}
     I -- Missing --> X
@@ -192,6 +205,9 @@ For validation and LLM evidence, the program reports:
 A copied validation corpus or semantically repackaged LLM corpus cannot increase repository
 coverage, cases, samples, claims, or quality metrics. LLM identity ignores descriptive metadata,
 JSON formatting, and sample order while retaining corpus format, subject, IDs, and decisions.
+Signature validity proves possession of the matching private key for the signed bytes. Trusted-key
+distribution, signer authorization, revocation, independent timestamping, and reviewer independence
+remain organizational controls.
 
 ## Multi-repository assurance
 
@@ -232,8 +248,10 @@ circuit-breaker expectations.
 | Exchange diagram data | Canonical diagram JSON | `sfmea diagram` | Architecture and tooling teams |
 | Triage incomplete work | Workflow status and queue | `sfmea status`, `sfmea queue` | Analysis owner |
 | Plan hardening tests | Assurance register/work queue | `sfmea assurance` | Verification team |
+| Capture observed call and timing evidence | Bounded simple-span trace plus reconciled analysis views | `RuntimeTraceRecorder`, `sfmea trace-import` | Test and software-assurance teams |
 | Inspect generated-test evidence | HTML LLM-generated test governance card plus external proposal/receipt | `sfmea report`, `sfmea assurance-test-readiness` | Verification and independent evidence reviewers |
-| Qualify generated-test automation | Content-sealed generated-test quality result bound to its exact corpus, with paired raw-evidence replay and format-3 campaign strata | `sfmea assurance-test-fault-evidence`, `sfmea assurance-test-fault-evidence-verify`, `sfmea assurance-test-quality-evaluate`, `sfmea assurance-test-quality-verify` | Independent model-evaluation authority |
+| Freeze and authenticate a generated-test campaign | Outcome-free plan, detached signature, and verification verdicts | `sfmea assurance-test-campaign-plan`, `sfmea assurance-evidence-sign`, corresponding verify commands | Independent model-evaluation and key authorities |
+| Qualify generated-test automation | Content-sealed generated-test quality result bound to its exact corpus, sealed plan, paired raw-evidence replay, and format-3 strata | `sfmea assurance-test-campaign-plan-verify`, `sfmea assurance-test-fault-evidence-verify`, `sfmea assurance-test-quality-evaluate`, `sfmea assurance-test-quality-verify` | Independent model-evaluation authority |
 | Review source coverage | Inventory and coverage views | `sfmea inventory`, `sfmea coverage` | Tool and software assurance |
 | Audit NASA/FAA relationships | Citation trace | `sfmea citations` | Safety and compliance reviewers |
 | Transfer a frozen review set | Verified ZIP package | `sfmea package`, `sfmea verify-package` | Independent recipient |
@@ -271,12 +289,15 @@ sfmea report-verify sfmea-report.html --analysis sfmea-analysis.json
 2. Review critical components, interfaces, and unresolved calls.
 3. Confirm failure modes, causes, and all three effect levels.
 4. Inspect propagation, sequence, timing, and containment assumptions.
-5. Validate guidance applicability and citation relationship strength.
-6. Accept or reject candidates; assign owners and actions.
-7. If generated-test automation is used, qualify the exact provider/model/prompt independently and
+5. Reconcile runtime instrumentation scope, dropped spans, runtime-only edges, and missing expected
+   relationships.
+6. Validate guidance applicability and citation relationship strength.
+7. Accept or reject candidates; assign owners and actions.
+8. If generated-test automation is used, freeze and authenticate its outcome-free campaign plan,
+   then qualify the exact provider/model/prompt independently and
    retain the replayable result.
-8. Implement obligations and collect controlled evidence; apply every per-test readiness gate.
-9. Reconcile all blockers, verify outputs, and package the exact analysis state.
+9. Implement obligations and collect controlled evidence; apply every per-test readiness gate.
+10. Reconcile all blockers, verify outputs, and package the exact analysis state.
 
 ## Authority boundary
 

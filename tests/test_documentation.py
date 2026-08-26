@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from pysfmea.diagrams import GENERATED_DIAGRAM_KINDS
+from pysfmea.schemas import schema_catalog
 
 DOCUMENT_EXCLUDED_DIRECTORIES = {".artifacts", ".git", ".venv", "build", "dist"}
 
@@ -120,6 +121,37 @@ class DocumentationLinksTests(unittest.TestCase):
         self.assertIn("`assurance-test-generation-quality-corpus-v3`", schemas)
         self.assertIn("`assurance-test-generation-quality-result-v3`", schemas)
         self.assertIn("`assurance-test-generation-fault-evidence`", schemas)
+        self.assertIn("`assurance-test-generation-campaign-plan`", schemas)
+        self.assertIn(
+            "`assurance-test-generation-campaign-plan-verification`", schemas
+        )
+        self.assertIn("`json-evidence-signature`", schemas)
+        self.assertIn("`json-evidence-signature-verification`", schemas)
+
+    def test_documented_schema_inventory_matches_public_catalog(self) -> None:
+        content = (ROOT / "docs" / "SCHEMAS.md").read_text(encoding="utf-8")
+        inventory = content.split("Available names:", 1)[1].split(
+            "The schemas use stable", 1
+        )[0]
+        documented = set(re.findall(r"^\| `([^`]+)` \|", inventory, re.MULTILINE))
+        published = {item["name"] for item in schema_catalog()["schemas"]}
+        self.assertEqual(documented, published)
+
+    def test_runtime_evidence_guide_covers_capture_and_claim_boundaries(self) -> None:
+        content = (ROOT / "docs" / "RUNTIME_EVIDENCE.md").read_text(
+            encoding="utf-8"
+        )
+        for expected in (
+            "sequenceDiagram",
+            "RuntimeTraceRecorder",
+            "sfmea trace-import",
+            "runtime_corroborated",
+            "runtime_only",
+            "dropped spans",
+            "does not establish",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, content)
 
     def test_diagram_documentation_lists_every_generated_category(self) -> None:
         content = (ROOT / "docs" / "DIAGRAMS.md").read_text(encoding="utf-8")

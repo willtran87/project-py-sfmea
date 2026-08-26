@@ -133,6 +133,26 @@ source path/line. Mapped `calls` edges that agree with the native AST graph are 
 evidence, an automatically approved architecture relationship, nor a new failure mode. Use
 `--graphify-json PATH` to consume a separately produced graph without invoking Graphify.
 
+### Optional controlled runtime evidence
+
+After the static scan, exercise a deliberately selected scenario with existing OTLP
+instrumentation or PySFMEA's opt-in `RuntimeTraceRecorder`, then import its bounded trace into the
+same governed analysis:
+
+```powershell
+$trace = Join-Path $artifacts 'runtime/checkout-timeout.json'
+sfmea trace-import (Join-Path $artifacts 'sfmea-analysis.json') $trace `
+  --label 'checkout timeout integration test'
+```
+
+The first-party recorder supports nested synchronous and asynchronous spans, monotonic timing,
+exception status, expected component/relationship declarations, dropped-span accounting, and
+atomic export. Import maps spans to scanner components, reconciles declared scope, and preserves
+runtime-only or unmapped relationships as review leads. It does not execute the repository,
+establish failure causality, prove timing compliance, or credit a circuit breaker. See the
+[runtime evidence workflow](RUNTIME_EVIDENCE.md) for instrumentation code, reconciliation states,
+bounds, and the scenario checklist.
+
 The default focused queue admits at most three ordinary families per component and 1,000 total
 records per projection. Revalidation, manual, and hazard-linked records remain eligible despite
 the per-component cap. Configure `review_queue_max_per_component` and
@@ -719,13 +739,16 @@ flowchart TB
     C["Independent generated-test corpus"] --> QMODE{"Evidence mode"}
     QMODE -- "Format 1" --> Q14["14 declared gates"]
     QMODE -- "Format 2" --> QART["Exact lifecycle artifacts"]
-    QMODE -- "Format 3" --> QSTRAT["Predeclared campaign strata"]
+    QMODE -- "Format 3" --> QPLAN["Outcome-free sealed plan"]
+    QPLAN --> QKEY["Detached signature + trusted key"]
+    QKEY --> QSTRAT["Predeclared campaign strata"]
     QART --> QRAW["Paired executions + manifests + raw artifacts"]
     QRAW --> Q15["15 artifact-backed, derived gates"]
     QSTRAT --> Q25["25 replayed campaign gates"]
+    Q25 --> QM["Completed corpus matches plan"]
     Q14 --> QREPLAY["Content integrity + corpus replay"]
     Q15 --> QREPLAY
-    Q25 --> QREPLAY
+    QM --> QREPLAY
   end
   R --> D{"Human promotion decision"}
   QREPLAY --> D
@@ -792,6 +815,29 @@ Prefer format 3 for promotion decisions. Its
 repository/framework/domain strata, per-stratum sample floors, repository concentration and
 decision-balance limits, and seeded-fault category diversity. All format-2 controls remain active;
 the evaluator publishes segment metrics and requires all 25 gates to pass.
+
+Before generating or observing outcomes, seal the outcome-free format-3 design and authenticate its
+exact bytes. After completing the corpus, reconcile it to the sealed plan before quality evaluation:
+
+```powershell
+$corpus = Join-Path $artifacts 'test-generation-evidence/corpus.json'
+$plan = Join-Path $artifacts 'test-generation-evidence/campaign-plan.json'
+$signature = "$plan.sig.json"
+
+sfmea assurance-test-campaign-plan $corpus --producer 'qualification-runner' -o $plan
+sfmea assurance-evidence-sign $plan --private-key qualification-private.pem `
+  --signer 'Independent qualification authority'
+sfmea assurance-evidence-signature-verify $plan $signature `
+  --public-key qualification-public.pem --json
+# Run the frozen campaign and complete corpus.json without changing its design projection.
+sfmea assurance-test-campaign-plan-verify $plan --corpus $corpus --json
+```
+
+The content seal and signature detect plan changes and bind a key to the exact bytes. They do not
+authenticate the person, establish signer authority, prove the declared timestamp, or make the
+sample representative. Preserve key-distribution, authorization, revocation, and independent-time
+evidence outside PySFMEA. The complete runbook and acceptance checklist are in
+[generated-test qualification campaigns](GENERATED_TEST_CAMPAIGNS.md).
 
 Build—not hand-author—the paired fault record after both runs are retained in the analysis:
 

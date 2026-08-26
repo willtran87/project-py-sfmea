@@ -24,7 +24,9 @@ flowchart LR
     A --> AT["Assurance traceability"]
     A --> ST["SFTA"]
     A --> XR["Evidence fabric"]
-    RT["Imported runtime evidence"] --> SQ
+    SC["Controlled Python scenario"] --> RR["RuntimeTraceRecorder"]
+    RR --> RT["Bounded runtime-trace import"]
+    RT --> SQ
     RT --> FP
     CT["Custom diagram JSON"] --> RP["Self-contained HTML report"]
     AR --> RP
@@ -42,7 +44,8 @@ flowchart LR
 ```
 
 - Generated diagrams share the exact governed analysis binding.
-- Runtime evidence can corroborate relationships without proving failure causality.
+- First-party or external runtime evidence can corroborate relationships without proving failure
+  causality, scenario representativeness, or timing compliance.
 - Custom diagrams use the same validated renderer-neutral model.
 - Every bounded view reports truncation, omissions, and interpretation limits.
 

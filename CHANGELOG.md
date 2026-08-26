@@ -5,6 +5,10 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Reconcile the documentation and Mermaid portfolio with first-party runtime capture, bounded trace
+  import, authenticated pre-outcome generated-test campaign planning, the four new public schemas,
+  evidence trust boundaries, and the 12,000-record report qualification tier. Add a dedicated
+  runtime-evidence runbook with instrumentation, interpretation, and operating checklists.
 - Add pre-outcome generated-test campaign plans that strip all outcome artifacts, seal the exact
   subject/sample/strata/policy design, and reconcile it to a completed format-3 corpus. Add generic
   detached Ed25519 authentication for bounded JSON assurance artifacts, trusted-key verification,

@@ -74,6 +74,8 @@ Available names:
 | `assurance-program-verification` | Program integrity, binding, trusted-evidence, timing/resilience, quality-gate, relationship, and governance verdicts |
 | `assurance-scaffold` | Exact-analysis-bound pytest starting points, property strategies, contract cases, and generated-file identities |
 | `assurance-scaffold-verification` | Manifest, synthesized-design, generated-file, lifecycle, and exact analysis-binding verdict |
+| `assurance-test-generation-campaign-plan` | Content-sealed outcome-free format-3 subject, sample, strata, and policy design |
+| `assurance-test-generation-campaign-plan-verification` | Campaign-plan integrity, chronology, and completed-corpus design-binding verdict |
 | `assurance-test-generation-readiness` | Seven proposal-to-publication-to-independent-evidence readiness gates |
 | `assurance-test-generation-quality-corpus` | Independently labeled provider/model/prompt generated-test qualification samples and policy |
 | `assurance-test-generation-quality-corpus-v2` | Artifact-backed samples that reference exact analysis, proposal, receipt, and paired fault-evidence bytes |
@@ -90,6 +92,7 @@ Available names:
 | `assurance-test-proposal-verification` | Proposal integrity, response contract, source, and optional exact-analysis binding verdict |
 | `assurance-work-queue` | Accepted-finding work states, blockers, automation eligibility, and next actions |
 | `assurance-work-queue-verification` | Queue integrity, analysis binding, and deterministic-projection verdicts |
+| `calibration-comparison` | Governed same-corpus scanner calibration comparison with semantic regression gates |
 | `detached-signature` | Ed25519 signature envelope, signed statement, and package subject |
 | `diagram` | Renderer-neutral `pysfmea-diagram-1` object |
 | `diagram-bundle` | Generated, integrity-declaring `pysfmea-diagram-bundle-1` object |
@@ -102,7 +105,11 @@ Available names:
 | `evidence-preflight` | Read-only analysis-bound evidence readiness and remediation receipt |
 | `evidence-onboarding-receipt` | Selected-artifact identities, source/result bindings, import accounting, and verified assurance queue |
 | `evidence-onboarding-receipt-verification` | Receipt integrity and optional exact resulting-analysis binding verdict |
+| `evaluation-result` | Exact-key finding, call, control, confidence, and deterministic semantic evaluation result |
+| `golden-corpus` | Closed bounded evaluation corpus for finding, call, control, and semantic qualification |
 | `html-report-verification` | Success, rejection, and incomplete HTML-verifier verdicts |
+| `json-evidence-signature` | Detached Ed25519 authentication of exact bounded JSON bytes and canonical semantics |
+| `json-evidence-signature-verification` | Exact artifact, trusted-key fingerprint, and Ed25519 signature verdict |
 | `plugin-manifest` | Closed SDK identity, compatibility, capability, entry point, trust, and execution-limit declaration |
 | `plugin-request` | Versioned, exact-analysis-bound isolated-process request envelope |
 | `plugin-response` | Strict observation-only plugin response envelope |

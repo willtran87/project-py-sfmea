@@ -26,6 +26,8 @@ flowchart LR
 - [Visual guide](docs/VISUAL_GUIDE.md) — workflows, failure cascades, generated-test governance,
   trust boundaries, and outputs
 - [Operator workflow](docs/WORKFLOW.md) — the concise scan-to-handoff path
+- [Runtime evidence workflow](docs/RUNTIME_EVIDENCE.md) — opt-in sync/async instrumentation,
+  trace reconciliation, timing interpretation, and operating limits
 - [Complete command guide](#quick-start)
 - [Methodology and assurance boundaries](docs/METHODOLOGY.md)
 - [Canonical diagram model](docs/DIAGRAMS.md)
@@ -1787,15 +1789,18 @@ flowchart TB
     Q["Independent generated-test corpus"] --> QMODE{"Evidence mode"}
     QMODE -- "Format 1: declared" --> Q14["14 declared gates"]
     QMODE -- "Format 2: artifact-backed" --> QART["Root-confined analysis, proposal, receipt"]
-    QMODE -- "Format 3: stratified campaign" --> QSTRAT["Predeclared repository/framework/domain strata"]
+    QMODE -- "Format 3: stratified campaign" --> QPLAN["Outcome-free sealed campaign plan"]
+    QPLAN --> QKEY["Detached signature + trusted key"]
+    QKEY --> QSTRAT["Predeclared repository/framework/domain strata"]
     QART --> QEXE["Distinct baseline + seeded execution records"]
     QEXE --> QRAW["Manifest seals + raw artifact size/SHA-256"]
     QRAW --> Q15["15 artifact-backed, derived gates"]
     QSTRAT --> QFAULT["Fault-category binding + concentration controls"]
     QFAULT --> Q25["25 artifact-backed campaign gates"]
+    Q25 --> QMATCH["Completed corpus matches sealed plan"]
     Q14 --> QREPLAY["Content seal + exact-corpus replay"]
     Q15 --> QREPLAY
-    Q25 --> QREPLAY
+    QMATCH --> QREPLAY
   end
   K --> P{"Human promotion decision"}
   QREPLAY --> P
