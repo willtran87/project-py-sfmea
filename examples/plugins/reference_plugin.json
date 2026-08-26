@@ -1,0 +1,12 @@
+{
+  "format": "pysfmea-plugin-manifest-1",
+  "id": "org.pysfmea.reference.inventory",
+  "name": "Reference inventory observer",
+  "version": "1.0.0",
+  "sdk_api": "1.0",
+  "command": ["{python}", "-m", "pysfmea.sdk.reference_plugin"],
+  "capabilities": ["analyze"],
+  "deterministic": true,
+  "timeout_seconds": 30,
+  "trust": "project"
+}

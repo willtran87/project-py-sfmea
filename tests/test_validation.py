@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pysfmea.cli import main
+from pysfmea.repository_inventory import legacy_repository_inventory
 from pysfmea.scanner import scan_repository
 from pysfmea.store import save_analysis, update_item_review
 from pysfmea.validation import review_queue, validate_analysis
@@ -18,7 +20,7 @@ from pysfmea.validation import review_queue, validate_analysis
 class ValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
             "def authorize(user):\n    return bool(user)\n",
             encoding="utf-8",
@@ -30,7 +32,10 @@ class ValidationTests(unittest.TestCase):
         self.temp.cleanup()
 
     def rules(self) -> set[str]:
-        return {finding["rule_id"] for finding in validate_analysis(self.analysis)["findings"]}
+        return {
+            finding["rule_id"]
+            for finding in validate_analysis(self.analysis)["findings"]
+        }
 
     def test_accepted_item_requires_trace_effect_severity_and_rationale(self) -> None:
         update_item_review(
@@ -120,7 +125,9 @@ class ValidationTests(unittest.TestCase):
                 "severity": 7,
                 "severity_rationale": "Confidentiality impact.",
                 "detection_controls": ["Authorization integration test"],
-                "actions_taken": ["No further action; risk accepted by the product owner."],
+                "actions_taken": [
+                    "No further action; risk accepted by the product owner."
+                ],
                 "verification_evidence": ["Review record SAF-42"],
                 "post_action_severity": 7,
                 "status": "closed",
@@ -161,6 +168,22 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("Validation: errors=", output.getvalue())
 
+    def test_cli_summary_recomputes_repository_artifact_totals(self) -> None:
+        inventory = self.analysis["repository_inventory"]
+        expected_files = len(inventory["entries"])
+        inventory["summary"]["files"] = expected_files + 999
+        self.analysis["summary"]["repository_artifacts"] = expected_files + 999
+        path = self.root / "analysis.json"
+        save_analysis(path, self.analysis)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["summary", str(path), "--json"])
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary["repository_artifacts"], expected_files)
+        self.assertEqual(summary["repository_inventory"]["status"], "recomputed")
+
     def test_rejection_traceability_and_integrity_checks(self) -> None:
         update_item_review(
             self.analysis,
@@ -171,7 +194,9 @@ class ValidationTests(unittest.TestCase):
         update_item_review(
             self.analysis,
             self.item["id"],
-            {"disposition_rationale": "Generic omission is not credible for this pure helper."},
+            {
+                "disposition_rationale": "Generic omission is not credible for this pure helper."
+            },
         )
         self.assertNotIn("review.missing_rejection_rationale", self.rules())
 
@@ -211,7 +236,9 @@ class ValidationTests(unittest.TestCase):
     def test_syntax_error_makes_scan_incomplete(self) -> None:
         (self.root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
         analysis = scan_repository(self.root)
-        rules = {finding["rule_id"] for finding in validate_analysis(analysis)["findings"]}
+        rules = {
+            finding["rule_id"] for finding in validate_analysis(analysis)["findings"]
+        }
         self.assertIn("scan.warning", rules)
         scan_finding = next(
             finding
@@ -219,6 +246,55 @@ class ValidationTests(unittest.TestCase):
             if finding["rule_id"] == "scan.warning"
         )
         self.assertEqual(scan_finding["level"], "error")
+
+    def test_repository_snapshot_provenance_and_summary_are_gated(self) -> None:
+        self.assertNotIn("coverage.invalid_snapshot_provenance", self.rules())
+        self.assertNotIn("coverage.inventory_summary_mismatch", self.rules())
+
+        inventory = self.analysis["repository_inventory"]
+        inventory["entries"][0]["snapshot_source"] = "unrecognized_snapshot"
+        self.assertIn("coverage.invalid_snapshot_provenance", self.rules())
+
+        self.analysis = scan_repository(self.root)
+        inventory = self.analysis["repository_inventory"]
+        inventory["summary"]["files"] += 1
+        inventory["summary"]["opaque_or_unresolved"] = 999
+        inventory["summary"]["semantic_coverage_percent"] = -1
+        findings = validate_analysis(self.analysis)["findings"]
+        self.assertIn("coverage.inventory_summary_mismatch", self.rules())
+        self.assertFalse(
+            any(
+                finding["rule_id"] == "coverage.opaque_or_unresolved_artifacts"
+                and "999" in finding["message"]
+                for finding in findings
+            )
+        )
+
+    def test_malformed_repository_inventory_records_are_bounded_findings(self) -> None:
+        inventory = self.analysis["repository_inventory"]
+        inventory["entries"][0] = "not-an-object"
+        findings = validate_analysis(self.analysis)["findings"]
+        invalid = [
+            finding
+            for finding in findings
+            if finding["rule_id"] == "coverage.invalid_inventory_records"
+        ]
+        self.assertEqual(len(invalid), 1)
+        self.assertEqual(invalid[0]["level"], "error")
+
+        self.analysis = scan_repository(self.root)
+        self.analysis["repository_inventory"]["summary"] = []
+        self.assertIn("coverage.inventory_summary_mismatch", self.rules())
+
+    def test_legacy_zero_file_inventory_retains_null_coverage_compatibility(
+        self,
+    ) -> None:
+        self.analysis["repository_inventory"] = legacy_repository_inventory(
+            "Historical scan did not capture repository coverage."
+        )
+        rules = self.rules()
+        self.assertNotIn("coverage.inventory_summary_mismatch", rules)
+        self.assertNotIn("coverage.invalid_snapshot_provenance", rules)
 
     def test_empty_failure_mode_set_is_an_error(self) -> None:
         self.analysis["items"] = []
@@ -231,11 +307,135 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(queue[0]["id"], self.item["id"])
         self.assertTrue(queue[0]["revalidation_required"])
 
+    def test_review_queue_can_group_rule_families_and_filter_priority(self) -> None:
+        for item in self.analysis["items"]:
+            item["scanner"]["screening_priority"] = "high"
+        grouped = review_queue(
+            self.analysis,
+            limit=100,
+            minimum_priority="high",
+            group_families=True,
+        )
+        self.assertTrue(grouped)
+        self.assertTrue(all(value["screening_priority"] == "high" for value in grouped))
+        self.assertTrue(
+            all(value["family_id"].startswith("REVIEW-FAMILY-") for value in grouped)
+        )
+        self.assertTrue(all(value["family_size"] >= 1 for value in grouped))
+        self.assertTrue(
+            all(value["rule_id"] in value["family_rule_ids"] for value in grouped)
+        )
+        self.assertTrue(
+            all(
+                value["review_cluster_id"].startswith("REVIEW-CLUSTER-")
+                for value in grouped
+            )
+        )
+        self.assertTrue(all(value["review_cluster_size"] >= 1 for value in grouped))
+        self.assertTrue(all(value["selection_reasons"] for value in grouped))
+
+        with self.assertRaisesRegex(ValueError, "minimum_priority"):
+            review_queue(self.analysis, minimum_priority="urgent")
+
+    def test_review_queue_diversifies_components_before_repeating_them(self) -> None:
+        (self.root / "many.py").write_text(
+            "def first(value):\n    return value\n\n"
+            "def second(value):\n    return value\n\n"
+            "def third(value):\n    return value\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        for item in analysis["items"]:
+            item["scanner"]["screening_priority"] = "high"
+        component_count = len(analysis["components"])
+        queue = review_queue(
+            analysis,
+            limit=component_count,
+            minimum_priority="high",
+            group_families=False,
+        )
+        self.assertEqual(len(queue), component_count)
+        self.assertEqual(
+            len({value["component_id"] for value in queue}), component_count
+        )
+        self.assertTrue(all(value["diversity_round"] == 1 for value in queue))
+
+    def test_review_queue_caps_components_without_hiding_protected_records(
+        self,
+    ) -> None:
+        component_id = self.analysis["items"][0]["component_id"]
+        matching = [
+            item
+            for item in self.analysis["items"]
+            if item["component_id"] == component_id
+        ]
+        self.assertGreater(len(matching), 2)
+        for item in matching:
+            item["scanner"]["screening_priority"] = "high"
+            item["review"]["linked_hazards"] = []
+        protected = matching[-1]
+        protected["review"]["linked_hazards"] = ["HZ-PROTECTED"]
+        queue = review_queue(
+            self.analysis,
+            limit=100,
+            minimum_priority="high",
+            max_per_component=2,
+        )
+        selected = [value for value in queue if value["component_id"] == component_id]
+        self.assertIn(protected["id"], {value["id"] for value in selected})
+        self.assertLessEqual(sum(not value["hazard_linked"] for value in selected), 2)
+
+        with self.assertRaisesRegex(ValueError, "max_per_component"):
+            review_queue(self.analysis, max_per_component=0)
+
+    def test_review_queue_can_reserve_multiple_priority_bands(self) -> None:
+        (self.root / "many.py").write_text(
+            "\n\n".join(
+                f"@app.get('/items/{index}')\n"
+                f"def function_{index}():\n"
+                "    try:\n"
+                "        return requests.get('/external')\n"
+                "    except Exception:\n"
+                "        pass"
+                for index in range(7)
+            )
+            + "\n\ndef plain(value):\n    return value\n",
+            encoding="utf-8",
+        )
+        analysis = scan_repository(self.root)
+        self.assertGreater(len(analysis["items"]), 5)
+        present = {
+            value["scanner"]["screening_priority"] for value in analysis["items"]
+        }
+        self.assertGreater(len(present), 1)
+
+        queue = review_queue(
+            analysis,
+            limit=5,
+            minimum_priority="low",
+            balance_priorities=True,
+        )
+
+        self.assertEqual(len(queue), 5)
+        selected_priorities = {value["screening_priority"] for value in queue}
+        self.assertTrue(present <= selected_priorities)
+        self.assertTrue(
+            any(
+                reason.startswith("priority_reserve:")
+                for value in queue
+                for reason in value["selection_reasons"]
+            )
+        )
+
     def test_repository_baseline_and_component_integrity_are_gated(self) -> None:
         update_item_review(
             self.analysis,
             self.item["id"],
-            {"disposition": "rejected", "disposition_rationale": "Not credible.", "reviewer": "Jordan"},
+            {
+                "disposition": "rejected",
+                "disposition_rationale": "Not credible.",
+                "reviewer": "Jordan",
+            },
         )
         self.analysis["project"]["baseline"]["id"] = "BASELINE-TAMPERED"
         self.analysis["components"].append(dict(self.analysis["components"][0]))

@@ -1,0 +1,79 @@
+{
+  "format": "pysfmea-qualification-campaign-manifest-1",
+  "id": "scanner-qualification-2026q3",
+  "title": "Replace with a governed multi-repository scanner campaign",
+  "purpose": "Template only: replace every placeholder and retain independently labeled repository artifacts before claiming campaign readiness.",
+  "governance": {
+    "independent": false,
+    "labeled_by": "Replace with benchmark engineering team identity",
+    "approved_by": "Replace with independent software assurance authority",
+    "approval_date": "1970-01-01",
+    "selection_method": "Replace with a predeclared risk-stratified selection method.",
+    "representativeness_rationale": "Replace with the represented and excluded frameworks, domains, sizes, and architecture styles."
+  },
+  "thresholds": {
+    "minimum_repositories": 5,
+    "minimum_frameworks": 3,
+    "minimum_domains": 3,
+    "minimum_expected_findings": 100,
+    "minimum_finding_recall": 0.9,
+    "minimum_finding_precision": 0.85,
+    "require_call_cases": true,
+    "minimum_call_recall": 0.9,
+    "minimum_call_precision": 0.9,
+    "require_control_cases": true,
+    "minimum_control_negative_components_per_repository": 5,
+    "minimum_control_recall": 0.85,
+    "minimum_control_precision": 0.85,
+    "require_semantic_cases": true,
+    "minimum_semantic_recall": 0.9,
+    "minimum_semantic_precision": 0.9
+  },
+  "repositories": [
+    {
+      "id": "placeholder-api-workflow-service",
+      "analysis": "repositories/placeholder-api-workflow-service/analysis.json",
+      "corpus": "repositories/placeholder-api-workflow-service/golden-corpus.json",
+      "evaluation": "repositories/placeholder-api-workflow-service/evaluation.json",
+      "frameworks": ["fastapi", "celery"],
+      "domains": ["workflow", "api"],
+      "selection_rationale": "Replace with the preselection rationale for this retained repository."
+    },
+    {
+      "id": "placeholder-data-pipeline",
+      "analysis": "repositories/placeholder-data-pipeline/analysis.json",
+      "corpus": "repositories/placeholder-data-pipeline/golden-corpus.json",
+      "evaluation": "repositories/placeholder-data-pipeline/evaluation.json",
+      "frameworks": ["airflow"],
+      "domains": ["data-engineering"],
+      "selection_rationale": "Replace with a rationale declared before scanner results are reviewed."
+    },
+    {
+      "id": "placeholder-django-monolith",
+      "analysis": "repositories/placeholder-django-monolith/analysis.json",
+      "corpus": "repositories/placeholder-django-monolith/golden-corpus.json",
+      "evaluation": "repositories/placeholder-django-monolith/evaluation.json",
+      "frameworks": ["django"],
+      "domains": ["web-application"],
+      "selection_rationale": "Replace with a rationale covering the monolith architecture stratum."
+    },
+    {
+      "id": "placeholder-command-line-tool",
+      "analysis": "repositories/placeholder-command-line-tool/analysis.json",
+      "corpus": "repositories/placeholder-command-line-tool/golden-corpus.json",
+      "evaluation": "repositories/placeholder-command-line-tool/evaluation.json",
+      "frameworks": ["click"],
+      "domains": ["developer-tooling"],
+      "selection_rationale": "Replace with a rationale covering local filesystem and subprocess boundaries."
+    },
+    {
+      "id": "placeholder-async-event-service",
+      "analysis": "repositories/placeholder-async-event-service/analysis.json",
+      "corpus": "repositories/placeholder-async-event-service/golden-corpus.json",
+      "evaluation": "repositories/placeholder-async-event-service/evaluation.json",
+      "frameworks": ["asyncio"],
+      "domains": ["event-processing"],
+      "selection_rationale": "Replace with a rationale covering asynchronous timing and cancellation behavior."
+    }
+  ]
+}

@@ -8,6 +8,30 @@ from typing import Any
 
 from .config import load_config
 from .guidance import DEFAULT_EXCLUDES
+from .json_ingestion import load_bounded_json_document
+from .system_context import build_system_context
+
+MAX_READINESS_COVERAGE_BYTES = 100_000_000
+MAX_READINESS_COVERAGE_DEPTH = 100
+MAX_READINESS_COVERAGE_NODES = 2_000_000
+
+
+def _coverage_json_error(path: Path) -> str:
+    try:
+        document = load_bounded_json_document(
+            path,
+            label="coverage JSON",
+            max_bytes=MAX_READINESS_COVERAGE_BYTES,
+            max_depth=MAX_READINESS_COVERAGE_DEPTH,
+            max_nodes=MAX_READINESS_COVERAGE_NODES,
+        )
+    except (OSError, ValueError) as exc:
+        return str(exc)
+    if not isinstance(document.value, dict) or not isinstance(
+        document.value.get("files"), dict
+    ):
+        return "coverage JSON must contain an object-valued files field"
+    return ""
 
 
 def repository_readiness(
@@ -16,8 +40,17 @@ def repository_readiness(
     root = Path(repository).expanduser().resolve()
     checks: list[dict[str, str]] = []
 
-    def add(check_id: str, status: str, message: str) -> None:
-        checks.append({"id": check_id, "status": status, "message": message})
+    def add(
+        check_id: str,
+        status: str,
+        message: str,
+        *,
+        next_action: str = "",
+    ) -> None:
+        check = {"id": check_id, "status": status, "message": message}
+        if next_action:
+            check["next_action"] = next_action
+        checks.append(check)
 
     if not root.is_dir():
         add("repository.directory", "error", f"Repository directory does not exist: {root}")
@@ -43,7 +76,11 @@ def repository_readiness(
     else:
         add("repository.python_sources", "error", "No Python source files were found.")
 
-    selected_config = Path(config_path).expanduser().resolve() if config_path else root / "sfmea.toml"
+    selected_config = (
+        Path(config_path).expanduser().absolute()
+        if config_path
+        else root / "sfmea.toml"
+    )
     if not selected_config.is_file():
         add(
             "configuration.file",
@@ -56,6 +93,7 @@ def repository_readiness(
     except (OSError, ValueError) as exc:
         add("configuration.valid", "error", f"Configuration is invalid: {exc}")
         return _result(root, selected_config, checks)
+    assert resolved_config is not None
     add("configuration.valid", "pass", f"Configuration loaded: {resolved_config}")
 
     template_markers = sum(
@@ -86,6 +124,19 @@ def repository_readiness(
             add(f"project.{field}", "pass", f"Project {field.replace('_', ' ')} is configured.")
         else:
             add(f"project.{field}", "error", f"Project {field.replace('_', ' ')} is blank.")
+    resolved_context = build_system_context(config)
+    add(
+        "project.context_completeness",
+        "pass" if resolved_context["status"] == "complete" else "warning",
+        f"System context is {resolved_context['status']} "
+        f"({resolved_context['completeness_percent']}% of governed fields supplied).",
+    )
+    for field in resolved_context["missing_recommended"]:
+        add(
+            f"project.context.{field}",
+            "information",
+            f"Recommended context is unresolved: {field.replace('_', ' ')}.",
+        )
     analysis = config["analysis"]
     add(
         "analysis.revision",
@@ -100,6 +151,31 @@ def repository_readiness(
         f"Configured {len(analysis.get('ground_rules', []))} ground rule(s)."
         if analysis.get("ground_rules")
         else "No SFMEA ground rules are configured.",
+    )
+    active_profiles = set(analysis.get("guidance_profiles", []))
+    decided_profiles = {
+        value.get("profile_id")
+        for value in config.get("guidance_applicability", [])
+        if isinstance(value, dict)
+    }
+    missing_profile_decisions = sorted(active_profiles - decided_profiles)
+    add(
+        "guidance.applicability",
+        "pass" if not missing_profile_decisions else "warning",
+        (
+            f"Recorded named applicability decisions for {len(active_profiles)} active "
+            "guidance profile(s)."
+            if not missing_profile_decisions
+            else "Active guidance profiles lack named applicability decisions: "
+            + ", ".join(missing_profile_decisions)
+            + "."
+        ),
+        next_action=(
+            "Add one [[guidance_applicability]] decision with rationale, selector, and "
+            "effective date for every active profile."
+            if missing_profile_decisions
+            else ""
+        ),
     )
 
     for field, label in (
@@ -129,17 +205,75 @@ def repository_readiness(
         )
     coverage_path = config["scan"].get("coverage_json", "")
     if coverage_path:
+        configured_coverage = Path(coverage_path).expanduser()
+        if not configured_coverage.is_absolute():
+            configured_coverage = resolved_config.parent / configured_coverage
+        configured_coverage = configured_coverage.resolve()
+        coverage_error = (
+            _coverage_json_error(configured_coverage)
+            if configured_coverage.is_file()
+            else "coverage file is unavailable"
+        )
         add(
             "evidence.coverage",
-            "pass" if Path(coverage_path).is_file() else "error",
-            f"Coverage evidence {'found' if Path(coverage_path).is_file() else 'not found'}: {coverage_path}",
+            "pass" if not coverage_error else "error",
+            "Coverage evidence "
+            f"{'validated' if not coverage_error else 'is not usable'}: "
+            f"{configured_coverage}"
+            + (f" ({coverage_error})" if coverage_error else ""),
+            next_action=(
+                "Run `coverage run -m pytest && coverage json -o coverage.json`, "
+                "then set scan.coverage_json to that file."
+                if coverage_error
+                else ""
+            ),
         )
     else:
+        discovered_coverage = next(
+            (
+                candidate
+                for candidate in (
+                    root / "coverage.json",
+                    root / ".artifacts" / "coverage.json",
+                )
+                if candidate.is_file()
+            ),
+            None,
+        )
         add(
             "evidence.coverage",
-            "information",
-            "No coverage.py evidence is configured; this is optional execution evidence.",
+            "warning" if discovered_coverage else "information",
+            (
+                f"Coverage JSON exists but is not configured: {discovered_coverage}."
+                if discovered_coverage
+                else "No coverage.py JSON is configured; findings cannot use observed "
+                "line-coverage evidence."
+            ),
+            next_action=(
+                f"Set scan.coverage_json = \"{discovered_coverage.as_posix()}\"."
+                if discovered_coverage
+                else "Run `coverage run -m pytest && coverage json -o coverage.json`, "
+                "then set scan.coverage_json = \"coverage.json\"."
+            ),
         )
+    test_files = [
+        path
+        for path in python_files
+        if path.name.startswith("test_") or "tests" in path.relative_to(root).parts
+    ]
+    add(
+        "evidence.test_sources",
+        "pass" if test_files else "warning",
+        f"Found {len(test_files)} Python test source file(s)."
+        if test_files
+        else "No Python test sources were discovered; generated assurance obligations "
+        "will begin without repository test references.",
+        next_action=(
+            "Add focused tests for safety-significant interfaces and failure controls."
+            if not test_files
+            else ""
+        ),
+    )
     return _result(root, resolved_config, checks)
 
 
@@ -154,5 +288,10 @@ def _result(root: Path, config_path: Path | None, checks: list[dict[str, str]]) 
             for status in ("error", "warning", "information", "pass")
         },
         "checks": checks,
+        "suggested_actions": [
+            {"check_id": check["id"], "action": check["next_action"]}
+            for check in checks
+            if check.get("next_action")
+        ],
         "notice": "Readiness confirms pre-scan inputs only; run sfmea validate after scanning.",
     }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import platform
@@ -13,8 +14,7 @@ from .guidance import analysis_guidance_profiles, guidance_bundle
 from .model import stable_id, utc_now
 from .version import __version__
 
-
-GROUNDED_DISCOVERY_PROMPT_VERSION = "sfmea-grounded-discovery-2"
+GROUNDED_DISCOVERY_PROMPT_VERSION = "sfmea-grounded-discovery-3"
 
 
 def _digest(value: Any) -> str:
@@ -23,13 +23,22 @@ def _digest(value: Any) -> str:
     ).hexdigest()
 
 
-def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
+def create_run_manifest(
+    analysis: dict[str, Any], *, tool_version: str | None = None
+) -> dict[str, Any]:
     """Create the immutable resolved manifest for a completed deterministic scan."""
 
+    producer_version = tool_version or __version__
     baseline = analysis.get("project", {}).get("baseline", {})
+    settings = copy.deepcopy(analysis.get("project", {}).get("settings", {}))
     registry = adapter_registry_snapshot(analysis)
     guidance_profiles = analysis_guidance_profiles(analysis)
-    guidance = guidance_bundle(guidance_profiles)
+    embedded_guidance = analysis.get("guidance")
+    guidance = (
+        embedded_guidance
+        if isinstance(embedded_guidance, dict) and embedded_guidance.get("catalog_sha256")
+        else guidance_bundle(guidance_profiles)
+    )
     inputs = {
         "source_digest": baseline.get("source_digest", ""),
         "configuration_digest": baseline.get("config_digest", ""),
@@ -41,8 +50,49 @@ def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
         "contract_inventory_sha256": _digest(
             analysis.get("context", {}).get("contracts", [])
         ),
+        "repository_inventory_sha256": analysis.get("repository_inventory", {}).get(
+            "inventory_sha256", ""
+        ),
+        "system_context_sha256": analysis.get("system_context", {}).get(
+            "context_sha256", ""
+        ),
+        "adapter_run_ledger_sha256": analysis.get("adapter_runs", {}).get(
+            "ledger_sha256", ""
+        ),
     }
+    source_snapshot_sha256 = baseline.get("source_snapshot_sha256")
+    if source_snapshot_sha256:
+        inputs["source_snapshot_sha256"] = str(source_snapshot_sha256)
+    test_evidence_snapshot_sha256 = baseline.get("test_evidence_snapshot_sha256")
+    if test_evidence_snapshot_sha256:
+        inputs["test_evidence_snapshot_sha256"] = str(
+            test_evidence_snapshot_sha256
+        )
+    coverage_evidence = (
+        analysis.get("project", {}).get("settings", {}).get("coverage_evidence")
+    )
+    if isinstance(coverage_evidence, dict) and coverage_evidence.get("sha256"):
+        inputs["coverage_json_sha256"] = str(coverage_evidence["sha256"])
+    graphify_evidence = analysis.get("graphify_reconciliation", {})
+    if (
+        isinstance(graphify_evidence, dict)
+        and isinstance(graphify_evidence.get("source"), dict)
+        and graphify_evidence["source"].get("sha256")
+    ):
+        inputs["graphify_graph_json_sha256"] = str(
+            graphify_evidence["source"]["sha256"]
+        )
     created_at = str(analysis.get("project", {}).get("scanned_at") or utc_now())
+    cache_settings = settings.get("fact_cache", {})
+    cache_run = (
+        cache_settings.get("run", {}) if isinstance(cache_settings, dict) else {}
+    )
+    cache_input = (
+        cache_settings.get("input", {}) if isinstance(cache_settings, dict) else {}
+    )
+    entries_reused = (
+        int(cache_run.get("hits", 0)) if isinstance(cache_run, dict) else 0
+    )
     manifest: dict[str, Any] = {
         "schema_version": "pysfmea-run-manifest-1",
         "id": stable_id("RUN", str(baseline.get("id", "")), created_at),
@@ -57,9 +107,9 @@ def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
         "resolved_inputs_sha256": _digest(inputs),
         "tool": {
             "name": "PySFMEA",
-            "version": __version__,
+            "version": producer_version,
             "analysis_schema_version": analysis.get("schema_version", ""),
-            "settings": analysis.get("project", {}).get("settings", {}),
+            "settings": copy.deepcopy(settings),
         },
         "environment": {
             "python": platform.python_version(),
@@ -95,13 +145,29 @@ def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
                 "operation": "static_scan",
                 "repository_code_executed": False,
                 "exit_code": 0,
-                "settings": analysis.get("project", {}).get("settings", {}),
+                "settings": copy.deepcopy(settings),
             }
         ],
         "events": [
             {"sequence": 1, "at": created_at, "event": "scan_completed", "baseline_id": baseline.get("id", "")}
         ],
-        "cache": {"used": False, "entries_reused": 0},
+        "cache": {
+            "enabled": bool(cache_run.get("enabled", False))
+            if isinstance(cache_run, dict)
+            else False,
+            "used": entries_reused > 0,
+            "entries_reused": entries_reused,
+            "entries_recomputed": int(cache_run.get("misses", 0))
+            if isinstance(cache_run, dict)
+            else 0,
+            "input_status": str(cache_input.get("status", "not_configured"))
+            if isinstance(cache_input, dict)
+            else "not_configured",
+            "input_sha256": str(cache_input.get("sha256", ""))
+            if isinstance(cache_input, dict)
+            else "",
+            "authority": "derived_performance_artifact_not_primary_assurance_evidence",
+        },
         "review_decisions": [],
         "waivers": [],
         "risk_acceptances": [],
@@ -111,10 +177,17 @@ def create_run_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
     return manifest
 
 
-def current_audit_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
+def current_audit_manifest(
+    analysis: dict[str, Any],
+    *,
+    generated_at: str | None = None,
+    tool_version: str | None = None,
+) -> dict[str, Any]:
     """Build a package-time audit view without mutating the immutable scan manifest."""
 
-    scan_manifest = analysis.get("run_manifest") or create_run_manifest(analysis)
+    scan_manifest = analysis.get("run_manifest") or create_run_manifest(
+        analysis, tool_version=tool_version
+    )
     reviews = []
     waivers = []
     risk_acceptances = []
@@ -154,7 +227,7 @@ def current_audit_manifest(analysis: dict[str, Any]) -> dict[str, Any]:
     ]
     result = {
         "schema_version": "pysfmea-current-audit-manifest-1",
-        "generated_at": utc_now(),
+        "generated_at": generated_at or utc_now(),
         "scan_manifest": scan_manifest,
         "review_decisions": reviews,
         "waivers": waivers,

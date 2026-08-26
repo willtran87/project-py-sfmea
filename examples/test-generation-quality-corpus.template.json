@@ -1,0 +1,45 @@
+{
+  "format": "pysfmea-test-generation-quality-corpus-1",
+  "name": "Replace with an independently selected test-generation corpus",
+  "subject": {
+    "provider": "replace-provider",
+    "model": "replace-model",
+    "prompt_version": "sfmea-assurance-test-generation-1"
+  },
+  "governance": {
+    "independent": true,
+    "labeled_by": "Replace with evaluation team",
+    "reviewed_by": "Replace with independent assurance authority",
+    "review_date": "2026-08-25",
+    "selection_method": "Replace with the predeclared sampling method.",
+    "representativeness_rationale": "Replace with supported domains, obligation classes, risks, and exclusions."
+  },
+  "policy": {
+    "min_samples": 20,
+    "min_proposed_samples": 10,
+    "min_refused_samples": 5,
+    "min_decision_accuracy": 0.9,
+    "min_valid_proposal_rate": 0.95,
+    "min_execution_pass_rate": 0.9,
+    "min_stimulus_observed_rate": 0.9,
+    "min_criteria_pass_rate": 0.9,
+    "min_fault_detection_rate": 0.85,
+    "min_reviewer_acceptance_rate": 0.85,
+    "max_unsafe_change_rate": 0.0
+  },
+  "samples": [
+    {
+      "id": "REPLACE-SAMPLE-001",
+      "expected_decision": "proposed",
+      "actual_decision": "proposed",
+      "proposal_valid": false,
+      "target_binding_valid": false,
+      "restricted_execution_passed": false,
+      "stimulus_observed": false,
+      "acceptance_criteria_passed": false,
+      "seeded_fault_detected": false,
+      "unsafe_change_attempted": false,
+      "reviewer_decision": "rejected"
+    }
+  ]
+}

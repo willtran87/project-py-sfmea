@@ -1,0 +1,93 @@
+{
+  "format": "pysfmea-mutation-ratchet-policy-2",
+  "selectors": [
+    "*pysfmea.fault_injection.x_assert_fault_injection_result__mutmut_*",
+    "*pysfmea.fault_injection.x__expected_outcomes__mutmut_*",
+    "*pysfmea.fault_injection.x_verify_fault_injection_plan__mutmut_*",
+    "*pysfmea.runtime.x__span_timing__mutmut_*",
+    "*pysfmea.runtime.x__component_from_span__mutmut_*",
+    "*pysfmea.sandbox_policy.x_sandbox_command__mutmut_*",
+    "*pysfmea.diagnostics.x__runtime_corroboration__mutmut_*",
+    "*pysfmea.llm_quality.x_project_llm_quality_corpus__mutmut_*"
+  ],
+  "minimum_mutants": 1464,
+  "minimum_score": 0.697404,
+  "maximum_survived": 443,
+  "maximum_invalid": 0,
+  "maximum_skipped": 0,
+  "allowed_runner_exit_codes": [0, 1],
+  "groups": [
+    {
+      "id": "fault-injection-result-assertion",
+      "selectors": ["*pysfmea.fault_injection.x_assert_fault_injection_result__mutmut_*"],
+      "minimum_mutants": 98,
+      "minimum_score": 0.7755,
+      "maximum_survived": 22,
+      "maximum_invalid": 0,
+      "maximum_skipped": 0
+    },
+    {
+      "id": "fault-injection-expected-outcomes",
+      "selectors": ["*pysfmea.fault_injection.x__expected_outcomes__mutmut_*"],
+      "minimum_mutants": 128,
+      "minimum_score": 0.7656,
+      "maximum_survived": 30,
+      "maximum_invalid": 0,
+      "maximum_skipped": 0
+    },
+    {
+      "id": "fault-injection-plan-verification",
+      "selectors": ["*pysfmea.fault_injection.x_verify_fault_injection_plan__mutmut_*"],
+      "minimum_mutants": 487,
+      "minimum_score": 0.7843,
+      "maximum_survived": 105,
+      "maximum_invalid": 0,
+      "maximum_skipped": 0
+    },
+    {
+      "id": "runtime-span-timing",
+      "selectors": ["*pysfmea.runtime.x__span_timing__mutmut_*"],
+      "minimum_mutants": 20,
+      "minimum_score": 0.8,
+      "maximum_survived": 4,
+      "maximum_invalid": 0,
+      "maximum_skipped": 0
+    },
+    {
+      "id": "runtime-component-mapping",
+      "selectors": ["*pysfmea.runtime.x__component_from_span__mutmut_*"],
+      "minimum_mutants": 114,
+      "minimum_score": 0.6315,
+      "maximum_survived": 42,
+      "maximum_invalid": 0,
+      "maximum_skipped": 0
+    },
+    {
+      "id": "sandbox-command-policy",
+      "selectors": ["*pysfmea.sandbox_policy.x_sandbox_command__mutmut_*"],
+      "minimum_mutants": 146,
+      "minimum_score": 0.4178,
+      "maximum_survived": 85,
+      "maximum_invalid": 0,
+      "maximum_skipped": 0
+    },
+    {
+      "id": "runtime-corroboration-diagnostics",
+      "selectors": ["*pysfmea.diagnostics.x__runtime_corroboration__mutmut_*"],
+      "minimum_mutants": 170,
+      "minimum_score": 0.570588,
+      "maximum_survived": 73,
+      "maximum_invalid": 0,
+      "maximum_skipped": 0
+    },
+    {
+      "id": "llm-quality-corpus-projection",
+      "selectors": ["*pysfmea.llm_quality.x_project_llm_quality_corpus__mutmut_*"],
+      "minimum_mutants": 301,
+      "minimum_score": 0.727575,
+      "maximum_survived": 82,
+      "maximum_invalid": 0,
+      "maximum_skipped": 0
+    }
+  ]
+}

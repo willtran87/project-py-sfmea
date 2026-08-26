@@ -3,20 +3,38 @@
 from __future__ import annotations
 
 import copy
+import os
+import stat
+import tempfile
 import tomllib
+from datetime import date
 from pathlib import Path
 from typing import Any
 
+MAX_CONFIG_BYTES = 5_000_000
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "project": {
         "name": "",
         "purpose": "",
+        "mission": "",
         "boundary": "",
         "operating_context": "",
+        "operational_modes": [],
+        "system_states": [],
+        "must_work_functions": [],
+        "must_not_work_functions": [],
+        "safe_states": [],
+        "degraded_states": [],
         "stakeholders": [],
         "interfaces": [],
+        "human_interactions": [],
+        "timing_constraints": [],
+        "resource_constraints": [],
+        "deployment_environments": [],
+        "criticality": "",
         "assumptions": [],
+        "exclusions": [],
     },
     "analysis": {
         "phase": "detailed_design",
@@ -39,14 +57,34 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "excluded_failure_classes": [],
         "fault_tolerance_assumptions": [],
         "guidance_profiles": ["core_sfmea"],
+        "guidance_packs": [],
     },
     "scan": {
         "include_private": True,
         "include_tests": False,
         "include_nested": True,
+        "review_depth": "focused",
+        "review_queue_max_per_component": 3,
+        "review_queue_max_total": 1_000,
+        "diagnostic_warning_budget": 25_000,
+        "diagnostic_per_rule_budget": 10_000,
+        "target_evidence_readiness_percent": 70,
+        "target_architecture_traceability_percent": 90,
+        "target_cross_stack_percent": 90,
+        "target_guidance_specificity_percent": 95,
+        "target_cold_scan_seconds": 10,
+        "cache_enabled": True,
+        "cache_path": ".artifacts/pysfmea-fact-cache.json",
+        "external_call_prefixes": [],
+        "external_receiver_hints": [],
+        "external_method_hints": [],
         "exclude": [],
+        "test_evidence_include": [],
+        "boundary_evidence_include": [],
         "focus": [],
         "coverage_json": "",
+        "coverage_discovery": True,
+        "graphify_json": "",
     },
     "risk": {
         "method": "severity_only",
@@ -89,6 +127,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "common_causes": [],
     "critical_functions": [],
     "custom_rules": [],
+    "guidance_applicability": [],
+    "guidance_rule_mappings": [],
+    "interface_dispositions": [],
 }
 
 RESERVED_SCANNER_RULE_IDS = {
@@ -114,21 +155,38 @@ RESERVED_SCANNER_RULE_IDS = {
     "timing.late_or_early",
     "detection.masked_failure",
     "resource.exhaustion",
+    "resilience.circuit_breaker_containment",
+    "resilience.circuit_breaker_recovery",
+    "resilience.circuit_breaker_isolation",
+    "resilience.circuit_breaker_fallback",
     "manual",
 }
 
 
-CONFIG_TEMPLATE = '''# PySFMEA project configuration
+CONFIG_TEMPLATE = """# PySFMEA project configuration
 # Edit this file before the first governed scan. Blank values are allowed.
 
 [project]
 name = "Example Python System"
 purpose = "Describe what the system must accomplish."
+mission = "Describe the mission outcome or service objective."
 boundary = "Describe what is inside and outside this analysis."
 operating_context = "Describe users, deployment, modes, loads, and environmental assumptions."
+operational_modes = ["Normal operation", "Maintenance"]
+system_states = ["Starting", "Ready", "Degraded", "Stopped"]
+must_work_functions = ["Describe the functions whose loss is unacceptable"]
+must_not_work_functions = ["Describe prohibited or hazardous functions"]
+safe_states = ["Describe the approved safe state"]
+degraded_states = ["Describe permitted degraded behavior"]
 stakeholders = ["End user", "Operator"]
 interfaces = ["External API", "Database"]
+human_interactions = ["Operator monitors alerts and authorizes recovery"]
+timing_constraints = ["Describe deadlines, timeouts, and sequencing constraints"]
+resource_constraints = ["Describe CPU, memory, storage, and connection limits"]
+deployment_environments = ["Describe production and recovery environments"]
+criticality = "Record the approved project criticality classification."
 assumptions = ["External identity provider is available"]
+exclusions = ["Record explicitly out-of-scope systems and behaviors"]
 
 [analysis]
 phase = "detailed_design" # requirements, architecture, detailed_design, implementation, operations
@@ -141,16 +199,75 @@ included_failure_classes = ["functional", "data", "interface", "timing", "logic"
 excluded_failure_classes = []
 fault_tolerance_assumptions = ["No single software control is credited as independent redundancy."]
 guidance_profiles = ["core_sfmea"] # Optional: nasa_assurance, faa_commercial_space, faa_airworthiness, security, legacy_reference
+# Optional governed JSON packs for licensed or internal organizational standards.
+guidance_packs = []
+
+# Record one governed selection decision for every active guidance profile.
+# [[guidance_applicability]]
+# profile_id = "core_sfmea"
+# rationale = "General SFMEA method applies to the governed software scope."
+# selected_by = "Safety engineering authority"
+# effective_date = "2026-08-06"
+# exclusions = []
+
+# Project-reviewed rule-to-source relationships supplement the built-in catalog.
+# [[guidance_rule_mappings]]
+# rule_selector = "configuration.missing_or_wrong"
+# citation_id = "NASA-SWEHB-8.05-CAUSES"
+# relationship = "failure_taxonomy"
+# strength = "direct" # direct, supporting, or contextual
+# rationale = "The cited passage directly supports this failure-mode prompt."
+# reviewed_by = "Independent guidance reviewer"
+# effective_date = "2026-08-09"
+
+# Stable endpoint dispositions are reapplied on later scans without hiding the
+# underlying static candidate or turning reviewer judgment into runtime evidence.
+# [[interface_dispositions]]
+# endpoint_id = "IFACE-SERVER-..."
+# side = "server" # server or client
+# decision = "intentional_unmatched"
+# rationale = "This administrative endpoint intentionally has no web client."
+# reviewed_by = "Architecture reviewer"
+# effective_date = "2026-08-09"
 
 [scan]
 include_private = true
 include_tests = false
 include_nested = true
+# Human queue projection only; the complete machine inventory is always retained.
+review_depth = "focused" # screening, focused, or exhaustive
+review_queue_max_per_component = 3 # 1-100; protected records remain eligible
+review_queue_max_total = 1000 # 1-50000; CLI --limit may request a smaller projection
+# Diagnostic budgets do not discard findings; they surface unmanageable repetition.
+diagnostic_warning_budget = 25000 # 1-1000000
+diagnostic_per_rule_budget = 10000 # 1-1000000
+# Proposed diagnostic targets are governance inputs, not qualification thresholds.
+target_evidence_readiness_percent = 70 # 1-100
+target_architecture_traceability_percent = 90 # 1-100
+target_cross_stack_percent = 90 # 1-100
+target_guidance_specificity_percent = 95 # 1-100
+target_cold_scan_seconds = 10 # 1-3600
+# Exact-content derived fact cache; never primary assurance evidence.
+cache_enabled = true
+cache_path = ".artifacts/pysfmea-fact-cache.json"
+# Project/framework hints extend built-in interface candidates without claiming resolution.
+external_call_prefixes = []
+external_receiver_hints = []
+external_method_hints = []
 exclude = ["migrations/**", "generated/**"]
+# Evidence-only overrides do not create components. They permit bounded indexing
+# where a semantic exclusion would otherwise hide corroborating evidence.
+test_evidence_include = [] # Example: ["backend/tests/**"]
+boundary_evidence_include = [] # Example: ["frontend/src/**"]
 # When non-empty, only matching path:qualified-name components are analyzed.
 focus = []
 # Optional coverage.py JSON path, relative to this file.
 coverage_json = ""
+# When no path is configured, inspect only coverage.json and .artifacts/coverage.json.
+coverage_discovery = true
+# Optional pre-generated Graphify graph.json. It is imported as supplementary static
+# architecture evidence; use `sfmea scan --graphify` to run Graphify code-only.
+graphify_json = ""
 
 [risk]
 method = "severity_only" # severity_only or sod_rpn
@@ -261,22 +378,86 @@ local_effect = "The transaction is recorded or submitted more than once."
 causes = ["Non-idempotent retry", "Duplicate event delivery"]
 actions = ["Use an idempotency key", "Test ambiguous completion and replay"]
 confidence = "project"
-'''
+"""
+
+
+def _read_config_source(path: str | Path) -> tuple[bytes, Path]:
+    config_path = Path(os.path.abspath(Path(path).expanduser()))
+    if config_path.is_symlink():
+        raise ValueError("configuration must be a regular non-symbolic-link file")
+    try:
+        inspected = config_path.lstat()
+    except OSError as exc:
+        raise ValueError("configuration could not be read safely") from exc
+    if not stat.S_ISREG(inspected.st_mode):
+        raise ValueError("configuration must be a regular non-symbolic-link file")
+    resolved_config_path = config_path.parent.resolve() / config_path.name
+    descriptor: int | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(config_path, flags)
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(inspected, opened):
+            raise ValueError("configuration changed during safe open")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            raw = handle.read(MAX_CONFIG_BYTES + 1)
+    except ValueError:
+        raise
+    except OSError as exc:
+        raise ValueError("configuration could not be read safely") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if len(raw) > MAX_CONFIG_BYTES:
+        raise ValueError(
+            f"configuration exceeds the {MAX_CONFIG_BYTES}-byte import limit"
+        )
+    return raw, resolved_config_path
+
+
+def load_config_source(
+    path: str | Path,
+) -> tuple[dict[str, Any], Path, bytes]:
+    """Load one exact safe TOML snapshot and retain its publication bytes."""
+
+    raw, resolved_config_path = _read_config_source(path)
+    try:
+        supplied = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as exc:
+        raise ValueError("configuration is not valid bounded UTF-8 TOML") from exc
+    config = normalize_config(supplied)
+
+    def configured_input_path(value: str) -> str:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = resolved_config_path.parent / candidate
+        return os.path.abspath(candidate)
+
+    coverage_path = config["scan"].get("coverage_json", "")
+    if coverage_path:
+        config["scan"]["coverage_json"] = configured_input_path(coverage_path)
+    graphify_path = config["scan"].get("graphify_json", "")
+    if graphify_path:
+        config["scan"]["graphify_json"] = configured_input_path(graphify_path)
+    # Cache paths are scanner outputs and are resolved against the repository by the
+    # CLI.  Resolving them against the configuration directory made a configuration
+    # stored under ``.artifacts`` turn the default into ``.artifacts/.artifacts``.
+    config["analysis"]["guidance_packs"] = [
+        configured_input_path(value)
+        for value in config["analysis"].get("guidance_packs", [])
+    ]
+    return config, resolved_config_path, raw
 
 
 def load_config(path: str | Path | None) -> tuple[dict[str, Any], Path | None]:
     if path is None:
         return normalize_config({}), None
-    config_path = Path(path).expanduser().resolve()
-    with config_path.open("rb") as handle:
-        supplied = tomllib.load(handle)
-    config = normalize_config(supplied)
-    coverage_path = config["scan"].get("coverage_json", "")
-    if coverage_path:
-        candidate = Path(coverage_path)
-        if not candidate.is_absolute():
-            config["scan"]["coverage_json"] = str((config_path.parent / candidate).resolve())
-    return config, config_path
+    config, resolved_config_path, _raw = load_config_source(path)
+    return config, resolved_config_path
 
 
 def normalize_config(supplied: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -303,9 +484,14 @@ def normalize_config(supplied: dict[str, Any] | None = None) -> dict[str, Any]:
         "common_causes",
         "critical_functions",
         "custom_rules",
+        "guidance_applicability",
+        "guidance_rule_mappings",
+        "interface_dispositions",
     ):
         value = supplied.get(section, [])
-        if not isinstance(value, list) or not all(isinstance(entry, dict) for entry in value):
+        if not isinstance(value, list) or not all(
+            isinstance(entry, dict) for entry in value
+        ):
             raise ValueError(f"[[{section}]] entries must be TOML tables")
         config[section] = value
     _validate_config(config)
@@ -317,11 +503,24 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
         "project": {
             "name",
             "purpose",
+            "mission",
             "boundary",
             "operating_context",
+            "operational_modes",
+            "system_states",
+            "must_work_functions",
+            "must_not_work_functions",
+            "safe_states",
+            "degraded_states",
             "stakeholders",
             "interfaces",
+            "human_interactions",
+            "timing_constraints",
+            "resource_constraints",
+            "deployment_environments",
+            "criticality",
             "assumptions",
+            "exclusions",
         },
         "analysis": {
             "phase",
@@ -331,14 +530,34 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "excluded_failure_classes",
             "fault_tolerance_assumptions",
             "guidance_profiles",
+            "guidance_packs",
         },
         "scan": {
             "include_private",
             "include_tests",
             "include_nested",
+            "review_depth",
+            "review_queue_max_per_component",
+            "review_queue_max_total",
+            "diagnostic_warning_budget",
+            "diagnostic_per_rule_budget",
+            "target_evidence_readiness_percent",
+            "target_architecture_traceability_percent",
+            "target_cross_stack_percent",
+            "target_guidance_specificity_percent",
+            "target_cold_scan_seconds",
+            "cache_enabled",
+            "cache_path",
+            "external_call_prefixes",
+            "external_receiver_hints",
+            "external_method_hints",
             "exclude",
+            "test_evidence_include",
+            "boundary_evidence_include",
             "focus",
             "coverage_json",
+            "coverage_discovery",
+            "graphify_json",
         },
         "risk": {
             "method",
@@ -401,11 +620,37 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
             "actions",
             "confidence",
         },
+        "guidance_applicability": {
+            "profile_id",
+            "rationale",
+            "selected_by",
+            "effective_date",
+            "exclusions",
+        },
+        "guidance_rule_mappings": {
+            "rule_selector",
+            "citation_id",
+            "relationship",
+            "strength",
+            "rationale",
+            "reviewed_by",
+            "effective_date",
+        },
+        "interface_dispositions": {
+            "endpoint_id",
+            "side",
+            "decision",
+            "rationale",
+            "reviewed_by",
+            "effective_date",
+        },
     }
     allowed_sections = set(table_fields) | set(array_fields)
     unknown_sections = set(supplied) - allowed_sections
     if unknown_sections:
-        raise ValueError("unknown configuration section(s): " + ", ".join(sorted(unknown_sections)))
+        raise ValueError(
+            "unknown configuration section(s): " + ", ".join(sorted(unknown_sections))
+        )
     for section, allowed in table_fields.items():
         value = supplied.get(section)
         if isinstance(value, dict):
@@ -426,20 +671,86 @@ def _reject_unknown_fields(supplied: dict[str, Any]) -> None:
 
 
 def write_config_template(path: str | Path, *, overwrite: bool = False) -> Path:
-    destination = Path(path).expanduser().resolve()
-    if destination.exists() and not overwrite:
-        raise ValueError(f"configuration already exists: {destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(CONFIG_TEMPLATE, encoding="utf-8", newline="\n")
+    destination = Path(os.path.abspath(Path(path).expanduser()))
+    if destination.is_symlink():
+        raise ValueError("configuration destination must not be a symbolic link")
+    if destination.exists():
+        if not destination.is_file():
+            raise ValueError("configuration destination must be a regular file path")
+        if not overwrite:
+            raise ValueError(f"configuration already exists: {destination}")
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ValueError(
+            "configuration destination could not be prepared safely"
+        ) from exc
+    staging: Path | None = None
+    try:
+        descriptor, staging_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=destination.parent,
+        )
+        staging = Path(staging_name)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(CONFIG_TEMPLATE)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if destination.is_symlink():
+            raise ValueError("configuration destination must not be a symbolic link")
+        if destination.exists():
+            if not destination.is_file():
+                raise ValueError(
+                    "configuration destination must be a regular file path"
+                )
+            if not overwrite:
+                raise ValueError(f"configuration already exists: {destination}")
+        os.replace(staging, destination)
+        staging = None
+    except ValueError:
+        raise
+    except OSError as exc:
+        raise ValueError(
+            "configuration template could not be published safely"
+        ) from exc
+    finally:
+        if staging is not None:
+            try:
+                staging.unlink(missing_ok=True)
+            except OSError:
+                pass
     return destination
 
 
 def _validate_config(config: dict[str, Any]) -> None:
     project = config["project"]
-    for field in ("name", "purpose", "boundary", "operating_context"):
+    for field in (
+        "name",
+        "purpose",
+        "mission",
+        "boundary",
+        "operating_context",
+        "criticality",
+    ):
         if not isinstance(project.get(field), str):
             raise ValueError(f"project.{field} must be a string")
-    for field in ("stakeholders", "interfaces", "assumptions"):
+    for field in (
+        "operational_modes",
+        "system_states",
+        "must_work_functions",
+        "must_not_work_functions",
+        "safe_states",
+        "degraded_states",
+        "stakeholders",
+        "interfaces",
+        "human_interactions",
+        "timing_constraints",
+        "resource_constraints",
+        "deployment_environments",
+        "assumptions",
+        "exclusions",
+    ):
         if not isinstance(project.get(field), list) or not all(
             isinstance(entry, str) for entry in project[field]
         ):
@@ -461,6 +772,7 @@ def _validate_config(config: dict[str, Any]) -> None:
         "excluded_failure_classes",
         "fault_tolerance_assumptions",
         "guidance_profiles",
+        "guidance_packs",
     ):
         if not isinstance(analysis.get(field), list) or not all(
             isinstance(entry, str) for entry in analysis[field]
@@ -468,7 +780,172 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError(f"analysis.{field} must be an array of strings")
     from .guidance import normalize_profile_ids
 
-    normalize_profile_ids(analysis["guidance_profiles"])
+    active_profiles = normalize_profile_ids(analysis["guidance_profiles"])
+    applicability = config.get("guidance_applicability", [])
+    seen_applicability: set[str] = set()
+    for index, decision in enumerate(applicability, start=1):
+        profile_id = decision.get("profile_id")
+        if not isinstance(profile_id, str) or profile_id not in active_profiles:
+            raise ValueError(
+                f"guidance_applicability entry {index} must reference an active profile"
+            )
+        if profile_id in seen_applicability:
+            raise ValueError(
+                f"guidance applicability profile is duplicated: {profile_id}"
+            )
+        seen_applicability.add(profile_id)
+        for field in ("rationale", "selected_by"):
+            if not isinstance(decision.get(field), str) or not decision[field].strip():
+                raise ValueError(
+                    f"guidance_applicability entry {index} requires {field}"
+                )
+        effective_date = decision.get("effective_date")
+        if not isinstance(effective_date, str):
+            raise ValueError(
+                f"guidance_applicability entry {index} requires effective_date"
+            )
+        try:
+            date.fromisoformat(effective_date)
+        except ValueError as exc:
+            raise ValueError(
+                f"guidance_applicability entry {index} effective_date must be YYYY-MM-DD"
+            ) from exc
+        exclusions = decision.get("exclusions", [])
+        if not isinstance(exclusions, list) or not all(
+            isinstance(value, str) and value.strip() for value in exclusions
+        ):
+            raise ValueError(
+                f"guidance_applicability entry {index} exclusions must be strings"
+            )
+    from .guidance import (
+        GUIDANCE_CITATIONS,
+        GUIDELINE_PROFILES,
+        MAPPING_STRENGTHS,
+        RELATIONSHIP_TYPES,
+    )
+
+    known_citations = {
+        str(value.get("id", "")): str(value.get("source_id", ""))
+        for value in GUIDANCE_CITATIONS
+        if isinstance(value, dict)
+    }
+    active_source_ids: set[str] = set()
+    for profile in GUIDELINE_PROFILES:
+        if not isinstance(profile, dict) or profile.get("id") not in active_profiles:
+            continue
+        source_ids = profile.get("source_ids", [])
+        if isinstance(source_ids, list):
+            active_source_ids.update(str(source_id) for source_id in source_ids)
+    seen_guidance_mappings: set[tuple[str, str, str, str]] = set()
+    for index, mapping in enumerate(
+        config.get("guidance_rule_mappings", []), start=1
+    ):
+        selector = mapping.get("rule_selector")
+        citation_id = mapping.get("citation_id")
+        relationship = mapping.get("relationship")
+        strength = mapping.get("strength")
+        if not isinstance(selector, str) or not selector.strip():
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} requires rule_selector"
+            )
+        if not isinstance(citation_id, str) or citation_id not in known_citations:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} references an unknown built-in citation"
+            )
+        if known_citations[citation_id] not in active_source_ids:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} citation is outside the active guidance profiles"
+            )
+        if relationship not in RELATIONSHIP_TYPES:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} has an invalid relationship"
+            )
+        if strength not in MAPPING_STRENGTHS:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} has an invalid strength"
+            )
+        identity = (selector, citation_id, str(relationship), str(strength))
+        if identity in seen_guidance_mappings:
+            raise ValueError(
+                f"duplicate guidance rule mapping: {selector} -> {citation_id} ({relationship})"
+            )
+        seen_guidance_mappings.add(identity)
+        for field in ("rationale", "reviewed_by"):
+            if not isinstance(mapping.get(field), str) or not mapping[field].strip():
+                raise ValueError(
+                    f"guidance_rule_mappings entry {index} requires {field}"
+                )
+        effective_date = mapping.get("effective_date")
+        if not isinstance(effective_date, str):
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} requires effective_date"
+            )
+        try:
+            date.fromisoformat(effective_date)
+        except ValueError as exc:
+            raise ValueError(
+                f"guidance_rule_mappings entry {index} effective_date must be YYYY-MM-DD"
+            ) from exc
+
+    interface_decisions = {
+        "server": {
+            "intentional_backend_only",
+            "external_or_generated_client",
+            "deprecated_or_unreachable",
+            "missing_client_coverage",
+            "confirmed_defect",
+            "needs_information",
+        },
+        "client": {
+            "confirmed_compatible",
+            "deployment_prefix_or_proxy",
+            "generated_or_external_server",
+            "test_only",
+            "confirmed_mismatch",
+            "confirmed_defect",
+            "needs_information",
+        },
+    }
+    seen_interface_dispositions: set[str] = set()
+    for index, disposition in enumerate(
+        config.get("interface_dispositions", []), start=1
+    ):
+        endpoint_id = disposition.get("endpoint_id")
+        side = disposition.get("side")
+        decision = disposition.get("decision")
+        if not isinstance(endpoint_id, str) or not endpoint_id.strip():
+            raise ValueError(
+                f"interface_dispositions entry {index} requires endpoint_id"
+            )
+        if endpoint_id in seen_interface_dispositions:
+            raise ValueError(f"duplicate interface disposition: {endpoint_id}")
+        seen_interface_dispositions.add(endpoint_id)
+        if side not in interface_decisions:
+            raise ValueError(
+                f"interface_dispositions entry {index} side must be server or client"
+            )
+        if decision not in interface_decisions[str(side)]:
+            raise ValueError(
+                f"interface_dispositions entry {index} has an invalid {side} decision"
+            )
+        for field in ("rationale", "reviewed_by"):
+            if not isinstance(disposition.get(field), str) or not disposition[
+                field
+            ].strip():
+                raise ValueError(
+                    f"interface_dispositions entry {index} requires {field}"
+                )
+        effective_date = disposition.get("effective_date")
+        if not isinstance(effective_date, str):
+            raise ValueError(
+                f"interface_dispositions entry {index} requires effective_date"
+            )
+        try:
+            date.fromisoformat(effective_date)
+        except ValueError as exc:
+            raise ValueError(
+                f"interface_dispositions entry {index} effective_date must be YYYY-MM-DD"
+            ) from exc
     overlap = set(analysis["included_failure_classes"]) & set(
         analysis["excluded_failure_classes"]
     )
@@ -478,16 +955,72 @@ def _validate_config(config: dict[str, Any]) -> None:
             + ", ".join(sorted(overlap))
         )
     scan = config["scan"]
-    for field in ("include_private", "include_tests", "include_nested"):
+    for field in (
+        "include_private",
+        "include_tests",
+        "include_nested",
+        "coverage_discovery",
+    ):
         if not isinstance(scan.get(field), bool):
             raise ValueError(f"scan.{field} must be true or false")
+    if scan.get("review_depth") not in {"screening", "focused", "exhaustive"}:
+        raise ValueError("scan.review_depth must be screening, focused, or exhaustive")
+    for field, maximum in (
+        ("review_queue_max_per_component", 100),
+        ("review_queue_max_total", 50_000),
+        ("diagnostic_warning_budget", 1_000_000),
+        ("diagnostic_per_rule_budget", 1_000_000),
+        ("target_evidence_readiness_percent", 100),
+        ("target_architecture_traceability_percent", 100),
+        ("target_cross_stack_percent", 100),
+        ("target_guidance_specificity_percent", 100),
+        ("target_cold_scan_seconds", 3_600),
+    ):
+        value = scan.get(field)
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not 1 <= value <= maximum
+        ):
+            raise ValueError(
+                f"scan.{field} must be an integer from 1 through {maximum}"
+            )
+    if not isinstance(scan.get("cache_enabled"), bool):
+        raise ValueError("scan.cache_enabled must be a boolean")
+    if not isinstance(scan.get("cache_path"), str):
+        raise ValueError("scan.cache_path must be a string path")
+    if scan.get("cache_enabled") and not scan.get("cache_path", "").strip():
+        raise ValueError("scan.cache_path is required when scan.cache_enabled is true")
+    for field in (
+        "external_call_prefixes",
+        "external_receiver_hints",
+        "external_method_hints",
+    ):
+        value = scan.get(field)
+        if (
+            not isinstance(value, list)
+            or len(value) > 1_000
+            or not all(isinstance(item, str) and 0 < len(item) <= 200 for item in value)
+        ):
+            raise ValueError(
+                f"scan.{field} must be an array of up to 1000 bounded strings"
+            )
     if not isinstance(scan.get("coverage_json"), str):
         raise ValueError("scan.coverage_json must be a string path")
-    for field in ("exclude", "focus"):
+    if not isinstance(scan.get("graphify_json"), str):
+        raise ValueError("scan.graphify_json must be a string path")
+    for field in (
+        "exclude",
+        "test_evidence_include",
+        "boundary_evidence_include",
+        "focus",
+    ):
         if not isinstance(scan.get(field), list) or not all(
-            isinstance(entry, str) for entry in scan[field]
+            isinstance(entry, str) and 0 < len(entry) <= 4_096 for entry in scan[field]
         ):
-            raise ValueError(f"scan.{field} must be an array of glob strings")
+            raise ValueError(
+                f"scan.{field} must be an array of non-empty bounded glob strings"
+            )
     risk = config["risk"]
     if risk.get("method") not in {"severity_only", "sod_rpn"}:
         raise ValueError("risk.method must be 'severity_only' or 'sod_rpn'")
@@ -500,7 +1033,9 @@ def _validate_config(config: dict[str, Any]) -> None:
         if not isinstance(risk.get(field), str):
             raise ValueError(f"risk.{field} must be a string")
     categories = risk.get("severity_categories", [])
-    if not isinstance(categories, list) or not all(isinstance(value, str) for value in categories):
+    if not isinstance(categories, list) or not all(
+        isinstance(value, str) for value in categories
+    ):
         raise ValueError("risk.severity_categories must be an array of strings")
     if len(categories) != len(set(categories)):
         raise ValueError("risk.severity_categories must not contain duplicates")
@@ -528,13 +1063,21 @@ def _validate_config(config: dict[str, Any]) -> None:
         if not isinstance(quality.get(field), bool):
             raise ValueError(f"quality.{field} must be true or false")
     threshold = quality.get("approval_severity_threshold")
-    if isinstance(threshold, bool) or not isinstance(threshold, int) or not 1 <= threshold <= 10:
-        raise ValueError("quality.approval_severity_threshold must be from 1 through 10")
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, int)
+        or not 1 <= threshold <= 10
+    ):
+        raise ValueError(
+            "quality.approval_severity_threshold must be from 1 through 10"
+        )
     approval_categories = quality.get("approval_severity_categories", [])
     if not isinstance(approval_categories, list) or not all(
         isinstance(value, str) for value in approval_categories
     ):
-        raise ValueError("quality.approval_severity_categories must be an array of strings")
+        raise ValueError(
+            "quality.approval_severity_categories must be an array of strings"
+        )
     unknown_approval_categories = set(approval_categories) - set(categories)
     if unknown_approval_categories:
         raise ValueError(
@@ -542,9 +1085,13 @@ def _validate_config(config: dict[str, Any]) -> None:
             + ", ".join(sorted(unknown_approval_categories))
         )
     if quality.get("unreviewed_level") not in {"error", "warning", "information"}:
-        raise ValueError("quality.unreviewed_level must be error, warning, or information")
+        raise ValueError(
+            "quality.unreviewed_level must be error, warning, or information"
+        )
     if quality.get("scan_warning_level") not in {"error", "warning", "information"}:
-        raise ValueError("quality.scan_warning_level must be error, warning, or information")
+        raise ValueError(
+            "quality.scan_warning_level must be error, warning, or information"
+        )
 
     hazard_ids: set[str] = set()
     for hazard in config["hazards"]:
@@ -563,7 +1110,9 @@ def _validate_config(config: dict[str, Any]) -> None:
             or not isinstance(severity, int)
             or not 1 <= severity <= 10
         ):
-            raise ValueError(f"hazard {hazard_id} severity must be an integer from 1 through 10")
+            raise ValueError(
+                f"hazard {hazard_id} severity must be an integer from 1 through 10"
+            )
         severity_category = hazard.get("severity_category", "")
         if not isinstance(severity_category, str):
             raise ValueError(f"hazard {hazard_id} severity_category must be a string")
@@ -581,7 +1130,9 @@ def _validate_config(config: dict[str, Any]) -> None:
         tree_ids.add(tree_id)
         hazard_id = tree.get("hazard")
         if hazard_id not in hazard_ids:
-            raise ValueError(f"fault tree {tree_id} references unknown hazard: {hazard_id}")
+            raise ValueError(
+                f"fault tree {tree_id} references unknown hazard: {hazard_id}"
+            )
         for field in ("top_event_id", "top_event"):
             if not isinstance(tree.get(field), str) or not tree[field]:
                 raise ValueError(f"fault tree {tree_id} requires {field}")
@@ -591,12 +1142,18 @@ def _validate_config(config: dict[str, Any]) -> None:
         if not isinstance(assumptions, list) or not all(
             isinstance(value, str) for value in assumptions
         ):
-            raise ValueError(f"fault tree {tree_id} assumptions must be an array of strings")
+            raise ValueError(
+                f"fault tree {tree_id} assumptions must be an array of strings"
+            )
         gates = tree.get("gates", [])
         events = tree.get("events", [])
-        if not isinstance(gates, list) or not all(isinstance(value, dict) for value in gates):
+        if not isinstance(gates, list) or not all(
+            isinstance(value, dict) for value in gates
+        ):
             raise ValueError(f"fault tree {tree_id} gates must be an array of tables")
-        if not isinstance(events, list) or not all(isinstance(value, dict) for value in events):
+        if not isinstance(events, list) or not all(
+            isinstance(value, dict) for value in events
+        ):
             raise ValueError(f"fault tree {tree_id} events must be an array of tables")
         nodes: dict[str, list[str]] = {}
         for gate in gates:
@@ -611,10 +1168,14 @@ def _validate_config(config: dict[str, Any]) -> None:
             if not isinstance(gate_id, str) or not gate_id:
                 raise ValueError(f"fault tree {tree_id} gate requires an id")
             if gate_type not in {"AND", "OR", "VOTE", "INHIBIT"}:
-                raise ValueError(f"fault tree {tree_id} gate {gate_id} has invalid type")
+                raise ValueError(
+                    f"fault tree {tree_id} gate {gate_id} has invalid type"
+                )
             inputs = gate.get("inputs", [])
-            if not isinstance(inputs, list) or len(inputs) < 2 or not all(
-                isinstance(value, str) and value for value in inputs
+            if (
+                not isinstance(inputs, list)
+                or len(inputs) < 2
+                or not all(isinstance(value, str) and value for value in inputs)
             ):
                 raise ValueError(
                     f"fault tree {tree_id} gate {gate_id} requires at least two input ids"
@@ -624,13 +1185,26 @@ def _validate_config(config: dict[str, Any]) -> None:
                 or not isinstance(gate.get("k"), int)
                 or not 1 <= gate["k"] <= len(inputs)
             ):
-                raise ValueError(f"fault tree {tree_id} VOTE gate {gate_id} requires valid k")
+                raise ValueError(
+                    f"fault tree {tree_id} VOTE gate {gate_id} requires valid k"
+                )
             if not isinstance(gate.get("description", ""), str):
-                raise ValueError(f"fault tree {tree_id} gate {gate_id} description must be a string")
+                raise ValueError(
+                    f"fault tree {tree_id} gate {gate_id} description must be a string"
+                )
             if gate_id in nodes:
-                raise ValueError(f"fault tree {tree_id} has duplicate node id: {gate_id}")
+                raise ValueError(
+                    f"fault tree {tree_id} has duplicate node id: {gate_id}"
+                )
             nodes[gate_id] = inputs
-        event_types = {"top", "intermediate", "basic", "undeveloped", "external", "conditioning"}
+        event_types = {
+            "top",
+            "intermediate",
+            "basic",
+            "undeveloped",
+            "external",
+            "conditioning",
+        }
         for event in events:
             unknown = set(event) - {
                 "id",
@@ -652,14 +1226,23 @@ def _validate_config(config: dict[str, Any]) -> None:
             if not isinstance(event_id, str) or not event_id:
                 raise ValueError(f"fault tree {tree_id} event requires an id")
             if event.get("type") not in event_types:
-                raise ValueError(f"fault tree {tree_id} event {event_id} has invalid type")
-            if not isinstance(event.get("description"), str) or not event["description"]:
-                raise ValueError(f"fault tree {tree_id} event {event_id} requires a description")
+                raise ValueError(
+                    f"fault tree {tree_id} event {event_id} has invalid type"
+                )
+            if (
+                not isinstance(event.get("description"), str)
+                or not event["description"]
+            ):
+                raise ValueError(
+                    f"fault tree {tree_id} event {event_id} requires a description"
+                )
             inputs = event.get("inputs", [])
             if not isinstance(inputs, list) or not all(
                 isinstance(value, str) and value for value in inputs
             ):
-                raise ValueError(f"fault tree {tree_id} event {event_id} inputs must be strings")
+                raise ValueError(
+                    f"fault tree {tree_id} event {event_id} inputs must be strings"
+                )
             for field in (
                 "component_patterns",
                 "failure_mode_patterns",
@@ -675,11 +1258,16 @@ def _validate_config(config: dict[str, Any]) -> None:
                         f"fault tree {tree_id} event {event_id} {field} must be strings"
                     )
             if event_id in nodes:
-                raise ValueError(f"fault tree {tree_id} has duplicate node id: {event_id}")
+                raise ValueError(
+                    f"fault tree {tree_id} has duplicate node id: {event_id}"
+                )
             nodes[event_id] = inputs
         top_event_id = tree["top_event_id"]
         event_by_id = {str(value.get("id")): value for value in events}
-        if top_event_id not in event_by_id or event_by_id[top_event_id].get("type") != "top":
+        if (
+            top_event_id not in event_by_id
+            or event_by_id[top_event_id].get("type") != "top"
+        ):
             raise ValueError(
                 f"fault tree {tree_id} top_event_id must identify an event of type top"
             )
@@ -715,10 +1303,16 @@ def _validate_config(config: dict[str, Any]) -> None:
         requirement_ids.add(requirement_id)
         for field in ("text", "source"):
             if field in requirement and not isinstance(requirement[field], str):
-                raise ValueError(f"requirement {requirement_id} {field} must be a string")
+                raise ValueError(
+                    f"requirement {requirement_id} {field} must be a string"
+                )
         linked = requirement.get("hazards", [])
-        if not isinstance(linked, list) or not all(isinstance(value, str) for value in linked):
-            raise ValueError(f"requirement {requirement_id} hazards must be an array of strings")
+        if not isinstance(linked, list) or not all(
+            isinstance(value, str) for value in linked
+        ):
+            raise ValueError(
+                f"requirement {requirement_id} hazards must be an array of strings"
+            )
         unknown = set(linked) - hazard_ids
         if unknown:
             raise ValueError(
@@ -730,10 +1324,17 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError("each component_mappings entry requires a pattern")
         if not isinstance(mapping.get("subsystem", ""), str):
             raise ValueError("component_mappings subsystem must be a string")
-        for field, known in (("requirements", requirement_ids), ("hazards", hazard_ids)):
+        for field, known in (
+            ("requirements", requirement_ids),
+            ("hazards", hazard_ids),
+        ):
             linked = mapping.get(field, [])
-            if not isinstance(linked, list) or not all(isinstance(value, str) for value in linked):
-                raise ValueError(f"component_mappings {field} must be an array of strings")
+            if not isinstance(linked, list) or not all(
+                isinstance(value, str) for value in linked
+            ):
+                raise ValueError(
+                    f"component_mappings {field} must be an array of strings"
+                )
             unknown = set(linked) - known
             if unknown:
                 raise ValueError(
@@ -744,7 +1345,9 @@ def _validate_config(config: dict[str, Any]) -> None:
         if not isinstance(interfaces, list) or not all(
             isinstance(value, str) for value in interfaces
         ):
-            raise ValueError("component_mappings interfaces must be an array of strings")
+            raise ValueError(
+                "component_mappings interfaces must be an array of strings"
+            )
     interface_ids: set[str] = set()
     for interface in config["system_interfaces"]:
         interface_id = interface.get("id")
@@ -755,11 +1358,17 @@ def _validate_config(config: dict[str, Any]) -> None:
         interface_ids.add(interface_id)
         for field in ("source", "target", "description"):
             if not isinstance(interface.get(field, ""), str):
-                raise ValueError(f"system interface {interface_id} {field} must be a string")
+                raise ValueError(
+                    f"system interface {interface_id} {field} must be a string"
+                )
         for field in ("data", "assumptions"):
             value = interface.get(field, [])
-            if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
-                raise ValueError(f"system interface {interface_id} {field} must be an array of strings")
+            if not isinstance(value, list) or not all(
+                isinstance(entry, str) for entry in value
+            ):
+                raise ValueError(
+                    f"system interface {interface_id} {field} must be an array of strings"
+                )
     for mapping in config["component_mappings"]:
         unknown = set(mapping.get("interfaces", [])) - interface_ids
         if unknown:
@@ -776,7 +1385,9 @@ def _validate_config(config: dict[str, Any]) -> None:
         reviewer_names.add(reviewer["name"])
         for field in ("role", "organization"):
             if not isinstance(reviewer.get(field, ""), str):
-                raise ValueError(f"reviewer {reviewer['name']} {field} must be a string")
+                raise ValueError(
+                    f"reviewer {reviewer['name']} {field} must be a string"
+                )
     common_cause_ids: set[str] = set()
     for common_cause in config["common_causes"]:
         common_cause_id = common_cause.get("id")
@@ -785,19 +1396,31 @@ def _validate_config(config: dict[str, Any]) -> None:
         if common_cause_id in common_cause_ids:
             raise ValueError(f"duplicate common cause id: {common_cause_id}")
         common_cause_ids.add(common_cause_id)
-        if not isinstance(common_cause.get("description"), str) or not common_cause["description"]:
+        if (
+            not isinstance(common_cause.get("description"), str)
+            or not common_cause["description"]
+        ):
             raise ValueError(f"common cause {common_cause_id} requires a description")
         patterns = common_cause.get("component_patterns", [])
-        if not isinstance(patterns, list) or not patterns or not all(
-            isinstance(pattern, str) for pattern in patterns
+        if (
+            not isinstance(patterns, list)
+            or not patterns
+            or not all(isinstance(pattern, str) for pattern in patterns)
         ):
             raise ValueError(
                 f"common cause {common_cause_id} component_patterns must be a non-empty array"
             )
-        for field, known in (("hazards", hazard_ids), ("requirements", requirement_ids)):
+        for field, known in (
+            ("hazards", hazard_ids),
+            ("requirements", requirement_ids),
+        ):
             values = common_cause.get(field, [])
-            if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-                raise ValueError(f"common cause {common_cause_id} {field} must be an array")
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) for value in values
+            ):
+                raise ValueError(
+                    f"common cause {common_cause_id} {field} must be an array"
+                )
             unknown = set(values) - known
             if unknown:
                 raise ValueError(
@@ -806,13 +1429,19 @@ def _validate_config(config: dict[str, Any]) -> None:
                 )
         for field in ("causes", "controls"):
             values = common_cause.get(field, [])
-            if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-                raise ValueError(f"common cause {common_cause_id} {field} must be an array")
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) for value in values
+            ):
+                raise ValueError(
+                    f"common cause {common_cause_id} {field} must be an array"
+                )
     for entry in config["critical_functions"]:
         if not isinstance(entry.get("pattern"), str) or not entry["pattern"]:
             raise ValueError("each critical_functions entry requires a pattern")
         linked = entry.get("hazards", [])
-        if not isinstance(linked, list) or not all(isinstance(value, str) for value in linked):
+        if not isinstance(linked, list) or not all(
+            isinstance(value, str) for value in linked
+        ):
             raise ValueError("critical_functions hazards must be an array of strings")
         if "rationale" in entry and not isinstance(entry["rationale"], str):
             raise ValueError("critical_functions rationale must be a string")
@@ -825,7 +1454,11 @@ def _validate_config(config: dict[str, Any]) -> None:
     rule_ids: set[str] = set()
     for rule in config["custom_rules"]:
         required = {"id", "pattern", "guideword", "failure_mode"}
-        missing = [field for field in required if not isinstance(rule.get(field), str) or not rule[field]]
+        missing = [
+            field
+            for field in required
+            if not isinstance(rule.get(field), str) or not rule[field]
+        ]
         if missing:
             raise ValueError("custom rule missing: " + ", ".join(sorted(missing)))
         if rule["id"] in rule_ids:
@@ -835,8 +1468,12 @@ def _validate_config(config: dict[str, Any]) -> None:
         rule_ids.add(rule["id"])
         for field in ("causes", "actions"):
             value = rule.get(field, [])
-            if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
-                raise ValueError(f"custom rule {rule['id']} {field} must be an array of strings")
+            if not isinstance(value, list) or not all(
+                isinstance(entry, str) for entry in value
+            ):
+                raise ValueError(
+                    f"custom rule {rule['id']} {field} must be an array of strings"
+                )
         for field in ("trigger", "local_effect", "confidence", "failure_class"):
             if field in rule and not isinstance(rule[field], str):
                 raise ValueError(f"custom rule {rule['id']} {field} must be a string")
@@ -854,3 +1491,22 @@ def _validate_config(config: dict[str, Any]) -> None:
                 f"analysis.{field} contains unknown failure classes: "
                 + ", ".join(sorted(unknown))
             )
+
+
+def validate_fault_tree_definitions(
+    hazards: list[dict[str, Any]], fault_trees: list[dict[str, Any]]
+) -> None:
+    """Validate standalone fault-tree definitions with the governed config rules."""
+
+    if not isinstance(hazards, list) or not all(
+        isinstance(value, dict) for value in hazards
+    ):
+        raise ValueError("hazards must be a list of objects")
+    if not isinstance(fault_trees, list) or not all(
+        isinstance(value, dict) for value in fault_trees
+    ):
+        raise ValueError("fault trees must be a list of objects")
+    candidate = copy.deepcopy(DEFAULT_CONFIG)
+    candidate["hazards"] = copy.deepcopy(hazards)
+    candidate["fault_trees"] = copy.deepcopy(fault_trees)
+    _validate_config(candidate)

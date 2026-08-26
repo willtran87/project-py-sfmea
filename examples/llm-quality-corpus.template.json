@@ -1,0 +1,27 @@
+{
+  "schema_version": "pysfmea-llm-quality-corpus-3",
+  "name": "Replace with an independently selected and reviewed LLM quality corpus",
+  "purpose": "Template only; this file is not model-quality evidence.",
+  "subject": {
+    "provider": "replace-provider",
+    "model": "replace-model",
+    "prompt_version": "replace-prompt-version"
+  },
+  "governance": {
+    "independent": true,
+    "labeled_by": "Replace with labeling team identity",
+    "reviewed_by": "Replace with independent review authority",
+    "review_date": "2026-08-25",
+    "selection_method": "Replace with the predeclared sample-selection method.",
+    "representativeness_rationale": "Replace with supported prompts, domains, risks, and known exclusions."
+  },
+  "samples": [
+    {
+      "id": "REPLACE-SAMPLE-001",
+      "grounded": false,
+      "citations_correct": false,
+      "claim_count": 1,
+      "unsupported_claim_count": 1
+    }
+  ]
+}

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
 import html
+import json
 import re
 from pathlib import Path
 from typing import Any
+
+from .file_publication import atomic_publish_text
 
 
 def architecture_graph(analysis: dict[str, Any]) -> dict[str, Any]:
@@ -59,7 +61,10 @@ def architecture_graph(analysis: dict[str, Any]) -> dict[str, Any]:
     for interface in interfaces:
         source = "EXT-" + _safe_id(interface.get("source", "source"))
         target = "EXT-" + _safe_id(interface.get("target", "target"))
-        for node_id, label in ((source, interface.get("source", "")), (target, interface.get("target", ""))):
+        for node_id, label in (
+            (source, interface.get("source", "")),
+            (target, interface.get("target", "")),
+        ):
             if not any(node["id"] == node_id for node in nodes):
                 nodes.append(
                     {
@@ -108,18 +113,47 @@ def architecture_graph(analysis: dict[str, Any]) -> dict[str, Any]:
                     "trace_id": runtime_edge.get("trace_id", ""),
                 }
             )
-    return {"nodes": nodes, "edges": edges, "system_interfaces": interfaces}
+    for graphify_edge in analysis.get("graphify_reconciliation", {}).get("edges", []):
+        if (
+            graphify_edge.get("relation") == "calls"
+            and graphify_edge.get("source_component_id") in component_ids
+            and graphify_edge.get("target_component_id") in component_ids
+        ):
+            edges.append(
+                {
+                    "source": graphify_edge["source_component_id"],
+                    "target": graphify_edge["target_component_id"],
+                    "kind": "graphify_static_call",
+                    "label": (
+                        "calls (corroborated)"
+                        if graphify_edge.get("reconciliation") == "corroborated"
+                        else "calls (Graphify review lead)"
+                    ),
+                    "evidence": "graphify_code_only_static",
+                    "confidence": graphify_edge.get("confidence", "unknown"),
+                    "reconciliation": graphify_edge.get("reconciliation", ""),
+                }
+            )
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "system_interfaces": interfaces,
+        "deployment_topology": analysis.get("deployment_topology", {}),
+        "shared_fate_analysis": analysis.get("shared_fate_analysis", {}),
+        "architecture_hierarchy": analysis.get("architecture_hierarchy", {}),
+    }
 
 
 def export_architecture(
     analysis: dict[str, Any], destination: str | Path, *, format: str = "markdown"
 ) -> Path:
-    path = Path(destination).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
     graph = architecture_graph(analysis)
     if format == "json":
-        path.write_text(json.dumps(graph, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return path
+        return atomic_publish_text(
+            destination,
+            json.dumps(graph, indent=2, ensure_ascii=False) + "\n",
+            label="architecture JSON export",
+        )
     if format != "markdown":
         raise ValueError("architecture format must be markdown or json")
     context = analysis.get("context", {})
@@ -169,8 +203,91 @@ def export_architecture(
         )
     if not graph["system_interfaces"]:
         lines.append("- None configured")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    deployment = graph.get("deployment_topology", {})
+    deployment_summary = deployment.get("summary", {})
+    deployment_nodes = deployment.get("nodes", [])[:100]
+    deployment_node_names = {
+        str(value.get("id", "")): f"D{index}"
+        for index, value in enumerate(deployment_nodes)
+    }
+    lines.extend(
+        [
+            "",
+            "## Declared deployment topology",
+            "",
+            f"- Nodes: {deployment_summary.get('nodes_embedded', 0)} embedded / {deployment_summary.get('nodes_discovered', 0)} discovered",
+            f"- Relationships: {deployment_summary.get('edges_embedded', 0)} embedded / {deployment_summary.get('edges_discovered', 0)} discovered",
+            f"- Candidate placements: {deployment_summary.get('placed_components', 0)} placed; {deployment_summary.get('unplaced_components', 0)} unplaced",
+            "",
+            "> Repository declarations and heuristic placements are not observed runtime topology.",
+        ]
+    )
+    if deployment_nodes:
+        lines.extend(["", "```mermaid", "flowchart LR"])
+        for node in deployment_nodes:
+            node_name = deployment_node_names[str(node.get("id", ""))]
+            label = f"{node.get('name', '')}\\n{node.get('kind', '')}"
+            lines.append(f'  {node_name}["{_label(label)}"]')
+        for edge in deployment.get("edges", []):
+            source = deployment_node_names.get(str(edge.get("source_node_id", "")))
+            target = deployment_node_names.get(str(edge.get("target_node_id", "")))
+            if source and target:
+                lines.append(
+                    f'  {source} -->|"{_label(str(edge.get("kind", "")))}"| {target}'
+                )
+        lines.extend(["```", ""])
+    else:
+        lines.extend(["", "- No supported deployment declarations were discovered."])
+    shared_fate = graph.get("shared_fate_analysis", {})
+    lines.extend(["", "## Shared-fate candidates", ""])
+    for region in shared_fate.get("regions", [])[:100]:
+        lines.append(
+            f"- **{_markdown_text(region.get('kind', 'candidate'))}: "
+            f"{_markdown_text(region.get('key', ''))}** - "
+            f"{len(region.get('affected_component_ids', []))} affected components"
+        )
+    if not shared_fate.get("regions"):
+        lines.append("- No multi-component shared-fate candidate was discovered.")
+    lines.extend(
+        [
+            "",
+            "> Shared membership is a common-cause review lead, not proof of correlated failure or independence.",
+        ]
+    )
+    hierarchy = graph.get("architecture_hierarchy", {})
+    hierarchy_nodes = hierarchy.get("nodes", [])[:100]
+    hierarchy_names = {
+        str(value.get("id", "")): f"H{index}"
+        for index, value in enumerate(hierarchy_nodes)
+    }
+    lines.extend(["", "## Architecture hierarchy and inherited trace", ""])
+    if hierarchy_nodes:
+        lines.extend(["```mermaid", "flowchart TD"])
+        for node in hierarchy_nodes:
+            node_name = hierarchy_names[str(node.get("id", ""))]
+            trace = node.get("effective_trace", {})
+            label = (
+                f"{node.get('name', '')}\\n{len(node.get('component_ids', []))} components"
+                f" / {len(trace.get('requirements', []))} requirements"
+                f" / {len(trace.get('hazards', []))} hazards"
+            )
+            lines.append(f'  {node_name}["{_label(label)}"]')
+        for node in hierarchy_nodes:
+            parent = hierarchy_names.get(str(node.get("parent_id", "")))
+            child = hierarchy_names.get(str(node.get("id", "")))
+            if parent and child:
+                lines.append(f"  {parent} --> {child}")
+        lines.extend(["```", ""])
+    else:
+        lines.append("- No architecture hierarchy was generated.")
+    lines.append(
+        "> Trace rolls upward only from governed mappings; the projection does not approve the architecture."
+    )
+    return atomic_publish_text(
+        destination,
+        "\n".join(lines) + "\n",
+        label="architecture Markdown export",
+    )
 
 
 def _safe_id(value: str) -> str:
@@ -193,4 +310,6 @@ def _label(value: str) -> str:
 
 
 def _markdown_text(value: Any) -> str:
-    return html.escape(str(value or ""), quote=False).replace("\r", " ").replace("\n", " ")
+    return (
+        html.escape(str(value or ""), quote=False).replace("\r", " ").replace("\n", " ")
+    )

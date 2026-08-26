@@ -6,12 +6,19 @@ import copy
 import hashlib
 import json
 from collections import Counter
+from datetime import date
+from pathlib import Path
 from typing import Any
 
+from .integrity import verify_run_manifest_integrity
+from .json_ingestion import load_bounded_json_document
 
 GUIDANCE_SCHEMA_VERSION = "1.1"
-GUIDANCE_CATALOG_VERSION = "2026.08.04"
-GUIDANCE_RETRIEVED_AT = "2026-08-04"
+GUIDANCE_CATALOG_VERSION = "2026.08.05"
+GUIDANCE_RETRIEVED_AT = "2026-08-05"
+MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES = 5_000_000
+MAX_ORGANIZATIONAL_GUIDANCE_PACK_DEPTH = 100
+MAX_ORGANIZATIONAL_GUIDANCE_PACK_NODES = 250_000
 
 RELATIONSHIP_TYPES = {
     "methodology_basis",
@@ -35,7 +42,7 @@ APPLICABILITY_TYPES = {
 
 DEFAULT_GUIDANCE_PROFILES = ["core_sfmea"]
 
-GUIDELINE_PROFILES = [
+GUIDELINE_PROFILES: list[dict[str, Any]] = [
     {
         "id": "core_sfmea",
         "title": "Core public SFMEA methodology",
@@ -110,7 +117,7 @@ GUIDELINE_PROFILES = [
 ]
 
 
-GUIDANCE_DOCUMENTS = [
+GUIDANCE_DOCUMENTS: list[dict[str, Any]] = [
     {
         "id": "NASA-SWEHB-8.05",
         "publisher": "NASA",
@@ -263,7 +270,9 @@ def _attach_source_integrity(records: list[dict[str, Any]]) -> None:
             "quotation_policy",
             "Locator and concise paraphrase only; verify the official source before making an assurance or compliance decision.",
         )
-        canonical = {key: value for key, value in record.items() if key != "record_sha256"}
+        canonical = {
+            key: value for key, value in record.items() if key != "record_sha256"
+        }
         record["record_sha256"] = hashlib.sha256(
             json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -293,13 +302,23 @@ def _citation(
     }
     if url:
         value["url"] = url
+    anchor_material = {
+        "source_id": source_id,
+        "locator": value["locator"],
+        "summary": summary,
+    }
+    value["locator_summary_sha256"] = hashlib.sha256(
+        json.dumps(anchor_material, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
     value["record_sha256"] = hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     return value
 
 
-GUIDANCE_CITATIONS = [
+GUIDANCE_CITATIONS: list[dict[str, Any]] = [
     _citation(
         "NASA-SWEHB-8.05-PROCESS",
         "NASA-SWEHB-8.05",
@@ -374,6 +393,15 @@ GUIDANCE_CITATIONS = [
         "Software Failure Modes and Effects Analysis",
         "Defines an SFMEA procedure covering the computing system boundary, software elements and interfaces, failure modes and causes, local and system effects, controls, and derived requirements.",
         page="48-52",
+        applicability="faa_commercial_space",
+    ),
+    _citation(
+        "FAA-AC-450.141-1A-B.1.2-TAXONOMY",
+        "FAA-AC-450.141-1A",
+        "Appendix B.1.2, Table B-1",
+        "Example Classification of Software and Computing System Errors",
+        "Provides direct calculation, data, interface, logic/control, timing, and other generalized software and computing-system failure classifications for SFMEA screening.",
+        page="49-51",
         applicability="faa_commercial_space",
     ),
     _citation(
@@ -604,16 +632,21 @@ def _mapping(
     profile_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     if profile_ids is None:
-        citation = next(value for value in GUIDANCE_CITATIONS if value["id"] == citation_id)
+        citation = next(
+            value for value in GUIDANCE_CITATIONS if value["id"] == citation_id
+        )
         profile_ids = [
             profile["id"]
             for profile in GUIDELINE_PROFILES
             if citation["source_id"] in profile["source_ids"]
         ]
-    return {
-        "id": "MAP-" + hashlib.sha256(
+    value = {
+        "id": "MAP-"
+        + hashlib.sha256(
             f"{selector}\x1f{citation_id}\x1f{relationship}".encode("utf-8")
-        ).hexdigest()[:12].upper(),
+        )
+        .hexdigest()[:12]
+        .upper(),
         "rule_selector": selector,
         "citation_id": citation_id,
         "relationship": relationship,
@@ -622,54 +655,353 @@ def _mapping(
         "profile_ids": profile_ids,
         "created_by": "curated",
         "mapping_version": GUIDANCE_CATALOG_VERSION,
+        "review_status": "maintainer_curated",
+        "reviewed_at": GUIDANCE_RETRIEVED_AT,
+        "independent_approval": False,
+        "review_basis": "Exact locator plus bounded paraphrase; official source applicability remains project-reviewed.",
     }
+    value["record_sha256"] = hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return value
 
 
-GUIDANCE_RULE_MAPPINGS = [
-    _mapping("functional.*", "NASA-SWEHB-8.05-PROCESS", "process_expectation", "Functional failure candidates implement the item-failure review step."),
-    _mapping("functional.*", "FAA-RLV-SCS-2006-B.1-PROCEDURE", "failure_taxonomy", "The FAA procedure considers functional software failures and their causes and effects.", strength="supporting"),
-    _mapping("data.*", "NASA-SWEHB-8.05-DATA-EVENTS", "failure_taxonomy", "The rule reviews documented bad-data manifestations."),
-    _mapping("data.*", "FAA-RLV-SCS-2006-B.1-TAXONOMY", "failure_taxonomy", "The FAA table includes data and representation fault classes."),
-    _mapping("data.invalid_input", "NASA-STD-8739.8B-A.1.4-CAUSES", "hazard_traceability", "The NASA hazard-cause table includes range and input/output validity faults.", strength="supporting"),
-    _mapping("calculation.*", "FAA-RLV-SCS-2006-B.1-TAXONOMY", "failure_taxonomy", "The FAA classification includes equation, operand, sign, precision, convergence, overflow, and underflow faults."),
-    _mapping("logic.*", "NASA-SWEHB-8.05-DATA-EVENTS", "failure_taxonomy", "The events table includes incorrect logic, omission, and ordering faults."),
-    _mapping("logic.*", "FAA-RLV-SCS-2006-B.1-TAXONOMY", "failure_taxonomy", "The FAA classification includes logic and control faults."),
-    _mapping("state.*", "NASA-SWEHB-8.05-DATA-EVENTS", "failure_taxonomy", "State-transition faults are reviewed as incorrect, omitted, duplicated, or out-of-order events.", strength="supporting"),
-    _mapping("interface.*", "NASA-SWEHB-8.05-PROCESS", "process_expectation", "NASA's procedure explicitly calls for interface failure modes."),
-    _mapping("interface.*", "FAA-RLV-SCS-2006-B.1-TAXONOMY", "failure_taxonomy", "The FAA classification includes calls, parameters, messages, and interface resolution faults."),
-    _mapping("storage.*", "NASA-SWEHB-8.05-DATA-EVENTS", "failure_taxonomy", "Stored, overwritten, missing, duplicated, and incompatible data are within the documented data review."),
-    _mapping("configuration.*", "NASA-SWEHB-8.05-PROCESS", "process_expectation", "Configuration assumptions and component behavior require explicit analysis.", strength="contextual"),
-    _mapping("process.*", "FAA-RLV-SCS-2006-B.1-PROCEDURE", "process_expectation", "External-process failure is analyzed through element, cause, effect, and mitigation fields.", strength="contextual"),
-    _mapping("environment.*", "NASA-SWEHB-8.05-CHANGE", "process_expectation", "Environment and dependency changes require impact review and reanalysis.", strength="supporting"),
-    _mapping("hardware.*", "NASA-STD-8739.8B-A.1.1-COMMON-MODE", "hazard_traceability", "Software must be considered as a cause or control within system hazard analysis.", strength="supporting"),
-    _mapping("timing.*", "NASA-SWEHB-8.05-DATA-EVENTS", "failure_taxonomy", "The NASA events table includes wrong-time and out-of-sequence behavior."),
-    _mapping("timing.*", "FAA-RLV-SCS-2006-B.1-TAXONOMY", "failure_taxonomy", "The FAA classification includes timing and sequencing faults."),
-    _mapping("detection.*", "NASA-SWEHB-8.05-DETECTION", "process_expectation", "The rule prompts review of detection methods and compensating provisions."),
-    _mapping("resource.*", "NASA-STD-8739.8B-A.1.4-CAUSES", "hazard_traceability", "The NASA cause table includes overload and resource-related communication failure conditions.", strength="supporting"),
-    _mapping("common_cause.*", "NASA-STD-8739.8B-A.1.1-COMMON-MODE", "hazard_traceability", "The guidance explicitly calls for consideration of software common-mode failures."),
-    _mapping("*", "NASA-SWEHB-8.05-EFFECTS", "methodology_basis", "Every candidate is reviewed using local, next-higher-level, and end-effect propagation.", strength="contextual"),
-    _mapping("*", "FAA-RLV-SCS-2006-B.1-WORKSHEET", "methodology_basis", "The worksheet structure relates candidates to causes, effects, hazards, and mitigations.", strength="contextual"),
-    _mapping("functional.*", "NASA-GB-8719.13-6.6.8-SFMEA", "methodology_basis", "The guidebook's bottom-up SFMEA method reviews functional failure causes and propagated effects.", strength="supporting"),
-    _mapping("data.*", "NASA-GB-8719.13-D.4.8-DATA-EVENTS", "failure_taxonomy", "The guidebook data table provides structured bad-data failure prompts.", strength="supporting"),
-    _mapping("logic.*", "NASA-GB-8719.13-D.4.8-DATA-EVENTS", "failure_taxonomy", "The guidebook events table provides logic, omission, timing, and sequence prompts.", strength="supporting"),
-    _mapping("timing.*", "NASA-GB-8719.13-D.4.8-DATA-EVENTS", "failure_taxonomy", "The guidebook events table includes wrong-time and out-of-sequence behavior.", strength="supporting"),
-    _mapping("*", "NASA-GB-8719.13-6.6.7-SFTA", "hazard_traceability", "Bottom-up candidates should be reconciled with top-down hazard causal paths.", strength="contextual"),
-    _mapping("functional.*", "FAA-AC-450.141-1A-B.1.1-SFMEA", "methodology_basis", "The current commercial-space guidance defines a software FMEA procedure for elements, interfaces, causes, effects, controls, and requirements.", strength="supporting"),
-    _mapping("interface.*", "FAA-AC-450.141-1A-B.1.1-SFMEA", "failure_taxonomy", "The procedure explicitly includes computing-system interfaces.", strength="supporting"),
-    _mapping("*", "FAA-AC-450.141-1A-B.2-SFTA", "hazard_traceability", "Candidate failure modes can support top-down reconciliation with software fault-tree events.", strength="contextual"),
-    _mapping("*", "FAA-AC-450.141-1A-7.3.1-INDEPENDENCE", "verification_expectation", "Safety-critical verification evidence may require organizational independence under the selected commercial-space profile.", strength="contextual"),
-    _mapping("*", "FAA-AC-450.141-1A-8.2.4-TRACE", "verification_expectation", "Requirements should be traceable to validation and verification evidence under the selected commercial-space profile.", strength="contextual"),
-    _mapping("*", "FAA-AC-20-115D-6-LIFECYCLE", "process_expectation", "In the selected airworthiness profile, findings are assurance inputs and do not replace applicable lifecycle objectives or life-cycle data.", strength="contextual"),
-    _mapping("*", "FAA-AC-20-115D-9.B.4-CHANGE", "verification_expectation", "Resolved findings and corrective changes require scoped impact analysis and verification in the selected airworthiness profile.", strength="contextual"),
-    _mapping("*", "FAA-AC-20-115D-10-TOOLS", "verification_expectation", "Reliance on unverified analysis-tool output may create a separate qualification concern in the selected airworthiness profile.", strength="contextual"),
-    _mapping("data.invalid_input", "MITRE-CWE-20", "security_taxonomy", "The scanner prompt overlaps the CWE input-validation weakness class when a security consequence is credible.", strength="supporting"),
-    _mapping("resource.*", "MITRE-CWE-400", "security_taxonomy", "The scanner prompt overlaps uncontrolled consumption of bounded resources.", strength="supporting"),
-    _mapping("detection.masked_failure", "MITRE-CWE-703", "security_taxonomy", "Broad or silent failure handling overlaps improper exceptional-condition handling.", strength="supporting"),
-    _mapping("process.uncontrolled_failure", "MITRE-CWE-703", "security_taxonomy", "Unchecked subprocess failure states overlap improper exceptional-condition handling.", strength="supporting"),
-    _mapping("domain.cross_scope_access", "MITRE-CWE-862", "security_taxonomy", "The project rule explicitly reviews missing or insufficient authorization across a resource scope.", strength="direct"),
-    _mapping("domain.outbound_rebinding", "MITRE-CWE-918", "security_taxonomy", "The project rule explicitly reviews attacker-influenced server-side request destinations and rebinding behavior.", strength="direct"),
-    _mapping("domain.*", "NIST-SP-800-218-PW.7", "process_expectation", "Security-relevant project rules should be reviewed or analyzed against the applicable security requirements.", strength="contextual"),
-    _mapping("domain.*", "NIST-SP-800-218-RV.3", "verification_expectation", "Accepted security-relevant findings should feed evidence-backed root-cause and recurrence-prevention review.", strength="contextual"),
+GUIDANCE_RULE_MAPPINGS: list[dict[str, Any]] = [
+    _mapping(
+        "functional.*",
+        "NASA-SWEHB-8.05-PROCESS",
+        "process_expectation",
+        "Functional failure candidates implement the item-failure review step.",
+    ),
+    _mapping(
+        "functional.*",
+        "FAA-RLV-SCS-2006-B.1-PROCEDURE",
+        "failure_taxonomy",
+        "The FAA procedure considers functional software failures and their causes and effects.",
+        strength="supporting",
+    ),
+    _mapping(
+        "data.*",
+        "NASA-SWEHB-8.05-DATA-EVENTS",
+        "failure_taxonomy",
+        "The rule reviews documented bad-data manifestations.",
+    ),
+    _mapping(
+        "data.*",
+        "FAA-RLV-SCS-2006-B.1-TAXONOMY",
+        "failure_taxonomy",
+        "The FAA table includes data and representation fault classes.",
+    ),
+    _mapping(
+        "data.invalid_input",
+        "NASA-STD-8739.8B-A.1.4-CAUSES",
+        "hazard_traceability",
+        "The NASA hazard-cause table includes range and input/output validity faults.",
+        strength="supporting",
+    ),
+    _mapping(
+        "calculation.*",
+        "FAA-RLV-SCS-2006-B.1-TAXONOMY",
+        "failure_taxonomy",
+        "The FAA classification includes equation, operand, sign, precision, convergence, overflow, and underflow faults.",
+    ),
+    _mapping(
+        "logic.*",
+        "NASA-SWEHB-8.05-DATA-EVENTS",
+        "failure_taxonomy",
+        "The events table includes incorrect logic, omission, and ordering faults.",
+    ),
+    _mapping(
+        "logic.*",
+        "FAA-RLV-SCS-2006-B.1-TAXONOMY",
+        "failure_taxonomy",
+        "The FAA classification includes logic and control faults.",
+    ),
+    _mapping(
+        "state.*",
+        "NASA-SWEHB-8.05-DATA-EVENTS",
+        "failure_taxonomy",
+        "State-transition faults are reviewed as incorrect, omitted, duplicated, or out-of-order events.",
+        strength="supporting",
+    ),
+    _mapping(
+        "interface.*",
+        "NASA-SWEHB-8.05-PROCESS",
+        "process_expectation",
+        "NASA's procedure explicitly calls for interface failure modes.",
+    ),
+    _mapping(
+        "interface.*",
+        "FAA-RLV-SCS-2006-B.1-TAXONOMY",
+        "failure_taxonomy",
+        "The FAA classification includes calls, parameters, messages, and interface resolution faults.",
+    ),
+    _mapping(
+        "storage.*",
+        "NASA-SWEHB-8.05-DATA-EVENTS",
+        "failure_taxonomy",
+        "Stored, overwritten, missing, duplicated, and incompatible data are within the documented data review.",
+    ),
+    _mapping(
+        "configuration.*",
+        "NASA-SWEHB-8.05-PROCESS",
+        "process_expectation",
+        "Configuration assumptions and component behavior require explicit analysis.",
+        strength="contextual",
+    ),
+    _mapping(
+        "process.*",
+        "FAA-RLV-SCS-2006-B.1-PROCEDURE",
+        "process_expectation",
+        "External-process failure is analyzed through element, cause, effect, and mitigation fields.",
+        strength="contextual",
+    ),
+    _mapping(
+        "environment.*",
+        "NASA-SWEHB-8.05-CHANGE",
+        "process_expectation",
+        "Environment and dependency changes require impact review and reanalysis.",
+        strength="supporting",
+    ),
+    _mapping(
+        "hardware.*",
+        "NASA-STD-8739.8B-A.1.1-COMMON-MODE",
+        "hazard_traceability",
+        "Software must be considered as a cause or control within system hazard analysis.",
+        strength="supporting",
+    ),
+    _mapping(
+        "timing.*",
+        "NASA-SWEHB-8.05-DATA-EVENTS",
+        "failure_taxonomy",
+        "The NASA events table includes wrong-time and out-of-sequence behavior.",
+    ),
+    _mapping(
+        "resilience.circuit_breaker_*",
+        "NASA-SWEHB-8.05-PROCESS",
+        "process_expectation",
+        "Circuit-breaker candidates are analyzed as software controls with explicit failure modes, causes, propagated effects, and derived verification needs.",
+    ),
+    _mapping(
+        "resilience.circuit_breaker_*",
+        "NASA-SWEHB-8.05-DETECTION",
+        "verification_expectation",
+        "A detected containment mechanism is not credited until its detection, compensating, and recovery behavior is supported by objective evidence.",
+    ),
+    _mapping(
+        "resilience.circuit_breaker_recovery",
+        "NASA-SWEHB-8.05-DATA-EVENTS",
+        "failure_taxonomy",
+        "Cooldown and half-open recovery are reviewed for wrong-time and out-of-sequence behavior.",
+    ),
+    _mapping(
+        "timing.*",
+        "FAA-RLV-SCS-2006-B.1-TAXONOMY",
+        "failure_taxonomy",
+        "The FAA classification includes timing and sequencing faults.",
+    ),
+    _mapping(
+        "detection.*",
+        "NASA-SWEHB-8.05-DETECTION",
+        "process_expectation",
+        "The rule prompts review of detection methods and compensating provisions.",
+    ),
+    _mapping(
+        "resource.*",
+        "NASA-STD-8739.8B-A.1.4-CAUSES",
+        "hazard_traceability",
+        "The NASA cause table includes overload and resource-related communication failure conditions.",
+        strength="supporting",
+    ),
+    _mapping(
+        "common_cause.*",
+        "NASA-STD-8739.8B-A.1.1-COMMON-MODE",
+        "hazard_traceability",
+        "The guidance explicitly calls for consideration of software common-mode failures.",
+    ),
+    _mapping(
+        "*",
+        "NASA-SWEHB-8.05-EFFECTS",
+        "methodology_basis",
+        "Every candidate is reviewed using local, next-higher-level, and end-effect propagation.",
+        strength="contextual",
+    ),
+    _mapping(
+        "*",
+        "FAA-RLV-SCS-2006-B.1-WORKSHEET",
+        "methodology_basis",
+        "The worksheet structure relates candidates to causes, effects, hazards, and mitigations.",
+        strength="contextual",
+    ),
+    _mapping(
+        "functional.*",
+        "NASA-GB-8719.13-6.6.8-SFMEA",
+        "methodology_basis",
+        "The guidebook's bottom-up SFMEA method reviews functional failure causes and propagated effects.",
+        strength="supporting",
+    ),
+    _mapping(
+        "data.*",
+        "NASA-GB-8719.13-D.4.8-DATA-EVENTS",
+        "failure_taxonomy",
+        "The guidebook data table provides structured bad-data failure prompts.",
+        strength="supporting",
+    ),
+    _mapping(
+        "logic.*",
+        "NASA-GB-8719.13-D.4.8-DATA-EVENTS",
+        "failure_taxonomy",
+        "The guidebook events table provides logic, omission, timing, and sequence prompts.",
+        strength="supporting",
+    ),
+    _mapping(
+        "timing.*",
+        "NASA-GB-8719.13-D.4.8-DATA-EVENTS",
+        "failure_taxonomy",
+        "The guidebook events table includes wrong-time and out-of-sequence behavior.",
+        strength="supporting",
+    ),
+    _mapping(
+        "*",
+        "NASA-GB-8719.13-6.6.7-SFTA",
+        "hazard_traceability",
+        "Bottom-up candidates should be reconciled with top-down hazard causal paths.",
+        strength="contextual",
+    ),
+    _mapping(
+        "functional.*",
+        "FAA-AC-450.141-1A-B.1.1-SFMEA",
+        "methodology_basis",
+        "The current commercial-space guidance directly defines an SFMEA procedure for system elements, potential failure modes, causes, effects, controls, requirements, and worksheet documentation.",
+    ),
+    _mapping(
+        "calculation.*",
+        "FAA-AC-450.141-1A-B.1.2-TAXONOMY",
+        "failure_taxonomy",
+        "Table B-1 directly identifies calculation failure classifications including equations, operands, operators, sign, precision, convergence, overflow, and underflow.",
+    ),
+    _mapping(
+        "data.*",
+        "FAA-AC-450.141-1A-B.1.2-TAXONOMY",
+        "failure_taxonomy",
+        "Table B-1 directly identifies data failure classifications for SFMEA screening.",
+    ),
+    _mapping(
+        "interface.*",
+        "FAA-AC-450.141-1A-B.1.2-TAXONOMY",
+        "failure_taxonomy",
+        "Table B-1 directly identifies interface failure classifications for SFMEA screening.",
+    ),
+    _mapping(
+        "logic.*",
+        "FAA-AC-450.141-1A-B.1.2-TAXONOMY",
+        "failure_taxonomy",
+        "Table B-1 directly identifies logic and control failure classifications for SFMEA screening.",
+    ),
+    _mapping(
+        "timing.*",
+        "FAA-AC-450.141-1A-B.1.2-TAXONOMY",
+        "failure_taxonomy",
+        "Table B-1 directly identifies timing and sequencing failure classifications for SFMEA screening.",
+    ),
+    _mapping(
+        "*",
+        "FAA-AC-450.141-1A-B.2-SFTA",
+        "hazard_traceability",
+        "Candidate failure modes can support top-down reconciliation with software fault-tree events.",
+        strength="contextual",
+    ),
+    _mapping(
+        "*",
+        "FAA-AC-450.141-1A-7.3.1-INDEPENDENCE",
+        "verification_expectation",
+        "Safety-critical verification evidence may require organizational independence under the selected commercial-space profile.",
+        strength="contextual",
+    ),
+    _mapping(
+        "*",
+        "FAA-AC-450.141-1A-8.2.4-TRACE",
+        "verification_expectation",
+        "Requirements should be traceable to validation and verification evidence under the selected commercial-space profile.",
+        strength="contextual",
+    ),
+    _mapping(
+        "*",
+        "FAA-AC-20-115D-6-LIFECYCLE",
+        "process_expectation",
+        "In the selected airworthiness profile, findings are assurance inputs and do not replace applicable lifecycle objectives or life-cycle data.",
+        strength="contextual",
+    ),
+    _mapping(
+        "*",
+        "FAA-AC-20-115D-9.B.4-CHANGE",
+        "verification_expectation",
+        "Resolved findings and corrective changes require scoped impact analysis and verification in the selected airworthiness profile.",
+        strength="contextual",
+    ),
+    _mapping(
+        "*",
+        "FAA-AC-20-115D-10-TOOLS",
+        "verification_expectation",
+        "Reliance on unverified analysis-tool output may create a separate qualification concern in the selected airworthiness profile.",
+        strength="contextual",
+    ),
+    _mapping(
+        "data.invalid_input",
+        "MITRE-CWE-20",
+        "security_taxonomy",
+        "The scanner prompt overlaps the CWE input-validation weakness class when a security consequence is credible.",
+        strength="supporting",
+    ),
+    _mapping(
+        "resource.*",
+        "MITRE-CWE-400",
+        "security_taxonomy",
+        "The scanner prompt overlaps uncontrolled consumption of bounded resources.",
+        strength="supporting",
+    ),
+    _mapping(
+        "detection.masked_failure",
+        "MITRE-CWE-703",
+        "security_taxonomy",
+        "Broad or silent failure handling overlaps improper exceptional-condition handling.",
+        strength="supporting",
+    ),
+    _mapping(
+        "process.uncontrolled_failure",
+        "MITRE-CWE-703",
+        "security_taxonomy",
+        "Unchecked subprocess failure states overlap improper exceptional-condition handling.",
+        strength="supporting",
+    ),
+    _mapping(
+        "domain.cross_scope_access",
+        "MITRE-CWE-862",
+        "security_taxonomy",
+        "The project rule explicitly reviews missing or insufficient authorization across a resource scope.",
+        strength="direct",
+    ),
+    _mapping(
+        "domain.outbound_rebinding",
+        "MITRE-CWE-918",
+        "security_taxonomy",
+        "The project rule explicitly reviews attacker-influenced server-side request destinations and rebinding behavior.",
+        strength="direct",
+    ),
+    _mapping(
+        "domain.*",
+        "NIST-SP-800-218-PW.7",
+        "process_expectation",
+        "Security-relevant project rules should be reviewed or analyzed against the applicable security requirements.",
+        strength="contextual",
+    ),
+    _mapping(
+        "domain.*",
+        "NIST-SP-800-218-RV.3",
+        "verification_expectation",
+        "Accepted security-relevant findings should feed evidence-backed root-cause and recurrence-prevention review.",
+        strength="contextual",
+    ),
 ]
 
 
@@ -699,29 +1031,93 @@ def validate_guidance_catalog() -> None:
     if unknown := sorted(
         {citation["source_id"] for citation in GUIDANCE_CITATIONS} - set(source_ids)
     ):
-        raise ValueError("guidance citations reference unknown sources: " + ", ".join(unknown))
+        raise ValueError(
+            "guidance citations reference unknown sources: " + ", ".join(unknown)
+        )
     if unknown := sorted(
         {mapping["citation_id"] for mapping in GUIDANCE_RULE_MAPPINGS}
         - set(citation_ids)
     ):
-        raise ValueError("guidance mappings reference unknown citations: " + ", ".join(unknown))
+        raise ValueError(
+            "guidance mappings reference unknown citations: " + ", ".join(unknown)
+        )
     for mapping in GUIDANCE_RULE_MAPPINGS:
         if mapping["relationship"] not in RELATIONSHIP_TYPES:
-            raise ValueError(f"invalid guidance relationship: {mapping['relationship']}")
+            raise ValueError(
+                f"invalid guidance relationship: {mapping['relationship']}"
+            )
         if mapping["strength"] not in MAPPING_STRENGTHS:
-            raise ValueError(f"invalid guidance mapping strength: {mapping['strength']}")
+            raise ValueError(
+                f"invalid guidance mapping strength: {mapping['strength']}"
+            )
         if unknown := sorted(set(mapping.get("profile_ids", [])) - set(profile_ids)):
-            raise ValueError("guidance mapping references unknown profiles: " + ", ".join(unknown))
+            raise ValueError(
+                "guidance mapping references unknown profiles: " + ", ".join(unknown)
+            )
         if not mapping.get("profile_ids"):
-            raise ValueError(f"guidance mapping has no applicable profile: {mapping['id']}")
+            raise ValueError(
+                f"guidance mapping has no applicable profile: {mapping['id']}"
+            )
+        if mapping.get("review_status") != "maintainer_curated":
+            raise ValueError(
+                f"guidance mapping lacks maintainer review state: {mapping['id']}"
+            )
+        material = {
+            key: value for key, value in mapping.items() if key != "record_sha256"
+        }
+        expected = hashlib.sha256(
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if mapping.get("record_sha256") != expected:
+            raise ValueError(f"guidance mapping digest mismatch: {mapping['id']}")
     for citation in GUIDANCE_CITATIONS:
         if citation["applicability"] not in APPLICABILITY_TYPES:
-            raise ValueError(f"invalid guidance applicability: {citation['applicability']}")
+            raise ValueError(
+                f"invalid guidance applicability: {citation['applicability']}"
+            )
+        anchor_material = {
+            "source_id": citation["source_id"],
+            "locator": citation["locator"],
+            "summary": citation["summary"],
+        }
+        expected_anchor = hashlib.sha256(
+            json.dumps(anchor_material, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        if citation.get("locator_summary_sha256") != expected_anchor:
+            raise ValueError(
+                f"guidance citation locator digest mismatch: {citation['id']}"
+            )
+        citation_material = {
+            key: value for key, value in citation.items() if key != "record_sha256"
+        }
+        expected_record = hashlib.sha256(
+            json.dumps(citation_material, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        if citation.get("record_sha256") != expected_record:
+            raise ValueError(
+                f"guidance citation record digest mismatch: {citation['id']}"
+            )
     for source in GUIDANCE_DOCUMENTS:
         if source["applicability"] not in APPLICABILITY_TYPES:
             raise ValueError(f"invalid source applicability: {source['applicability']}")
         if len(str(source.get("record_sha256", ""))) != 64:
-            raise ValueError(f"guidance source lacks a canonical digest: {source['id']}")
+            raise ValueError(
+                f"guidance source lacks a canonical digest: {source['id']}"
+            )
+        source_material = {
+            key: value for key, value in source.items() if key != "record_sha256"
+        }
+        expected_source = hashlib.sha256(
+            json.dumps(source_material, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        if source.get("record_sha256") != expected_source:
+            raise ValueError(f"guidance source record digest mismatch: {source['id']}")
     for profile in GUIDELINE_PROFILES:
         if unknown := sorted(set(profile["source_ids"]) - set(source_ids)):
             raise ValueError(
@@ -737,13 +1133,18 @@ _CITATIONS_BY_ID = {citation["id"]: citation for citation in GUIDANCE_CITATIONS}
 _SOURCES_BY_ID = {source["id"]: source for source in GUIDANCE_DOCUMENTS}
 
 
-def normalize_profile_ids(profile_ids: list[str] | None) -> list[str]:
+def normalize_profile_ids(
+    profile_ids: list[str] | None, catalog: dict[str, Any] | None = None
+) -> list[str]:
     """Validate, deduplicate, and deterministically order a profile selection."""
 
     selected = DEFAULT_GUIDANCE_PROFILES if profile_ids is None else profile_ids
-    if not isinstance(selected, list) or not all(isinstance(value, str) for value in selected):
+    if not isinstance(selected, list) or not all(
+        isinstance(value, str) for value in selected
+    ):
         raise ValueError("guidance profiles must be an array of strings")
-    known = {profile["id"] for profile in GUIDELINE_PROFILES}
+    profiles = (catalog or {}).get("profiles", GUIDELINE_PROFILES)
+    known = {profile["id"] for profile in profiles}
     if unknown := sorted(set(selected) - known):
         raise ValueError("unknown guidance profile(s): " + ", ".join(unknown))
     if not selected:
@@ -752,13 +1153,23 @@ def normalize_profile_ids(profile_ids: list[str] | None) -> list[str]:
 
 
 def citations_for_rule(
-    rule_id: str, profile_ids: list[str] | None = None
+    rule_id: str,
+    profile_ids: list[str] | None = None,
+    *,
+    catalog: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return curated, typed citation links inherited by one scanner rule."""
 
-    active_profiles = normalize_profile_ids(profile_ids)
+    active_profiles = normalize_profile_ids(profile_ids, catalog)
+    mappings = (catalog or {}).get("rule_mappings", GUIDANCE_RULE_MAPPINGS)
+    citations_by_id = {
+        value["id"]: value
+        for value in (catalog or {}).get("citations", GUIDANCE_CITATIONS)
+    }
     links: list[dict[str, Any]] = []
-    for mapping in GUIDANCE_RULE_MAPPINGS:
+    for mapping in mappings:
+        if mapping.get("review_status") == "independent_rejected":
+            continue
         if not _selector_matches(mapping["rule_selector"], rule_id):
             continue
         matched_profiles = [
@@ -766,7 +1177,7 @@ def citations_for_rule(
         ]
         if not matched_profiles:
             continue
-        citation = _CITATIONS_BY_ID[mapping["citation_id"]]
+        citation = citations_by_id[mapping["citation_id"]]
         links.append(
             {
                 "citation_id": citation["id"],
@@ -776,6 +1187,11 @@ def citations_for_rule(
                 "applicability": citation["applicability"],
                 "via_rule_id": rule_id,
                 "mapping_id": mapping["id"],
+                "mapping_record_sha256": mapping.get("record_sha256", ""),
+                "mapping_review_status": mapping.get("review_status", "unreviewed"),
+                "mapping_independent_approval": bool(
+                    mapping.get("independent_approval", False)
+                ),
                 "profile_ids": matched_profiles,
                 "status": "curated",
             }
@@ -783,10 +1199,13 @@ def citations_for_rule(
     return links
 
 
-def guidance_bundle(profile_ids: list[str] | None = None) -> dict[str, Any]:
+def guidance_bundle(
+    profile_ids: list[str] | None = None,
+    *,
+    organizational_packs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Return the complete immutable-in-practice catalog as detached JSON data."""
 
-    active_profiles = normalize_profile_ids(profile_ids)
     core = {
         "schema_version": GUIDANCE_SCHEMA_VERSION,
         "catalog_version": GUIDANCE_CATALOG_VERSION,
@@ -797,6 +1216,26 @@ def guidance_bundle(profile_ids: list[str] | None = None) -> dict[str, Any]:
         "rule_mappings": GUIDANCE_RULE_MAPPINGS,
     }
     bundle = copy.deepcopy(core)
+    pack_records = []
+    for pack in organizational_packs or []:
+        _merge_organizational_pack(bundle, pack)
+        pack_records.append(copy.deepcopy(pack["provenance"]))
+    if pack_records:
+        bundle["organizational_packs"] = pack_records
+        core = {
+            key: bundle[key]
+            for key in (
+                "schema_version",
+                "catalog_version",
+                "retrieved_at",
+                "sources",
+                "profiles",
+                "citations",
+                "rule_mappings",
+                "organizational_packs",
+            )
+        }
+    active_profiles = normalize_profile_ids(profile_ids, bundle)
     bundle["catalog_sha256"] = hashlib.sha256(
         json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -807,7 +1246,9 @@ def guidance_bundle(profile_ids: list[str] | None = None) -> dict[str, Any]:
     return bundle
 
 
-def selected_guidance_sources(profile_ids: list[str] | None = None) -> list[dict[str, Any]]:
+def selected_guidance_sources(
+    profile_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """Return detached source records applicable to the selected profiles."""
 
     active_profiles = normalize_profile_ids(profile_ids)
@@ -822,14 +1263,525 @@ def selected_guidance_sources(profile_ids: list[str] | None = None) -> list[dict
     )
 
 
+def selected_sources_from_bundle(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return sources selected by a resolved built-in/organizational catalog."""
+
+    active_profiles = normalize_profile_ids(bundle.get("active_profiles"), bundle)
+    source_ids = {
+        source_id
+        for profile in bundle.get("profiles", [])
+        if profile.get("id") in active_profiles
+        for source_id in profile.get("source_ids", [])
+    }
+    return copy.deepcopy(
+        [
+            source
+            for source in bundle.get("sources", [])
+            if source.get("id") in source_ids
+        ]
+    )
+
+
+def load_organizational_guidance_pack(path: str | Path) -> dict[str, Any]:
+    """Load and strictly validate a local organizational guidance pack."""
+
+    try:
+        document = load_bounded_json_document(
+            path,
+            label="organizational guidance pack",
+            max_bytes=MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES,
+            max_depth=MAX_ORGANIZATIONAL_GUIDANCE_PACK_DEPTH,
+            max_nodes=MAX_ORGANIZATIONAL_GUIDANCE_PACK_NODES,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == (
+            "organizational guidance pack exceeds the "
+            f"{MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES}-byte limit"
+        ):
+            raise ValueError(
+                "organizational guidance pack exceeds the "
+                f"{MAX_ORGANIZATIONAL_GUIDANCE_PACK_BYTES}-byte safety limit"
+            ) from exc
+        raise
+    source_path = document.path
+    payload = document.value
+    raw = document.raw
+    if not isinstance(payload, dict):
+        raise ValueError("organizational guidance pack root must be an object")
+    allowed = {"schema_version", "profile", "sources", "citations", "rule_mappings"}
+    if unknown := set(payload) - allowed:
+        raise ValueError(
+            "unknown organizational guidance pack field(s): "
+            + ", ".join(sorted(unknown))
+        )
+    if payload.get("schema_version") != "pysfmea-organizational-guidance-pack-1":
+        raise ValueError("unsupported organizational guidance pack schema")
+    profile = payload.get("profile")
+    sources = payload.get("sources")
+    citations = payload.get("citations")
+    mappings = payload.get("rule_mappings")
+    if not isinstance(profile, dict):
+        raise ValueError("organizational guidance pack profile must be an object")
+    if (
+        not isinstance(sources, list)
+        or not isinstance(citations, list)
+        or not isinstance(mappings, list)
+    ):
+        raise ValueError(
+            "organizational guidance pack sources, citations, and rule_mappings must be arrays"
+        )
+    required_profile = {
+        "id",
+        "title",
+        "status",
+        "applicability",
+        "risk_semantics",
+        "verification_semantics",
+        "tailoring",
+        "compliance_claim",
+    }
+    if missing := required_profile - set(profile):
+        raise ValueError(
+            "organizational profile missing field(s): " + ", ".join(sorted(missing))
+        )
+    if not isinstance(profile.get("id"), str) or not profile["id"].startswith("org."):
+        raise ValueError("organizational profile id must start with 'org.'")
+    for field in required_profile - {"compliance_claim"}:
+        if not isinstance(profile.get(field), str) or not profile[field].strip():
+            raise ValueError(
+                f"organizational profile {field} must be a non-empty string"
+            )
+    if profile.get("compliance_claim") is not False:
+        raise ValueError(
+            "organizational guidance packs cannot assert a compliance claim"
+        )
+    required_source = {
+        "id",
+        "publisher",
+        "title",
+        "version",
+        "status",
+        "published_at",
+        "url",
+        "official_source",
+        "scope",
+        "use",
+        "access",
+        "quote_policy",
+    }
+    source_ids: set[str] = set()
+    for index, source in enumerate(sources, start=1):
+        if not isinstance(source, dict):
+            raise ValueError(f"organizational source {index} must be an object")
+        if missing := required_source - set(source):
+            raise ValueError(
+                f"organizational source {index} missing field(s): "
+                + ", ".join(sorted(missing))
+            )
+        source_id = source.get("id")
+        if not isinstance(source_id, str) or not source_id.startswith("ORG-"):
+            raise ValueError("organizational source ids must start with 'ORG-'")
+        if source_id in source_ids:
+            raise ValueError(f"duplicate organizational source id: {source_id}")
+        for field in required_source - {"id"}:
+            if not isinstance(source.get(field), str) or not source[field].strip():
+                raise ValueError(
+                    f"organizational source {source_id} {field} must be a non-empty string"
+                )
+        artifact = source.get("artifact")
+        if artifact is not None:
+            if not isinstance(artifact, dict):
+                raise ValueError(
+                    f"organizational source {source_id} artifact must be an object"
+                )
+            digest = artifact.get("sha256", "")
+            if (
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(
+                    character not in "0123456789abcdefABCDEF" for character in digest
+                )
+            ):
+                raise ValueError(
+                    f"organizational source {source_id} artifact requires a SHA-256 digest"
+                )
+        source_ids.add(source_id)
+        source["applicability"] = "organizational"
+        material = {
+            key: value for key, value in source.items() if key != "record_sha256"
+        }
+        source["record_sha256"] = hashlib.sha256(
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    citation_ids: set[str] = set()
+    for index, citation in enumerate(citations, start=1):
+        if not isinstance(citation, dict):
+            raise ValueError(f"organizational citation {index} must be an object")
+        required = {"id", "source_id", "locator", "summary"}
+        if missing := required - set(citation):
+            raise ValueError(
+                f"organizational citation {index} missing field(s): "
+                + ", ".join(sorted(missing))
+            )
+        citation_id = citation.get("id")
+        if not isinstance(citation_id, str) or not citation_id.startswith("ORG-CIT-"):
+            raise ValueError("organizational citation ids must start with 'ORG-CIT-'")
+        if citation_id in citation_ids:
+            raise ValueError(f"duplicate organizational citation id: {citation_id}")
+        if citation.get("source_id") not in source_ids:
+            raise ValueError(
+                f"organizational citation {citation_id} references an unknown source"
+            )
+        if (
+            not isinstance(citation.get("summary"), str)
+            or not citation["summary"].strip()
+        ):
+            raise ValueError(
+                f"organizational citation {citation_id} summary must be a non-empty string"
+            )
+        locator = citation.get("locator")
+        if not isinstance(locator, dict) or not (
+            str(locator.get("section", "")).strip()
+            or str(locator.get("heading", "")).strip()
+        ):
+            raise ValueError(
+                f"organizational citation {citation_id} requires an exact locator"
+            )
+        citation["applicability"] = "organizational"
+        anchor_material = {
+            "source_id": citation["source_id"],
+            "locator": citation["locator"],
+            "summary": citation["summary"],
+        }
+        citation["locator_summary_sha256"] = hashlib.sha256(
+            json.dumps(anchor_material, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        citation_material = {
+            key: value for key, value in citation.items() if key != "record_sha256"
+        }
+        citation["record_sha256"] = hashlib.sha256(
+            json.dumps(citation_material, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        citation_ids.add(citation_id)
+    for index, mapping in enumerate(mappings, start=1):
+        if not isinstance(mapping, dict):
+            raise ValueError(f"organizational rule mapping {index} must be an object")
+        required = {"id", "rule_selector", "citation_id", "relationship", "strength"}
+        if missing := required - set(mapping):
+            raise ValueError(
+                f"organizational rule mapping {index} missing field(s): "
+                + ", ".join(sorted(missing))
+            )
+        if mapping.get("citation_id") not in citation_ids:
+            raise ValueError(
+                f"organizational mapping {mapping.get('id')} references an unknown citation"
+            )
+        if mapping.get("relationship") not in RELATIONSHIP_TYPES:
+            raise ValueError(
+                f"organizational mapping {mapping.get('id')} has an invalid relationship"
+            )
+        if mapping.get("strength") not in MAPPING_STRENGTHS:
+            raise ValueError(
+                f"organizational mapping {mapping.get('id')} has an invalid strength"
+            )
+        if not isinstance(mapping.get("id"), str) or not mapping["id"].startswith(
+            "ORG-MAP-"
+        ):
+            raise ValueError("organizational mapping ids must start with 'ORG-MAP-'")
+        if (
+            not isinstance(mapping.get("rule_selector"), str)
+            or not mapping["rule_selector"].strip()
+        ):
+            raise ValueError(
+                f"organizational mapping {mapping.get('id')} requires a rule selector"
+            )
+        mapping["profile_ids"] = [profile["id"]]
+        mapping.setdefault("created_by", "organizational_pack")
+        mapping.setdefault("mapping_version", str(profile.get("id", "organizational")))
+        review = mapping.get("review")
+        if review is None:
+            mapping["review_status"] = "organization_supplied"
+            mapping["reviewed_at"] = ""
+            mapping["independent_approval"] = False
+            mapping["review_basis"] = (
+                "Organization-supplied mapping; approval authority is external to PySFMEA."
+            )
+        else:
+            if not isinstance(review, dict):
+                raise ValueError(
+                    f"organizational mapping {mapping.get('id')} review must be an object"
+                )
+            review_fields = {
+                "decision",
+                "producer",
+                "reviewer",
+                "authority",
+                "reviewed_at",
+                "expires_at",
+                "source_revision",
+                "rationale",
+            }
+            if unknown := set(review) - review_fields:
+                raise ValueError(
+                    f"organizational mapping {mapping.get('id')} review contains unsupported "
+                    "fields: " + ", ".join(sorted(unknown))
+                )
+            required_review = review_fields - {"expires_at"}
+            if missing := required_review - set(review):
+                raise ValueError(
+                    f"organizational mapping {mapping.get('id')} review missing field(s): "
+                    + ", ".join(sorted(missing))
+                )
+            for field in required_review | {"expires_at"}:
+                value = review.get(field, "")
+                if not isinstance(value, str) or len(value) > 4096:
+                    raise ValueError(
+                        f"organizational mapping {mapping.get('id')} review {field} must be "
+                        "a bounded string"
+                    )
+                if field != "expires_at" and not value.strip():
+                    raise ValueError(
+                        f"organizational mapping {mapping.get('id')} review {field} must be "
+                        "non-empty"
+                    )
+            decision = review["decision"].strip()
+            if decision not in {"approved", "rejected"}:
+                raise ValueError(
+                    f"organizational mapping {mapping.get('id')} review decision is unsupported"
+                )
+            if (
+                review["producer"].strip().casefold()
+                == review["reviewer"].strip().casefold()
+            ):
+                raise ValueError(
+                    f"organizational mapping {mapping.get('id')} independent review requires "
+                    "distinct producer and reviewer identities"
+                )
+            try:
+                date.fromisoformat(review["reviewed_at"].strip())
+                if review.get("expires_at", "").strip():
+                    date.fromisoformat(review["expires_at"].strip())
+            except ValueError as exc:
+                raise ValueError(
+                    f"organizational mapping {mapping.get('id')} review dates must use YYYY-MM-DD"
+                ) from exc
+            citation = next(
+                value for value in citations if value["id"] == mapping["citation_id"]
+            )
+            source = next(
+                value for value in sources if value["id"] == citation["source_id"]
+            )
+            if review["source_revision"].strip() != source["version"]:
+                raise ValueError(
+                    f"organizational mapping {mapping.get('id')} review source_revision does "
+                    "not match its governed source version"
+                )
+            review.setdefault("expires_at", "")
+            review_material = {
+                key: review.get(key, "") for key in sorted(review_fields)
+            }
+            review["record_sha256"] = hashlib.sha256(
+                json.dumps(
+                    review_material, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            mapping["review_status"] = f"independent_{decision}"
+            mapping["reviewed_at"] = review["reviewed_at"].strip()
+            mapping["independent_approval"] = decision == "approved"
+            mapping["review_basis"] = review["rationale"].strip()
+        mapping_material = {
+            key: value for key, value in mapping.items() if key != "record_sha256"
+        }
+        mapping["record_sha256"] = hashlib.sha256(
+            json.dumps(mapping_material, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    all_ids = [
+        profile["id"],
+        *(value["id"] for value in sources),
+        *(value["id"] for value in citations),
+        *(value["id"] for value in mappings),
+    ]
+    if len(all_ids) != len(set(all_ids)):
+        raise ValueError("organizational guidance pack IDs must be globally unique")
+    profile["source_ids"] = sorted(source_ids)
+    payload["provenance"] = {
+        "path": source_path.name,
+        "source_location": "local_explicit_input",
+        "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "profile_id": profile["id"],
+    }
+    return payload
+
+
+def _merge_organizational_pack(bundle: dict[str, Any], pack: dict[str, Any]) -> None:
+    existing = {
+        value.get("id")
+        for field in ("profiles", "sources", "citations", "rule_mappings")
+        for value in bundle.get(field, [])
+    }
+    incoming = [
+        pack["profile"],
+        *pack["sources"],
+        *pack["citations"],
+        *pack["rule_mappings"],
+    ]
+    collisions = sorted(
+        str(value.get("id")) for value in incoming if value.get("id") in existing
+    )
+    if collisions:
+        raise ValueError(
+            "organizational guidance IDs collide with the resolved catalog: "
+            + ", ".join(collisions)
+        )
+    bundle["profiles"].append(copy.deepcopy(pack["profile"]))
+    bundle["sources"].extend(copy.deepcopy(pack["sources"]))
+    bundle["citations"].extend(copy.deepcopy(pack["citations"]))
+    bundle["rule_mappings"].extend(copy.deepcopy(pack["rule_mappings"]))
+
+
 def analysis_guidance_profiles(analysis: dict[str, Any]) -> list[str]:
     """Resolve the persisted selection without silently enabling extra authorities."""
 
     embedded = analysis.get("guidance", {})
     if isinstance(embedded, dict) and isinstance(embedded.get("active_profiles"), list):
-        return normalize_profile_ids(embedded["active_profiles"])
-    configured = analysis.get("context", {}).get("analysis", {}).get("guidance_profiles")
+        return normalize_profile_ids(embedded["active_profiles"], embedded)
+    configured = (
+        analysis.get("context", {}).get("analysis", {}).get("guidance_profiles")
+    )
     return normalize_profile_ids(configured)
+
+
+def apply_guidance_applicability(
+    bundle: dict[str, Any], decisions: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """Attach project-owned profile-selection evidence to a catalog projection."""
+
+    active_profiles = [
+        value
+        for value in bundle.get("active_profiles", [])
+        if isinstance(value, str)
+    ]
+    preserved = copy.deepcopy(decisions or [])
+    decided_profiles = {
+        value.get("profile_id")
+        for value in preserved
+        if isinstance(value, dict) and isinstance(value.get("profile_id"), str)
+    }
+    bundle["applicability_decisions"] = preserved
+    bundle["applicability_summary"] = {
+        "active_profiles": len(active_profiles),
+        "decided_profiles": len(decided_profiles & set(active_profiles)),
+        "missing_profile_ids": sorted(set(active_profiles) - decided_profiles),
+        "notice": (
+            "Profile selection is a tool input until a named project authority records an "
+            "applicability decision."
+        ),
+    }
+    return bundle
+
+
+def apply_project_guidance_mappings(
+    bundle: dict[str, Any], mappings: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """Attach named project-reviewed mappings to built-in source records.
+
+    These relationships are project configuration, not changes to the shipped
+    catalog and not independent regulatory approval. Configuration validation
+    restricts them to known built-in citations and closed relationship types.
+    """
+
+    supplied = copy.deepcopy(mappings or [])
+    citations = {
+        str(value.get("id", "")): value
+        for value in bundle.get("citations", [])
+        if isinstance(value, dict)
+    }
+    profiles = [
+        value for value in bundle.get("profiles", []) if isinstance(value, dict)
+    ]
+    existing = {
+        (
+            str(value.get("rule_selector", "")),
+            str(value.get("citation_id", "")),
+            str(value.get("relationship", "")),
+            str(value.get("strength", "")),
+        )
+        for value in bundle.get("rule_mappings", [])
+        if isinstance(value, dict)
+    }
+    applied: list[str] = []
+    shadowed: list[str] = []
+    for configured in supplied:
+        selector = str(configured.get("rule_selector", ""))
+        citation_id = str(configured.get("citation_id", ""))
+        relationship = str(configured.get("relationship", ""))
+        strength = str(configured.get("strength", ""))
+        identity = (selector, citation_id, relationship, strength)
+        mapping_id = "PROJECT-MAP-" + hashlib.sha256(
+            "\x1f".join(
+                (
+                    selector,
+                    citation_id,
+                    relationship,
+                    strength,
+                    str(configured.get("reviewed_by", "")),
+                    str(configured.get("effective_date", "")),
+                )
+            ).encode("utf-8")
+        ).hexdigest()[:12].upper()
+        if identity in existing:
+            shadowed.append(mapping_id)
+            continue
+        citation = citations[citation_id]
+        source_id = str(citation.get("source_id", ""))
+        profile_ids = [
+            str(profile.get("id", ""))
+            for profile in profiles
+            if source_id in profile.get("source_ids", [])
+        ]
+        value: dict[str, Any] = {
+            "id": mapping_id,
+            "rule_selector": selector,
+            "citation_id": citation_id,
+            "relationship": relationship,
+            "rationale": str(configured.get("rationale", "")),
+            "strength": strength,
+            "profile_ids": profile_ids,
+            "created_by": "project_configuration",
+            "mapping_version": "project-reviewed-1",
+            "review_status": "project_reviewed",
+            "reviewed_at": str(configured.get("effective_date", "")),
+            "independent_approval": False,
+            "review_basis": (
+                f"Named project review by {configured.get('reviewed_by', '')}; "
+                "regulatory applicability and independent approval remain external."
+            ),
+        }
+        value["record_sha256"] = hashlib.sha256(
+            json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        bundle.setdefault("rule_mappings", []).append(value)
+        existing.add(identity)
+        applied.append(mapping_id)
+    bundle["project_mapping_application"] = {
+        "configured": len(supplied),
+        "applied": len(applied),
+        "shadowed_by_existing_mapping": len(shadowed),
+        "mapping_ids": applied,
+        "shadowed_mapping_ids": shadowed,
+        "authority": (
+            "named_project_mapping_review_not_independent_approval_or_compliance"
+        ),
+    }
+    return bundle
 
 
 def ensure_guidance_traceability(
@@ -838,13 +1790,33 @@ def ensure_guidance_traceability(
     """Add missing guidance data or refresh scanner-owned mappings explicitly."""
 
     active_profiles = analysis_guidance_profiles(analysis)
+    existing_bundle = analysis.get("guidance", {})
     if refresh or not isinstance(analysis.get("guidance"), dict):
-        analysis["guidance"] = guidance_bundle(active_profiles)
+        if isinstance(existing_bundle, dict) and existing_bundle.get(
+            "organizational_packs"
+        ):
+            analysis["guidance"] = existing_bundle
+        else:
+            analysis["guidance"] = guidance_bundle(active_profiles)
+    resolved_bundle = analysis.get("guidance", {})
+    if isinstance(resolved_bundle, dict):
+        configured_decisions = analysis.get("context", {}).get(
+            "guidance_applicability"
+        )
+        if not isinstance(configured_decisions, list):
+            configured_decisions = existing_bundle.get("applicability_decisions", [])
+        apply_guidance_applicability(resolved_bundle, configured_decisions)
+        configured_mappings = analysis.get("context", {}).get(
+            "guidance_rule_mappings", []
+        )
+        if not isinstance(configured_mappings, list):
+            configured_mappings = []
+        apply_project_guidance_mappings(resolved_bundle, configured_mappings)
     methodology = analysis.setdefault("methodology", {})
     if refresh:
-        methodology["basis"] = selected_guidance_sources(active_profiles)
+        methodology["basis"] = selected_sources_from_bundle(resolved_bundle)
     else:
-        methodology.setdefault("basis", selected_guidance_sources(active_profiles))
+        methodology.setdefault("basis", selected_sources_from_bundle(resolved_bundle))
     methodology.setdefault("notice", METHODOLOGY_NOTICE)
     methodology.setdefault("review_checklist", copy.deepcopy(REVIEW_CHECKLIST))
     for item in analysis.get("items", []):
@@ -852,14 +1824,20 @@ def ensure_guidance_traceability(
         if isinstance(scanner, dict):
             if refresh:
                 inherited = citations_for_rule(
-                    str(scanner.get("rule_id", "")), active_profiles
+                    str(scanner.get("rule_id", "")),
+                    active_profiles,
+                    catalog=resolved_bundle,
                 )
                 retained = [
                     link
                     for link in scanner.get("citations", [])
                     if isinstance(link, dict)
                     and link.get("status") in {"proposed", "reviewer_accepted"}
-                    and link.get("citation_id") in _CITATIONS_BY_ID
+                    and link.get("citation_id")
+                    in {
+                        value.get("id")
+                        for value in resolved_bundle.get("citations", [])
+                    }
                 ]
                 seen = {
                     (link.get("citation_id"), link.get("relationship"))
@@ -877,16 +1855,148 @@ def ensure_guidance_traceability(
             else:
                 scanner.setdefault(
                     "citations",
-                    citations_for_rule(str(scanner.get("rule_id", "")), active_profiles),
+                    citations_for_rule(
+                        str(scanner.get("rule_id", "")),
+                        active_profiles,
+                        catalog=resolved_bundle,
+                    ),
                 )
     return analysis
+
+
+def mapping_review_expiry_audit(
+    analysis: dict[str, Any],
+    *,
+    bundle: dict[str, Any] | None = None,
+    active_profiles: list[str] | None = None,
+) -> dict[str, Any]:
+    """Audit mapping-review expiry against a reproducible analysis timestamp."""
+
+    resolved_bundle = (
+        bundle if isinstance(bundle, dict) else analysis.get("guidance", {})
+    )
+    if not isinstance(resolved_bundle, dict):
+        resolved_bundle = {}
+    profiles = (
+        active_profiles
+        if active_profiles is not None
+        else analysis_guidance_profiles(analysis)
+    )
+    audit_date: date | None = None
+    for candidate in (
+        analysis.get("run_manifest", {}).get("created_at", ""),
+        analysis.get("project", {}).get("scanned_at", ""),
+        resolved_bundle.get("retrieved_at", ""),
+        GUIDANCE_RETRIEVED_AT,
+    ):
+        try:
+            audit_date = date.fromisoformat(str(candidate).strip()[:10])
+            break
+        except (TypeError, ValueError):
+            continue
+    if (
+        audit_date is None
+    ):  # pragma: no cover - the module constant is valid by contract
+        audit_date = date(1970, 1, 1)
+    active_profile_set = set(profiles)
+    expired: list[str] = []
+    invalid: list[str] = []
+    for mapping in resolved_bundle.get("rule_mappings", []):
+        if not isinstance(mapping, dict):
+            continue
+        profile_ids = mapping.get("profile_ids", [])
+        if not isinstance(profile_ids, list) or not active_profile_set.intersection(
+            str(value) for value in profile_ids
+        ):
+            continue
+        review = mapping.get("review")
+        if not isinstance(review, dict) or review.get("decision") != "approved":
+            continue
+        expires_at = str(review.get("expires_at", "")).strip()
+        if not expires_at:
+            continue
+        try:
+            expiry = date.fromisoformat(expires_at)
+        except ValueError:
+            invalid.append(str(mapping.get("id", "")))
+            continue
+        if expiry < audit_date:
+            expired.append(str(mapping.get("id", "")))
+    manifest_integrity = verify_run_manifest_integrity(analysis)
+    timestamp_integrity = manifest_integrity["checks"].get(
+        "timestamp_binding", False
+    ) and manifest_integrity["checks"].get("content_integrity", False)
+    return {
+        "audit_as_of": audit_date.isoformat(),
+        "timestamp_source": (
+            "run_manifest.created_at"
+            if analysis.get("run_manifest", {}).get("created_at")
+            else "persisted_analysis_fallback"
+        ),
+        "timestamp_integrity": "verified" if timestamp_integrity else "invalid",
+        "expired_mapping_review_ids": sorted(expired),
+        "invalid_mapping_review_expiry_ids": sorted(invalid),
+    }
 
 
 def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
     """Build source-to-rule-to-finding relationships for programmatic export."""
 
     active_profiles = analysis_guidance_profiles(analysis)
-    bundle = guidance_bundle(active_profiles)
+    embedded = analysis.get("guidance", {})
+    bundle = (
+        copy.deepcopy(embedded)
+        if isinstance(embedded, dict)
+        else guidance_bundle(active_profiles)
+    )
+    active_mappings = [
+        mapping
+        for mapping in bundle.get("rule_mappings", [])
+        if isinstance(mapping, dict)
+        and set(mapping.get("profile_ids", [])) & set(active_profiles)
+    ]
+    mapping_review_states = Counter(
+        str(mapping.get("review_status", "unreviewed")) for mapping in active_mappings
+    )
+    mapping_integrity_failures = 0
+    unverifiable_legacy_mappings = 0
+    review_integrity_failures = 0
+    invalid_mapping_ids: set[str] = set()
+    for mapping in active_mappings:
+        material = {
+            key: value for key, value in mapping.items() if key != "record_sha256"
+        }
+        expected = hashlib.sha256(
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        recorded = mapping.get("record_sha256")
+        if not recorded:
+            unverifiable_legacy_mappings += 1
+            invalid_mapping_ids.add(str(mapping.get("id", "")))
+        elif recorded != expected:
+            mapping_integrity_failures += 1
+            invalid_mapping_ids.add(str(mapping.get("id", "")))
+        review = mapping.get("review")
+        if isinstance(review, dict):
+            review_material = {
+                key: value for key, value in review.items() if key != "record_sha256"
+            }
+            expected_review = hashlib.sha256(
+                json.dumps(
+                    review_material, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            if review.get("record_sha256") != expected_review:
+                review_integrity_failures += 1
+                invalid_mapping_ids.add(str(mapping.get("id", "")))
+    review_expiry = mapping_review_expiry_audit(
+        analysis,
+        bundle=bundle,
+        active_profiles=active_profiles,
+    )
+    expired_mapping_ids = set(review_expiry["expired_mapping_review_ids"])
+    review_timestamp_valid = review_expiry["timestamp_integrity"] == "verified"
+    citations_by_id = {value.get("id") for value in bundle.get("citations", [])}
     active = [
         item
         for item in analysis.get("items", [])
@@ -897,23 +2007,49 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
     used_citations: Counter[str] = Counter()
     used_sources: Counter[str] = Counter()
     rules: Counter[str] = Counter()
+    strengths: Counter[str] = Counter()
+    relationships: Counter[str] = Counter()
+    directly_cited_items: set[str] = set()
+    supporting_only_items: set[str] = set()
+    contextual_only_items: set[str] = set()
+    direct_rules: set[str] = set()
     for item in active:
         scanner = item.get("scanner", {})
         rule_id = str(scanner.get("rule_id", ""))
         links = scanner.get("citations")
         if not isinstance(links, list):
-            links = citations_for_rule(rule_id, active_profiles)
+            links = citations_for_rule(rule_id, active_profiles, catalog=bundle)
         normalized_links = [
             link
             for link in links
-            if isinstance(link, dict) and link.get("citation_id") in _CITATIONS_BY_ID
+            if isinstance(link, dict) and link.get("citation_id") in citations_by_id
         ]
         if normalized_links:
             cited_items.add(str(item.get("id", "")))
+        finding_strengths = {str(link.get("strength", "")) for link in normalized_links}
+        strongest = (
+            "direct"
+            if "direct" in finding_strengths
+            else "supporting"
+            if "supporting" in finding_strengths
+            else "contextual"
+            if "contextual" in finding_strengths
+            else "uncited"
+        )
+        finding_id = str(item.get("id", ""))
+        if strongest == "direct":
+            directly_cited_items.add(finding_id)
+            direct_rules.add(rule_id)
+        elif strongest == "supporting":
+            supporting_only_items.add(finding_id)
+        elif strongest == "contextual":
+            contextual_only_items.add(finding_id)
         rules[rule_id] += 1
         for link in normalized_links:
             used_citations[str(link["citation_id"])] += 1
             used_sources[str(link["source_id"])] += 1
+            strengths[str(link.get("strength", "unknown"))] += 1
+            relationships[str(link.get("relationship", "unknown"))] += 1
         finding_links.append(
             {
                 "finding_id": item.get("id", ""),
@@ -922,23 +2058,98 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
                 "source": item.get("source", {}),
                 "rule_id": rule_id,
                 "failure_class": scanner.get("failure_class", ""),
+                "strongest_mapping": strongest,
                 "citations": copy.deepcopy(normalized_links),
             }
         )
     total = len(active)
+    total_citation_uses = sum(used_citations.values())
+    broadly_reused_citations = {
+        citation_id: uses
+        for citation_id, uses in used_citations.items()
+        if total and uses / total >= 0.8
+    }
     bundle.update(
         {
             "finding_links": finding_links,
+            "mapping_governance": {
+                "active_mappings": len(active_mappings),
+                "review_statuses": dict(sorted(mapping_review_states.items())),
+                "independently_approved_mappings": sum(
+                    bool(mapping.get("independent_approval", False))
+                    and review_timestamp_valid
+                    for mapping in active_mappings
+                ),
+                "effective_independently_approved_mappings": sum(
+                    bool(mapping.get("independent_approval", False))
+                    and str(mapping.get("id", "")) not in expired_mapping_ids
+                    and str(mapping.get("id", "")) not in invalid_mapping_ids
+                    for mapping in active_mappings
+                ),
+                "review_audit_as_of": review_expiry["audit_as_of"],
+                "review_audit_timestamp_source": review_expiry["timestamp_source"],
+                "review_audit_timestamp_integrity": review_expiry[
+                    "timestamp_integrity"
+                ],
+                "expired_mapping_reviews": len(expired_mapping_ids),
+                "expired_mapping_review_ids": sorted(expired_mapping_ids),
+                "invalid_mapping_review_expiries": len(
+                    review_expiry["invalid_mapping_review_expiry_ids"]
+                ),
+                "mapping_integrity_failures": mapping_integrity_failures,
+                "review_integrity_failures": review_integrity_failures,
+                "unverifiable_legacy_mappings": unverifiable_legacy_mappings,
+                "rejected_mappings": sum(
+                    mapping.get("review_status") == "independent_rejected"
+                    for mapping in active_mappings
+                ),
+                "notice": (
+                    "Maintainer curation is not independent regulatory approval; projects must "
+                    "approve applicability and mapping strength under their own authority. "
+                    "Mappings without record digests are retained as legacy-unverifiable rather "
+                    "than being misreported as integrity failures. Approval effectiveness is "
+                    "audited against the persisted analysis timestamp, not the viewer's clock."
+                ),
+            },
             "coverage": {
                 "active_findings": total,
                 "cited_findings": len(cited_items),
                 "uncited_findings": total - len(cited_items),
+                "directly_cited_findings": len(directly_cited_items),
+                "supporting_only_findings": len(supporting_only_items),
+                "contextual_only_findings": len(contextual_only_items),
                 "finding_coverage_percent": round(len(cited_items) * 100 / total, 1)
+                if total
+                else 100.0,
+                "direct_finding_coverage_percent": round(
+                    len(directly_cited_items) * 100 / total, 1
+                )
                 if total
                 else 100.0,
                 "used_citations": len(used_citations),
                 "used_sources": len(used_sources),
+                "total_citation_uses": total_citation_uses,
+                "average_citations_per_finding": round(
+                    total_citation_uses / total, 2
+                )
+                if total
+                else 0.0,
+                "broadly_reused_citations": dict(
+                    sorted(broadly_reused_citations.items())
+                ),
+                "broadly_reused_citation_count": len(
+                    broadly_reused_citations
+                ),
+                "specificity_notice": (
+                    "Coverage counts methodology, supporting, and contextual mappings. Broadly "
+                    "reused citations apply to at least 80% of active findings and must not be "
+                    "read as finding-specific regulatory applicability."
+                ),
                 "findings_by_rule": dict(sorted(rules.items())),
+                "rules_with_direct_mapping": sorted(direct_rules),
+                "rules_without_direct_mapping": sorted(set(rules) - direct_rules),
+                "uses_by_mapping_strength": dict(sorted(strengths.items())),
+                "uses_by_relationship": dict(sorted(relationships.items())),
                 "uses_by_citation": dict(sorted(used_citations.items())),
                 "uses_by_source": dict(sorted(used_sources.items())),
             },
@@ -951,7 +2162,7 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
     return bundle
 
 
-GUIDANCE_SOURCES = copy.deepcopy(GUIDANCE_DOCUMENTS)
+GUIDANCE_SOURCES: list[dict[str, Any]] = copy.deepcopy(GUIDANCE_DOCUMENTS)
 
 
 METHODOLOGY_NOTICE = (

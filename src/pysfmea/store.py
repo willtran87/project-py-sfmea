@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import copy
+import gzip
+import hashlib
+import io
 import json
 import os
+import stat
 import tempfile
 import uuid
 from datetime import date
 from pathlib import Path
 from typing import Any
 
+from .adapters import build_adapter_run_ledger
 from .assurance import (
     ASSURANCE_STATUSES,
     EVIDENCE_STATUSES,
@@ -20,13 +25,31 @@ from .assurance import (
     refresh_assurance_register,
 )
 from .config import DEFAULT_CONFIG, normalize_config
-from .guidance import ensure_guidance_traceability
 from .execution import EXECUTION_STATUSES
-from .sfta import build_sfta
-from .model import SCHEMA_VERSION, calculate_rpn, empty_review, utc_now, validate_rating
+from .guidance import ensure_guidance_traceability
+from .integrity import (
+    MAX_ANALYSIS_BYTES as _MAX_ANALYSIS_BYTES,
+)
+from .integrity import (
+    MAX_ANALYSIS_JSON_NODES as _MAX_ANALYSIS_JSON_NODES,
+)
+from .integrity import (
+    MAX_GOVERNED_JSON_DEPTH,
+    bounded_json_structure_metrics,
+)
 from .manifest import create_run_manifest
+from .model import SCHEMA_VERSION, calculate_rpn, empty_review, utc_now, validate_rating
+from .repository_inventory import legacy_repository_inventory
+from .sfta import build_sfta
+from .system_context import build_system_context
 from .version import __version__
 
+MAX_ANALYSIS_JSON_DEPTH = MAX_GOVERNED_JSON_DEPTH
+# Public compatibility aliases keep existing CLI, qualification, and test imports
+# stable while the shared integrity module remains the single default-policy source.
+MAX_ANALYSIS_BYTES = _MAX_ANALYSIS_BYTES
+MAX_ANALYSIS_JSON_NODES = _MAX_ANALYSIS_JSON_NODES
+ANALYSIS_GZIP_COMPRESSION_LEVEL = 6
 
 EDITABLE_REVIEW_FIELDS = {
     "disposition",
@@ -37,6 +60,11 @@ EDITABLE_REVIEW_FIELDS = {
     "function",
     "failure_mode",
     "trigger",
+    "operational_mode",
+    "operational_state",
+    "required_safe_state",
+    "degraded_behavior",
+    "recovery_behavior",
     "causes",
     "local_effect",
     "next_higher_effect",
@@ -60,6 +88,7 @@ EDITABLE_REVIEW_FIELDS = {
     "post_action_occurrence_rationale",
     "post_action_detection",
     "post_action_detection_rationale",
+    "residual_risk",
     "owner",
     "target_date",
     "approved_by",
@@ -68,6 +97,207 @@ EDITABLE_REVIEW_FIELDS = {
     "revalidation_required",
     "notes",
 }
+
+
+class AnalysisRevisionConflictError(RuntimeError):
+    """The governed analysis changed before an atomic replacement."""
+
+
+def _same_file_state(first: os.stat_result, second: os.stat_result) -> bool:
+    common = bool(
+        os.path.samestat(first, second)
+        and first.st_size == second.st_size
+        and first.st_mtime_ns == second.st_mtime_ns
+    )
+    # Windows path and descriptor stat calls can expose different creation-time
+    # precision for the same file. Identity, size, and modification time remain
+    # comparable; POSIX retains the additional metadata-change-time check.
+    return common and (os.name == "nt" or first.st_ctime_ns == second.st_ctime_ns)
+
+
+def _input_path(path: str | Path) -> Path:
+    return Path(os.path.abspath(Path(path).expanduser()))
+
+
+def _inspect_regular_file(path: Path, label: str) -> os.stat_result:
+    if path.is_symlink():
+        raise ValueError(f"{label} must be a regular non-symbolic-link file")
+    try:
+        inspected = path.lstat()
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"{label} is unavailable") from exc
+    except PermissionError as exc:
+        raise PermissionError(f"{label} could not be read safely") from exc
+    except OSError as exc:
+        raise OSError(f"{label} could not be read safely") from exc
+    if not stat.S_ISREG(inspected.st_mode):
+        raise ValueError(f"{label} must be a regular non-symbolic-link file")
+    return inspected
+
+
+def _read_analysis_bytes(path: Path) -> bytes:
+    inspected = _inspect_regular_file(path, "analysis input")
+    descriptor: int | None = None
+    opened_before: os.stat_result | None = None
+    opened_after: os.stat_result | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened_before = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_before.st_mode) or not _same_file_state(
+            inspected, opened_before
+        ):
+            raise ValueError("analysis input changed during safe open")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            raw = handle.read(MAX_ANALYSIS_BYTES + 1)
+            opened_after = os.fstat(handle.fileno())
+    except ValueError:
+        raise
+    except FileNotFoundError as exc:
+        raise FileNotFoundError("analysis input is unavailable") from exc
+    except PermissionError as exc:
+        raise PermissionError("analysis input could not be read safely") from exc
+    except OSError as exc:
+        raise OSError("analysis input could not be read safely") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if len(raw) > MAX_ANALYSIS_BYTES:
+        raise ValueError(
+            f"analysis input exceeds the {MAX_ANALYSIS_BYTES}-byte import limit"
+        )
+    if (
+        opened_before is None
+        or opened_after is None
+        or not _same_file_state(opened_before, opened_after)
+    ):
+        raise ValueError("analysis input changed while it was being read")
+    try:
+        current = path.lstat()
+    except OSError as exc:
+        raise ValueError("analysis input changed while it was being read") from exc
+    if not _same_file_state(opened_after, current):
+        raise ValueError("analysis input changed while it was being read")
+    if raw.startswith(b"\x1f\x8b"):
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(raw), mode="rb") as compressed:
+                expanded = compressed.read(MAX_ANALYSIS_BYTES + 1)
+        except (EOFError, OSError) as exc:
+            raise ValueError("analysis input is not a valid gzip stream") from exc
+        if len(expanded) > MAX_ANALYSIS_BYTES:
+            raise ValueError(
+                f"expanded analysis exceeds the {MAX_ANALYSIS_BYTES}-byte import limit"
+            )
+        raw = expanded
+    return raw
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, entry in pairs:
+        if key in value:
+            raise ValueError(f"analysis JSON contains a duplicate object key: {key}")
+        value[key] = entry
+    return value
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"analysis JSON contains a non-finite number: {value}")
+
+
+def _enforce_analysis_json_shape(value: Any) -> None:
+    metrics = bounded_json_structure_metrics(
+        value,
+        max_depth=MAX_ANALYSIS_JSON_DEPTH,
+        max_nodes=MAX_ANALYSIS_JSON_NODES,
+    )
+    if not metrics["depth_within_limit"]:
+        raise ValueError(
+            f"analysis JSON exceeds the {MAX_ANALYSIS_JSON_DEPTH}-level depth limit"
+        )
+    if not metrics["node_within_limit"]:
+        raise ValueError(
+            f"analysis JSON exceeds the {MAX_ANALYSIS_JSON_NODES}-node limit"
+        )
+
+
+def _decode_analysis_object(raw: bytes) -> dict[str, Any]:
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("analysis input is not valid bounded UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("analysis file root must be a JSON object")
+    _enforce_analysis_json_shape(value)
+    return value
+
+
+def analysis_file_sha256(path: str | Path) -> str:
+    """Hash one stable regular analysis file under the persisted-analysis limit."""
+
+    source = _input_path(path)
+    inspected = _inspect_regular_file(source, "analysis input")
+    descriptor: int | None = None
+    digest = hashlib.sha256()
+    consumed = 0
+    opened_before: os.stat_result | None = None
+    opened_after: os.stat_result | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(source, flags)
+        opened_before = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_before.st_mode) or not _same_file_state(
+            inspected, opened_before
+        ):
+            raise ValueError("analysis input changed during safe open")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            while chunk := handle.read(1024 * 1024):
+                consumed += len(chunk)
+                if consumed > MAX_ANALYSIS_BYTES:
+                    raise ValueError(
+                        "analysis input exceeds the "
+                        f"{MAX_ANALYSIS_BYTES}-byte hash limit"
+                    )
+                digest.update(chunk)
+            opened_after = os.fstat(handle.fileno())
+    except ValueError:
+        raise
+    except FileNotFoundError as exc:
+        raise FileNotFoundError("analysis input is unavailable") from exc
+    except PermissionError as exc:
+        raise PermissionError("analysis input could not be hashed safely") from exc
+    except OSError as exc:
+        raise OSError("analysis input could not be hashed safely") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if (
+        opened_before is None
+        or opened_after is None
+        or not _same_file_state(opened_before, opened_after)
+    ):
+        raise ValueError("analysis input changed while it was being hashed")
+    try:
+        current = source.lstat()
+    except OSError as exc:
+        raise ValueError("analysis input changed while it was being hashed") from exc
+    if not _same_file_state(opened_after, current):
+        raise ValueError("analysis input changed while it was being hashed")
+    return digest.hexdigest()
+
+
 LIST_FIELDS = {
     "causes",
     "prevention_controls",
@@ -91,11 +321,8 @@ ALLOWED_STATUSES = {"draft", "in_review", "action_required", "verified", "closed
 
 
 def load_analysis(path: str | Path) -> dict[str, Any]:
-    source = Path(path)
-    with source.open("r", encoding="utf-8") as handle:
-        analysis = json.load(handle)
-    if not isinstance(analysis, dict):
-        raise ValueError("analysis file root must be a JSON object")
+    source = _input_path(path)
+    analysis = _decode_analysis_object(_read_analysis_bytes(source))
     if analysis.get("schema_version") == "0.1":
         analysis = _migrate_01_to_02(analysis)
     if analysis.get("schema_version") == "0.2":
@@ -104,6 +331,8 @@ def load_analysis(path: str | Path) -> dict[str, Any]:
         analysis = _migrate_03_to_04(analysis)
     if analysis.get("schema_version") == "0.4":
         analysis = _migrate_04_to_05(analysis)
+    if analysis.get("schema_version") == "0.5":
+        analysis = _migrate_05_to_06(analysis)
     if analysis.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(
             f"unsupported schema version {analysis.get('schema_version')!r}; expected {SCHEMA_VERSION!r}"
@@ -120,7 +349,13 @@ def load_analysis(path: str | Path) -> dict[str, Any]:
     ensure_guidance_traceability(analysis)
     ensure_assurance_register(analysis)
     analysis.setdefault("context", {}).setdefault("fault_trees", [])
-    analysis["sfta"] = build_sfta(analysis)
+    sfta = analysis.get("sfta")
+    if (
+        not isinstance(sfta, dict)
+        or not isinstance(sfta.get("trees"), list)
+        or not isinstance(sfta.get("reconciliation"), dict)
+    ):
+        analysis["sfta"] = build_sfta(analysis)
     if "run_manifest" not in analysis:
         analysis["run_manifest"] = create_run_manifest(analysis)
     _validate_analysis_structure(analysis)
@@ -250,6 +485,41 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         or not run_manifest.get("manifest_sha256")
     ):
         raise ValueError("analysis run_manifest is missing required reproducibility fields")
+    system_context = analysis.get("system_context", {})
+    if (
+        not isinstance(system_context, dict)
+        or system_context.get("schema_version") != "pysfmea-system-context-1"
+        or not isinstance(system_context.get("fields", []), list)
+        or not isinstance(system_context.get("unresolved_questions", []), list)
+    ):
+        raise ValueError("analysis system_context is missing required context fields")
+    inventory = analysis.get("repository_inventory", {})
+    if (
+        not isinstance(inventory, dict)
+        or inventory.get("schema_version") != "pysfmea-repository-inventory-1"
+        or not isinstance(inventory.get("entries", []), list)
+        or not isinstance(inventory.get("regions", []), list)
+        or not inventory.get("inventory_sha256")
+    ):
+        raise ValueError("analysis repository_inventory is missing required coverage fields")
+    adapter_runs = analysis.get("adapter_runs", {})
+    if (
+        not isinstance(adapter_runs, dict)
+        or adapter_runs.get("schema_version") != "pysfmea-adapter-run-ledger-1"
+        or not isinstance(adapter_runs.get("runs", []), list)
+        or not adapter_runs.get("ledger_sha256")
+    ):
+        raise ValueError("analysis adapter_runs is missing required provenance fields")
+    graphify = analysis.get("graphify_reconciliation")
+    if graphify is not None and (
+        not isinstance(graphify, dict)
+        or graphify.get("format") != "pysfmea-graphify-reconciliation-1"
+        or not isinstance(graphify.get("source"), dict)
+        or not isinstance(graphify.get("summary"), dict)
+        or not isinstance(graphify.get("edges"), list)
+        or not isinstance(graphify.get("reconciliation_sha256"), str)
+    ):
+        raise ValueError("analysis graphify_reconciliation has an invalid structure")
     for index, suggestion in enumerate(analysis.get("suggestions", []), start=1):
         if not isinstance(suggestion, dict):
             raise ValueError(f"analysis suggestion {index} must be an object")
@@ -302,6 +572,13 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         ):
             raise ValueError(
                 f"analysis item {index} scanner.citations must be a list of objects"
+            )
+        adapter_ids = item["scanner"].get("adapter_ids", [])
+        if not isinstance(adapter_ids, list) or not all(
+            isinstance(entry, str) and entry for entry in adapter_ids
+        ):
+            raise ValueError(
+                f"analysis item {index} scanner.adapter_ids must be a non-empty string list"
             )
         if not isinstance(item.get("review_history", []), list):
             raise ValueError(f"analysis item {index} review_history must be a list")
@@ -406,34 +683,156 @@ def _migrate_03_to_04(analysis: dict[str, Any]) -> dict[str, Any]:
 def _migrate_04_to_05(analysis: dict[str, Any]) -> dict[str, Any]:
     """Add the executable assurance-contract register introduced with schema 0.5."""
 
-    analysis["schema_version"] = SCHEMA_VERSION
+    analysis["schema_version"] = "0.5"
     if isinstance(analysis.get("generator"), dict):
-        analysis["generator"]["analysis_schema_version"] = SCHEMA_VERSION
+        analysis["generator"]["analysis_schema_version"] = "0.5"
     refresh_assurance_register(analysis, {})
     return analysis
 
 
-def save_analysis(path: str | Path, analysis: dict[str, Any]) -> None:
+def _migrate_05_to_06(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Add context, coverage, adapter-run, and safe/recovery review records."""
+
+    defaults = empty_review()
+    for item in analysis.get("items", []):
+        review = item.setdefault("review", {})
+        for key, value in defaults.items():
+            if key not in review:
+                review[key] = list(value) if isinstance(value, list) else value
+    context = analysis.setdefault("context", {})
+    analysis.setdefault("system_context", build_system_context(context))
+    analysis.setdefault(
+        "repository_inventory",
+        legacy_repository_inventory(
+            "Repository artifact coverage was not captured by the original pre-0.6 scan; "
+            "rescan to establish analyzed, excluded, unresolved, and opaque regions."
+        ),
+    )
+    refresh_assurance_register(analysis, analysis.get("assurance", {}))
+    analysis["sfta"] = build_sfta(analysis)
+    analysis["adapter_runs"] = build_adapter_run_ledger(analysis)
+    analysis["schema_version"] = "0.6"
+    if isinstance(analysis.get("generator"), dict):
+        analysis["generator"]["analysis_schema_version"] = "0.6"
+    analysis["run_manifest"] = create_run_manifest(analysis)
+    return analysis
+
+
+def _analysis_destination_snapshot(path: Path) -> os.stat_result | None:
+    if path.is_symlink():
+        raise ValueError("analysis destination must not be a symbolic link")
+    try:
+        snapshot = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError("analysis destination could not be inspected safely") from exc
+    if not stat.S_ISREG(snapshot.st_mode):
+        raise ValueError("analysis destination must be a regular file path")
+    return snapshot
+
+
+class _BoundedUtf8Writer:
+    def __init__(self, handle: Any, limit: int) -> None:
+        self.handle = handle
+        self.limit = limit
+        self.written = 0
+
+    def write(self, value: str) -> int:
+        raw = value.encode("utf-8")
+        if self.written + len(raw) > self.limit:
+            raise ValueError(
+                f"serialized analysis exceeds the {self.limit}-byte output limit"
+            )
+        self.handle.write(raw)
+        self.written += len(raw)
+        return len(value)
+
+
+def save_analysis(
+    path: str | Path,
+    analysis: dict[str, Any],
+    *,
+    expected_sha256: str | None = None,
+    compact: bool = False,
+) -> None:
     """Atomically save an analysis to avoid truncation on interrupted writes."""
 
-    destination = Path(path).expanduser().resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = _input_path(path)
+    destination_snapshot = _analysis_destination_snapshot(destination)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ValueError("analysis destination could not be prepared safely") from exc
     ensure_guidance_traceability(analysis, refresh=True)
     refresh_assurance_register(analysis, analysis.get("assurance", {}))
     analysis["sfta"] = build_sfta(analysis)
     refresh_summary(analysis)
+    _reconcile_last_saved_at(destination, analysis)
+    _enforce_analysis_json_shape(analysis)
     _validate_analysis_structure(analysis)
     descriptor, temp_name = tempfile.mkstemp(
-        prefix=destination.name + ".",
+        prefix=f".{destination.name}.",
         suffix=".tmp",
         dir=str(destination.parent),
     )
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(analysis, handle, indent=2, ensure_ascii=False)
-            handle.write("\n")
+        with os.fdopen(descriptor, "wb") as handle:
+            compressed_handle: Any = handle
+            gzip_stream: gzip.GzipFile | None = None
+            if destination.suffix.casefold() == ".gz":
+                gzip_stream = gzip.GzipFile(
+                    filename="",
+                    mode="wb",
+                    compresslevel=ANALYSIS_GZIP_COMPRESSION_LEVEL,
+                    fileobj=handle,
+                    mtime=0,
+                )
+                compressed_handle = gzip_stream
+            try:
+                writer = _BoundedUtf8Writer(compressed_handle, MAX_ANALYSIS_BYTES)
+                json.dump(
+                    analysis,
+                    writer,
+                    indent=None if compact else 2,
+                    separators=(",", ":") if compact else None,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+                writer.write("\n")
+            finally:
+                if gzip_stream is not None:
+                    gzip_stream.close()
             handle.flush()
             os.fsync(handle.fileno())
+        if expected_sha256 is not None:
+            try:
+                current_sha256 = analysis_file_sha256(destination)
+            except (OSError, ValueError) as exc:
+                raise AnalysisRevisionConflictError(
+                    "governed analysis disappeared before atomic replacement"
+                ) from exc
+            if current_sha256 != expected_sha256:
+                raise AnalysisRevisionConflictError(
+                    "governed analysis changed before atomic replacement"
+                )
+        try:
+            current_snapshot = _analysis_destination_snapshot(destination)
+        except ValueError as exc:
+            raise AnalysisRevisionConflictError(
+                "governed analysis changed before atomic replacement"
+            ) from exc
+        if destination_snapshot is None:
+            unchanged = current_snapshot is None
+        else:
+            unchanged = bool(
+                current_snapshot is not None
+                and _same_file_state(destination_snapshot, current_snapshot)
+            )
+        if not unchanged:
+            raise AnalysisRevisionConflictError(
+                "governed analysis changed before atomic replacement"
+            )
         os.replace(temp_name, destination)
     except Exception:
         try:
@@ -441,6 +840,44 @@ def save_analysis(path: str | Path, analysis: dict[str, Any]) -> None:
         except OSError:
             pass
         raise
+
+
+def _without_last_saved_at(analysis: dict[str, Any]) -> dict[str, Any]:
+    snapshot = copy.deepcopy(analysis)
+    summary = snapshot.get("summary")
+    if isinstance(summary, dict):
+        summary.pop("last_saved_at", None)
+    return snapshot
+
+
+def _reconcile_last_saved_at(
+    destination: Path, analysis: dict[str, Any]
+) -> None:
+    """Preserve byte identity for no-op saves and advance time for real changes."""
+
+    summary = analysis.setdefault("summary", {})
+    if not destination.is_file() or destination.is_symlink():
+        summary.setdefault("last_saved_at", utc_now())
+        return
+    try:
+        previous = _decode_analysis_object(_read_analysis_bytes(destination))
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        summary["last_saved_at"] = utc_now()
+        return
+    previous_summary = previous.get("summary", {})
+    previous_saved_at = (
+        previous_summary.get("last_saved_at")
+        if isinstance(previous_summary, dict)
+        else None
+    )
+    if (
+        isinstance(previous_saved_at, str)
+        and previous_saved_at
+        and _without_last_saved_at(previous) == _without_last_saved_at(analysis)
+    ):
+        summary["last_saved_at"] = previous_saved_at
+    else:
+        summary["last_saved_at"] = utc_now()
 
 
 def merge_rescan(previous: dict[str, Any], scanned: dict[str, Any]) -> dict[str, Any]:
@@ -716,7 +1153,17 @@ def _mark_revalidation(item: dict[str, Any], at: str, reasons: list[str]) -> Non
 def update_item_review(
     analysis: dict[str, Any], item_id: str, changes: dict[str, Any]
 ) -> dict[str, Any]:
-    item = next((entry for entry in analysis["items"] if entry.get("id") == item_id), None)
+    items = analysis.get("items", [])
+    if not isinstance(items, list):
+        raise ValueError("analysis items must be an array")
+    item = next(
+        (
+            entry
+            for entry in items
+            if isinstance(entry, dict) and entry.get("id") == item_id
+        ),
+        None,
+    )
     if item is None:
         raise KeyError(item_id)
     unknown = set(changes) - EDITABLE_REVIEW_FIELDS
@@ -798,6 +1245,11 @@ def update_item_review(
         "function",
         "failure_mode",
         "trigger",
+        "operational_mode",
+        "operational_state",
+        "required_safe_state",
+        "degraded_behavior",
+        "recovery_behavior",
         "causes",
         "local_effect",
         "next_higher_effect",
@@ -821,6 +1273,7 @@ def update_item_review(
         "post_action_occurrence_rationale",
         "post_action_detection",
         "post_action_detection_rationale",
+        "residual_risk",
     }
     if (
         item["review"].get("status") in {"verified", "closed"}
@@ -873,6 +1326,7 @@ def update_item_review(
         }
     )
     analysis["sfta"] = build_sfta(analysis)
+    refresh_assurance_register(analysis, analysis.get("assurance", {}))
     refresh_summary(analysis)
     return item
 
@@ -903,6 +1357,7 @@ def add_manual_item(analysis: dict[str, Any], component_id: str | None = None) -
         },
         "scanner": {
             "rule_id": "manual",
+            "failure_class": "manual",
             "guideword": "Reviewer identified",
             "failure_mode": "",
             "trigger": "",
@@ -910,6 +1365,9 @@ def add_manual_item(analysis: dict[str, Any], component_id: str | None = None) -
             "screening_priority": "manual",
             "screening_reasons": [],
             "evidence": ["Manually added by reviewer"],
+            "adapter_id": "human.manual_finding",
+            "adapter_ids": ["human.manual_finding"],
+            "citations": [],
         },
         "review": review,
         "review_history": [
@@ -928,6 +1386,7 @@ def add_manual_item(analysis: dict[str, Any], component_id: str | None = None) -
 
 def refresh_summary(analysis: dict[str, Any]) -> None:
     summary = analysis.setdefault("summary", {})
+    previous_summary = copy.deepcopy(summary)
     items = analysis.get("items", [])
     active = [item for item in items if item.get("source_status", "active") == "active"]
     dispositions = {name: 0 for name in ALLOWED_DISPOSITIONS}
@@ -973,7 +1432,6 @@ def refresh_summary(analysis: dict[str, Any]) -> None:
     summary["failure_classes"] = failure_classes
     summary["screening_priorities"] = screening_priorities
     summary["subsystems"] = subsystems
-    summary["last_saved_at"] = utc_now()
     suggestion_statuses: dict[str, int] = {}
     for suggestion in analysis.get("suggestions", []):
         status = suggestion.get("status", "unknown")
@@ -991,3 +1449,19 @@ def refresh_summary(analysis: dict[str, Any]) -> None:
     )
     assurance = ensure_assurance_register(analysis)
     summary["assurance"] = copy.deepcopy(assurance.get("summary", {}))
+    previous_saved_at = previous_summary.get("last_saved_at")
+    previous_content = {
+        key: value
+        for key, value in previous_summary.items()
+        if key != "last_saved_at"
+    }
+    current_content = {
+        key: value for key, value in summary.items() if key != "last_saved_at"
+    }
+    summary["last_saved_at"] = (
+        previous_saved_at
+        if isinstance(previous_saved_at, str)
+        and previous_saved_at
+        and previous_content == current_content
+        else utc_now()
+    )

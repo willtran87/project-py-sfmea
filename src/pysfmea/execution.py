@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -11,13 +12,17 @@ import subprocess
 import threading
 import time
 import uuid
-import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
+
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 from .assurance import assurance_summary, ensure_assurance_register
+from .json_ingestion import load_bounded_json_file
 from .model import stable_id, utc_now
-
+from .sandbox_policy import resolve_sandbox_engine as _resolve_engine
+from .sandbox_policy import sandbox_command
 
 EXECUTION_SCHEMA_VERSION = "1.0"
 EVIDENCE_REVIEW_DECISIONS = {
@@ -36,6 +41,8 @@ MAX_TIMEOUT_SECONDS = 7200
 MAX_IMPORT_MANIFEST_BYTES = 2_000_000
 MAX_IMPORTED_ARTIFACT_BYTES = 100_000_000
 MAX_IMPORTED_EVIDENCE_BYTES = 500_000_000
+MAX_EXECUTION_JSON_DEPTH = 100
+MAX_EXECUTION_JSON_NODES = 100_000
 
 
 def _sha256_file(path: Path) -> str:
@@ -46,6 +53,80 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _read_json_object_bounded(path: Path, *, limit: int, label: str) -> dict[str, Any]:
+    """Read one strict, bounded, identity-stable execution JSON object."""
+
+    try:
+        _path, loaded, _size = load_bounded_json_file(
+            path,
+            label=label,
+            max_bytes=limit,
+            max_depth=MAX_EXECUTION_JSON_DEPTH,
+            max_nodes=MAX_EXECUTION_JSON_NODES,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == f"{label} exceeds the {limit}-byte limit":
+            raise ValueError(
+                f"{label} exceeds the {limit}-byte consumption limit"
+            ) from exc
+        if message in {
+            f"{label} is not valid UTF-8 JSON",
+            f"{label} is not valid JSON",
+            f"{label} exceeds the JSON parser nesting limit",
+        }:
+            raise ValueError(f"{label} is not valid bounded UTF-8 JSON") from exc
+        raise
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{label} root must be an object")
+    return loaded
+
+
+def _sha256_file_bounded(path: Path, *, limit: int, label: str) -> tuple[str, int]:
+    """Hash a regular file while enforcing the limit on bytes actually consumed."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be a regular non-symbolic-link file")
+    digest = hashlib.sha256()
+    consumed = 0
+    try:
+        with path.open("rb") as source_file:
+            while chunk := source_file.read(1024 * 1024):
+                consumed += len(chunk)
+                if consumed > limit:
+                    raise ValueError(f"{label} exceeds the {limit}-byte consumption limit")
+                digest.update(chunk)
+    except OSError as exc:
+        raise ValueError(f"{label} could not be read safely") from exc
+    return digest.hexdigest(), consumed
+
+
+def _copy_file_bounded(
+    source: Path,
+    destination: Path,
+    *,
+    limit: int,
+    label: str,
+) -> tuple[str, int]:
+    """Copy and hash one source stream without exceeding the artifact byte limit."""
+
+    if source.is_symlink() or not source.is_file():
+        raise ValueError(f"{label} must be a regular non-symbolic-link file")
+    digest = hashlib.sha256()
+    consumed = 0
+    try:
+        with source.open("rb") as source_file, destination.open("xb") as target_file:
+            while chunk := source_file.read(1024 * 1024):
+                consumed += len(chunk)
+                if consumed > limit:
+                    raise ValueError(f"{label} exceeds the {limit}-byte consumption limit")
+                target_file.write(chunk)
+                digest.update(chunk)
+    except OSError as exc:
+        raise ValueError(f"{label} could not be copied safely") from exc
+    return digest.hexdigest(), consumed
+
+
 def _inside(root: Path, value: Path) -> bool:
     try:
         value.relative_to(root)
@@ -54,13 +135,15 @@ def _inside(root: Path, value: Path) -> bool:
         return False
 
 
-def _obligation(analysis: dict[str, Any], obligation_id: str) -> dict[str, Any]:
+def _obligation(
+    analysis: dict[str, Any], obligation_id: str
+) -> dict[str, Any]:
     register = ensure_assurance_register(analysis)
     value = next(
         (
             candidate
             for candidate in register.get("obligations", [])
-            if candidate.get("id") == obligation_id
+            if isinstance(candidate, dict) and candidate.get("id") == obligation_id
         ),
         None,
     )
@@ -168,114 +251,6 @@ def _git_state(root: Path) -> dict[str, Any]:
         if status.returncode == 0
         else "",
     }
-
-
-def _resolve_engine(engine: str) -> str:
-    if engine not in {"auto", "docker", "podman"}:
-        raise ValueError("sandbox engine must be auto, docker, or podman")
-    names = ("docker", "podman") if engine == "auto" else (engine,)
-    for name in names:
-        resolved = shutil.which(name)
-        if resolved:
-            return resolved
-    raise ValueError("no Docker or Podman executable is available for sandbox execution")
-
-
-def _pytest_command(command: list[str]) -> bool:
-    names = [Path(value).name.casefold() for value in command[:3]]
-    return bool(
-        names
-        and (
-            names[0] in {"pytest", "pytest.exe"}
-            or (len(names) >= 3 and names[1:3] == ["-m", "pytest"])
-        )
-    )
-
-
-def sandbox_command(
-    *,
-    engine_path: str,
-    container_name: str,
-    repository: Path,
-    evidence_directory: Path,
-    image: str,
-    command_argv: list[str],
-    cpus: float,
-    memory_mb: int,
-    pids_limit: int,
-) -> list[str]:
-    """Return a shell-free, locked-down Docker/Podman command argv."""
-
-    if not image.strip() or any(character.isspace() for character in image):
-        raise ValueError("sandbox image must be a non-empty image reference without whitespace")
-    if not 0.1 <= cpus <= 8:
-        raise ValueError("sandbox CPU limit must be from 0.1 through 8")
-    if not 128 <= memory_mb <= 32768:
-        raise ValueError("sandbox memory limit must be from 128 through 32768 MiB")
-    if not 16 <= pids_limit <= 1024:
-        raise ValueError("sandbox process limit must be from 16 through 1024")
-    if not command_argv or not all(
-        isinstance(value, str) and value and "\x00" not in value
-        for value in command_argv
-    ):
-        raise ValueError("sandbox command argv must contain non-empty strings")
-    command = list(command_argv)
-    if _pytest_command(command) and not any(
-        value.startswith("--junitxml") for value in command
-    ):
-        command.append("--junitxml=/evidence/junit.xml")
-    engine_name = Path(engine_path).name.casefold()
-    security = (
-        ["--security-opt", "no-new-privileges"]
-        if "podman" in engine_name
-        else ["--security-opt", "no-new-privileges:true"]
-    )
-    pull = ["--pull=never"] if "podman" in engine_name else ["--pull", "never"]
-    entrypoint, *arguments = command
-    return [
-        engine_path,
-        "run",
-        *pull,
-        "--name",
-        container_name,
-        "--rm",
-        "--network",
-        "none",
-        "--ipc",
-        "none",
-        "--read-only",
-        "--user",
-        "65534:65534",
-        "--cpus",
-        str(cpus),
-        "--memory",
-        f"{memory_mb}m",
-        "--pids-limit",
-        str(pids_limit),
-        "--cap-drop",
-        "ALL",
-        "--ulimit",
-        "nofile=1024:1024",
-        *security,
-        "--mount",
-        f"type=bind,src={repository},dst=/workspace,readonly",
-        "--mount",
-        f"type=bind,src={evidence_directory},dst=/evidence",
-        "--tmpfs",
-        "'/tmp:rw,noexec,nosuid,nodev,size=268435456'".strip("'"),
-        "--env",
-        "HOME=/tmp",
-        "--env",
-        "PYTHONDONTWRITEBYTECODE=1",
-        "--env",
-        "PYTHONUNBUFFERED=1",
-        "--workdir",
-        "/workspace",
-        "--entrypoint",
-        entrypoint,
-        image,
-        *arguments,
-    ]
 
 
 def prepare_sandbox_execution(
@@ -421,16 +396,25 @@ def _junit_summary(path: Path) -> dict[str, Any]:
         return {}
     try:
         root = ET.parse(path).getroot()
-    except (ET.ParseError, OSError):
+    except (DefusedXmlException, ET.ParseError, OSError):
+        return {"parse_error": True}
+    if root is None:
         return {"parse_error": True}
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
-    return {
-        "tests": sum(int(value.get("tests", 0)) for value in suites),
-        "failures": sum(int(value.get("failures", 0)) for value in suites),
-        "errors": sum(int(value.get("errors", 0)) for value in suites),
-        "skipped": sum(int(value.get("skipped", 0)) for value in suites),
-        "time_seconds": sum(float(value.get("time", 0) or 0) for value in suites),
+    summary: dict[str, int | float] = {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": 0.0,
     }
+    for suite in suites:
+        summary["tests"] += int(suite.get("tests", 0))
+        summary["failures"] += int(suite.get("failures", 0))
+        summary["errors"] += int(suite.get("errors", 0))
+        summary["skipped"] += int(suite.get("skipped", 0))
+        summary["time_seconds"] += float(suite.get("time", 0) or 0)
+    return summary
 
 
 def _artifact(execution_id: str, kind: str, path: Path, run_directory: Path) -> dict[str, Any]:
@@ -523,10 +507,6 @@ def run_sandbox_execution(
     if run_directory.exists():
         raise ValueError(f"execution evidence destination already exists: {run_directory}")
     preview.mkdir(parents=True, exist_ok=False)
-    try:
-        os.chmod(preview, 0o777)
-    except OSError:
-        pass
     # The mount argument embeds the path, so build against the staging destination.
     argv = sandbox_command(
         engine_path=str(contract["sandbox"]["engine_path"]),
@@ -558,9 +538,13 @@ def run_sandbox_execution(
     except OSError:
         shutil.rmtree(preview, ignore_errors=True)
         raise
-    assert process.stdout is not None and process.stderr is not None
-    stdout = _BoundedCapture(process.stdout)
-    stderr = _BoundedCapture(process.stderr)
+    if process.stdout is None or process.stderr is None:
+        process.kill()
+        process.wait()
+        shutil.rmtree(preview, ignore_errors=True)
+        raise RuntimeError("sandbox process output pipes were not created")
+    stdout = _BoundedCapture(cast(BinaryIO, process.stdout))
+    stderr = _BoundedCapture(cast(BinaryIO, process.stderr))
     threads = [
         threading.Thread(target=stdout.drain, daemon=True),
         threading.Thread(target=stderr.drain, daemon=True),
@@ -649,18 +633,13 @@ def import_execution_evidence(
 
     if not initiated_by.strip():
         raise ValueError("evidence import requires an initiating identity")
-    source_manifest = Path(manifest_path).expanduser().resolve()
-    if (
-        not source_manifest.is_file()
-        or source_manifest.is_symlink()
-        or source_manifest.stat().st_size > MAX_IMPORT_MANIFEST_BYTES
-    ):
-        raise ValueError("evidence manifest must be a regular file within the size limit")
-    try:
-        supplied = json.loads(source_manifest.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ValueError("evidence manifest is not valid UTF-8 JSON") from exc
-    if not isinstance(supplied, dict) or supplied.get("schema_version") != "1.0":
+    source_manifest = Path(manifest_path).expanduser().absolute()
+    supplied = _read_json_object_bounded(
+        source_manifest,
+        limit=MAX_IMPORT_MANIFEST_BYTES,
+        label="evidence manifest",
+    )
+    if supplied.get("schema_version") != "1.0":
         raise ValueError("evidence manifest must be an object with schema_version 1.0")
     obligation = _obligation(analysis, obligation_id)
     baseline = analysis.get("project", {}).get("baseline", {})
@@ -683,29 +662,35 @@ def import_execution_evidence(
         raise ValueError("imported evidence must identify the repository-relative test path")
     root = _repository_root(analysis)
     test_path = _test_file(root, str(test["path"]))
-    test_sha = _sha256_file(test_path)
+    test_sha, _test_size = _sha256_file_bounded(
+        test_path,
+        limit=MAX_TEST_BYTES,
+        label="imported assurance test",
+    )
     if test.get("sha256") != test_sha:
         raise ValueError("imported evidence test hash does not match the current test source")
     automation = obligation.get("automation", {})
-    if automation.get("implementation_status") != "implemented":
-        register_test_implementation(
-            analysis,
-            obligation_id,
-            test_path=test_path.relative_to(root).as_posix(),
-            author=initiated_by,
-            origin="imported",
-        )
-        automation = obligation["automation"]
-    if (
+    registration_required = automation.get("implementation_status") != "implemented"
+    if not registration_required and (
         automation.get("implemented_test_path") != test_path.relative_to(root).as_posix()
         or automation.get("test_sha256") != test_sha
     ):
         raise ValueError("imported evidence does not match the registered test implementation")
+    implementation_origin = (
+        "imported"
+        if registration_required
+        else str(automation.get("implementation_origin", "imported"))
+    )
+    implemented_by = (
+        initiated_by.strip()
+        if registration_required
+        else str(automation.get("implemented_by", initiated_by))
+    )
     supplied_artifacts = supplied.get("artifacts")
     if not isinstance(supplied_artifacts, list) or not supplied_artifacts:
         raise ValueError("imported evidence must include at least one artifact")
     source_root = source_manifest.parent.resolve()
-    sources: list[tuple[str, Path, str]] = []
+    sources: list[tuple[str, Path, str, int]] = []
     total_bytes = 0
     for index, artifact in enumerate(supplied_artifacts, start=1):
         if not isinstance(artifact, dict):
@@ -716,27 +701,35 @@ def import_execution_evidence(
         relative = Path(str(artifact.get("path", "")))
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"artifact {index} path must be manifest-relative")
-        source = (source_root / relative).resolve()
-        if not _inside(source_root, source) or not source.is_file() or source.is_symlink():
+        candidate = (source_root / relative).absolute()
+        if candidate.is_symlink() or not candidate.is_file():
             raise ValueError(f"artifact {index} path is missing or unsafe")
-        size = source.stat().st_size
-        if size > MAX_IMPORTED_ARTIFACT_BYTES:
-            raise ValueError(f"artifact {index} exceeds the per-artifact size limit")
+        source = candidate.resolve()
+        if not _inside(source_root, source):
+            raise ValueError(f"artifact {index} path is missing or unsafe")
+        actual_sha, size = _sha256_file_bounded(
+            source,
+            limit=MAX_IMPORTED_ARTIFACT_BYTES,
+            label=f"artifact {index}",
+        )
         total_bytes += size
         if total_bytes > MAX_IMPORTED_EVIDENCE_BYTES:
             raise ValueError("imported evidence exceeds the total size limit")
-        actual_sha = _sha256_file(source)
         claimed_sha = str(artifact.get("sha256", ""))
         if claimed_sha and claimed_sha != actual_sha:
             raise ValueError(f"artifact {index} digest does not match its manifest claim")
-        sources.append((kind.casefold(), source, actual_sha))
+        sources.append((kind.casefold(), source, actual_sha, size))
     supplied_digest = hashlib.sha256(
         json.dumps(supplied, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     execution_id = stable_id("EXEC", obligation_id, baseline.get("id", ""), supplied_digest)
     register = ensure_assurance_register(analysis)
     existing = next(
-        (value for value in register.get("executions", []) if value.get("id") == execution_id),
+        (
+            value
+            for value in register.get("executions", [])
+            if isinstance(value, dict) and value.get("id") == execution_id
+        ),
         None,
     )
     if existing is not None:
@@ -750,11 +743,20 @@ def import_execution_evidence(
     preview.mkdir(parents=True, exist_ok=False)
     artifacts: list[dict[str, Any]] = []
     try:
-        for index, (kind, source, actual_sha) in enumerate(sources, start=1):
+        copied_total = 0
+        for index, (kind, source, actual_sha, source_size) in enumerate(sources, start=1):
             suffix = source.suffix[:16] if re.fullmatch(r"\.[A-Za-z0-9._-]+", source.suffix) else ""
             destination = preview / f"artifact-{index:03d}-{kind}{suffix}"
-            shutil.copyfile(source, destination)
-            if _sha256_file(destination) != actual_sha:
+            copied_sha, copied_size = _copy_file_bounded(
+                source,
+                destination,
+                limit=MAX_IMPORTED_ARTIFACT_BYTES,
+                label=f"artifact {index}",
+            )
+            copied_total += copied_size
+            if copied_total > MAX_IMPORTED_EVIDENCE_BYTES:
+                raise ValueError("imported evidence exceeds the total size limit during copy")
+            if copied_sha != actual_sha or copied_size != source_size:
                 raise ValueError(f"artifact {index} changed while it was imported")
             artifacts.append(_artifact(execution_id, kind, destination, preview))
         at = utc_now()
@@ -779,8 +781,8 @@ def import_execution_evidence(
             "test": {
                 "path": test_path.relative_to(root).as_posix(),
                 "sha256": test_sha,
-                "origin": automation.get("implementation_origin", "imported"),
-                "implemented_by": automation.get("implemented_by", initiated_by),
+                "origin": implementation_origin,
+                "implemented_by": implemented_by,
             },
             "command_argv": command_argv,
             "test_command_argv": command_argv,
@@ -807,13 +809,29 @@ def import_execution_evidence(
     except Exception:
         shutil.rmtree(preview, ignore_errors=True)
         raise
-    _record_collected_execution(
-        analysis,
-        obligation,
-        contract,
-        artifacts,
-        event="external_execution_evidence_imported",
-    )
+    analysis_snapshot = copy.deepcopy(analysis)
+    try:
+        if registration_required:
+            register_test_implementation(
+                analysis,
+                obligation_id,
+                test_path=test_path.relative_to(root).as_posix(),
+                author=initiated_by,
+                origin="imported",
+            )
+            obligation = _obligation(analysis, obligation_id)
+        _record_collected_execution(
+            analysis,
+            obligation,
+            contract,
+            artifacts,
+            event="external_execution_evidence_imported",
+        )
+    except Exception:
+        analysis.clear()
+        analysis.update(analysis_snapshot)
+        shutil.rmtree(run_directory, ignore_errors=True)
+        raise
     return contract
 
 
@@ -821,12 +839,19 @@ def _verify_execution_manifest(execution: dict[str, Any]) -> tuple[bool, str]:
     """Verify the on-disk execution statement against its recorded canonical digest."""
 
     directory = Path(str(execution.get("evidence_directory", ""))).resolve()
-    manifest = (directory / "execution.json").resolve()
-    if not _inside(directory, manifest) or not manifest.is_file() or manifest.is_symlink():
+    candidate = (directory / "execution.json").absolute()
+    if candidate.is_symlink() or not candidate.is_file():
+        return False, "execution manifest is missing or unsafe"
+    manifest = candidate.resolve()
+    if not _inside(directory, manifest):
         return False, "execution manifest is missing or unsafe"
     try:
-        on_disk = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        on_disk = _read_json_object_bounded(
+            manifest,
+            limit=MAX_IMPORT_MANIFEST_BYTES,
+            label="execution manifest",
+        )
+    except ValueError:
         return False, "execution manifest is unreadable or invalid JSON"
     expected = str(on_disk.pop("execution_manifest_sha256", ""))
     canonical = json.dumps(on_disk, sort_keys=True, separators=(",", ":")).encode(
@@ -861,15 +886,78 @@ def _verify_artifacts(
         if not artifact:
             errors.append(f"missing artifact record: {artifact_id}")
             continue
-        path = (directory / str(artifact.get("path", ""))).resolve()
-        if not _inside(directory, path) or not path.is_file() or path.is_symlink():
+        candidate = (directory / str(artifact.get("path", ""))).absolute()
+        if candidate.is_symlink() or not candidate.is_file():
             errors.append(f"artifact path is missing or unsafe: {artifact_id}")
             continue
-        if path.stat().st_size != artifact.get("bytes") or _sha256_file(path) != artifact.get(
-            "sha256"
-        ):
+        path = candidate.resolve()
+        if not _inside(directory, path):
+            errors.append(f"artifact path is missing or unsafe: {artifact_id}")
+            continue
+        try:
+            actual_sha, actual_size = _sha256_file_bounded(
+                path,
+                limit=MAX_IMPORTED_ARTIFACT_BYTES,
+                label=f"artifact {artifact_id}",
+            )
+        except ValueError:
+            errors.append(f"artifact content changed: {artifact_id}")
+            continue
+        if actual_size != artifact.get("bytes") or actual_sha != artifact.get("sha256"):
             errors.append(f"artifact content changed: {artifact_id}")
     return not errors, errors
+
+
+def verify_execution_artifacts(
+    analysis: dict[str, Any],
+    execution_id: str,
+    *,
+    evidence_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Verify one retained execution manifest and all referenced artifact bytes."""
+
+    register = ensure_assurance_register(analysis)
+    execution = next(
+        (
+            value
+            for value in register.get("executions", [])
+            if isinstance(value, dict) and value.get("id") == execution_id
+        ),
+        None,
+    )
+    if execution is None:
+        return {
+            "valid": False,
+            "execution_id": execution_id,
+            "manifest_sha256": "",
+            "artifact_ids": [],
+            "errors": ["execution record is unavailable"],
+        }
+    if evidence_root is not None:
+        allowed_root = Path(evidence_root).expanduser().absolute().resolve()
+        execution_root = Path(
+            str(execution.get("evidence_directory", ""))
+        ).expanduser().absolute().resolve()
+        if not _inside(allowed_root, execution_root):
+            return {
+                "valid": False,
+                "execution_id": execution_id,
+                "manifest_sha256": str(
+                    execution.get("execution_manifest_sha256", "")
+                ),
+                "artifact_ids": [
+                    str(value) for value in execution.get("artifacts", [])
+                ],
+                "errors": ["execution evidence directory escapes the allowed root"],
+            }
+    valid, errors = _verify_artifacts(register, execution)
+    return {
+        "valid": valid,
+        "execution_id": execution_id,
+        "manifest_sha256": str(execution.get("execution_manifest_sha256", "")),
+        "artifact_ids": [str(value) for value in execution.get("artifacts", [])],
+        "errors": errors,
+    }
 
 
 def review_execution_evidence(

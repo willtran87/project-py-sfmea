@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,17 +8,50 @@ dynamic = ["version"]
 description = "A local, guidance-based Software FMEA starter for Python repositories"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "PySFMEA contributors" }]
+keywords = ["dfmea", "fmea", "python", "safety", "sfmea", "software-assurance"]
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Quality Assurance",
 ]
+dependencies = ["defusedxml>=0.7.1"]
 
 [project.optional-dependencies]
 signing = ["cryptography>=42"]
+dev = [
+  "build>=1.2",
+  "hypothesis>=6.138",
+  "jsonschema>=4.23",
+  "pytest>=8",
+  "pytest-timeout>=2.4",
+  "ruff>=0.9",
+]
+quality = [
+  "bandit>=1.8",
+  "coverage[toml]>=7.10",
+  "mypy>=1.18",
+  "mutmut>=3.7,<4",
+  "pip-audit>=2.9",
+  "types-defusedxml>=0.7.0.20260504",
+]
+browser = ["playwright>=1"]
+
+[project.urls]
+Documentation = "https://willtran87.github.io/project-py-sfmea/"
+Homepage = "https://willtran87.github.io/project-py-sfmea/"
+Issues = "https://github.com/willtran87/project-py-sfmea/issues"
+Repository = "https://github.com/willtran87/project-py-sfmea"
 
 [project.scripts]
 sfmea = "pysfmea.cli:main"
@@ -31,3 +64,69 @@ where = ["src"]
 
 [tool.setuptools.dynamic]
 version = { attr = "pysfmea.version.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "I"]
+
+[tool.coverage.run]
+branch = true
+source = ["pysfmea"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = [
+  "src/pysfmea",
+  "scripts/check_coverage_ratchets.py",
+  "scripts/check_mutation_ratchet.py",
+  "scripts/check_module_size_ratchets.py",
+  "scripts/benchmark_scan.py",
+  "scripts/generate_scale_corpus.py",
+  "scripts/qualification_readiness.py",
+  "scripts/report_browser_gate.py",
+]
+warn_unused_configs = true
+
+[tool.bandit]
+exclude_dirs = ["tests", "build", "dist"]
+
+[tool.mutmut]
+source_paths = ["src/pysfmea"]
+only_mutate = [
+  "src/pysfmea/assurance_planning.py",
+  "src/pysfmea/fault_injection.py",
+  "src/pysfmea/runtime.py",
+  "src/pysfmea/sandbox_policy.py",
+  "src/pysfmea/readiness.py",
+  "src/pysfmea/scan_cache.py",
+  "src/pysfmea/diagnostics.py",
+  "src/pysfmea/llm_quality.py",
+]
+pytest_add_cli_args_test_selection = [
+  "tests/test_fault_injection.py",
+  "tests/test_runtime.py",
+  "tests/test_sandbox_policy.py",
+  "tests/test_readiness.py",
+  "tests/test_scan_cache.py",
+  "tests/test_diagnostics.py",
+  "tests/test_llm_quality_mutation.py",
+]
+mutate_only_covered_lines = true
+max_stack_depth = 12
+pytest_add_cli_args = ["--timeout=30"]
