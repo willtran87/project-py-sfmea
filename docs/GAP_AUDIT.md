@@ -132,7 +132,10 @@ This matrix compares PySFMEA with the public NASA and FAA process guidance used 
   assurance-program cohort with reconciled failure-mode and call-resolution metrics, and calculate
   provider/model/prompt-specific LLM grounding, citation, and claim-weighted unsupported-claim
   metrics from an exact-artifact-bound, subject-bound labeled corpus whose samples are replayed by
-  program verification. Program aggregation credits each validation corpus digest once and each
+  program verification. Generated test code has a separate independently governed corpus with
+  expected and actual proposal/refusal populations, exact target-binding, restricted-execution,
+  stimulus, criteria, seeded-fault, reviewer, and unsafe-change gates; its content-sealed result is
+  replayable against the exact corpus. Program aggregation credits each validation corpus digest once and each
   replayed LLM semantic fingerprint once, so metadata or sample-order repackaging cannot inflate
   the population; declared/credited/duplicate/fingerprinted counts remain visible. Legacy unbound
   corpora are explicitly identified and gated.
@@ -147,6 +150,9 @@ authority that must supply the evidence.
 - Source code cannot determine a credible system consequence, hazard severity, independence claim, or risk acceptance without architecture, operational knowledge, and authorized reviewers.
 - SFTA correlation does not prove top-down completeness or logical sufficiency. Projects must review and approve their explicit fault-tree logic, analyze non-software contributors, and separately perform any required FTA, STPA, or other hazard analysis.
 - Textual test references and line/branch coverage do not prove control effectiveness. Off-nominal tests, fault injection, mutation testing, monitoring evidence, and independent verification must be supplied where required.
+- A qualified generated-test provider/model/prompt does not make an individual test ready, and a
+  ready test does not prove general model quality. Corpus representativeness, reviewer competence,
+  publication authority, and all per-test evidence decisions remain external responsibilities.
 - PySFMEA cannot supply a licensed proprietary Action Priority table, domain certification, tool qualification, independence, an identity provider, or a legally controlled approval signature. Optional detached package signatures authenticate freshly verified bytes to a trusted key through strict byte/depth/node-bounded JSON, inspected/opened/final identity-revalidated key/envelope/manifest inputs, and atomic race-refusing publication; they do not provide authorization, revocation, key custody, or approval workflow.
 - The governed analysis source is consumed and hashed through a 200 MB identity-stable regular-file boundary, structurally limited to 100 levels and 5,000,000 nodes before migration, and atomically replaced only after bounded serialization and destination revalidation. These controls protect local availability and revision integrity; they do not replace organizational backup, retention, access control, or disaster recovery.
 - Standalone CSV/Markdown/JSON/SARIF/CycloneDX/SFTA/visual/diagram/HTML, assurance-register/work-queue, individual-schema, and publication-catalog exports use a shared encoded-artifact boundary with final-link/non-file refusal, synchronized sibling staging, concurrent-destination reconciliation, atomic replacement, prior preservation, exact BOM/newline compatibility, and staging cleanup. Catalog refresh retains its exact pre-validation absent/file state and refuses any later owner or content change. These controls prevent partial or misdirected publication; they do not validate the engineering conclusions or guarantee storage durability beyond the host filesystem.

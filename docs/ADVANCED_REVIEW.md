@@ -4,16 +4,34 @@ These workflows extend the governed analysis without changing the central author
 static and model-generated results are review leads; named humans own engineering decisions.
 
 ```mermaid
-flowchart LR
-    A["Governed analysis"] --> R["Self-contained report"]
-    R --> V["Saved or shared review view"]
-    R --> Q["Accessibility qualification evidence"]
-    A --> L["LLM synthesis workspace"]
-    L --> H["Human edits and decisions"]
+flowchart TB
+    A["Governed analysis"]
+    subgraph REPORT["Report review"]
+        direction LR
+        R["Self-contained report"] --> V["Saved or shared review view"]
+        R --> Q["Accessibility qualification evidence"]
+    end
+    subgraph SYNTHESIS["Human-controlled synthesis"]
+        direction LR
+        L["LLM synthesis workspace"] --> H["Human edits and decisions"]
+    end
+    subgraph TESTS["Generated-test governance"]
+        direction LR
+        T["Generated-test proposal"] --> E["Human publication + per-test evidence gates"]
+        C["Independent generated-test corpus"] --> M["Subject qualification + replay"]
+        E --> D{"Human automation decision"}
+        M --> D
+    end
+    subgraph EXTENSIONS["Change and extension review"]
+        direction LR
+        G["Git base and head"] --> P["PR differential bundle"]
+        X["Explicit process plugin"] --> O["Untrusted observations"]
+    end
+    A --> R
+    A --> L
     H --> A
-    G["Git base and head"] --> P["PR differential bundle"]
-    A --> X["Explicit process plugin"]
-    X --> O["Untrusted observations"]
+    A --> T
+    A --> X
 ```
 
 ## Saved and shareable report views
@@ -106,6 +124,22 @@ source/workspace/result and decision-accounting reconciliation. For receipt tran
 use `--integrity-only`; this deliberately reports `reconciled=false`. If result/receipt publication
 fails after the source snapshot is written, the immutable snapshot remains useful recovery evidence
 and can be supplied to the verifier after reconciliation.
+
+## Governed LLM test implementation
+
+Generated test code uses a narrower authority path than discovery and synthesis. One accepted,
+planning-ready obligation produces one bounded packet and one allowlisted test proposal. Validation
+requires an analyzer-derived import-qualified target invocation; a named human must approve atomic
+publication before exact registration, restricted execution, stimulus/criteria assessment, and
+independent evidence review can satisfy the seven per-test gates.
+
+Automation promotion is a separate decision. An independently labeled corpus must qualify the
+exact provider/model/prompt through fourteen population, validity, execution, effectiveness,
+reviewer, and unsafe-change gates. The result is content-sealed and replayed against the exact
+corpus. Neither lane waives the other, authenticates reviewer identities, or grants the model
+publication, evidence, risk, or compliance authority. See the
+[operator workflow](WORKFLOW.md#6-turn-accepted-findings-into-hardening-tests) for exact commands
+and the [visual guide](VISUAL_GUIDE.md#governed-llm-generated-test-path) for the evidence split.
 
 ## Pull-request base/head analysis
 

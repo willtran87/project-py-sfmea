@@ -117,6 +117,39 @@ An obligation should answer all of these questions:
 - Which artifacts prove the exact test and execution?
 - Who independently reviewed the evidence?
 
+## Governed LLM-generated test path
+
+```mermaid
+flowchart TB
+    subgraph PERTEST["Per-test evidence"]
+        O["Accepted planning-ready obligation"] --> P["Bounded source-grounded packet"]
+        P --> M["Model proposes one allowlisted test"]
+        M --> X["Closed response + import-qualified target validation"]
+        X --> H["Named human publication review"]
+        H --> E["Exact registration + restricted execution"]
+        E --> I["Observed stimulus + criteria + independent evidence review"]
+        I --> R{"7 readiness gates"}
+        I --> HTML["HTML: 5 analysis-resident evidence gates"]
+        H --> EXT["External proposal + publication receipts"]
+        EXT --> R
+    end
+    subgraph SUBJECT["Subject qualification"]
+        C["Independent generated-test corpus"] --> Q{"14 quality gates"}
+        Q --> S["Content-sealed result"]
+        S --> V["Exact-corpus semantic replay"]
+    end
+    R --> D{"Human promotion decision"}
+    V --> D
+```
+
+The lanes are deliberately independent. A qualified provider/model/prompt does not make one test
+ready, and one ready test does not qualify the model generally. The HTML report projects only the
+five gates available in the governed analysis—registration, passing restricted execution,
+observed stimulus, complete criteria, and independent evidence review. The exact proposal and
+publication receipt remain separately verified artifacts, so seven-gate readiness must be checked
+with `sfmea assurance-test-readiness`. Model qualification uses
+`sfmea assurance-test-quality-evaluate` and `sfmea assurance-test-quality-verify`.
+
 ## Evidence trust ladder
 
 ```mermaid
@@ -187,6 +220,8 @@ circuit-breaker expectations.
 | Exchange diagram data | Canonical diagram JSON | `sfmea diagram` | Architecture and tooling teams |
 | Triage incomplete work | Workflow status and queue | `sfmea status`, `sfmea queue` | Analysis owner |
 | Plan hardening tests | Assurance register/work queue | `sfmea assurance` | Verification team |
+| Inspect generated-test evidence | HTML LLM-generated test governance card plus external proposal/receipt | `sfmea report`, `sfmea assurance-test-readiness` | Verification and independent evidence reviewers |
+| Qualify generated-test automation | Content-sealed generated-test quality result bound to its exact corpus | `sfmea assurance-test-quality-evaluate`, `sfmea assurance-test-quality-verify` | Independent model-evaluation authority |
 | Review source coverage | Inventory and coverage views | `sfmea inventory`, `sfmea coverage` | Tool and software assurance |
 | Audit NASA/FAA relationships | Citation trace | `sfmea citations` | Safety and compliance reviewers |
 | Transfer a frozen review set | Verified ZIP package | `sfmea package`, `sfmea verify-package` | Independent recipient |
@@ -198,11 +233,16 @@ circuit-breaker expectations.
 |---|---|---|
 | Architecture | Which components depend on which components? | Bounded static structure. |
 | Interface flow | Where are internal, external, and unresolved calls? | Receiver resolution is confidence-labeled. |
+| Data flow | Which bounded value/alias relationships cross components? | Static flow is not runtime information-flow proof. |
 | Sequence | In what lexical/evaluation order do calls occur? | Not path-sensitive execution proof. |
 | Failure propagation | Where could an effect be exposed upstream? | Exposure is not causal sufficiency. |
 | Circuit breaker | Which state roles and transitions were detected? | Conceptual states and review gaps remain explicit. |
 | Control coverage | Which findings have prevention, detection, and evidence? | Presence does not establish effectiveness. |
-| Traceability | How do requirements, hazards, findings, and citations connect? | A citation is rationale, not compliance approval. |
+| Traceability | How do requirements, hazards, findings, and components connect? | A relationship is not verification evidence. |
+| Guidance traceability | Which guidance locators and mappings support findings? | A citation is rationale, not compliance approval. |
+| Assurance traceability | How do findings connect to obligations, tests, executions, and evidence? | Registration or execution alone is not readiness. |
+| SFTA | How are reviewed top events, gates, and basic events structured? | Generated structure is not quantitative risk proof. |
+| Evidence fabric | Which cross-domain records and discrepancies connect? | Correlation and lineage do not establish causality or authority. |
 
 Generate and verify the complete portfolio:
 
@@ -221,8 +261,10 @@ sfmea report-verify sfmea-report.html --analysis sfmea-analysis.json
 4. Inspect propagation, sequence, timing, and containment assumptions.
 5. Validate guidance applicability and citation relationship strength.
 6. Accept or reject candidates; assign owners and actions.
-7. Implement obligations and collect controlled evidence.
-8. Reconcile all blockers, verify outputs, and package the exact analysis state.
+7. If generated-test automation is used, qualify the exact provider/model/prompt independently and
+   retain the replayable result.
+8. Implement obligations and collect controlled evidence; apply every per-test readiness gate.
+9. Reconcile all blockers, verify outputs, and package the exact analysis state.
 
 ## Authority boundary
 

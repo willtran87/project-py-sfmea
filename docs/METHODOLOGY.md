@@ -825,13 +825,24 @@ LLM test implementation is a separate, narrower authority path. It operates on o
 planning-ready verification obligation and an inventory-hashed, byte-bounded source snapshot.
 Potential embedded secrets block provider invocation, and live source egress is an explicit
 operator decision. Closed response validation restricts output to one exact test path and rejects
-unsafe, placeholder, skipped, assertion-free, or non-exercising source. Validator-guided repair is
-limited to three total attempts and its outcome digests are retained. Model output is staged
+unsafe, placeholder, skipped, assertion-free, or non-exercising source. The named test must import
+and directly invoke an analyzer-derived import-qualified identity; wrong-module lookalikes, local
+replacements, rebound aliases, and collection-time-only calls fail closed. Validator-guided repair
+is limited to three total attempts and its outcome digests are retained. Model output is staged
 outside the repository; a named human review is required before coordinated atomic publication of
 the test and receipt. Assurance readiness additionally requires exact LLM-origin registration,
 restricted execution, observed stimulus, complete criterion results, artifact-integrity credit,
 and an independent sufficient-evidence decision. No stage grants the model disposition, approval,
 evidence-review, risk-acceptance, or compliance authority.
+
+Generated-code model qualification is separate from both generic discovery/summarization quality
+and per-test readiness. A closed independently labeled corpus binds one exact provider, model, and
+prompt version and requires expected and actual proposal/refusal populations. Fourteen gates cover
+population sufficiency, decision accuracy, proposal validity, exact target binding, restricted
+execution, stimulus observation, criteria completion, seeded-fault detection, independent reviewer
+acceptance, and unsafe-change attempts. Results are content-sealed, bind the exact corpus digest,
+and can be semantically replayed. Passing qualifies only that retained sample and subject; it does
+not prove corpus representativeness, authorize publication, or waive any test-specific gate.
 
 Pull-request orchestration compares exact committed archives without checking out the working tree
 or executing repository code. Process plugins are explicit, semantic-versioned, bounded

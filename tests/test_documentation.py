@@ -9,6 +9,8 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+from pysfmea.diagrams import GENERATED_DIAGRAM_KINDS
+
 DOCUMENT_EXCLUDED_DIRECTORIES = {".artifacts", ".git", ".venv", "build", "dist"}
 
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
@@ -68,3 +70,41 @@ class DocumentationLinksTests(unittest.TestCase):
                         failures.append(f"{document.relative_to(ROOT)} -> {target}")
 
         self.assertEqual(failures, [], "Broken local documentation links:\n" + "\n".join(failures))
+
+    def test_generated_test_governance_documentation_matches_current_contract(self) -> None:
+        documents = {
+            name: (ROOT / name).read_text(encoding="utf-8")
+            for name in (
+                "README.md",
+                "docs/WORKFLOW.md",
+                "docs/VISUAL_GUIDE.md",
+                "docs/METHODOLOGY.md",
+            )
+        }
+        for name, content in documents.items():
+            with self.subTest(document=name):
+                self.assertIn("import-qualified", content)
+                self.assertIn("exact", content.casefold())
+        for name in ("README.md", "docs/WORKFLOW.md", "docs/VISUAL_GUIDE.md"):
+            with self.subTest(quality_gates=name):
+                self.assertIn("14 quality gates", documents[name])
+                self.assertIn("7", documents[name])
+        self.assertIn("Fourteen gates", documents["docs/METHODOLOGY.md"])
+        for command in (
+            "assurance-test-quality-evaluate",
+            "assurance-test-quality-verify",
+        ):
+            self.assertIn(command, documents["README.md"])
+            self.assertIn(command, documents["docs/WORKFLOW.md"])
+            self.assertIn(command, documents["docs/VISUAL_GUIDE.md"])
+        visual = documents["docs/VISUAL_GUIDE.md"]
+        self.assertIn('subgraph PERTEST["Per-test evidence"]', visual)
+        self.assertIn('subgraph SUBJECT["Subject qualification"]', visual)
+        self.assertIn('D{"Human promotion decision"}', visual)
+
+    def test_diagram_documentation_lists_every_generated_category(self) -> None:
+        content = (ROOT / "docs" / "DIAGRAMS.md").read_text(encoding="utf-8")
+        for category in GENERATED_DIAGRAM_KINDS:
+            if category != "all":
+                with self.subTest(category=category):
+                    self.assertIn(f"`{category}`", content)

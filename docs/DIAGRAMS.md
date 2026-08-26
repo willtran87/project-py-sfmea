@@ -14,22 +14,30 @@ the [visual guide](VISUAL_GUIDE.md).
 flowchart LR
     A["Governed analysis"] --> AR["Architecture"]
     A --> IF["Interface flow"]
+    A --> DF["Data flow"]
     A --> SQ["Sequence"]
     A --> FP["Failure propagation"]
     A --> CB["Circuit breaker"]
     A --> CC["Control coverage"]
     A --> TR["Traceability"]
+    A --> GT["Guidance traceability"]
+    A --> AT["Assurance traceability"]
+    A --> ST["SFTA"]
     A --> XR["Evidence fabric"]
     RT["Imported runtime evidence"] --> SQ
     RT --> FP
     CT["Custom diagram JSON"] --> RP["Self-contained HTML report"]
     AR --> RP
     IF --> RP
+    DF --> RP
     SQ --> RP
     FP --> RP
     CB --> RP
     CC --> RP
     TR --> RP
+    GT --> RP
+    AT --> RP
+    ST --> RP
     XR --> RP
 ```
 

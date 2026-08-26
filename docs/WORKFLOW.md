@@ -703,6 +703,24 @@ independently review as-run evidence where the assurance policy requires it.
 For a single accepted obligation with no planning gaps, the governed LLM path can implement the
 test without granting the model approval or evidence authority:
 
+```mermaid
+flowchart TB
+  subgraph TEST["One generated test"]
+    O["Accepted planning-ready obligation"] --> P["Bounded packet"]
+    P --> L["LLM proposal"]
+    L --> B["Closed contract + import-qualified target binding"]
+    B --> H["Human-reviewed atomic publication"]
+    H --> E["Register, execute, assess criteria, review evidence"]
+    E --> R{"7 readiness gates"}
+  end
+  subgraph QUAL["Exact provider/model/prompt"]
+    C["Independent generated-test corpus"] --> G{"14 quality gates"}
+    G --> V["Content integrity + corpus replay"]
+  end
+  R --> D{"Human promotion decision"}
+  V --> D
+```
+
 ```powershell
 $proposal = Join-Path $artifacts "generated-test.json"
 $stage = Join-Path $artifacts "generated-test-stage"
@@ -735,17 +753,21 @@ Before promoting a provider/model/prompt beyond supervised pilots, independently
 generated-test-specific corpus template and enforce its declared thresholds:
 
 ```powershell
+$qualityCorpus = Join-Path $artifacts "test-generation-quality-corpus.json"
+Copy-Item examples/test-generation-quality-corpus.template.json $qualityCorpus
+# Replace every template marker, add the independently labeled samples, and retain review evidence.
 sfmea assurance-test-quality-evaluate `
-  examples/test-generation-quality-corpus.json `
+  $qualityCorpus `
   --require-qualified -o test-generation-quality-result.json
 sfmea assurance-test-quality-verify test-generation-quality-result.json `
-  examples/test-generation-quality-corpus.json
+  $qualityCorpus
 ```
 
 The evaluator requires both expected and actual proposal/refusal populations, content-seals the
-result for exact-corpus replay, and recomputes
-decision, validity, binding, execution, stimulus, criteria, seeded-fault, reviewer-acceptance, and
-unsafe-change metrics. Passing qualifies only the retained sample and exact subject.
+result for exact-corpus replay, and recomputes 14 population, decision, validity, binding,
+execution, stimulus, criteria, seeded-fault, reviewer-acceptance, and unsafe-change gates. Passing
+qualifies only the retained sample and exact subject. It does not replace any per-test readiness
+gate or authorize automatic publication.
 
 For a high-value dependency or resilience obligation, generate and verify an explicit
 fault-injection plan before implementing the corresponding test:

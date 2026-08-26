@@ -23,7 +23,8 @@ flowchart LR
 ## Documentation map
 
 - [Product site and generated live report](https://willtran87.github.io/project-py-sfmea/)
-- [Visual guide](docs/VISUAL_GUIDE.md) — workflows, failure cascades, trust boundaries, and outputs
+- [Visual guide](docs/VISUAL_GUIDE.md) — workflows, failure cascades, generated-test governance,
+  trust boundaries, and outputs
 - [Operator workflow](docs/WORKFLOW.md) — the concise scan-to-handoff path
 - [Complete command guide](#quick-start)
 - [Methodology and assurance boundaries](docs/METHODOLOGY.md)
@@ -1725,17 +1726,26 @@ also requires explicit source-egress approval; offline recorded responses suppor
 qualification without a network call.
 
 ```mermaid
-flowchart LR
-  A[Accepted obligation] --> B[Inspect bounded packet]
-  B --> C[LLM proposal]
-  C --> D[Closed-contract verification]
-  D --> E[Isolated stage]
-  E --> F[Named human approval]
-  F --> G[Atomic test + receipt]
-  G --> H[Register exact SHA-256]
-  H --> I[Restricted execution]
-  I --> J[Independent evidence review]
-  J --> K{7 readiness gates}
+flowchart TB
+  subgraph TEST["Per-test evidence lane"]
+    A["Accepted planning-ready obligation"] --> B["Bounded source-grounded packet"]
+    B --> C["LLM proposal"]
+    C --> D["Closed contract + import-qualified target binding"]
+    D --> E["Isolated stage"]
+    E --> F["Named human publication review"]
+    F --> G["Atomic test + receipt"]
+    G --> H["Exact SHA-256 registration"]
+    H --> I["Restricted execution + observed stimulus"]
+    I --> J["Criteria + independent evidence review"]
+    J --> K{"7 per-test readiness gates"}
+  end
+  subgraph MODEL["Provider/model/prompt qualification lane"]
+    Q["Independent generated-test corpus"] --> R["Recompute 14 quality gates"]
+    R --> S["Content seal + exact-corpus replay"]
+  end
+  K --> P{"Human promotion decision"}
+  S --> P
+  P --> U["Supervised production use"]
 ```
 
 ```powershell
@@ -1789,23 +1799,23 @@ pre-existing acceptance criteria passing, and an independent sufficient-evidence
 output, syntactic validity, a passing test, or the application receipt alone receives no assurance
 credit. System-safety assessment and risk acceptance remain human authorities.
 
-Before enabling a provider in a production assurance program, retain an independently labeled
-format-3 LLM quality corpus whose subject uses prompt version
-`sfmea-assurance-test-generation-1`. That corpus qualifies the named provider/model/prompt sample;
-the per-test readiness gates still supply the execution and effectiveness evidence and neither
-mechanism proves representativeness by itself.
-
-For generated code, use the specific corpus template at
+Do not use the generic format-3 discovery/summarization LLM corpus as a substitute for generated-
+code qualification. Before enabling generated-test automation beyond supervised pilots, use the
+dedicated corpus template at
 [`examples/test-generation-quality-corpus.template.json`](examples/test-generation-quality-corpus.template.json).
-It measures proposal/refusal decision accuracy, closed-proposal validity, exact target binding,
+It binds the exact provider/model/`sfmea-assurance-test-generation-1` prompt and measures expected
+and actual proposal/refusal populations, decision accuracy, closed-proposal validity, exact target binding,
 restricted execution, stimulus observation, criteria completion, seeded-fault detection,
 independent reviewer acceptance, and unsafe-change attempts:
 
 ```powershell
-sfmea assurance-test-quality-evaluate test-generation-quality-corpus.json `
+$qualityCorpus = "test-generation-quality-corpus.json"
+Copy-Item examples/test-generation-quality-corpus.template.json $qualityCorpus
+# Replace every template marker, add the independently labeled samples, and retain review evidence.
+sfmea assurance-test-quality-evaluate $qualityCorpus `
   --require-qualified -o test-generation-quality-result.json
 sfmea assurance-test-quality-verify test-generation-quality-result.json `
-  test-generation-quality-corpus.json
+  $qualityCorpus
 sfmea schema assurance-test-generation-quality-corpus `
   -o assurance-test-generation-quality-corpus.schema.json
 sfmea schema assurance-test-generation-quality-result `
@@ -1813,8 +1823,9 @@ sfmea schema assurance-test-generation-quality-result `
 ```
 
 Results are content-sealed and can be replayed against the exact corpus; both expected and actual
-proposal/refusal populations must clear their gates. The self-contained HTML assurance view reports
-current `llm_generated` registration and the five
+proposal/refusal populations and all 14 gates must pass. Qualification applies only to the retained
+independently governed sample and exact subject; it does not prove representativeness. The self-
+contained HTML assurance view reports current `llm_generated` registration and the five
 analysis-resident execution/effectiveness gates. Exact proposal and human-publication receipts stay
 separate so the report cannot imply that unavailable external artifacts were verified.
 

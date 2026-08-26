@@ -12,7 +12,9 @@ package; public artifact and schema identifiers carry their own explicit compati
   criteria, seeded-fault, reviewer, and unsafe-change gates. Content-seal results and support exact-
   corpus semantic replay. Surface LLM-origin registration and internal
   evidence readiness in the self-contained HTML assurance view while keeping proposal/publication
-  receipts explicitly external.
+  receipts explicitly external. Refresh the operator, methodology, confidence-gate, and visual
+  documentation with the separate seven-gate per-test and fourteen-gate subject-qualification
+  lanes, and reconcile the diagram portfolio with every generated category.
 - Add a governed LLM assurance-test generation workflow: bounded source-grounded packets,
   closed proposal validation, three-attempt repair provenance, isolated staging, explicit
   human publication receipts, and seven fail-closed readiness gates covering registration,

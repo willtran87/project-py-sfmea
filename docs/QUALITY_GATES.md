@@ -23,6 +23,9 @@ flowchart LR
   Z --> R
   X["Independent repositories, labels, reviewers"] --> Q["Qualification campaign"]
   R --> Q
+  G["Independent generated-test corpus"] --> T["14 subject-bound quality gates + replay"]
+  R --> T
+  T --> A["Human automation-promotion decision"]
 ```
 
 ## Enforced controls
