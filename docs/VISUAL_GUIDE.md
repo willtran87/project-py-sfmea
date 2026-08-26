@@ -148,7 +148,10 @@ five gates available in the governed analysis—registration, passing restricted
 observed stimulus, complete criteria, and independent evidence review. The exact proposal and
 publication receipt remain separately verified artifacts, so seven-gate readiness must be checked
 with `sfmea assurance-test-readiness`. Model qualification uses
-`sfmea assurance-test-quality-evaluate` and `sfmea assurance-test-quality-verify`.
+`sfmea assurance-test-quality-evaluate` and `sfmea assurance-test-quality-verify`. Paired fault
+credit is prepared with `sfmea assurance-test-fault-evidence` and independently replayed with
+`sfmea assurance-test-fault-evidence-verify`; both commands reconcile the exact execution manifests
+and raw artifacts rather than trusting declared pass/fail strings.
 
 ## Evidence trust ladder
 

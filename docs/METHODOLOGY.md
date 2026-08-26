@@ -846,8 +846,11 @@ not prove corpus representativeness, authorize publication, or waive any test-sp
 The compatible format-2 corpus replaces manually asserted outcome booleans with safe relative
 references to exact analysis, proposal, publication, and paired baseline/seeded-fault artifacts.
 PySFMEA rechecks their byte identities and lifecycle semantics, derives the scored claims, and adds
-a fifteenth artifact-derived-claims gate. This strengthens traceability but still does not
-authenticate named actors or prove that the selected sample represents deployment use.
+a fifteenth artifact-derived-claims gate. Seeded-fault credit additionally requires two distinct
+analysis-linked execution manifests under the campaign root, the same test digest, baseline-pass and
+seeded-fail status, valid manifest seals, and every referenced raw artifact at its recorded size and
+SHA-256. This strengthens traceability but still does not authenticate named actors, prove the
+semantic adequacy of the injected fault, or show that the sample represents deployment use.
 
 Pull-request orchestration compares exact committed archives without checking out the working tree
 or executing repository code. Process plugins are explicit, semantic-versioned, bounded

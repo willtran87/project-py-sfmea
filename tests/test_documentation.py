@@ -92,6 +92,8 @@ class DocumentationLinksTests(unittest.TestCase):
                 self.assertIn("7", documents[name])
         self.assertIn("Fourteen gates", documents["docs/METHODOLOGY.md"])
         for command in (
+            "assurance-test-fault-evidence",
+            "assurance-test-fault-evidence-verify",
             "assurance-test-quality-evaluate",
             "assurance-test-quality-verify",
         ):

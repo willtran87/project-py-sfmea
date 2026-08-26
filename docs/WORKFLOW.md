@@ -777,6 +777,24 @@ replays lifecycle verification against the current exact repository bytes, and a
 derived-claims gate. Refused samples must not attach execution artifacts. Missing, linked, escaping,
 oversized, stale, digest-mismatched, subject-mismatched, or duplicate evidence fails closed.
 
+Build—not hand-author—the paired fault record after both runs are retained in the analysis:
+
+```powershell
+sfmea assurance-test-fault-evidence sfmea-analysis.json SAMPLE-001 `
+  EXEC-BASELINE EXEC-SEEDED --fault-id MUTATION-001 `
+  --environment "locked-down qualification container" `
+  --evidence-root $artifacts -o (Join-Path $artifacts "SAMPLE-001/fault.json")
+sfmea assurance-test-fault-evidence-verify `
+  (Join-Path $artifacts "SAMPLE-001/fault.json") `
+  --analysis sfmea-analysis.json --evidence-root $artifacts --json
+```
+
+Creation and replay require distinct execution IDs and manifest digests, the same exact generated
+test SHA-256, baseline `passed`, seeded `failed`, execution directories confined under the supplied
+root, valid content-sealed execution manifests, and every referenced artifact at its recorded size
+and SHA-256. A result string or digest without those available bytes receives no fault-detection
+credit.
+
 For a high-value dependency or resilience obligation, generate and verify an explicit
 fault-injection plan before implementing the corresponding test:
 

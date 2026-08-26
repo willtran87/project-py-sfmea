@@ -908,6 +908,58 @@ def _verify_artifacts(
     return not errors, errors
 
 
+def verify_execution_artifacts(
+    analysis: dict[str, Any],
+    execution_id: str,
+    *,
+    evidence_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Verify one retained execution manifest and all referenced artifact bytes."""
+
+    register = ensure_assurance_register(analysis)
+    execution = next(
+        (
+            value
+            for value in register.get("executions", [])
+            if isinstance(value, dict) and value.get("id") == execution_id
+        ),
+        None,
+    )
+    if execution is None:
+        return {
+            "valid": False,
+            "execution_id": execution_id,
+            "manifest_sha256": "",
+            "artifact_ids": [],
+            "errors": ["execution record is unavailable"],
+        }
+    if evidence_root is not None:
+        allowed_root = Path(evidence_root).expanduser().absolute().resolve()
+        execution_root = Path(
+            str(execution.get("evidence_directory", ""))
+        ).expanduser().absolute().resolve()
+        if not _inside(allowed_root, execution_root):
+            return {
+                "valid": False,
+                "execution_id": execution_id,
+                "manifest_sha256": str(
+                    execution.get("execution_manifest_sha256", "")
+                ),
+                "artifact_ids": [
+                    str(value) for value in execution.get("artifacts", [])
+                ],
+                "errors": ["execution evidence directory escapes the allowed root"],
+            }
+    valid, errors = _verify_artifacts(register, execution)
+    return {
+        "valid": valid,
+        "execution_id": execution_id,
+        "manifest_sha256": str(execution.get("execution_manifest_sha256", "")),
+        "artifact_ids": [str(value) for value in execution.get("artifacts", [])],
+        "errors": errors,
+    }
+
+
 def review_execution_evidence(
     analysis: dict[str, Any],
     execution_id: str,

@@ -34,10 +34,13 @@ from pysfmea.test_generation import (
     verify_test_proposal_stage,
 )
 from pysfmea.test_generation_quality import (
-    TEST_GENERATION_FAULT_EVIDENCE_FORMAT,
     evaluate_test_generation_quality,
     evaluate_test_generation_quality_evidence,
     verify_test_generation_quality_result,
+)
+from pysfmea.test_generation_quality_evidence import (
+    build_fault_detection_evidence,
+    export_fault_detection_evidence,
 )
 
 
@@ -975,7 +978,42 @@ class GovernedTestGenerationTests(unittest.TestCase):
                 "test_sha256": receipt["file"]["sha256"],
             }
         )
-        execution = {
+        def attach_raw_execution(execution: dict[str, object]) -> Path:
+            execution_id = str(execution["id"])
+            run_directory = self.root / "qualification-runs" / execution_id
+            run_directory.mkdir(parents=True)
+            result_path = run_directory / "result.log"
+            result_path.write_text(
+                f"{execution_id}:{execution['status']}\n", encoding="utf-8"
+            )
+            artifact_sha = hashlib.sha256(result_path.read_bytes()).hexdigest()
+            artifact_id = f"ART-{execution_id}"
+            execution["artifacts"] = [artifact_id]
+            execution["evidence_directory"] = str(run_directory)
+            unsigned = json.dumps(
+                execution, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            execution["execution_manifest_sha256"] = hashlib.sha256(
+                unsigned
+            ).hexdigest()
+            (run_directory / "execution.json").write_text(
+                json.dumps(execution, indent=2) + "\n", encoding="utf-8"
+            )
+            self.analysis["assurance"]["executions"].append(execution)
+            self.analysis["assurance"]["evidence_artifacts"].append(
+                {
+                    "id": artifact_id,
+                    "execution_id": execution_id,
+                    "kind": "raw_result",
+                    "path": result_path.name,
+                    "bytes": len(result_path.read_bytes()),
+                    "sha256": artifact_sha,
+                }
+            )
+            self.obligation["executions"].append(execution_id)
+            return result_path
+
+        baseline_execution = {
             "id": "EXEC-EVIDENCE-QUALITY",
             "obligation_id": self.obligation["id"],
             "baseline_id": receipt["baseline_id"],
@@ -998,8 +1036,41 @@ class GovernedTestGenerationTests(unittest.TestCase):
                 }
             ],
         }
-        self.analysis["assurance"]["executions"].append(execution)
-        self.obligation["executions"].append(execution["id"])
+        attach_raw_execution(baseline_execution)
+
+        def reference(path: Path) -> dict[str, str]:
+            return {
+                "path": path.relative_to(self.root).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+
+        fault_paths: dict[str, Path] = {}
+        seeded_result_paths: dict[str, Path] = {}
+        for sample_id in ("PROPOSE-EVIDENCE-1", "PROPOSE-EVIDENCE-2"):
+            seeded_execution = {
+                "id": f"{sample_id}-SEEDED",
+                "obligation_id": self.obligation["id"],
+                "baseline_id": receipt["baseline_id"],
+                "test": {"sha256": receipt["file"]["sha256"]},
+                "status": "failed",
+                "initiated_by": "Fault Injection Operator",
+                "stimulus_observed": True,
+                "acceptance_criteria": [],
+                "reviews": [],
+            }
+            seeded_result_paths[sample_id] = attach_raw_execution(seeded_execution)
+            fault = build_fault_detection_evidence(
+                self.analysis,
+                sample_id=sample_id,
+                baseline_execution_id=str(baseline_execution["id"]),
+                seeded_execution_id=str(seeded_execution["id"]),
+                fault_id=f"{sample_id}-FAULT",
+                environment="locked-down qualification container",
+                evidence_root=self.root,
+            )
+            fault_path = self.root / f"{sample_id}.fault.json"
+            export_fault_detection_evidence(fault, fault_path)
+            fault_paths[sample_id] = fault_path
 
         proposed_analysis_path = self.root / "proposed-analysis.json"
         proposed_proposal_path = self.root / "proposed-proposal.json"
@@ -1008,50 +1079,22 @@ class GovernedTestGenerationTests(unittest.TestCase):
 
         refused_analysis_path = self.root / "refused-analysis.json"
         save_analysis(refused_analysis_path, self.analysis)
-
-        def reference(path: Path) -> dict[str, str]:
-            return {
-                "path": path.relative_to(self.root).as_posix(),
-                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            }
-
         proposed_artifacts = {
             "analysis": reference(proposed_analysis_path),
             "proposal": reference(proposed_proposal_path),
             "application_receipt": reference(receipt_path),
         }
-        samples = []
-        for sample_id in ("PROPOSE-EVIDENCE-1", "PROPOSE-EVIDENCE-2"):
-            fault_path = self.root / f"{sample_id}.fault.json"
-            fault = {
-                "format": TEST_GENERATION_FAULT_EVIDENCE_FORMAT,
-                "sample_id": sample_id,
-                "test_sha256": receipt["file"]["sha256"],
-                "environment": "locked-down qualification container",
-                "baseline": {
-                    "execution_id": f"{sample_id}-BASELINE",
-                    "status": "passed",
-                    "evidence_sha256": "1" * 64,
-                },
-                "seeded": {
-                    "execution_id": f"{sample_id}-SEEDED",
-                    "status": "failed",
-                    "evidence_sha256": "2" * 64,
-                    "fault_id": f"{sample_id}-FAULT",
+        samples = [
+            {
+                "id": sample_id,
+                "expected_decision": "proposed",
+                "artifacts": {
+                    **proposed_artifacts,
+                    "fault_detection": reference(fault_paths[sample_id]),
                 },
             }
-            fault["content_sha256"] = canonical_json_sha256(fault)
-            fault_path.write_text(json.dumps(fault), encoding="utf-8")
-            samples.append(
-                {
-                    "id": sample_id,
-                    "expected_decision": "proposed",
-                    "artifacts": {
-                        **proposed_artifacts,
-                        "fault_detection": reference(fault_path),
-                    },
-                }
-            )
+            for sample_id in ("PROPOSE-EVIDENCE-1", "PROPOSE-EVIDENCE-2")
+        ]
         refusal_response = {
             "decision": "refused",
             "rationale": "The supplied evidence does not support a defensible oracle.",
@@ -1144,6 +1187,46 @@ class GovernedTestGenerationTests(unittest.TestCase):
                 ),
                 0,
             )
+        cli_fault_path = self.root / "cli-fault-evidence.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-test-fault-evidence",
+                        str(proposed_analysis_path),
+                        "CLI-FAULT-SAMPLE",
+                        str(baseline_execution["id"]),
+                        "PROPOSE-EVIDENCE-1-SEEDED",
+                        "--fault-id",
+                        "CLI-SEEDED-FAULT",
+                        "--environment",
+                        "locked-down qualification container",
+                        "--evidence-root",
+                        str(self.root),
+                        "-o",
+                        str(cli_fault_path),
+                    ]
+                ),
+                0,
+            )
+        with contextlib.redirect_stdout(io.StringIO()) as fault_verification:
+            self.assertEqual(
+                main(
+                    [
+                        "assurance-test-fault-evidence-verify",
+                        str(cli_fault_path),
+                        "--analysis",
+                        str(proposed_analysis_path),
+                        "--evidence-root",
+                        str(self.root),
+                        "--json",
+                    ]
+                ),
+                0,
+            )
+        self.assertTrue(
+            json.loads(fault_verification.getvalue())["raw_artifacts_verified"]
+        )
         duplicated = copy.deepcopy(corpus)
         duplicated["samples"][1]["artifacts"] = copy.deepcopy(  # type: ignore[index]
             duplicated["samples"][0]["artifacts"]  # type: ignore[index]
@@ -1154,6 +1237,13 @@ class GovernedTestGenerationTests(unittest.TestCase):
         mislabeled["subject"]["model"] = "different-model"  # type: ignore[index]
         with self.assertRaisesRegex(ValueError, "subject does not match"):
             evaluate_test_generation_quality_evidence(mislabeled, self.root)
+        seeded_result = seeded_result_paths["PROPOSE-EVIDENCE-1"]
+        seeded_result.write_text("tampered\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "raw execution evidence is invalid"):
+            evaluate_test_generation_quality_evidence(corpus, self.root)
+        seeded_result.write_text(
+            "PROPOSE-EVIDENCE-1-SEEDED:failed\n", encoding="utf-8"
+        )
         proposed_proposal_path.write_text("{}", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "declared SHA-256"):
             evaluate_test_generation_quality_evidence(corpus, self.root)

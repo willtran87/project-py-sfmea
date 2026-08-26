@@ -37,6 +37,8 @@ flowchart LR
 - [Platform support and qualification evidence](docs/PLATFORM_SUPPORT.md)
 - [Product confidence gates](docs/QUALITY_GATES.md) — mutation, scale, maintainability,
   model-quality, and qualification-readiness boundaries
+- [Generated-test qualification campaigns](docs/GENERATED_TEST_CAMPAIGNS.md) — independent
+  format-2 sampling, raw-evidence retention, replay, and acceptance checklist
 - [Service threat model and residual-risk register](docs/THREAT_MODEL.md)
 - [Advanced review workflows](docs/ADVANCED_REVIEW.md) — saved views, accessibility,
   LLM synthesis, PR analysis, and the plugin SDK
@@ -1832,24 +1834,34 @@ separate so the report cannot imply that unavailable external artifacts were ver
 For stronger qualification, use the format-2 corpus. It removes manually asserted outcome booleans:
 PySFMEA loads content-addressed analysis, proposal, application-receipt, and paired baseline/seeded-
 fault records; re-verifies lifecycle bindings; derives execution, stimulus, criteria, review, target,
-and fault-detection outcomes; and adds a fifteenth artifact-derived-claims gate.
+and fault-detection outcomes; and adds a fifteenth artifact-derived-claims gate. Each fault record
+must reconcile to two distinct execution manifests under the campaign evidence root, the same exact
+generated test, a passing baseline, a failing seeded run, and every retained raw artifact byte.
 
 ```powershell
 $evidenceRoot = "test-generation-evidence"
 Copy-Item examples/test-generation-quality-corpus-v2.template.json `
   (Join-Path $evidenceRoot "corpus.json")
 # Replace template values and hashes; refused samples use null receipt/fault references.
+sfmea assurance-test-fault-evidence analysis.json SAMPLE-001 EXEC-BASELINE EXEC-SEEDED `
+  --fault-id MUTATION-001 --environment "locked-down qualification container" `
+  --evidence-root $evidenceRoot -o (Join-Path $evidenceRoot "SAMPLE-001/fault.json")
+sfmea assurance-test-fault-evidence-verify `
+  (Join-Path $evidenceRoot "SAMPLE-001/fault.json") --analysis analysis.json `
+  --evidence-root $evidenceRoot
 sfmea assurance-test-quality-evaluate (Join-Path $evidenceRoot "corpus.json") `
   --evidence-root $evidenceRoot --require-qualified -o artifact-quality-result.json
 sfmea assurance-test-quality-verify artifact-quality-result.json `
   (Join-Path $evidenceRoot "corpus.json") --evidence-root $evidenceRoot
 ```
 
-Artifact paths are bounded, relative, root-confined, regular non-link JSON inputs whose exact bytes
-must match their SHA-256 references. The fault record is itself content-sealed and proves only the
-recorded paired outcome. Proposal producer/model/prompt metadata must match the corpus subject, and
-duplicate evidence bundles cannot increase sample credit; actor authentication and sample
-representativeness remain external.
+Artifact paths are bounded, relative, root-confined, regular non-link inputs whose exact bytes must
+match their SHA-256 references. Fault evidence is built only after its analysis-linked manifests and
+raw artifacts verify under the same evidence root; later replay repeats those checks. Proposal
+producer/model/prompt metadata must match the corpus subject, and duplicate evidence bundles cannot
+increase sample credit; actor authentication and sample representativeness remain external. Use the
+[generated-test campaign runbook](docs/GENERATED_TEST_CAMPAIGNS.md) to structure repository
+selection, independent labeling, evidence retention, acceptance, and change-triggered requalification.
 
 For high-value dependency, interface, timing, persistence, detection, and circuit-breaker
 obligations, PySFMEA provides governed executable fault-injection plugins. List them and create an

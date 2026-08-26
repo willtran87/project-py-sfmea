@@ -336,9 +336,18 @@ def _assurance_test_generation_fault_evidence_schema() -> dict[str, Any]:
     text = {"type": "string", "minLength": 1, "maxLength": 20_000}
     digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
     run_properties = {
-        "execution_id": text,
+        "execution_id": {
+            **text,
+            "description": "Execution identifier in the bound analysis assurance register.",
+        },
         "status": {"enum": ["passed", "failed"]},
-        "evidence_sha256": digest,
+        "evidence_sha256": {
+            **digest,
+            "description": (
+                "SHA-256 of the execution.json manifest; semantic verification also "
+                "replays every artifact named by that manifest."
+            ),
+        },
     }
     properties = {
         "format": {"const": TEST_GENERATION_FAULT_EVIDENCE_FORMAT},
@@ -363,6 +372,10 @@ def _assurance_test_generation_fault_evidence_schema() -> dict[str, Any]:
         "$schema": JSON_SCHEMA_DRAFT,
         "$id": _schema_id("assurance-test-generation-fault-evidence"),
         "title": "PySFMEA paired baseline and seeded-fault detection evidence",
+        "description": (
+            "A content-sealed claim that receives credit only when reconciled to two "
+            "distinct analysis-linked execution manifests and all retained raw artifacts."
+        ),
         "type": "object",
         "required": list(properties),
         "properties": properties,

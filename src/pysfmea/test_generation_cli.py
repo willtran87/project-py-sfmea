@@ -33,6 +33,11 @@ from .test_generation_quality import (
     load_test_generation_quality_result,
     verify_test_generation_quality_result,
 )
+from .test_generation_quality_evidence import (
+    build_fault_detection_evidence,
+    export_fault_detection_evidence,
+    verify_fault_detection_evidence,
+)
 
 ProviderFactory = Callable[[argparse.Namespace], TestGenerationProvider]
 
@@ -145,6 +150,30 @@ def add_test_generation_commands(
     readiness.add_argument("--analysis", required=True)
     readiness.add_argument("--json", action="store_true")
     readiness.set_defaults(handler=_readiness)
+
+    fault_evidence = subparsers.add_parser(
+        "assurance-test-fault-evidence",
+        help="seal paired baseline/seeded-fault evidence after raw artifact verification",
+    )
+    fault_evidence.add_argument("analysis", help="analysis JSON containing both executions")
+    fault_evidence.add_argument("sample_id")
+    fault_evidence.add_argument("baseline_execution_id")
+    fault_evidence.add_argument("seeded_execution_id")
+    fault_evidence.add_argument("--fault-id", required=True)
+    fault_evidence.add_argument("--environment", required=True)
+    fault_evidence.add_argument("--evidence-root", required=True)
+    fault_evidence.add_argument("-o", "--output", required=True)
+    fault_evidence.set_defaults(handler=_fault_evidence)
+
+    fault_evidence_verify = subparsers.add_parser(
+        "assurance-test-fault-evidence-verify",
+        help="reconcile a fault-evidence claim to exact execution manifests and artifacts",
+    )
+    fault_evidence_verify.add_argument("evidence")
+    fault_evidence_verify.add_argument("--analysis", required=True)
+    fault_evidence_verify.add_argument("--evidence-root", required=True)
+    fault_evidence_verify.add_argument("--json", action="store_true")
+    fault_evidence_verify.set_defaults(handler=_fault_evidence_verify)
 
     quality = subparsers.add_parser(
         "assurance-test-quality-evaluate",
@@ -339,6 +368,51 @@ def _readiness(args: argparse.Namespace) -> int:
                 print(f"  {gate['remediation']}")
         print(result["notice"])
     return int(not result["ready"])
+
+
+def _fault_evidence(args: argparse.Namespace) -> int:
+    analysis = load_analysis(args.analysis)
+    evidence = build_fault_detection_evidence(
+        analysis,
+        sample_id=args.sample_id,
+        baseline_execution_id=args.baseline_execution_id,
+        seeded_execution_id=args.seeded_execution_id,
+        fault_id=args.fault_id,
+        environment=args.environment,
+        evidence_root=args.evidence_root,
+    )
+    output = export_fault_detection_evidence(evidence, args.output)
+    print(f"Created raw-artifact-verified fault-detection evidence: {output}")
+    return 0
+
+
+def _fault_evidence_verify(args: argparse.Namespace) -> int:
+    document = load_bounded_json_document(
+        args.evidence,
+        label="generated-test fault-detection evidence",
+        max_bytes=2_000_000,
+        max_depth=30,
+        max_nodes=100_000,
+    )
+    if not isinstance(document.value, dict):
+        raise ValueError("generated-test fault-detection evidence root must be an object")
+    evidence = document.value
+    result = verify_fault_detection_evidence(
+        evidence,
+        load_analysis(args.analysis),
+        sample_id=str(evidence.get("sample_id", "")),
+        test_sha256=str(evidence.get("test_sha256", "")),
+        evidence_root=args.evidence_root,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            "Generated-test fault evidence: valid; "
+            f"baseline_artifacts={result['baseline_artifacts']}; "
+            f"seeded_artifacts={result['seeded_artifacts']}"
+        )
+    return 0
 
 
 def _quality_evaluate(args: argparse.Namespace) -> int:

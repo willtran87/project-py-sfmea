@@ -5,6 +5,10 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Reconcile generated-test fault-detection qualification to exact analysis-linked baseline and
+  seeded execution manifests plus every retained raw artifact. Add fail-closed evidence-root
+  confinement, paired-test/status/manifest checks, standalone build/replay CLI commands, tamper
+  regressions, and a dedicated typed evidence subsystem so digest strings alone receive no credit.
 - Add format-2 artifact-backed generated-test qualification. Exact bounded analysis, proposal,
   application-receipt, and paired baseline/seeded-fault records now drive derived validity,
   target-binding, execution, stimulus, criteria, fault-detection, and reviewer outcomes with a
