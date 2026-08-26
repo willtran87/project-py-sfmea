@@ -2489,7 +2489,8 @@ python -m pip_audit . --format cyclonedx-json --output pysfmea-build.cdx.json `
 Strict typing covers the complete `pysfmea` package and the release-gate scripts configured in
 `pyproject.toml`; a newly added module is therefore included automatically. The focused Linux
 mutation gate targets plan verification, outcome and false-pass verdicts, and sandbox command
-policy. Its aggregate and per-function ratchets prevent cross-function masking while keeping
+policy, runtime-corroboration scoring, and governed LLM-corpus projection. Its aggregate and
+per-function ratchets prevent cross-function masking while keeping
 surviving mutants visible as test-oracle debt. CI also loads the 5,000-record deterministic scale
 report in Chromium and exercises a retained dynamic-Python boundary corpus. Coverage has both a
 complete-package floor and higher module-specific floors for critical boundaries.

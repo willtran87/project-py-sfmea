@@ -10,9 +10,9 @@
     "*pysfmea.diagnostics.x__runtime_corroboration__mutmut_*",
     "*pysfmea.llm_quality.x_project_llm_quality_corpus__mutmut_*"
   ],
-  "minimum_mutants": 900,
-  "minimum_score": 0,
-  "maximum_survived": 10000,
+  "minimum_mutants": 1464,
+  "minimum_score": 0.697404,
+  "maximum_survived": 443,
   "maximum_invalid": 0,
   "maximum_skipped": 0,
   "allowed_runner_exit_codes": [0, 1],
@@ -74,18 +74,18 @@
     {
       "id": "runtime-corroboration-diagnostics",
       "selectors": ["*pysfmea.diagnostics.x__runtime_corroboration__mutmut_*"],
-      "minimum_mutants": 1,
-      "minimum_score": 0,
-      "maximum_survived": 10000,
+      "minimum_mutants": 170,
+      "minimum_score": 0.570588,
+      "maximum_survived": 73,
       "maximum_invalid": 0,
       "maximum_skipped": 0
     },
     {
       "id": "llm-quality-corpus-projection",
       "selectors": ["*pysfmea.llm_quality.x_project_llm_quality_corpus__mutmut_*"],
-      "minimum_mutants": 1,
-      "minimum_score": 0,
-      "maximum_survived": 10000,
+      "minimum_mutants": 301,
+      "minimum_score": 0.727575,
+      "maximum_survived": 82,
       "maximum_invalid": 0,
       "maximum_skipped": 0
     }

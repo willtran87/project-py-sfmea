@@ -38,6 +38,8 @@ Windows across supported Python versions. Separate jobs build and install the wh
 branch coverage with critical-module ratchets, type-check extracted subsystem boundaries, scan
 source and dependencies, publish a dependency SBOM, run property tests, and mutation-test the
 critical fault-plan, outcome, and sandbox-policy verdict logic.
+Runtime-corroboration scoring and governed LLM-corpus projection are included in the same bounded
+Linux mutation campaign.
 The focused mutation job consumes mutmut 3 native metadata and enforces checked-in aggregate and
 independently partitioned per-function population, score, survivor, invalid, and skipped ratchets.
 Do not raise survivor or module-size ceilings merely
