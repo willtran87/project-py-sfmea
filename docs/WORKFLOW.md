@@ -9,6 +9,8 @@ For a diagram-led overview of scanning, failure cascades, evidence credit, findi
 multi-repository assurance, see the [visual guide](VISUAL_GUIDE.md).
 For saved report views, accessibility qualification, governed LLM synthesis, exact-commit PR
 analysis, and process plugins, see [advanced review workflows](ADVANCED_REVIEW.md).
+For objective-by-objective IEC/SAE/FAA/ISO/NIST assessment and ISO 15026/SACM-aligned
+claims–arguments–evidence output, see [industry assurance profiles](INDUSTRY_ASSURANCE.md).
 
 ```mermaid
 flowchart LR

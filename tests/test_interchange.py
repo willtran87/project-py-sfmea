@@ -62,7 +62,9 @@ class InterchangeTests(unittest.TestCase):
             tool_version="0.55.0",
         )
         self.assertEqual(document["bomFormat"], "CycloneDX")
-        self.assertEqual(document["specVersion"], "1.6")
+        self.assertEqual(document["specVersion"], "1.7")
+        self.assertEqual(document["metadata"]["lifecycles"], [{"phase": "discovery"}])
+        self.assertEqual(document["compositions"][0]["aggregate"], "incomplete")
         self.assertEqual(
             document["metadata"]["timestamp"], "2026-08-04T12:00:00+00:00"
         )

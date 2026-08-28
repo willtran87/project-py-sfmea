@@ -32,6 +32,11 @@ The governing rules are simple:
 - Scanner results and LLM suggestions are candidates until a named reviewer decides.
 - Passing tests are evidence, not automatic risk acceptance.
 - Every integrity or completeness limitation remains visible.
+- Standards citations are navigation evidence; conformance requires an exact-bound objective
+  assessment and external authority.
+
+For the standards-profile and structured assurance-case workflow, see
+[industry assurance profiles](INDUSTRY_ASSURANCE.md).
 
 ## What the scanner discovers
 

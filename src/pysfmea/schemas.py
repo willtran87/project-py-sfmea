@@ -93,6 +93,7 @@ from .fault_injection import (
 )
 from .file_publication import atomic_publish_text
 from .html_report import HTML_REPORT_VERIFICATION_FORMAT
+from .industry_schemas import INDUSTRY_SCHEMA_DESCRIPTIONS, industry_schema_builders
 from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_file
 from .program import (
@@ -126,6 +127,18 @@ from .qualification_report import (
     QUALIFICATION_REPORT_VERIFICATION_FORMAT,
 )
 from .review_package_schema import _review_package_manifest_schema
+from .schema_primitives import (
+    identifier_schema as _identifier_schema,
+)
+from .schema_primitives import (
+    metadata_schema as _metadata_schema,
+)
+from .schema_primitives import (
+    scalar_schema as _scalar_schema,
+)
+from .schema_primitives import (
+    text_schema as _text_schema,
+)
 from .schema_registry import SCHEMA_CATALOG_FILENAME, SCHEMA_FILENAMES
 from .sdk import (
     PLUGIN_MANIFEST_FORMAT,
@@ -183,48 +196,10 @@ INTERCHANGE_ARTIFACTS_VERIFICATION_FORMAT = (
 )
 REVIEW_VIEWS_VERIFICATION_FORMAT = "pysfmea-review-views-verification-1"
 PACKAGE_PROVENANCE_VERIFICATION_FORMAT = "pysfmea-package-provenance-verification-1"
-_IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
 
 
 def _schema_id(name: str) -> str:
     return f"urn:pysfmea:schema:{name}:1"
-
-
-def _scalar_schema() -> dict[str, Any]:
-    return {"type": ["string", "number", "boolean", "null"]}
-
-
-def _metadata_schema() -> dict[str, Any]:
-    scalar = _scalar_schema()
-    return {
-        "type": "object",
-        "additionalProperties": {
-            "oneOf": [
-                scalar,
-                {
-                    "type": "array",
-                    "maxItems": 100,
-                    "items": scalar,
-                },
-            ]
-        },
-    }
-
-
-def _identifier_schema() -> dict[str, Any]:
-    return {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": MAX_TEXT_LENGTH,
-        "pattern": _IDENTIFIER_PATTERN,
-    }
-
-
-def _text_schema(*, required: bool = False) -> dict[str, Any]:
-    schema: dict[str, Any] = {"type": "string", "maxLength": MAX_TEXT_LENGTH}
-    if required:
-        schema["minLength"] = 1
-    return schema
 
 
 def _diagram_definition() -> dict[str, Any]:
@@ -9210,6 +9185,7 @@ def _qualification_report_verification_schema() -> dict[str, Any]:
 
 
 _SCHEMA_BUILDERS = {
+    **industry_schema_builders(_schema_id, JSON_SCHEMA_DRAFT),
     "calibration-comparison": _calibration_comparison_schema,
     "accessibility-evidence": _accessibility_evidence_sealed_schema,
     "accessibility-evidence-draft": _accessibility_evidence_draft_schema,
@@ -9343,6 +9319,7 @@ _SCHEMA_BUILDERS = {
     "workflow-status": _workflow_status_schema,
 }
 _SCHEMA_DESCRIPTIONS = {
+    **INDUSTRY_SCHEMA_DESCRIPTIONS,
     "calibration-comparison": "Governed same-corpus scanner calibration comparison with semantic regression gates.",
     "accessibility-evidence": "Sealed, analysis-bound manual accessibility qualification evidence for the self-contained report.",
     "accessibility-evidence-draft": "Editable accessibility qualification workspace covering the required report scenarios.",

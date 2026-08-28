@@ -63,12 +63,16 @@ Available names:
 | `configuration-authoring-apply-receipt` | Validated TOML publication and addition-count receipt |
 | `configuration-authoring-draft` | Editable guidance, architecture, and interface proposal workspace |
 | `configuration-authoring-verification` | Integrity, semantics, and optional exact-binding verdict |
+| `conformance-workspace` | Exact-analysis-bound standards applicability, tailoring, objective, evidence-reference, and reviewer assessments |
+| `conformance-verification` | Workspace integrity, catalog, objective semantics, summary, and optional analysis-binding verdict |
 | `cross-reference` | Typed entity/relationship fabric, fused scanner channels, semantic-exposure, verification-readiness, review-governance, adapter-run, repository-source, non-authoritative machine-assistance, guidance/context/lifecycle provenance, analysis-output projection coverage, finding chains, quality diagnostics, compound-model/claim intersections, and prioritized review leads |
 | `cross-reference-verification` | Fabric integrity, semantic/readiness/governance/repository/machine/guidance/context/lifecycle/output-projection consistency, diagnostic scope/identity, accounting, and optional exact-analysis regeneration verdict |
 | `sfta-authoring` | Sealed exact-analysis-bound fault-tree definitions with named engineering approvals |
 | `sfta-authoring-apply-receipt` | Applied hazard replacements and source/result analysis bindings |
 | `sfta-authoring-draft` | Editable one-entry-per-hazard fault-tree engineering workspace |
 | `sfta-authoring-verification` | Integrity, structure, logic, review, and optional exact-analysis binding verdict |
+| `slsa-provenance` | in-toto Statement carrying SLSA Provenance v1 for an exact analysis artifact |
+| `slsa-provenance-verification` | SLSA structure, builder, materials, and optional exact subject/state binding verdict |
 | `assurance-program` | Multi-repository analysis bindings, external requirements/evidence, temporal and circuit-breaker relationships, independent validation/model metrics, and governance policy |
 | `assurance-program-report-verification` | Standalone program-HTML integrity and optional exact-program regeneration verdicts |
 | `assurance-program-verification` | Program integrity, binding, trusted-evidence, timing/resilience, quality-gate, relationship, and governance verdicts |
@@ -92,6 +96,8 @@ Available names:
 | `assurance-test-proposal-verification` | Proposal integrity, response contract, source, and optional exact-analysis binding verdict |
 | `assurance-work-queue` | Accepted-finding work states, blockers, automation eligibility, and next actions |
 | `assurance-work-queue-verification` | Queue integrity, analysis binding, and deterministic-projection verdicts |
+| `assurance-case` | ISO 15026 and OMG SACM-aligned claims, arguments, evidence, relationships, assumptions, and defeaters |
+| `assurance-case-verification` | Assurance-case integrity, graph, coverage, status, and optional exact-analysis binding verdict |
 | `calibration-comparison` | Governed same-corpus scanner calibration comparison with semantic regression gates |
 | `detached-signature` | Ed25519 signature envelope, signed statement, and package subject |
 | `diagram` | Renderer-neutral `pysfmea-diagram-1` object |
@@ -134,6 +140,7 @@ Available names:
 | `synthesis-workspace` | Sealed, exact-analysis-bound suggestion and contradiction-review workspace |
 | `synthesis-workspace-draft` | Editable, human-controlled suggestion synthesis workspace |
 | `synthesis-workspace-verification` | Integrity, decision, contradiction, and optional exact-analysis binding verdict |
+| `standards-catalog` | Content-addressed standards metadata and original PySFMEA objective summaries without licensed normative text |
 | `workflow-status` | Lifecycle stage, handoff gates, evidence, summaries, and remediation actions |
 
 The schemas use stable `urn:pysfmea:schema:…:1` identifiers and have no external `$ref`

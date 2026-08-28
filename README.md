@@ -26,6 +26,8 @@ flowchart LR
 - [Visual guide](docs/VISUAL_GUIDE.md) — workflows, failure cascades, generated-test governance,
   trust boundaries, and outputs
 - [Operator workflow](docs/WORKFLOW.md) — the concise scan-to-handoff path
+- [Industry assurance profiles](docs/INDUSTRY_ASSURANCE.md) — IEC/SAE/FAA/ISO/NIST
+  objective assessment, independent qualification, and structured assurance cases
 - [Runtime evidence workflow](docs/RUNTIME_EVIDENCE.md) — opt-in sync/async instrumentation,
   trace reconciliation, timing interpretation, and operating limits
 - [Complete command guide](#quick-start)
@@ -2369,7 +2371,7 @@ and the digest requires retention of the referenced evaluation artifact to be in
 ## Standards-oriented interchange and change analysis
 
 Export screening candidates to SARIF 2.1.0 and the declared dependency inventory to
-CycloneDX 1.6:
+CycloneDX 1.7 with explicit discovery lifecycle and incomplete-composition semantics:
 
 ```powershell
 sfmea sarif sfmea-analysis.json -o findings.sarif
@@ -2645,6 +2647,32 @@ Only selected profiles contribute citations to findings. Record one named
 `[[guidance_applicability]]` decision per active profile; `doctor` and validation identify missing
 decisions. Selection and a local decision record still do not determine legal applicability or
 compliance.
+
+For auditable objective-by-objective assessment, use the separate exact-analysis-bound workflow:
+
+```powershell
+sfmea standards-catalog
+sfmea conformance-init sfmea-analysis.json --profile iec-60812-2018 `
+  --system "System name" --phase verification `
+  --basis "Approved assurance plan" --authority "Assurance board" `
+  -o conformance.json
+sfmea conformance-assess conformance.json IEC60812-SCOPE `
+  --applicability applicable --status satisfied `
+  --rationale "Reviewed against approved scope." --reviewer "reviewer-id" `
+  --evidence-ref "reqif://PLAN/SCOPE"
+sfmea conformance-verify conformance.json --analysis sfmea-analysis.json --json
+sfmea assurance-case sfmea-analysis.json --conformance conformance.json `
+  -o assurance-case.json
+sfmea assurance-case-verify assurance-case.json --analysis sfmea-analysis.json --json
+sfmea provenance sfmea-analysis.json -o sfmea-analysis.intoto.json
+sfmea provenance-verify sfmea-analysis.intoto.json --analysis sfmea-analysis.json --json
+```
+
+The catalog adds IEC 60812, SAE J1739_202605, FAA/DO-178C/DO-330, IEC 61508-3,
+ISO 26262-6, NIST SSDF, ISO 25010/29119, and NIST AI 600-1 profiles. Its objective text is
+original navigation guidance, not reproduced normative text. The assurance case keeps claims,
+arguments, exact artifact evidence, assumptions, and unresolved defeaters distinct. See
+[Industry assurance profiles](docs/INDUSTRY_ASSURANCE.md).
 
 ## Public guidance basis
 

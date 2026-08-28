@@ -5,6 +5,13 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Add an exact-analysis-bound industry assurance layer: eight selectable IEC/SAE/FAA/ISO/NIST
+  profiles, content-addressed objective assessment workspaces, governed applicability/status/
+  rationale/reviewer/evidence decisions, fail-visible conformance verification, and ISO 15026 /
+  OMG SACM-aligned claims–arguments–evidence cases with explicit assumptions and defeaters. Add
+  public schemas and CLI round trips for every artifact. Upgrade dependency exchange to CycloneDX
+  1.7 with discovery-lifecycle and incomplete-composition declarations, add exact-subject in-toto
+  SLSA Provenance v1 plus verification, and run an immutable-SHA-pinned OpenSSF Scorecard workflow.
 - Reconcile the documentation and Mermaid portfolio with first-party runtime capture, bounded trace
   import, authenticated pre-outcome generated-test campaign planning, the four new public schemas,
   evidence trust boundaries, and the 12,000-record report qualification tier. Add a dedicated

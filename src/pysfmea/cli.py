@@ -119,7 +119,6 @@ from .file_publication import (
     inspect_artifact_destination,
 )
 from .graphify import run_graphify_code_only
-from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
 from .html_report import (
     HTML_REPORT_VERIFICATION_FORMAT,
     MAX_HTML_REPORT_VERIFY_BYTES,
@@ -127,6 +126,7 @@ from .html_report import (
     export_html_report,
     verify_html_report_file,
 )
+from .industry_cli import add_industry_commands
 from .integrity import canonical_json_sha256
 from .interchange import (
     cyclonedx_document,
@@ -1219,7 +1219,7 @@ def _parser() -> argparse.ArgumentParser:
     sarif.set_defaults(handler=_sarif)
 
     sbom = subparsers.add_parser(
-        "sbom", help="export declared dependency inventory as CycloneDX 1.6"
+        "sbom", help="export declared dependency inventory as CycloneDX 1.7"
     )
     sbom.add_argument("analysis", help="analysis JSON path")
     sbom.add_argument("-o", "--output", help="destination CycloneDX JSON path")
@@ -1802,10 +1802,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     program_report_verify.set_defaults(handler=_program_report_verify)
 
-    guidance = subparsers.add_parser(
-        "guidance", help="show methodology sources and limitations"
-    )
-    guidance.set_defaults(handler=_guidance)
+    add_industry_commands(subparsers)
+
     citations = subparsers.add_parser(
         "citations", help="export source-to-rule-to-finding guidance traceability"
     )
@@ -5207,25 +5205,6 @@ def _program_report_verify(args: argparse.Namespace) -> int:
             )
         print(result.get("notice", ""))
     return int(not result.get("valid", False))
-
-
-def _guidance(args: argparse.Namespace) -> int:
-    print("PySFMEA methodology notice")
-    print(METHODOLOGY_NOTICE)
-    print("\nApplicability profiles:")
-    for profile in GUIDELINE_PROFILES:
-        print(
-            f"- {profile['id']}: {profile['title']} ({profile['status']})\n  "
-            f"{profile['applicability']}\n  Tailoring: {profile['tailoring']}"
-        )
-    print("\nPublic guidance basis:")
-    for source in GUIDANCE_SOURCES:
-        print(
-            f"- {source['title']} ({source.get('version', 'unversioned')}; "
-            f"{source.get('status', 'status unknown')})\n  {source['url']}\n  "
-            f"Applicability: {source.get('applicability', 'not recorded')}\n  {source['use']}"
-        )
-    return 0
 
 
 def _citations(args: argparse.Namespace) -> int:

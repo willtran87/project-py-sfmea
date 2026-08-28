@@ -133,7 +133,7 @@ def cyclonedx_document(
     analysis: dict[str, Any], *, generated_at: str | None = None,
     tool_version: str | None = None
 ) -> dict[str, Any]:
-    """Return a CycloneDX 1.6 inventory of declared dependencies and hashed manifests."""
+    """Return a CycloneDX 1.7 inventory with explicit completeness semantics."""
 
     project_name = str(analysis.get("project", {}).get("name", "python-project"))
     baseline_id = str(analysis.get("project", {}).get("baseline", {}).get("id", ""))
@@ -157,13 +157,14 @@ def cyclonedx_document(
             component["hashes"] = [{"alg": "SHA-256", "content": specification[7:]}]
         components.append(component)
     return {
-        "$schema": "https://cyclonedx.org/schema/bom-1.6.schema.json",
+        "$schema": "https://cyclonedx.org/schema/bom-1.7.schema.json",
         "bomFormat": "CycloneDX",
-        "specVersion": "1.6",
+        "specVersion": "1.7",
         "serialNumber": f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, f'pysfmea:{project_name}:{baseline_id}')}",
         "version": 1,
         "metadata": {
             "timestamp": generated_at or utc_now(),
+            "lifecycles": [{"phase": "discovery"}],
             "tools": {"components": [{"type": "application", "name": "PySFMEA", "version": producer_version}]},
             "component": {
                 "type": "application",
@@ -178,6 +179,13 @@ def cyclonedx_document(
         },
         "components": components,
         "dependencies": [{"ref": "project", "dependsOn": [value["bom-ref"] for value in components]}],
+        "compositions": [
+            {
+                "aggregate": "incomplete",
+                "assemblies": ["project"],
+                "dependencies": ["project"],
+            }
+        ],
     }
 
 

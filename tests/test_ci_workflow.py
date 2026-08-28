@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 UPLOAD_ARTIFACT_V7_SHA = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+SCORECARD_ACTION_SHA = "2d1146689b8cda280b9bc96326124645441f03bc"
 
 
 def test_artifact_uploads_use_the_node24_release_with_an_immutable_pin() -> None:
@@ -37,6 +38,21 @@ def test_hidden_browser_evidence_is_explicitly_uploaded() -> None:
     assert ".ci-scale-report/*" in body
     assert "include-hidden-files: true" in body
     assert "if-no-files-found: error" in body
+
+
+def test_openssf_scorecard_is_pinned_least_privilege_and_publishes_sarif() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "scorecard.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "permissions: read-all" in workflow
+    assert "security-events: write" in workflow
+    assert "id-token: write" in workflow
+    assert f"ossf/scorecard-action@{SCORECARD_ACTION_SHA}" in workflow
+    assert "publish_results: true" in workflow
+    assert "persist-credentials: false" in workflow
+    assert "results.sarif" in workflow
+    assert f"actions/upload-artifact@{UPLOAD_ARTIFACT_V7_SHA}" in workflow
 
 
 def test_mutation_sandbox_copies_the_complete_package() -> None:
