@@ -136,6 +136,8 @@ class SchemaCatalogTests(unittest.TestCase):
                 "fault-injection-plan-verification",
                 "golden-corpus",
                 "html-report-verification",
+                "independent-benchmark-assessment",
+                "independent-benchmark-verification",
                 "json-evidence-signature",
                 "json-evidence-signature-verification",
                 "plugin-manifest",
@@ -169,6 +171,8 @@ class SchemaCatalogTests(unittest.TestCase):
                 "synthesis-workspace",
                 "synthesis-workspace-draft",
                 "synthesis-workspace-verification",
+                "tool-qualification-dossier",
+                "tool-qualification-verification",
                 "workflow-status",
             ],
         )

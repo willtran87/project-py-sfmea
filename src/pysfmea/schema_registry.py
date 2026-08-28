@@ -69,6 +69,8 @@ SCHEMA_FILENAMES = {
     "fault-injection-plan": "pysfmea-fault-injection-plan.schema.json",
     "fault-injection-plan-verification": "pysfmea-fault-injection-plan-verification.schema.json",
     "html-report-verification": "pysfmea-html-report-verification.schema.json",
+    "independent-benchmark-assessment": "pysfmea-independent-benchmark-assessment.schema.json",
+    "independent-benchmark-verification": "pysfmea-independent-benchmark-verification.schema.json",
     "plugin-manifest": "pysfmea-plugin-manifest.schema.json",
     "plugin-request": "pysfmea-plugin-request.schema.json",
     "plugin-response": "pysfmea-plugin-response.schema.json",
@@ -100,6 +102,8 @@ SCHEMA_FILENAMES = {
     "synthesis-workspace-draft": "pysfmea-synthesis-workspace-draft.schema.json",
     "synthesis-workspace-verification": "pysfmea-synthesis-workspace-verification.schema.json",
     "standards-catalog": "pysfmea-standards-catalog.schema.json",
+    "tool-qualification-dossier": "pysfmea-tool-qualification-dossier.schema.json",
+    "tool-qualification-verification": "pysfmea-tool-qualification-verification.schema.json",
     "workflow-status": "pysfmea-workflow-status.schema.json",
 }
 

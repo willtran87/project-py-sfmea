@@ -1,13 +1,14 @@
 # Industry assurance profiles
 
-PySFMEA separates four questions that are often blurred together:
+PySFMEA separates five questions that are often blurred together:
 
 1. Did the scanner create a bounded and reproducible candidate analysis?
 2. Did authorized engineers review the findings and verification evidence?
 3. Were the objectives of the project-selected standards addressed?
-4. Does an authorized certification, regulatory, or risk authority accept the result?
+4. Has the tool evidence been independently benchmarked and assembled for qualification review?
+5. Does an authorized certification, regulatory, or risk authority accept the result?
 
-The tool can produce evidence for the first three. It cannot answer the fourth.
+The tool can organize evidence for the first four. It cannot answer the fifth.
 
 ```mermaid
 flowchart LR
@@ -18,7 +19,9 @@ flowchart LR
     A --> E["Tests and reviewed evidence"]
     E --> AC["Structured assurance case"]
     O --> AC
-    Q["Independent qualification campaign"] --> AC
+    Q["Independent qualification campaign"] --> B["Pre-registered benchmark assessment"]
+    B --> TQ["Tool qualification dossier"]
+    TQ --> AC
     AC --> D{"Authorized decision"}
     D -->|external authority| X["Approval, certification, or risk acceptance"]
 ```
@@ -31,7 +34,8 @@ sfmea standards-catalog --json
 sfmea standards-catalog -o standards-catalog.json
 ```
 
-The content-addressed catalog provides eight selectable profiles:
+The content-addressed catalog provides 20 selectable profiles. Select only profiles made
+applicable by the system, market, contract, and approved assurance plan.
 
 | Profile | Intended use | Normative text |
 |---|---|---|
@@ -43,6 +47,18 @@ The content-addressed catalog provides eight selectable profiles:
 | `nist-ssdf-1.1` | Secure software development | Public |
 | `iso-25010-29119` | Product-quality model and governed testing | Licensed |
 | `nist-ai-600-1-llm` | LLM-assisted analysis and generated-test governance | Public |
+| `aiag-vda-fmea-2019` | Seven-step automotive FMEA method | Licensed; proprietary rating/AP material is not bundled |
+| `sae-arp4754b-arp4761a` | Aircraft/system development and safety assessment | Licensed |
+| `iso-12207-2026` | Current software lifecycle processes | Licensed |
+| `iso-330xx-process-assessment` | Governed process assessment and capability evidence | Licensed |
+| `openssf-osps-2026-02-19` | Open-source project security baseline | Public |
+| `iso-42001-23894-ai-governance` | AI management and risk governance | Licensed |
+| `nist-ssdf-800-218a-genai` | Generative-AI secure-development profile | Public |
+| `iso-21434-21448-automotive` | Automotive cybersecurity and SOTIF | Licensed |
+| `medical-14971-62304-81001` | Medical risk, software lifecycle, and health-software security | Licensed |
+| `en-50716-2023-rail` | Railway software lifecycle | Licensed |
+| `iec-62443-4-1-2018` | Industrial secure product development | Licensed |
+| `iec-61511-process-safety` | Process-industry functional safety | Licensed |
 
 Catalog objectives are original summaries and navigation aids. A project using a licensed
 standard must consult its controlled normative copy and record the adopted edition, tailoring,
@@ -123,7 +139,7 @@ argument, artifact, and asserted-relationship semantics. It is intentionally not
 normative SACM XMI. Each unsupported or partial subclaim produces an explicit defeater and keeps
 the top claim from becoming decision-ready.
 
-## Independent qualification remains independent
+## Independent benchmark assessment
 
 PySFMEA's built-in corpus is a regression gate. Industry qualification should additionally use:
 
@@ -136,8 +152,74 @@ PySFMEA's built-in corpus is a regression gate. Industry qualification should ad
 - Independent approval of labels, selection rationale, thresholds, anomalies, and deviations
 
 Use `qualification-build`, `qualification-verify`, and `qualification-report` for the retained
-campaign. The assurance case can reference a passed content-addressed result, but it preserves the
-external assumptions about independence, label correctness, and qualification authority.
+campaign. Then assess it against a protocol frozen before scanner execution:
+
+```powershell
+Copy-Item examples\independent-benchmark-protocol.json benchmark-protocol.json
+# Replace every placeholder and reviewer count with controlled project evidence.
+sfmea benchmark-assess benchmark-protocol.json qualification-result.json `
+  qualification-campaign.json -o benchmark-assessment.json
+sfmea benchmark-verify benchmark-assessment.json `
+  --protocol benchmark-protocol.json `
+  --qualification-result qualification-result.json `
+  --qualification-manifest qualification-campaign.json --json
+```
+
+The assessment calculates two-sided Wilson intervals for finding, call, control, and semantic
+recall/precision; calculates Cohen's kappa from the retained reviewer matrix; gates the lower
+confidence bound rather than the point estimate; binds exact protocol, campaign, and result bytes;
+and requires a closed requalification-trigger set. Missing metric populations fail visibly.
+The verifier can exactly regenerate the artifact from all three retained sources.
+
+Passing means only `eligible_for_authorized_tool_qualification_review`. PySFMEA cannot establish
+that repositories are representative, labels are true, authorities are independent, or the
+selected thresholds are sufficient.
+
+## Tool qualification dossier
+
+The dossier is a controlled evidence index, not a qualification certificate:
+
+```powershell
+sfmea tool-qualification-init sfmea-analysis.json `
+  --benchmark benchmark-assessment.json --conformance conformance.json `
+  --anomalies examples\known-anomalies.json `
+  --intended-use "Screen Python repositories and retain review candidates" `
+  --reliance "No lifecycle objective is eliminated solely by scanner output" `
+  --basis "Project-approved DO-330-aligned process" `
+  --classification "Classification pending authority decision" `
+  --environment "Controlled CPython and dependency baseline" `
+  --authority "Tool qualification authority" -o tool-qualification.json
+
+sfmea tool-qualification-assess tool-qualification.json TQ-CLASSIFY `
+  --applicability applicable --status satisfied `
+  --rationale "Approved classification decision TQA-17" `
+  --reviewer "independent-reviewer-id" --evidence-ref "record://TQA-17"
+
+sfmea tool-qualification-verify tool-qualification.json `
+  --analysis sfmea-analysis.json --benchmark benchmark-assessment.json `
+  --conformance conformance.json --anomalies examples\known-anomalies.json --json
+```
+
+Nine immutable objectives cover classification, operational requirements, qualification and
+verification plans, verification results, configuration, known anomalies, accomplishment, and
+requalification. Exact-source verification reconciles the analysis, benchmark, conformance
+workspace, anomaly register, and derived input gates. Every applicable objective needs attributed
+evidence; open anomalies and undecided classification block readiness. Only an authorized authority
+can choose DO-330 TQL, ISO 26262 tool-confidence, IEC 61508 tool-class, or another qualification
+basis and approve its required lifecycle data.
+
+```mermaid
+flowchart LR
+    P["Frozen protocol"] --> BA["Benchmark assessment"]
+    QR["Exact qualification result"] --> BA
+    QM["Exact campaign manifest"] --> BA
+    A["Exact analysis"] --> TQ["Qualification dossier"]
+    BA --> TQ
+    C["Conformance workspace"] --> TQ
+    K["Known-anomaly register"] --> TQ
+    TQ --> V{"Exact-source verification"}
+    V -->|eligible, never approved| H["Authorized qualification decision"]
+```
 
 ## Supply-chain exchange
 

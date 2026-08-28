@@ -11,6 +11,10 @@ from .activation import (
     verify_activation_workspace_file,
 )
 from .assurance_case import assurance_case, verify_assurance_case_file
+from .benchmark_assurance import (
+    benchmark_assessment,
+    verify_benchmark_assessment_file,
+)
 from .browser_quality import (
     bind_browser_quality_receipt,
     verify_browser_quality_receipt,
@@ -61,11 +65,17 @@ from .synthesis import (
     verify_synthesis_apply_receipt,
     verify_synthesis_apply_receipt_file,
 )
+from .tool_qualification import (
+    assess_tool_qualification_objective,
+    tool_qualification_dossier,
+    verify_tool_qualification_dossier_file,
+)
 from .version import __version__
 
 __all__ = [
     "__version__",
     "activation_workspace",
+    "assess_tool_qualification_objective",
     "assurance_case",
     "activation_records_template",
     "apply_activation_workspace",
@@ -73,6 +83,7 @@ __all__ = [
     "assess_objective",
     "apply_sfta_authoring",
     "bind_browser_quality_receipt",
+    "benchmark_assessment",
     "build_qualification_campaign",
     "evidence_preflight",
     "export_qualification_report",
@@ -92,9 +103,11 @@ __all__ = [
     "record_activation_assignment",
     "record_activation_decision",
     "test_attribution",
+    "tool_qualification_dossier",
     "verify_activation_workspace_file",
     "verify_browser_quality_receipt",
     "verify_browser_quality_receipt_file",
+    "verify_benchmark_assessment_file",
     "verify_assurance_case_file",
     "verify_conformance_workspace_file",
     "verify_configuration_authoring_file",
@@ -108,4 +121,5 @@ __all__ = [
     "verify_slsa_provenance_file",
     "verify_synthesis_apply_receipt",
     "verify_synthesis_apply_receipt_file",
+    "verify_tool_qualification_dossier_file",
 ]

@@ -114,6 +114,8 @@ Available names:
 | `evaluation-result` | Exact-key finding, call, control, confidence, and deterministic semantic evaluation result |
 | `golden-corpus` | Closed bounded evaluation corpus for finding, call, control, and semantic qualification |
 | `html-report-verification` | Success, rejection, and incomplete HTML-verifier verdicts |
+| `independent-benchmark-assessment` | Pre-registered blinded-holdout statistics, reviewer agreement, qualification-campaign bindings, and requalification policy |
+| `independent-benchmark-verification` | Internal statistical reconciliation plus optional exact protocol/result/manifest regeneration verdict |
 | `json-evidence-signature` | Detached Ed25519 authentication of exact bounded JSON bytes and canonical semantics |
 | `json-evidence-signature-verification` | Exact artifact, trusted-key fingerprint, and Ed25519 signature verdict |
 | `plugin-manifest` | Closed SDK identity, compatibility, capability, entry point, trust, and execution-limit declaration |
@@ -141,6 +143,8 @@ Available names:
 | `synthesis-workspace-draft` | Editable, human-controlled suggestion synthesis workspace |
 | `synthesis-workspace-verification` | Integrity, decision, contradiction, and optional exact-analysis binding verdict |
 | `standards-catalog` | Content-addressed standards metadata and original PySFMEA objective summaries without licensed normative text |
+| `tool-qualification-dossier` | Exact-bound intended use, classification, operational/verification objectives, configuration, and known-anomaly evidence |
+| `tool-qualification-verification` | Dossier semantics and optional exact analysis/benchmark/conformance/anomaly binding verdict |
 | `workflow-status` | Lifecycle stage, handoff gates, evidence, summaries, and remediation actions |
 
 The schemas use stable `urn:pysfmea:schema:…:1` identifiers and have no external `$ref`

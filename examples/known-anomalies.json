@@ -1,0 +1,13 @@
+{
+  "format": "pysfmea-known-anomaly-register-1",
+  "anomalies": [
+    {
+      "id": "ANOM-DYNAMIC-DISPATCH",
+      "title": "Dynamic dispatch can remain unresolved by static analysis",
+      "status": "open",
+      "impact": "Call-graph and downstream cascade completeness may be reduced for reflection, monkey-patching, dependency injection, or runtime-generated targets.",
+      "disposition": "Require targeted runtime evidence and human review for affected safety or assurance boundaries.",
+      "evidence_refs": []
+    }
+  ]
+}

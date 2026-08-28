@@ -14,7 +14,14 @@ from jsonschema.exceptions import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from pysfmea.benchmark_assurance import (
+    BENCHMARK_PROTOCOL_FORMAT,
+    benchmark_assessment,
+    verify_benchmark_assessment,
+    verify_benchmark_assessment_file,
+)
 from pysfmea.cli import main
+from pysfmea.conformance import assess_objective, conformance_workspace
 from pysfmea.discovery import evaluate_candidates, load_evaluation_spec
 from pysfmea.integrity import canonical_json_sha256
 from pysfmea.program import verify_assurance_program
@@ -33,6 +40,12 @@ from pysfmea.qualification_report import (
 from pysfmea.scanner import scan_repository
 from pysfmea.schemas import schema_document
 from pysfmea.store import load_analysis, save_analysis
+from pysfmea.tool_qualification import (
+    assess_tool_qualification_objective,
+    tool_qualification_dossier,
+    verify_tool_qualification_dossier,
+    verify_tool_qualification_dossier_file,
+)
 
 
 class QualificationCampaignTests(unittest.TestCase):
@@ -61,9 +74,7 @@ class QualificationCampaignTests(unittest.TestCase):
             if item["source"]["path"] == "service.py"
         ]
         semantic_item = next(
-            item
-            for item in analysis["items"]
-            if item["source"]["path"] == "service.py"
+            item for item in analysis["items"] if item["source"]["path"] == "service.py"
         )
         self.corpus = {
             "schema_version": "pysfmea-golden-corpus-1",
@@ -178,6 +189,296 @@ class QualificationCampaignTests(unittest.TestCase):
         self.assertEqual(
             result["features"]["control_detection"]["evaluated_components"], 2
         )
+
+    def test_independent_benchmark_protocol_adds_statistical_and_holdout_gates(
+        self,
+    ) -> None:
+        result = build_qualification_campaign(self.manifest_path)
+        result_path = self.root / "qualification-result.json"
+        self._write_json(result_path, result)
+        protocol = {
+            "format": BENCHMARK_PROTOCOL_FORMAT,
+            "id": "BENCHMARK-1",
+            "title": "Pre-registered independent scanner benchmark",
+            "pre_registered_at": "2026-08-01T00:00:00+00:00",
+            "pre_registration_evidence_ref": "registry://benchmark/BENCHMARK-1",
+            "governance": {
+                "protocol_owner": "Benchmark protocol owner",
+                "label_authority": "Independent label authority",
+                "approval_authority": "Tool qualification authority",
+                "independence_basis": "The label and approval authorities are organizationally independent of scanner development.",
+            },
+            "design": {
+                "frozen_before_execution": True,
+                "blinded_holdout": True,
+                "minimum_holdout_repositories": 1,
+                "holdout_repository_ids": ["service-a"],
+                "selection_method": "Risk-stratified sampling frozen before scanner execution.",
+                "represented_populations": ["plain Python workflow service"],
+                "excluded_populations": ["native extension modules"],
+            },
+            "statistics": {
+                "confidence_level": 0.95,
+                "minimum_lower_bounds": {
+                    name: 0.0
+                    for name in (
+                        "finding_recall",
+                        "finding_precision",
+                        "call_recall",
+                        "call_precision",
+                        "control_recall",
+                        "control_precision",
+                        "semantic_recall",
+                        "semantic_precision",
+                    )
+                },
+                "minimum_cohen_kappa": 0.8,
+            },
+            "reviewer_agreement": {
+                "both_positive": 8,
+                "primary_only": 0,
+                "secondary_only": 0,
+                "both_negative": 8,
+                "adjudication_evidence_ref": "evidence://benchmark/adjudication",
+            },
+            "requalification_triggers": [
+                "scanner_or_rule_change",
+                "python_or_dependency_change",
+                "benchmark_or_label_change",
+                "llm_model_prompt_or_policy_change",
+                "intended_environment_change",
+                "new_or_changed_known_anomaly",
+            ],
+        }
+        protocol_path = self.root / "benchmark-protocol.json"
+        self._write_json(protocol_path, protocol)
+        assessment = benchmark_assessment(
+            protocol_path,
+            result_path,
+            self.manifest_path,
+            generated_at="2026-08-27T12:00:00+00:00",
+        )
+        self.assertTrue(verify_benchmark_assessment(assessment)["valid"])
+        self.assertFalse(assessment["summary"]["passed"])
+        assessment_path = self.root / "benchmark-assessment.json"
+        self._write_json(assessment_path, assessment)
+        exact = verify_benchmark_assessment_file(
+            assessment_path,
+            protocol_source=protocol_path,
+            qualification_result_source=result_path,
+            qualification_manifest_source=self.manifest_path,
+        )
+        self.assertTrue(exact["valid"])
+        self.assertTrue(exact["checks"]["source_regeneration"])
+        Draft202012Validator(
+            schema_document("independent-benchmark-assessment")
+        ).validate(assessment)
+        Draft202012Validator(
+            schema_document("independent-benchmark-verification")
+        ).validate(exact)
+        tampered = copy.deepcopy(assessment)
+        tampered["statistics"]["confidence_intervals"]["finding_recall"]["lower"] = 1.0
+        tampered["content_sha256"] = canonical_json_sha256(
+            {key: value for key, value in tampered.items() if key != "content_sha256"}
+        )
+        self.assertFalse(verify_benchmark_assessment(tampered)["valid"])
+
+        conformance = conformance_workspace(
+            load_analysis(self.analysis_path),
+            ["nist-ssdf-1.1"],
+            system="qualification fixture",
+            lifecycle_phase="verification",
+            applicability_basis="approved qualification plan",
+            authority="Tool qualification authority",
+            generated_at="2026-08-27T12:30:00+00:00",
+        )
+        for objective in [
+            item["id"] for item in conformance["profiles"][0]["objectives"]
+        ]:
+            conformance = assess_objective(
+                conformance,
+                objective,
+                applicability="applicable",
+                status="satisfied",
+                rationale="The objective is supported by controlled fixture evidence.",
+                reviewer="Conformance reviewer",
+                evidence_refs=[f"evidence://{objective}"],
+                reviewed_at="2026-08-27T12:45:00+00:00",
+            )
+        conformance_path = self.root / "conformance.json"
+        self._write_json(conformance_path, conformance)
+        anomaly_path = self.root / "known-anomalies.json"
+        self._write_json(
+            anomaly_path,
+            {"format": "pysfmea-known-anomaly-register-1", "anomalies": []},
+        )
+        dossier = tool_qualification_dossier(
+            load_analysis(self.analysis_path),
+            self.analysis_path,
+            assessment_path,
+            conformance_path,
+            anomaly_path,
+            intended_use="Generate review candidates and assurance evidence for Python repositories.",
+            reliance="Authorized reviewers do not eliminate required verification based solely on scanner output.",
+            qualification_basis="Project-selected DO-330-aligned organizational process.",
+            tool_classification="TQL-5 candidate",
+            intended_environment="CPython 3.13 on the controlled Windows qualification host.",
+            classification_authority="Tool qualification authority",
+            generated_at="2026-08-27T13:00:00+00:00",
+        )
+        self.assertTrue(verify_tool_qualification_dossier(dossier)["valid"])
+        self.assertFalse(
+            dossier["summary"]["eligible_for_authorized_qualification_decision"]
+        )
+        dossier_path = self.root / "tool-qualification-dossier.json"
+        self._write_json(dossier_path, dossier)
+        dossier_verdict = verify_tool_qualification_dossier_file(
+            dossier_path,
+            analysis_source=self.analysis_path,
+            benchmark_assessment_source=assessment_path,
+            conformance_workspace_source=conformance_path,
+            anomaly_register_source=anomaly_path,
+        )
+        self.assertTrue(dossier_verdict["valid"])
+        self.assertTrue(dossier_verdict["checks"]["source_bindings"])
+        Draft202012Validator(schema_document("tool-qualification-dossier")).validate(
+            dossier
+        )
+        Draft202012Validator(
+            schema_document("tool-qualification-verification")
+        ).validate(dossier_verdict)
+
+        cli_assessment_path = self.root / "cli-benchmark-assessment.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "benchmark-assess",
+                        str(protocol_path),
+                        str(result_path),
+                        str(self.manifest_path),
+                        "-o",
+                        str(cli_assessment_path),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "benchmark-verify",
+                        str(cli_assessment_path),
+                        "--protocol",
+                        str(protocol_path),
+                        "--qualification-result",
+                        str(result_path),
+                        "--qualification-manifest",
+                        str(self.manifest_path),
+                        "--json",
+                    ]
+                ),
+                0,
+            )
+        cli_dossier_path = self.root / "cli-tool-qualification.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "tool-qualification-init",
+                        str(self.analysis_path),
+                        "--benchmark",
+                        str(cli_assessment_path),
+                        "--conformance",
+                        str(conformance_path),
+                        "--anomalies",
+                        str(anomaly_path),
+                        "--intended-use",
+                        "Controlled screening",
+                        "--reliance",
+                        "Human review remains mandatory",
+                        "--basis",
+                        "Approved qualification plan",
+                        "--classification",
+                        "TQL decision pending",
+                        "--environment",
+                        "Controlled CPython baseline",
+                        "--authority",
+                        "Tool qualification authority",
+                        "-o",
+                        str(cli_dossier_path),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "tool-qualification-assess",
+                        str(cli_dossier_path),
+                        "TQ-CLASSIFY",
+                        "--applicability",
+                        "applicable",
+                        "--status",
+                        "satisfied",
+                        "--rationale",
+                        "Approved classification record",
+                        "--reviewer",
+                        "Independent reviewer",
+                        "--evidence-ref",
+                        "record://classification",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "tool-qualification-verify",
+                        str(cli_dossier_path),
+                        "--analysis",
+                        str(self.analysis_path),
+                        "--benchmark",
+                        str(cli_assessment_path),
+                        "--conformance",
+                        str(conformance_path),
+                        "--anomalies",
+                        str(anomaly_path),
+                        "--json",
+                    ]
+                ),
+                0,
+            )
+        for objective in [item["id"] for item in dossier["objectives"]]:
+            dossier = assess_tool_qualification_objective(
+                dossier,
+                objective,
+                applicability="applicable",
+                status="satisfied",
+                rationale="The controlled dossier evidence was independently reviewed.",
+                reviewer="Qualification reviewer",
+                evidence_refs=[f"evidence://qualification/{objective}"],
+                reviewed_at="2026-08-27T13:30:00+00:00",
+            )
+        self.assertTrue(verify_tool_qualification_dossier(dossier)["valid"])
+        self.assertFalse(
+            dossier["summary"]["eligible_for_authorized_qualification_decision"]
+        )
+        tampered_dossier = copy.deepcopy(dossier)
+        tampered_dossier["objectives"][0]["title"] = "weakened objective"
+        tampered_dossier["content_sha256"] = canonical_json_sha256(
+            {
+                key: value
+                for key, value in tampered_dossier.items()
+                if key != "content_sha256"
+            }
+        )
+        self.assertFalse(verify_tool_qualification_dossier(tampered_dossier)["valid"])
+        malformed_dossier = copy.deepcopy(dossier)
+        malformed_dossier["bindings"]["analysis"] = None
+        self.assertFalse(verify_tool_qualification_dossier(malformed_dossier)["valid"])
+        malformed_dossier = copy.deepcopy(dossier)
+        malformed_dossier["objectives"] = [1]
+        self.assertFalse(verify_tool_qualification_dossier(malformed_dossier)["valid"])
         self.assertEqual(
             result["features"]["control_detection"]["positive_components"], 1
         )
@@ -310,9 +611,7 @@ class QualificationCampaignTests(unittest.TestCase):
         self.assertEqual(program["validation_cohorts"], cohorts)
         verification = verify_assurance_program(program_path)
         self.assertEqual(verification["validation"]["cohorts"], 1)
-        self.assertEqual(
-            verification["validation"]["verified_evaluation_artifacts"], 1
-        )
+        self.assertEqual(verification["validation"]["verified_evaluation_artifacts"], 1)
         self.assertFalse(
             any(
                 finding["code"].startswith("validation.evaluation_artifact_")
@@ -453,9 +752,9 @@ class QualificationCampaignTests(unittest.TestCase):
         self.assertFalse(result["checks"]["independent_corpora"])
         self.assertFalse(result["checks"]["call_cases_present"])
         self.assertEqual(result["status"], "qualification_evidence_incomplete")
-        Draft202012Validator(
-            schema_document("qualification-campaign-result")
-        ).validate(result)
+        Draft202012Validator(schema_document("qualification-campaign-result")).validate(
+            result
+        )
 
         result_path = self.root / "negative-result.json"
         self._write_json(result_path, result)
@@ -508,9 +807,9 @@ class QualificationCampaignTests(unittest.TestCase):
         self.assertEqual(diagnostics["examples"][0]["field"], "confidence")
         self.assertEqual(result["summary"]["semantic_missing_cases"], 0)
         self.assertEqual(result["summary"]["semantic_mismatched_claims"], 1)
-        Draft202012Validator(
-            schema_document("qualification-campaign-result")
-        ).validate(result)
+        Draft202012Validator(schema_document("qualification-campaign-result")).validate(
+            result
+        )
         malformed = copy.deepcopy(result)
         malformed["repositories"][0]["semantic_diagnostics"]["examples"][0][
             "actual"
@@ -534,7 +833,9 @@ class QualificationCampaignTests(unittest.TestCase):
         self.assertFalse(result["checks"]["control_negative_population"])
         self.assertFalse(result["eligible_for_independent_review"])
 
-    def test_manifest_rejects_escape_duplicate_identity_and_unknown_fields(self) -> None:
+    def test_manifest_rejects_escape_duplicate_identity_and_unknown_fields(
+        self,
+    ) -> None:
         escaped = copy.deepcopy(self.manifest)
         escaped["repositories"][0]["analysis"] = "../analysis.json"
         self._write_json(self.manifest_path, escaped)
@@ -542,9 +843,7 @@ class QualificationCampaignTests(unittest.TestCase):
             build_qualification_campaign(self.manifest_path)
 
         duplicated = copy.deepcopy(self.manifest)
-        duplicated["repositories"].append(
-            copy.deepcopy(duplicated["repositories"][0])
-        )
+        duplicated["repositories"].append(copy.deepcopy(duplicated["repositories"][0]))
         self._write_json(self.manifest_path, duplicated)
         with self.assertRaisesRegex(ValueError, "IDs must be unique"):
             build_qualification_campaign(self.manifest_path)
@@ -632,9 +931,9 @@ class QualificationCampaignTests(unittest.TestCase):
         self._write_json(self.manifest_path, segmented)
         preliminary = build_qualification_campaign(self.manifest_path)
         global_recall = preliminary["features"]["finding_detection"]["recall"]
-        weak_recall = preliminary["repositories"][1]["features"][
-            "finding_detection"
-        ]["recall"]
+        weak_recall = preliminary["repositories"][1]["features"]["finding_detection"][
+            "recall"
+        ]
         self.assertGreater(global_recall, weak_recall)
         threshold = round((global_recall + weak_recall) / 2, 4)
         segmented["thresholds"]["minimum_finding_recall"] = threshold

@@ -61,7 +61,7 @@ class IndustryAssuranceTests(unittest.TestCase):
     ) -> None:
         catalog = standards_catalog()
         self.assertEqual(catalog["format"], CONFORMANCE_CATALOG_FORMAT)
-        self.assertGreaterEqual(len(catalog["profiles"]), 8)
+        self.assertGreaterEqual(len(catalog["profiles"]), 20)
         self.assertTrue(
             any(
                 profile["access"] == "licensed_normative_text_required"
@@ -72,6 +72,11 @@ class IndustryAssuranceTests(unittest.TestCase):
         self.assertIn("iec-60812-2018", profile_ids)
         self.assertIn("sae-j1739-202605", profile_ids)
         self.assertIn("nist-ai-600-1-llm", profile_ids)
+        self.assertIn("aiag-vda-fmea-2019", profile_ids)
+        self.assertIn("sae-arp4754b-arp4761a", profile_ids)
+        self.assertIn("iso-12207-2026", profile_ids)
+        self.assertIn("openssf-osps-2026-02-19", profile_ids)
+        self.assertIn("medical-14971-62304-81001", profile_ids)
         Draft202012Validator(schema_document("standards-catalog")).validate(catalog)
 
     def test_conformance_requires_evidence_and_reconciles_all_objectives(self) -> None:

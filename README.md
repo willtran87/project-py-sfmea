@@ -2661,6 +2661,20 @@ sfmea conformance-assess conformance.json IEC60812-SCOPE `
   --rationale "Reviewed against approved scope." --reviewer "reviewer-id" `
   --evidence-ref "reqif://PLAN/SCOPE"
 sfmea conformance-verify conformance.json --analysis sfmea-analysis.json --json
+sfmea benchmark-assess benchmark-protocol.json qualification-result.json `
+  qualification-campaign.json -o benchmark-assessment.json
+sfmea benchmark-verify benchmark-assessment.json --protocol benchmark-protocol.json `
+  --qualification-result qualification-result.json `
+  --qualification-manifest qualification-campaign.json --json
+sfmea tool-qualification-init sfmea-analysis.json --benchmark benchmark-assessment.json `
+  --conformance conformance.json --anomalies known-anomalies.json `
+  --intended-use "Approved screening use" --reliance "Human review remains mandatory" `
+  --basis "Approved qualification plan" --classification "Authority decision" `
+  --environment "Controlled baseline" --authority "Qualification authority" `
+  -o tool-qualification.json
+sfmea tool-qualification-verify tool-qualification.json --analysis sfmea-analysis.json `
+  --benchmark benchmark-assessment.json --conformance conformance.json `
+  --anomalies known-anomalies.json --json
 sfmea assurance-case sfmea-analysis.json --conformance conformance.json `
   -o assurance-case.json
 sfmea assurance-case-verify assurance-case.json --analysis sfmea-analysis.json --json
@@ -2668,9 +2682,12 @@ sfmea provenance sfmea-analysis.json -o sfmea-analysis.intoto.json
 sfmea provenance-verify sfmea-analysis.intoto.json --analysis sfmea-analysis.json --json
 ```
 
-The catalog adds IEC 60812, SAE J1739_202605, FAA/DO-178C/DO-330, IEC 61508-3,
-ISO 26262-6, NIST SSDF, ISO 25010/29119, and NIST AI 600-1 profiles. Its objective text is
-original navigation guidance, not reproduced normative text. The assurance case keeps claims,
+The 20-profile catalog covers general and automotive FMEA, aerospace, functional safety,
+software lifecycle/process assessment, secure development, AI governance, automotive
+cybersecurity/SOTIF, medical, rail, industrial cybersecurity, and process safety. Its objective
+text is original navigation guidance, not reproduced normative text. Pre-registered benchmark
+assessment adds confidence bounds and reviewer agreement; the exact-bound qualification dossier
+organizes governed evidence without claiming qualification. The assurance case keeps claims,
 arguments, exact artifact evidence, assumptions, and unresolved defeaters distinct. See
 [Industry assurance profiles](docs/INDUSTRY_ASSURANCE.md).
 

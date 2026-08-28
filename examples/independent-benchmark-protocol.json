@@ -1,0 +1,64 @@
+{
+  "format": "pysfmea-independent-benchmark-protocol-1",
+  "id": "PY-SFMEA-INDEPENDENT-2026-01",
+  "title": "Pre-registered independent PySFMEA benchmark",
+  "pre_registered_at": "2026-08-27T00:00:00+00:00",
+  "pre_registration_evidence_ref": "registry://replace-with-controlled-record",
+  "governance": {
+    "protocol_owner": "Replace with protocol owner",
+    "label_authority": "Replace with independent label authority",
+    "approval_authority": "Replace with qualification authority",
+    "independence_basis": "Document organizational, financial, and reporting-line independence from scanner development."
+  },
+  "design": {
+    "frozen_before_execution": true,
+    "blinded_holdout": true,
+    "minimum_holdout_repositories": 5,
+    "holdout_repository_ids": [
+      "replace-holdout-01",
+      "replace-holdout-02",
+      "replace-holdout-03",
+      "replace-holdout-04",
+      "replace-holdout-05"
+    ],
+    "selection_method": "Risk-stratified selection frozen before execution; retain sampling evidence.",
+    "represented_populations": [
+      "plain Python services",
+      "async service frameworks",
+      "data-processing applications"
+    ],
+    "excluded_populations": [
+      "native extension implementation",
+      "runtime-generated code without retained source"
+    ]
+  },
+  "statistics": {
+    "confidence_level": 0.95,
+    "minimum_lower_bounds": {
+      "finding_recall": 0.8,
+      "finding_precision": 0.8,
+      "call_recall": 0.8,
+      "call_precision": 0.8,
+      "control_recall": 0.8,
+      "control_precision": 0.8,
+      "semantic_recall": 0.8,
+      "semantic_precision": 0.8
+    },
+    "minimum_cohen_kappa": 0.8
+  },
+  "reviewer_agreement": {
+    "both_positive": 20,
+    "primary_only": 0,
+    "secondary_only": 0,
+    "both_negative": 20,
+    "adjudication_evidence_ref": "evidence://replace-with-reviewer-matrix"
+  },
+  "requalification_triggers": [
+    "scanner_or_rule_change",
+    "python_or_dependency_change",
+    "benchmark_or_label_change",
+    "llm_model_prompt_or_policy_change",
+    "intended_environment_change",
+    "new_or_changed_known_anomaly"
+  ]
+}

@@ -12,6 +12,11 @@ from .assurance_case import (
     export_assurance_case,
     verify_assurance_case_file,
 )
+from .benchmark_assurance import (
+    benchmark_assessment,
+    export_benchmark_assessment,
+    verify_benchmark_assessment_file,
+)
 from .conformance import (
     APPLICABILITY,
     ASSESSMENT_STATUSES,
@@ -30,6 +35,19 @@ from .slsa import (
     verify_slsa_provenance_file,
 )
 from .store import load_analysis
+from .tool_qualification import (
+    APPLICABILITY as TOOL_APPLICABILITY,
+)
+from .tool_qualification import (
+    STATUSES as TOOL_STATUSES,
+)
+from .tool_qualification import (
+    assess_tool_qualification_objective,
+    export_tool_qualification_dossier,
+    load_tool_qualification_dossier,
+    tool_qualification_dossier,
+    verify_tool_qualification_dossier_file,
+)
 
 
 def add_industry_commands(subparsers: Any) -> None:
@@ -140,6 +158,74 @@ def add_industry_commands(subparsers: Any) -> None:
     provenance_verify.add_argument("--analysis", help="exact analysis JSON subject")
     provenance_verify.add_argument("--json", action="store_true")
     provenance_verify.set_defaults(handler=_provenance_verify)
+
+    benchmark = subparsers.add_parser(
+        "benchmark-assess",
+        help="apply a pre-registered statistical benchmark protocol to a qualification campaign",
+    )
+    benchmark.add_argument("protocol")
+    benchmark.add_argument("qualification_result")
+    benchmark.add_argument("qualification_manifest")
+    benchmark.add_argument("-o", "--output", required=True)
+    benchmark.set_defaults(handler=_benchmark_assess)
+
+    benchmark_verify = subparsers.add_parser(
+        "benchmark-verify",
+        help="verify benchmark statistics and optional exact-source regeneration",
+    )
+    benchmark_verify.add_argument("assessment")
+    benchmark_verify.add_argument("--protocol")
+    benchmark_verify.add_argument("--qualification-result")
+    benchmark_verify.add_argument("--qualification-manifest")
+    benchmark_verify.add_argument("--json", action="store_true")
+    benchmark_verify.set_defaults(handler=_benchmark_verify)
+
+    tool_init = subparsers.add_parser(
+        "tool-qualification-init",
+        help="create an exact-bound, fail-visible tool qualification dossier",
+    )
+    tool_init.add_argument("analysis")
+    tool_init.add_argument("--benchmark", required=True)
+    tool_init.add_argument("--conformance", required=True)
+    tool_init.add_argument("--anomalies", required=True)
+    tool_init.add_argument("--intended-use", required=True)
+    tool_init.add_argument("--reliance", required=True)
+    tool_init.add_argument("--basis", required=True)
+    tool_init.add_argument("--classification", required=True)
+    tool_init.add_argument("--environment", required=True)
+    tool_init.add_argument("--authority", required=True)
+    tool_init.add_argument("-o", "--output", required=True)
+    tool_init.set_defaults(handler=_tool_qualification_init)
+
+    tool_assess = subparsers.add_parser(
+        "tool-qualification-assess",
+        help="record one governed tool qualification objective decision",
+    )
+    tool_assess.add_argument("dossier")
+    tool_assess.add_argument("objective_id")
+    tool_assess.add_argument(
+        "--applicability", choices=tuple(sorted(TOOL_APPLICABILITY)), required=True
+    )
+    tool_assess.add_argument(
+        "--status", choices=tuple(sorted(TOOL_STATUSES)), required=True
+    )
+    tool_assess.add_argument("--rationale", required=True)
+    tool_assess.add_argument("--reviewer", required=True)
+    tool_assess.add_argument("--evidence-ref", action="append", default=[])
+    tool_assess.add_argument("-o", "--output")
+    tool_assess.set_defaults(handler=_tool_qualification_assess)
+
+    tool_verify = subparsers.add_parser(
+        "tool-qualification-verify",
+        help="verify a dossier and optional exact source-artifact bindings",
+    )
+    tool_verify.add_argument("dossier")
+    tool_verify.add_argument("--analysis")
+    tool_verify.add_argument("--benchmark")
+    tool_verify.add_argument("--conformance")
+    tool_verify.add_argument("--anomalies")
+    tool_verify.add_argument("--json", action="store_true")
+    tool_verify.set_defaults(handler=_tool_qualification_verify)
 
 
 def _guidance(args: argparse.Namespace) -> int:
@@ -305,6 +391,112 @@ def _provenance_verify(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         print(f"SLSA provenance: valid={result['valid']}")
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _benchmark_assess(args: argparse.Namespace) -> int:
+    assessment = benchmark_assessment(
+        args.protocol, args.qualification_result, args.qualification_manifest
+    )
+    result = export_benchmark_assessment(assessment, args.output)
+    print(f"Created independent benchmark assessment: {result}")
+    print(
+        f"Status={assessment['summary']['status']}; "
+        f"confidence intervals={assessment['summary']['intervals_passing']}/"
+        f"{assessment['summary']['intervals_required']}; "
+        f"kappa={assessment['summary']['cohen_kappa']}."
+    )
+    print(assessment["notice"])
+    return 0
+
+
+def _benchmark_verify(args: argparse.Namespace) -> int:
+    result = verify_benchmark_assessment_file(
+        args.assessment,
+        protocol_source=args.protocol,
+        qualification_result_source=args.qualification_result,
+        qualification_manifest_source=args.qualification_manifest,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Independent benchmark: valid={result['valid']}, passed={result['passed']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _tool_qualification_init(args: argparse.Namespace) -> int:
+    analysis_path = Path(args.analysis).expanduser().resolve()
+    dossier = tool_qualification_dossier(
+        load_analysis(analysis_path),
+        analysis_path,
+        args.benchmark,
+        args.conformance,
+        args.anomalies,
+        intended_use=args.intended_use,
+        reliance=args.reliance,
+        qualification_basis=args.basis,
+        tool_classification=args.classification,
+        intended_environment=args.environment,
+        classification_authority=args.authority,
+    )
+    result = export_tool_qualification_dossier(dossier, args.output)
+    print(f"Created tool qualification dossier: {result}")
+    print(
+        f"Objectives={dossier['summary']['objectives']}; "
+        f"blockers={len(dossier['summary']['blocking_objective_ids'])}; "
+        f"inputs ready={dossier['summary']['inputs_ready']}."
+    )
+    print(dossier["claim"])
+    return 0
+
+
+def _tool_qualification_assess(args: argparse.Namespace) -> int:
+    source = Path(args.dossier).expanduser().resolve()
+    dossier = load_tool_qualification_dossier(source)
+    updated = assess_tool_qualification_objective(
+        dossier,
+        args.objective_id,
+        applicability=args.applicability,
+        status=args.status,
+        rationale=args.rationale,
+        reviewer=args.reviewer,
+        evidence_refs=args.evidence_ref,
+    )
+    destination = Path(args.output).expanduser().resolve() if args.output else source
+    result = export_tool_qualification_dossier(updated, destination)
+    print(f"Recorded and sealed {args.objective_id}: {result}")
+    print(
+        "Eligible for authorized qualification decision="
+        f"{updated['summary']['eligible_for_authorized_qualification_decision']}; "
+        f"blockers={len(updated['summary']['blocking_objective_ids'])}."
+    )
+    return 0
+
+
+def _tool_qualification_verify(args: argparse.Namespace) -> int:
+    result = verify_tool_qualification_dossier_file(
+        args.dossier,
+        analysis_source=args.analysis,
+        benchmark_assessment_source=args.benchmark,
+        conformance_workspace_source=args.conformance,
+        anomaly_register_source=args.anomalies,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Tool qualification dossier: valid={result['valid']}, "
+            "eligible for authorized decision="
+            f"{result['eligible_for_authorized_qualification_decision']}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])

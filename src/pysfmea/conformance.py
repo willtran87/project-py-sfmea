@@ -18,11 +18,12 @@ from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_document
 from .model import utc_now
 from .report import analysis_state_sha256
+from .standard_profiles import ADDITIONAL_PROFILES
 
 CONFORMANCE_CATALOG_FORMAT = "pysfmea-standards-catalog-1"
 CONFORMANCE_WORKSPACE_FORMAT = "pysfmea-conformance-workspace-1"
 CONFORMANCE_VERIFICATION_FORMAT = "pysfmea-conformance-verification-1"
-CONFORMANCE_CATALOG_VERSION = "2026.08.27"
+CONFORMANCE_CATALOG_VERSION = "2026.08.27-r2"
 MAX_CONFORMANCE_BYTES = 10_000_000
 MAX_CONFORMANCE_OBJECTIVES = 500
 MAX_CONFORMANCE_TEXT = 20_000
@@ -416,7 +417,7 @@ _PROFILES: tuple[dict[str, Any], ...] = (
             ),
         ],
     },
-)
+) + ADDITIONAL_PROFILES
 
 
 def standards_catalog() -> dict[str, Any]:

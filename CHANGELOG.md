@@ -5,6 +5,15 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Expand industry assurance to 20 selectable, content-addressed profiles spanning AIAG/VDA
+  FMEA, ARP4754B/ARP4761A, ISO/IEC/IEEE 12207:2026, ISO 330xx, OpenSSF OSPS, AI governance,
+  automotive cybersecurity/SOTIF, medical, rail, industrial cybersecurity, and process safety.
+  Add a pre-registered independent-benchmark protocol with blinded holdouts, Wilson confidence
+  intervals, Cohen's kappa, closed requalification triggers, and exact campaign regeneration.
+  Add an exact-source-bound tool-qualification dossier covering intended use/classification,
+  operational requirements, plans, verification, configuration, anomalies, accomplishment, and
+  requalification. Public schemas, CLI workflows, conservative readiness gates, and tamper tests
+  accompany both artifacts; neither artifact asserts certification or tool qualification.
 - Add an exact-analysis-bound industry assurance layer: eight selectable IEC/SAE/FAA/ISO/NIST
   profiles, content-addressed objective assessment workspaces, governed applicability/status/
   rationale/reviewer/evidence decisions, fail-visible conformance verification, and ISO 15026 /
