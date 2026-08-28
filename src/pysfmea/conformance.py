@@ -14,16 +14,18 @@ from pathlib import Path
 from typing import Any
 
 from .file_publication import atomic_publish_text
+from .governance_standard_profiles import GOVERNANCE_STANDARD_PROFILES
 from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_document
 from .model import utc_now
 from .report import analysis_state_sha256
 from .standard_profiles import ADDITIONAL_PROFILES
+from .system_standard_profiles import SYSTEM_STANDARD_PROFILES
 
 CONFORMANCE_CATALOG_FORMAT = "pysfmea-standards-catalog-1"
 CONFORMANCE_WORKSPACE_FORMAT = "pysfmea-conformance-workspace-1"
 CONFORMANCE_VERIFICATION_FORMAT = "pysfmea-conformance-verification-1"
-CONFORMANCE_CATALOG_VERSION = "2026.08.27-r2"
+CONFORMANCE_CATALOG_VERSION = "2026.08.27-r3"
 MAX_CONFORMANCE_BYTES = 10_000_000
 MAX_CONFORMANCE_OBJECTIVES = 500
 MAX_CONFORMANCE_TEXT = 20_000
@@ -417,7 +419,7 @@ _PROFILES: tuple[dict[str, Any], ...] = (
             ),
         ],
     },
-) + ADDITIONAL_PROFILES
+) + ADDITIONAL_PROFILES + SYSTEM_STANDARD_PROFILES + GOVERNANCE_STANDARD_PROFILES
 
 
 def standards_catalog() -> dict[str, Any]:

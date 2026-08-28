@@ -1,0 +1,58 @@
+{
+  "format": "pysfmea-independent-benchmark-protocol-2",
+  "id": "replace-with-controlled-protocol-id",
+  "title": "Independent repository-clustered PySFMEA benchmark",
+  "pre_registered_at": "2026-01-01T00:00:00Z",
+  "pre_registration_evidence_ref": "replace-with-immutable-registration-reference",
+  "governance": {
+    "protocol_owner": "replace-with-protocol-owner",
+    "label_authority": "replace-with-distinct-label-authority",
+    "approval_authority": "replace-with-distinct-approval-authority",
+    "independence_basis": "Document organizational, reporting-line, and implementation independence."
+  },
+  "design": {
+    "frozen_before_execution": true,
+    "blinded_holdout": true,
+    "minimum_repositories": 3,
+    "selection_method": "Replace with a pre-registered risk-stratified sampling method.",
+    "represented_populations": ["replace-with-represented-population"],
+    "excluded_populations": ["replace-with-excluded-population"],
+    "strata_fields": ["framework", "size", "domain"],
+    "minimum_repositories_per_stratum": 1
+  },
+  "statistics": {
+    "confidence_level": 0.95,
+    "bootstrap_replicates": 2000,
+    "bootstrap_seed": "replace-with-published-seed",
+    "metric_thresholds": {
+      "propagation_paths": {
+        "minimum_recall_lower": 0.8,
+        "minimum_precision_lower": 0.8
+      }
+    },
+    "minimum_krippendorff_alpha": 0.8,
+    "minimum_calibration_samples": 6,
+    "maximum_brier_score": 0.15,
+    "maximum_expected_calibration_error": 0.15
+  },
+  "power_analysis": {
+    "method": "Replace with the pre-registered repository-cluster power method.",
+    "alpha": 0.05,
+    "target_power": 0.8,
+    "minimum_effect_size": 0.2,
+    "required_repositories": 3,
+    "evidence_ref": "replace-with-power-analysis-evidence"
+  },
+  "requalification_triggers": [
+    "benchmark_or_label_change",
+    "exchange_or_model_adapter_change",
+    "intended_environment_change",
+    "llm_model_prompt_or_policy_change",
+    "new_or_changed_known_anomaly",
+    "python_or_dependency_change",
+    "scanner_or_rule_change",
+    "standards_profile_or_citation_change",
+    "statistical_protocol_change"
+  ],
+  "content_sha256": "reseal-with-sfmea-benchmark-seal-v2"
+}

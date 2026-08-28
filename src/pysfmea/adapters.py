@@ -584,10 +584,10 @@ BUILTIN_ADAPTERS = (
     AdapterDescriptor(
         "export.cyclonedx",
         "exporter",
-        "1",
-        ("cyclonedx_1_6", "declared_inventory"),
+        "2",
+        ("cyclonedx_1_7", "declared_inventory", "incomplete_composition"),
         "dependency-inventory-1",
-        "cyclonedx-1.6",
+        "cyclonedx-1.7",
         "deterministic",
     ),
     AdapterDescriptor(

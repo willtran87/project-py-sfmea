@@ -182,6 +182,7 @@ SCHEMA_BUNDLE_VERIFICATION_FORMAT = "pysfmea-schema-bundle-verification-1"
 MAX_SCHEMA_BUNDLE_FILE_BYTES = 2_000_000
 MAX_SCHEMA_BUNDLE_JSON_DEPTH = 100
 MAX_SCHEMA_BUNDLE_JSON_NODES = 250_000
+MAX_SCHEMA_BUNDLE_ENTRIES = 256
 REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
 REVIEW_PACKAGE_VERIFICATION_FORMAT = "pysfmea-review-package-verification-1"
 ANALYSIS_STRUCTURE_VERIFICATION_FORMAT = "pysfmea-analysis-structure-verification-1"
@@ -2683,7 +2684,7 @@ def _schema_catalog_schema() -> dict[str, Any]:
             "schemas": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 100,
+                "maxItems": 256,
                 "items": {
                     "type": "object",
                     "required": [
@@ -2754,10 +2755,10 @@ def _schema_bundle_verification_schema() -> dict[str, Any]:
                 "properties": {name: {"type": "boolean"} for name in check_names},
                 "additionalProperties": False,
             },
-            "schema_count": {"type": "integer", "minimum": 0, "maximum": 100},
+            "schema_count": {"type": "integer", "minimum": 0, "maximum": 256},
             "schemas": {
                 "type": "array",
-                "maxItems": 100,
+                "maxItems": 256,
                 "items": {
                     "type": "object",
                     "required": [
@@ -9693,11 +9694,12 @@ def verify_schema_bundle_path(source: str | Path) -> dict[str, Any]:
     except OSError as exc:
         add("schema.bundle_unreadable", f"Schema bundle cannot be enumerated: {exc}")
         entries = []
-    if len(entries) > 100:
+    if len(entries) > MAX_SCHEMA_BUNDLE_ENTRIES:
         add(
-            "schema.bundle_entry_limit", "Schema bundle contains more than 100 entries."
+            "schema.bundle_entry_limit",
+            f"Schema bundle contains more than {MAX_SCHEMA_BUNDLE_ENTRIES} entries.",
         )
-    for entry in entries[:101]:
+    for entry in entries[: MAX_SCHEMA_BUNDLE_ENTRIES + 1]:
         name = entry.name
         if name not in allowed:
             documents[name] = None

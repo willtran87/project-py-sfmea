@@ -95,7 +95,9 @@ def _review_package_manifest_schema() -> dict[str, Any]:
             "files": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 128,
+                # Keep synchronized with report.MAX_ARCHIVE_ENTRIES. The complete
+                # public schema bundle is embedded in every review package.
+                "maxItems": 512,
                 "items": {
                     "type": "object",
                     "required": ["path", "bytes", "sha256"],

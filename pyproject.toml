@@ -29,6 +29,10 @@ dependencies = ["defusedxml>=0.7.1"]
 
 [project.optional-dependencies]
 signing = ["cryptography>=42"]
+interop = [
+  "jsonschema>=4.23",
+  "lxml>=5.4",
+]
 dev = [
   "build>=1.2",
   "hypothesis>=6.138",

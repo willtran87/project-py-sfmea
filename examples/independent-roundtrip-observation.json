@@ -1,0 +1,15 @@
+{
+  "receiver_name": "replace-with-independent-receiving-tool",
+  "receiver_version": "replace-with-exact-version",
+  "receiver_vendor": "replace-with-vendor-or-organization",
+  "operator": "replace-with-attributed-operator",
+  "independence_basis": "Describe the operator, tool, reporting-line, and implementation independence.",
+  "import_succeeded": false,
+  "import_evidence_ref": "replace-with-controlled-import-log",
+  "reexport_artifact": "replace-with-reexport-path",
+  "identity_preserved": false,
+  "relationships_preserved": false,
+  "extensions_preserved": false,
+  "differences": ["Replace with observed differences; use an empty list only when comparison evidence supports it."],
+  "comparison_evidence_ref": "replace-with-controlled-comparison-record"
+}

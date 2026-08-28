@@ -1,0 +1,36 @@
+{
+  "format": "pysfmea-independent-benchmark-observations-2",
+  "protocol_id": "replace-with-controlled-protocol-id",
+  "sealed_at": "2026-01-02T00:00:00Z",
+  "labeling_completed_at": "2026-01-03T00:00:00Z",
+  "repositories": [
+    {
+      "id": "replace-repository-1",
+      "source_ref": "replace-with-exact-retained-source-1",
+      "strata": {"framework": ["plain"], "size": ["small"], "domain": ["service"]},
+      "metrics": {"propagation_paths": {"true_positive": 1, "false_positive": 0, "false_negative": 0, "true_negative": 1}},
+      "predictions": [{"confidence": 0.9, "outcome": true}, {"confidence": 0.1, "outcome": false}]
+    },
+    {
+      "id": "replace-repository-2",
+      "source_ref": "replace-with-exact-retained-source-2",
+      "strata": {"framework": ["async"], "size": ["medium"], "domain": ["service"]},
+      "metrics": {"propagation_paths": {"true_positive": 1, "false_positive": 0, "false_negative": 0, "true_negative": 1}},
+      "predictions": [{"confidence": 0.9, "outcome": true}, {"confidence": 0.1, "outcome": false}]
+    },
+    {
+      "id": "replace-repository-3",
+      "source_ref": "replace-with-exact-retained-source-3",
+      "strata": {"framework": ["data"], "size": ["large"], "domain": ["service"]},
+      "metrics": {"propagation_paths": {"true_positive": 1, "false_positive": 0, "false_negative": 0, "true_negative": 1}},
+      "predictions": [{"confidence": 0.9, "outcome": true}, {"confidence": 0.1, "outcome": false}]
+    }
+  ],
+  "rating_items": [
+    {"id": "replace-rating-1", "ratings": {"reviewer-a": true, "reviewer-b": true}, "adjudication_ref": "replace-with-adjudication-1"},
+    {"id": "replace-rating-2", "ratings": {"reviewer-a": false, "reviewer-b": false}, "adjudication_ref": "replace-with-adjudication-2"},
+    {"id": "replace-rating-3", "ratings": {"reviewer-a": true, "reviewer-b": true}, "adjudication_ref": "replace-with-adjudication-3"},
+    {"id": "replace-rating-4", "ratings": {"reviewer-a": false, "reviewer-b": false}, "adjudication_ref": "replace-with-adjudication-4"}
+  ],
+  "content_sha256": "reseal-with-sfmea-benchmark-seal-v2"
+}

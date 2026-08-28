@@ -5,6 +5,70 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Add an industry-validation portfolio that combines external benchmark-suite provenance,
+  exact suite-to-repository strata, two-or-more comparator baselines, runtime coverage,
+  independently attributable receiving-tool round trips, representative usability studies,
+  optional formal proof evidence, and continuity exercises under one fail-visible policy. Add a
+  self-contained responsive HTML report with embedded assessment, payload/document digests, exact
+  binding verification, public schemas, CLI workflows, and rehashed-summary tamper rejection.
+- Add exact-byte `coverage.py` JSON observations with producer/configuration/test-run provenance,
+  bounded line/branch normalization, exact analysis-component mapping, omission inventories,
+  configurable statement/branch gates, optional complete-component and object-code policies, and
+  exact regeneration. Branch observations remain explicitly distinct from decision and MC/DC
+  credit. Expand the catalog from 61 to 71 profiles with NIST CSF 2.0, ISO/IEC 27001/27002/27005,
+  ISO/IEC 27701:2025, ISO/IEC 29147/30111, ISO/IEC 15408/18045:2026, ISO 9241-210/171,
+  IEC 62366-1, ISO 22301, ISO/IEC 42006:2025, and FAA-recognized DO-333 navigation guidance.
+- Add six governed industry-method workbenches: STPA/CAST, requirements-based structural
+  coverage with vector-verified unique-cause MC/DC, bounded exact quantitative FTA with shared
+  events/cut sets/probability intervals/Birnbaum importance, ISO/IEC 25040 quality-evaluation
+  campaigns, CVSS v4 + OWASP ASVS 5 + SSVC security prioritization, and ISO/IEC 17025-inspired
+  laboratory governance. Each method provides init/seal/assess/verify CLI workflows, exact source
+  regeneration, fail-closed bounded input handling, and public schemas. Expand the governed
+  standards catalog from 49 to 61 profiles with IEEE 1633, OWASP ASVS 5.0, ISO/IEC 25040,
+  ISO/IEC 27034, NIST AI RMF, ISO/IEC 24029, Automotive SPICE 4.0, FAA DO-326A/ED-202A,
+  IEC 82304-1, ISO/IEC 17025, FIRST CVSS 4.0, and MIT STPA/CAST navigation guidance.
+- Add an industry release-qualification gate over exact advanced-benchmark evidence. The gate
+  requires distinct authorities, a temporal holdout, content/history/lineage disjointness,
+  exhaustive candidate/reference similarity evidence, conservative-bound metric non-inferiority,
+  and duration/RSS/artifact-size budgets. Add controlled complete SSVC-style decision tables,
+  attributable vulnerability observations, deterministic outcomes, and exact regeneration.
+- Add an exact assurance-case-to-GSN Version 3 semantic projection retaining goals, strategies,
+  solutions, assumptions, and open defeaters without claiming exchange-format conformance. Extend
+  RBD output with structural Birnbaum importance. Add selectable ISO/IEC/IEEE 15026-2:2022,
+  ISO/IEC 5338:2023, ISO/IEC 42005:2025, ISO/PAS 8800:2024, and UL 4600 Edition 3 profiles,
+  nine public artifact/verifier schemas, CLI workflows, and end-to-end tamper-aware tests.
+- Add an evidence-governed PHA/FHA/PSSA/SSA/operations lifecycle and Common Cause
+  Failure Analysis workbench. Project-defined common causes and qualitative cut sets from
+  approved software fault trees become exact-baseline review candidates; lifecycle objectives,
+  allocations, independence claims, mitigations, verification, residual-risk decisions, reviewers,
+  and evidence remain explicit engineering inputs with closed schemas and regeneration checks.
+  Close the operational loop with a FRACAS/CAPA-style review and incident ledger covering
+  containment, root-cause evidence, corrective actions, ownership, effectiveness, and closure.
+- Add deny-by-default SLSA 1.2 Build and Source track policy assessment. Provenance structure,
+  externally observed signature authentication, builder/signer/repository trust, hosted and
+  hardened build controls, source review, achieved levels, and policy acceptance remain separate,
+  attributable claims. Add governed profiles for SLSA 1.2, IEC 62443-4-2, CISA SSVC, the ISO/IEC
+  5259 data-quality series, ISO/IEC 25059 AI quality, and ISO/IEC TR 5469 functional safety for AI.
+- Strengthen advanced independent benchmarks with duplicate holdout-source rejection and
+  conservative repository-clustered precision/recall bounds for every metric inside every
+  represented stratum. Add an accessible, self-contained HTML reviewer report with embedded
+  assessment, payload/document integrity, exact binding verification, and print/dark-mode support.
+  Extend RBD authoring with evidence-backed failure/repair rates, steady-state
+  availability, reliability intervals, explicit gate independence evidence, and declared
+  beta-factor common-cause sensitivity while retaining direct-reliability compatibility.
+- Add industry-grade interoperability and dependability evidence: exact validation against
+  user-supplied normative JSON/XML schemas, independently attributable receiving-tool round trips,
+  conservative ReqIF/SysML v2/OSLC lifecycle ingestion, repository-clustered stratified benchmark
+  statistics with calibration and Krippendorff agreement, IEC-aligned HAZOP/RBD/Markov authoring,
+  and governed OASIS CSAF 2.0 publication. All PySFMEA control artifacts have closed public schemas,
+  content bindings, standalone verifiers, CLI workflows, and explicit authority boundaries.
+- Add ten governed requirements, architecture, lifecycle, risk, FTA, ETA, and RCA profiles; exact
+  standards-objective/finding/obligation/evidence crosswalks; SACM 2.3, SFPM 1.0, ReqIF 1.2, and
+  SPDX 3.0.1 standards-oriented exchange projections; three tool-qualification navigation packs;
+  and authority-attributed CycloneDX 1.7 VEX publication. New CLI workflows, public schemas,
+  exact-source verification receipts, templates, and tamper tests preserve the distinction between
+  interoperable evidence, independent qualification, conformity, and authorized acceptance.
+
 - Expand industry assurance to 20 selectable, content-addressed profiles spanning AIAG/VDA
   FMEA, ARP4754B/ARP4761A, ISO/IEC/IEEE 12207:2026, ISO 330xx, OpenSSF OSPS, AI governance,
   automotive cybersecurity/SOTIF, medical, rail, industrial cybersecurity, and process safety.

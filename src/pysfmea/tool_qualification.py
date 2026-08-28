@@ -15,6 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from .benchmark_assurance import verify_benchmark_assessment_file
+from .benchmark_v2 import (
+    BENCHMARK_ASSESSMENT_V2_FORMAT,
+    verify_benchmark_v2_assessment_file,
+)
 from .conformance import verify_conformance_workspace_file
 from .file_publication import atomic_publish_text
 from .integrity import canonical_json_sha256
@@ -162,6 +166,17 @@ def _binding(
     return result
 
 
+def _verify_benchmark_document(document: BoundedJsonDocument) -> dict[str, Any]:
+    """Verify the benchmark generation selected by its closed format identifier."""
+
+    if (
+        isinstance(document.value, dict)
+        and document.value.get("format") == BENCHMARK_ASSESSMENT_V2_FORMAT
+    ):
+        return verify_benchmark_v2_assessment_file(document.path)
+    return verify_benchmark_assessment_file(document.path)
+
+
 def _load_anomalies(
     source: str | Path,
 ) -> tuple[BoundedJsonDocument, list[dict[str, Any]]]:
@@ -304,7 +319,7 @@ def tool_qualification_dossier(
         conformance_workspace_source, "conformance workspace", MAX_DOSSIER_BYTES
     )
     anomaly_document, anomalies = _load_anomalies(anomaly_register_source)
-    benchmark_verdict = verify_benchmark_assessment_file(benchmark_document.path)
+    benchmark_verdict = _verify_benchmark_document(benchmark_document)
     conformance_verdict = verify_conformance_workspace_file(
         conformance_document.path, analysis=analysis
     )
@@ -726,9 +741,7 @@ def verify_tool_qualification_dossier_file(
                     "conformance_workspace": _binding(conformance_document),
                     "known_anomaly_register": _binding(anomaly_document),
                 }
-                benchmark_verdict = verify_benchmark_assessment_file(
-                    benchmark_document.path
-                )
+                benchmark_verdict = _verify_benchmark_document(benchmark_document)
                 conformance_verdict = verify_conformance_workspace_file(
                     conformance_document.path, analysis=analysis
                 )

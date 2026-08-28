@@ -1,0 +1,18 @@
+{
+  "format": "pysfmea-vex-decisions-1",
+  "authority": "REPLACE-WITH-PRODUCT-SECURITY-AUTHORITY",
+  "issued_at": "2026-08-27T00:00:00+00:00",
+  "vulnerabilities": [
+    {
+      "id": "REPLACE-WITH-VULNERABILITY-ID",
+      "source_name": "REPLACE-WITH-ADVISORY-SOURCE",
+      "source_url": "https://example.invalid/replace-with-controlled-advisory",
+      "state": "in_triage",
+      "justification": null,
+      "response": [],
+      "detail": "Replace this template text with the authority's evidence-backed analysis.",
+      "affected_refs": ["project"],
+      "evidence_refs": ["record://REPLACE-WITH-CONTROLLED-EVIDENCE"]
+    }
+  ]
+}

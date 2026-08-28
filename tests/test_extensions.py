@@ -42,6 +42,7 @@ from pysfmea.publication import (
 )
 from pysfmea.readiness import repository_readiness
 from pysfmea.report import (
+    MAX_ARCHIVE_ENTRIES,
     MAX_ARCHIVE_FILE_BYTES,
     REVIEW_PACKAGE_FILES,
     REVIEW_PACKAGE_SCHEMA_FILES,
@@ -2987,7 +2988,10 @@ class ExtensionTests(unittest.TestCase):
 
         export_review_package(self.analysis, destination, overwrite=True)
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["files"].extend(dict(manifest["files"][0]) for _ in range(61))
+        manifest["files"].extend(
+            dict(manifest["files"][0])
+            for _ in range(MAX_ARCHIVE_ENTRIES - len(manifest["files"]) + 1)
+        )
         manifest_path.write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",

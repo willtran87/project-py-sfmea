@@ -411,3 +411,24 @@ direction for layered layout and propagation.
 These controls protect the report renderer and keep diagrams reviewable. They do
 not establish that an imported relationship is true, complete, approved, or
 supported by adequate engineering evidence.
+
+## Industry-validation evidence flow
+
+The industry-validation report uses the same principle as the diagram bundle: preserve exact
+machine evidence and show its limitations instead of converting a relationship into an approval.
+
+```mermaid
+flowchart LR
+    B["External suite-stratified benchmark"] --> P["Validation portfolio"]
+    C["Exact runtime coverage observation"] --> P
+    R["Independent receiving-tool round trips"] --> P
+    U["Representative analyst study"] --> P
+    F["Applicable proofs and recovery exercises"] --> P
+    P --> J["Closed JSON assessment"]
+    J --> H["Self-contained HTML report"]
+    H --> V["Payload + document verifier"]
+    V --> D{"External authority decision"}
+```
+
+The report is a visualization of a machine-verifiable assessment. It does not replace the JSON
+source, exact referenced artifacts, controlled normative standards, or the external authority.

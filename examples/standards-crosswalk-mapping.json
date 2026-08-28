@@ -1,0 +1,14 @@
+{
+  "format": "pysfmea-standards-crosswalk-mapping-1",
+  "links": [
+    {
+      "objective_id": "REQ-TRACE",
+      "relationship": "direct",
+      "finding_ids": ["REPLACE-WITH-ACTIVE-FINDING-ID"],
+      "obligation_ids": [],
+      "rationale": "Replace this template assertion with the reviewed relationship between the selected objective and exact analysis evidence.",
+      "authority": "REPLACE-WITH-AUTHORIZED-REVIEWER",
+      "evidence_refs": ["record://REPLACE-WITH-CONTROLLED-EVIDENCE"]
+    }
+  ]
+}

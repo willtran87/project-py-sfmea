@@ -77,6 +77,11 @@ flowchart LR
 - Optional Graphify code-only AST graph reconciliation: typed static call edges map by
   source/line to PySFMEA components, compare with native call evidence, bind to the run
   manifest, and appear in architecture exports. Graphify-only calls are review leads.
+- Industry release qualification that compares exact advanced-benchmark candidate and baseline
+  evidence using temporal/leakage separation, conservative non-inferiority, and resource budgets;
+  controlled SSVC-style vulnerability decisions; and a GSN Version 3 semantic projection that
+  keeps assurance-case assumptions and defeaters visible. These are decision-support controls,
+  not certification, corpus-independence, or standards-conformance claims.
 - A deterministic cross-reference evidence fabric that fuses native AST, Graphify, and
   imported runtime relationships by directed component pair, then connects components to
   findings, guidance citations, requirements, hazards, SFTA events, verification obligations,
@@ -363,6 +368,55 @@ integrity metadata, and complete structural envelope; the format string alone is
 `--verify FILE` performs bounded regular-file, UTF-8 JSON, structure, digest, and exact-taxonomy
 verification. JSON mode emits the public catalog-verification verdict and returns nonzero when the
 received catalog is unavailable, malformed, drifted, or not the catalog shipped by that verifier.
+
+### Industry-assurance extension
+
+PySFMEA includes 71 selectable standards-navigation profiles and evidence workflows for:
+
+- exact validation against a project-supplied normative JSON or XML Schema;
+- independently attributable receiving-tool import/re-export evidence;
+- conservative ReqIF, SysML v2 JSON, and OSLC JSON-LD lifecycle ingestion;
+- repository-clustered and stratified independent benchmark statistics;
+- IEC-aligned HAZOP, reliability-block-diagram, and Markov analysis; and
+- exact-bound PHA/FHA/PSSA/SSA/operations traceability and common-cause review;
+- STPA unsafe-control-action analysis and CAST systemic incident learning;
+- requirements-based decision/condition coverage with validated unique-cause MC/DC pairs;
+- exact quantitative fault-tree evaluation with shared events, cut sets, intervals, and importance;
+- ISO/IEC 25040-aligned, uncertainty-aware quality-evaluation campaigns;
+- CVSS v4, OWASP ASVS 5, and SSVC cross-referenced security prioritization;
+- ISO/IEC 17025-inspired independent-evaluation laboratory evidence;
+- exact-byte `coverage.py` line/branch observations mapped to analysis components without
+  misrepresenting branch coverage as MC/DC;
+- a composite industry-validation portfolio covering external suites, independent comparator
+  baselines, interoperability round trips, usability, formal methods, and continuity evidence;
+- SLSA 1.2 Build/Source track trust-policy assessment using external authentication evidence; and
+- governed CycloneDX VEX and OASIS CSAF 2.0 security publication.
+
+Install `pysfmea[interop]` for JSON/XML normative-schema validation. Start with
+[docs/INDUSTRY_ASSURANCE.md](docs/INDUSTRY_ASSURANCE.md) for the complete command sequence,
+authority boundaries, evidence model, and diagrams. These capabilities assemble and verify
+evidence; they do not grant conformity, qualification, certification, or risk acceptance.
+
+The industry portfolio produces its own self-contained, integrity-verifiable review report:
+
+```powershell
+sfmea runtime-coverage-import analysis.json coverage.json `
+  --authority "Verification lead" `
+  --command "coverage json -o coverage.json" `
+  --configuration-sha256 <sha256> `
+  --environment "controlled CI runner" `
+  --test-run-ref "evidence://ci/run-42" `
+  --evidence-ref "evidence://ci/run-42/log" `
+  -o runtime-coverage.json
+
+sfmea validation-portfolio-init --authority "Qualification lead" -o portfolio.json
+# Populate external-suite, comparator, round-trip, usability, and applicability evidence.
+sfmea validation-portfolio-seal portfolio.json -o portfolio.sealed.json
+sfmea validation-portfolio-assess portfolio.sealed.json -o portfolio.assessment.json
+sfmea validation-portfolio-report portfolio.assessment.json -o portfolio.html
+sfmea validation-portfolio-report-verify portfolio.html `
+  --assessment portfolio.assessment.json --json
+```
 
 ## Quick start
 
@@ -2661,6 +2715,11 @@ sfmea conformance-assess conformance.json IEC60812-SCOPE `
   --rationale "Reviewed against approved scope." --reviewer "reviewer-id" `
   --evidence-ref "reqif://PLAN/SCOPE"
 sfmea conformance-verify conformance.json --analysis sfmea-analysis.json --json
+sfmea standards-crosswalk sfmea-analysis.json conformance.json `
+  standards-crosswalk-mapping.json -o standards-crosswalk.json
+sfmea standards-crosswalk-verify standards-crosswalk.json `
+  --analysis sfmea-analysis.json --conformance conformance.json `
+  --mapping standards-crosswalk-mapping.json --json
 sfmea benchmark-assess benchmark-protocol.json qualification-result.json `
   qualification-campaign.json -o benchmark-assessment.json
 sfmea benchmark-verify benchmark-assessment.json --protocol benchmark-protocol.json `
@@ -2678,17 +2737,43 @@ sfmea tool-qualification-verify tool-qualification.json --analysis sfmea-analysi
 sfmea assurance-case sfmea-analysis.json --conformance conformance.json `
   -o assurance-case.json
 sfmea assurance-case-verify assurance-case.json --analysis sfmea-analysis.json --json
+sfmea industry-exchange sacm assurance-case.json -o assurance-case.sacm.xmi
+sfmea industry-exchange sfpm sfmea-analysis.json -o findings.sfpm.xmi
+sfmea industry-exchange reqif sfmea-analysis.json -o assurance.reqif
+sfmea industry-exchange spdx sfmea-analysis.json -o inventory.spdx.json
+sfmea industry-schema-validate assurance.reqif reqif.xsd --schema-kind xml-schema `
+  --standard "OMG ReqIF" --edition "1.2" --schema-uri "controlled://reqif.xsd" `
+  -o reqif-schema-receipt.json
+sfmea lifecycle-import sysml2-json system-model.json --analysis sfmea-analysis.json `
+  -o lifecycle-model.json
+sfmea dependability-init sfmea-analysis.json --authority "Dependability lead" `
+  -o dependability-authoring.json
+sfmea safety-lifecycle-init sfmea-analysis.json --authority "System safety lead" `
+  -o safety-lifecycle-authoring.json
+sfmea tool-qualification-bases
+sfmea vex sfmea-analysis.json vex-decisions.json -o product.vex.cdx.json
+sfmea vex-verify product.vex.cdx.json sfmea-analysis.json vex-decisions.json --json
+sfmea csaf sfmea-analysis.json vex-decisions.json -o product.csaf.json
+sfmea csaf-verify product.csaf.json sfmea-analysis.json vex-decisions.json --json
 sfmea provenance sfmea-analysis.json -o sfmea-analysis.intoto.json
 sfmea provenance-verify sfmea-analysis.intoto.json --analysis sfmea-analysis.json --json
+sfmea slsa-policy-init --authority "Supply-chain authority" -o slsa-policy.json
+sfmea slsa-observation-init --verifier "Independent verifier" -o slsa-observation.json
 ```
 
-The 20-profile catalog covers general and automotive FMEA, aerospace, functional safety,
+The 71-profile catalog covers general and automotive FMEA, aerospace, functional safety,
 software lifecycle/process assessment, secure development, AI governance, automotive
-cybersecurity/SOTIF, medical, rail, industrial cybersecurity, and process safety. Its objective
+cybersecurity/SOTIF, medical, rail, industrial cybersecurity, process safety, requirements,
+architecture, system lifecycle, risk management, FTA, ETA, RCA, HAZOP, RBD, Markov methods,
+interoperability, source quality, independent V&V, CSAF, SLSA 1.2, component security,
+vulnerability prioritization, and AI data/system/functional-safety quality. Its objective
 text is original navigation guidance, not reproduced normative text. Pre-registered benchmark
 assessment adds confidence bounds and reviewer agreement; the exact-bound qualification dossier
-organizes governed evidence without claiming qualification. The assurance case keeps claims,
-arguments, exact artifact evidence, assumptions, and unresolved defeaters distinct. See
+organizes governed evidence without claiming qualification. Exact crosswalks expose objective-to-
+finding/evidence lineage. SACM, SFPM, ReqIF, SPDX, CycloneDX VEX, and CSAF outputs declare their
+supported subset and retain verifiable source binding; supplied normative schemas and independent
+receiving-tool observations add stronger interoperability evidence. The assurance case keeps claims, arguments, exact
+artifact evidence, assumptions, and unresolved defeaters distinct. See
 [Industry assurance profiles](docs/INDUSTRY_ASSURANCE.md).
 
 ## Public guidance basis
@@ -2726,7 +2811,7 @@ than a generic SFMEA failure taxonomy.
 - Project context and hazards must be supplied by people. A configured hazard may seed an end effect and severity, but its applicability still requires confirmation.
 - Suggested causes and actions are prompts, not findings proven to exist.
 - Rule output can be repetitive. Scope and review disposition are expected to reduce the working set.
-- Project-defined common causes and explicit SFTA are supported, but the tool does not infer or approve arbitrary fault-tree logic, prove independence, perform STPA, or invent repository-specific fault targets and oracles. Governed built-in fault plugins and focused CI mutation gates are provided; broader chaos, load, process-kill, and infrastructure fault campaigns remain project-owned.
+- Project-defined common causes, explicit SFTA, quantitative FTA, and a governed STPA/CAST workbench are supported, but the tool does not infer or approve arbitrary fault-tree logic, prove independence, invent hazards or unsafe control actions, or invent repository-specific fault targets and oracles. Governed built-in fault plugins and focused CI mutation gates are provided; broader chaos, load, process-kill, and infrastructure fault campaigns remain project-owned.
 - System assurance programs verify declared cross-repository endpoints, temporal contracts, evidence,
   quality metrics, and governance gates; they do not discover every deployed service, establish
   causal completeness or schedulability, authenticate named identities, or execute external tools.

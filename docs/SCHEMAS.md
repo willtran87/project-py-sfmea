@@ -113,9 +113,60 @@ Available names:
 | `evidence-onboarding-receipt-verification` | Receipt integrity and optional exact resulting-analysis binding verdict |
 | `evaluation-result` | Exact-key finding, call, control, confidence, and deterministic semantic evaluation result |
 | `golden-corpus` | Closed bounded evaluation corpus for finding, call, control, and semantic qualification |
+| `gsn-projection` | Exact assurance-case-bound GSN Version 3 semantic nodes and relationships |
+| `gsn-projection-verification` | Projection integrity, graph closure, summary reconciliation, and optional exact regeneration |
 | `html-report-verification` | Success, rejection, and incomplete HTML-verifier verdicts |
 | `independent-benchmark-assessment` | Pre-registered blinded-holdout statistics, reviewer agreement, qualification-campaign bindings, and requalification policy |
 | `independent-benchmark-verification` | Internal statistical reconciliation plus optional exact protocol/result/manifest regeneration verdict |
+| `independent-benchmark-assessment-v2` | Repository-clustered, stratified metrics, calibration, Krippendorff agreement, power evidence, and requalification gates |
+| `independent-benchmark-verification-v2` | Format-2 integrity, statistical reconciliation, and optional exact protocol/observation regeneration verdict |
+| `independent-roundtrip-evidence` | Authority-attributed receiving-tool import/re-export evidence bound to exact normative validation and re-export bytes |
+| `independent-roundtrip-verification` | Round-trip integrity, semantics, and optional exact receipt/observation/re-export binding verdict |
+| `industry-exchange-verification` | SACM, SFPM, ReqIF, or SPDX structure, exact-source binding, and population-reconciliation verdict |
+| `lifecycle-model` | Conservative ReqIF, SysML v2 JSON, or OSLC JSON-LD normalized entities, explicit relations, and exact code links |
+| `lifecycle-model-verification` | Lifecycle-model integrity and optional exact-source/analysis regeneration verdict |
+| `normative-schema-validation` | Exact artifact/schema validation receipt for a supplied normative JSON or XML Schema |
+| `normative-schema-validation-verification` | Receipt integrity and optional exact artifact/schema binding verdict |
+| `dependability-authoring` | Exact-analysis-bound HAZOP, RBD, and Markov engineering input artifact |
+| `dependability-assessment` | Reconciled HAZOP completeness, explicit RBD probability, and bounded Markov results |
+| `dependability-verification` | Dependability integrity and optional exact analysis/authoring regeneration verdict |
+| `stpa-cast-source` | Exact-analysis-bound STPA/CAST control, hazard, scenario, incident, and action inputs |
+| `stpa-cast-assessment` | Derived STPA/CAST traceability and method-completeness assessment |
+| `stpa-cast-verification` | STPA/CAST integrity and optional exact-source regeneration verdict |
+| `structural-coverage-source` | Requirements, decisions, conditions, Boolean vectors, MC/DC pairs, and coverage evidence |
+| `structural-coverage-assessment` | Derived requirements, decision, condition, and unique-cause MC/DC accounting |
+| `structural-coverage-verification` | Structural-coverage integrity and optional exact-source regeneration verdict |
+| `quantitative-fta-source` | Fault-tree logic, probability intervals, dependency declarations, and evidence |
+| `quantitative-fta-assessment` | Exact shared-event probability, cut sets, intervals, and Birnbaum importance |
+| `quantitative-fta-verification` | Quantitative FTA integrity and optional exact-source regeneration verdict |
+| `quality-evaluation-source` | ISO/IEC 25040-aligned stages, measures, observations, deviations, and conclusion |
+| `quality-evaluation-assessment` | Uncertainty-aware measure results and authorized-conclusion readiness |
+| `quality-evaluation-verification` | Quality-evaluation integrity and optional exact-source regeneration verdict |
+| `security-prioritization-source` | CVSS v4 observations, ASVS 5 evidence, SSVC decisions, and dispositions |
+| `security-prioritization-assessment` | Cross-referenced vulnerability-evidence completeness assessment |
+| `security-prioritization-verification` | Security-prioritization integrity and optional exact-source regeneration verdict |
+| `laboratory-governance-source` | ISO/IEC 17025-inspired roles, controls, nonconformities, and approval evidence |
+| `laboratory-governance-assessment` | Laboratory-control and governed-use readiness assessment |
+| `laboratory-governance-verification` | Laboratory-governance integrity and optional exact-source regeneration verdict |
+| `runtime-coverage-observation` | Exact coverage.py bytes, producer/configuration provenance, line/branch observations, component mapping, omissions, and claim boundary |
+| `runtime-coverage-observation-verification` | Coverage observation integrity, semantic reconciliation, exact analysis/artifact binding, and optional regeneration verdict |
+| `industry-validation-portfolio-source` | External benchmark-suite, comparator, runtime, interoperability, usability, formal-method, and continuity evidence policy |
+| `industry-validation-portfolio-assessment` | Reconciled industry-validation readiness gates over exact referenced artifacts |
+| `industry-validation-portfolio-verification` | Portfolio integrity, rehashed-summary rejection, and optional exact-source regeneration verdict |
+| `industry-validation-portfolio-report-verification` | Self-contained portfolio HTML payload/document integrity and exact-assessment binding verdict |
+| `independent-benchmark-report-verification-v2` | Self-contained benchmark HTML, embedded assessment, document integrity, and exact binding verdict |
+| `safety-lifecycle-authoring` | Exact-analysis-bound PHA/FHA/PSSA/SSA/operations and CCFA engineering workspace |
+| `safety-lifecycle-assessment` | Lifecycle traceability, residual-risk decision, and CCFA coverage assessment |
+| `safety-lifecycle-verification` | Lifecycle integrity, accounting, and optional exact-source regeneration verdict |
+| `slsa-trust-policy` | Deny-by-default SLSA 1.2 Build/Source track identity and level policy |
+| `slsa-verification-observation` | Attributable external signature, builder, and source-control evidence intake |
+| `slsa-policy-assessment` | Achieved SLSA levels and local trust-policy decision with exact bindings |
+| `slsa-policy-verification` | SLSA policy accounting and optional exact-source regeneration verdict |
+| `ssvc-policy` | Controlled complete and non-overlapping SSVC-style decision table |
+| `ssvc-observations` | Policy-bound vulnerability decision-point evidence and reassessment dates |
+| `ssvc-assessment` | Deterministic local SSVC-style action outcomes |
+| `ssvc-verification` | Outcome accounting and optional exact policy/observation regeneration verdict |
+| `csaf-verification` | OASIS CSAF 2.0 structure, governed decision, and exact-source-regeneration verdict |
 | `json-evidence-signature` | Detached Ed25519 authentication of exact bounded JSON bytes and canonical semantics |
 | `json-evidence-signature-verification` | Exact artifact, trusted-key fingerprint, and Ed25519 signature verdict |
 | `plugin-manifest` | Closed SDK identity, compatibility, capability, entry point, trust, and execution-limit declaration |
@@ -131,6 +182,9 @@ Available names:
 | `qualification-campaign-result` | Exact-regenerated finding, call-resolution, and false-positive-aware control metrics plus positive/negative control populations by repository, rule, framework, and domain |
 | `qualification-campaign-verification` | Internal integrity plus optional exact manifest/artifact regeneration verdict |
 | `qualification-report-verification` | Self-contained HTML document, embedded campaign result, and optional exact-result binding verdict |
+| `release-qualification-source` | Pre-registered temporal/leakage, non-inferiority, and resource-budget release policy and evidence |
+| `release-qualification-assessment` | Exact candidate/baseline benchmark release-gate assessment |
+| `release-qualification-verification` | Release accounting and optional exact three-source regeneration verdict |
 | `report-browser-quality` | Content-addressed Chromium navigation, progressive per-section rendering, performance, responsive-layout, accessibility, and UI-contract receipt |
 | `report-browser-quality-verification` | Receipt integrity, semantic consistency, and optional exact-report binding verdict |
 | `review-package-manifest` | Package file inventory, checksums, provenance, and state binding |
@@ -143,8 +197,12 @@ Available names:
 | `synthesis-workspace-draft` | Editable, human-controlled suggestion synthesis workspace |
 | `synthesis-workspace-verification` | Integrity, decision, contradiction, and optional exact-analysis binding verdict |
 | `standards-catalog` | Content-addressed standards metadata and original PySFMEA objective summaries without licensed normative text |
+| `standards-crosswalk` | Exact-bound, authority-attributed standards-objective links to findings, obligations, and evidence |
+| `standards-crosswalk-verification` | Crosswalk integrity, semantic reconciliation, trace-completeness, and optional exact-source regeneration verdict |
+| `tool-qualification-bases` | DO-330, ISO 26262, and IEC 61508 navigation packs, classification prompts, and generic dossier mappings |
 | `tool-qualification-dossier` | Exact-bound intended use, classification, operational/verification objectives, configuration, and known-anomaly evidence |
 | `tool-qualification-verification` | Dossier semantics and optional exact analysis/benchmark/conformance/anomaly binding verdict |
+| `vex-verification` | CycloneDX 1.7 VEX structure, governed-decision, and exact-source-regeneration verdict |
 | `workflow-status` | Lifecycle stage, handoff gates, evidence, summaries, and remediation actions |
 
 The schemas use stable `urn:pysfmea:schema:…:1` identifiers and have no external `$ref`
@@ -636,6 +694,33 @@ occur during `generation`, never publish the staged artifact, and preserve a pri
 
 Schema validity does not authenticate an author, approve an analysis, demonstrate control
 effectiveness, or accept residual risk.
+
+## Industry-assurance contracts
+
+The public catalog also includes these closed contracts:
+
+- `standards-catalog`, `conformance-workspace`, and `conformance-verification`
+- `standards-crosswalk` and `standards-crosswalk-verification`
+- `assurance-case` and `assurance-case-verification`
+- `gsn-projection` and `gsn-projection-verification`
+- `independent-benchmark-assessment` and `independent-benchmark-verification`
+- `independent-benchmark-assessment-v2` and `independent-benchmark-verification-v2`
+- `release-qualification-source`, `release-qualification-assessment`, and its verification receipt
+- `normative-schema-validation` and its verification receipt
+- `independent-roundtrip-evidence` and its verification receipt
+- `lifecycle-model` and `lifecycle-model-verification`
+- `dependability-authoring`, `dependability-assessment`, and its verification receipt
+- `tool-qualification-bases`, `tool-qualification-dossier`, and its verification receipt
+- `industry-exchange-verification` for SACM, SFPM, ReqIF, and SPDX projections
+- `vex-verification` for authority-attributed CycloneDX 1.7 VEX
+- `csaf-verification` for authority-attributed OASIS CSAF 2.0 advisories
+- `slsa-provenance` and `slsa-provenance-verification`
+- `ssvc-policy`, `ssvc-observations`, `ssvc-assessment`, and `ssvc-verification`
+
+XML and JSON-LD standards artifacts retain their native external formats; PySFMEA schemas cover
+the verifier receipts and PySFMEA control artifacts. Use the semantic verifier as well as schema
+validation. A valid receipt establishes exact projection integrity within the declared supported
+subset, not external-tool acceptance, standard conformity, qualification, or certification.
 
 Every current `html-report-verification`, `assurance-program-report-verification`,
 `diagram-bundle-verification`, and `assurance-work-queue-verification` result carries
