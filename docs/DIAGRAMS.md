@@ -419,6 +419,14 @@ machine evidence and show its limitations instead of converting a relationship i
 
 ```mermaid
 flowchart LR
+    S1["Bandit / Semgrep / other SARIF 2.1.0"] --> SF["Lossless exact-byte SARIF fusion"]
+    SF --> A["Analysis-bound triage"]
+    A --> O["OSCAL Assessment Results observations"]
+    O --> NV["Official NIST schema + receiving-tool validation"]
+    BR["Governed benchmark registry"] --> BE["Pinned isolated execution receipt"]
+    BE --> B
+    FC["Atheris / ClusterFuzzLite"] --> FE["Corpus + coverage + crash-triage receipt"]
+    FE --> P
     B["External suite-stratified benchmark"] --> P["Validation portfolio"]
     C["Exact runtime coverage observation"] --> P
     R["Independent receiving-tool round trips"] --> P

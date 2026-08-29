@@ -34,7 +34,13 @@ from .dependability import (
     DEPENDABILITY_AUTHORING_FORMAT,
     DEPENDABILITY_VERIFICATION_FORMAT,
 )
+from .fuzz_campaign import FUZZ_CAMPAIGN_FORMAT, FUZZ_CAMPAIGN_VERIFICATION_FORMAT
 from .gsn import GSN_PROJECTION_FORMAT, GSN_VERIFICATION_FORMAT
+from .industry_benchmarks import (
+    BENCHMARK_CATALOG_FORMAT,
+    BENCHMARK_EXECUTION_FORMAT,
+    BENCHMARK_EXECUTION_VERIFICATION_FORMAT,
+)
 from .interoperability_validation import (
     NORMATIVE_VALIDATION_FORMAT,
     NORMATIVE_VALIDATION_VERIFICATION_FORMAT,
@@ -51,6 +57,7 @@ from .lifecycle_model import (
     LIFECYCLE_MODEL_FORMAT,
     LIFECYCLE_MODEL_VERIFICATION_FORMAT,
 )
+from .oscal_exchange import OSCAL_SCHEMA, OSCAL_VERIFICATION_FORMAT
 from .qualification_bases import QUALIFICATION_BASES_FORMAT
 from .quality_evaluation import (
     QUALITY_EVALUATION_ASSESSMENT_FORMAT,
@@ -72,6 +79,7 @@ from .safety_lifecycle import (
     SAFETY_LIFECYCLE_AUTHORING_FORMAT,
     SAFETY_LIFECYCLE_VERIFICATION_FORMAT,
 )
+from .sarif_ingestion import SARIF_FUSION_FORMAT, SARIF_FUSION_VERIFICATION_FORMAT
 from .security_prioritization import (
     SECURITY_ASSESSMENT_FORMAT,
     SECURITY_SOURCE_FORMAT,
@@ -202,6 +210,15 @@ INDUSTRY_SCHEMA_DESCRIPTIONS = {
     "industry-validation-portfolio-assessment": "Deterministic industry-validation readiness assessment over exact referenced artifacts and declared evidence.",
     "industry-validation-portfolio-verification": "Industry-validation portfolio integrity, semantic reconciliation, and optional exact regeneration verdict.",
     "industry-validation-portfolio-report-verification": "Self-contained validation-portfolio HTML document, payload, semantics, and optional exact-assessment binding verdict.",
+    "sarif-fusion": "Exact-byte SARIF 2.1.0 intake, conservative component mapping, lossless result preservation, and deterministic cross-tool clustering.",
+    "sarif-fusion-verification": "SARIF fusion integrity, accounting, analysis binding, and optional exact regeneration verdict.",
+    "oscal-assessment-results": "NIST OSCAL 1.2.3 Assessment Results projection of exact-analysis-bound SFMEA observations.",
+    "oscal-assessment-results-verification": "Supported OSCAL subset, exact analysis binding, and optional regeneration verdict.",
+    "industry-benchmark-catalog": "Governed external Python benchmark targets, intended measures, use, and limitations.",
+    "benchmark-execution": "Pinned, isolated, independently governed external benchmark execution evidence contract.",
+    "benchmark-execution-verification": "Benchmark execution integrity and eligibility for downstream statistical assessment.",
+    "fuzz-campaign": "Pinned, isolated Python fuzz-campaign provenance, corpus, coverage, execution, and crash-triage evidence contract.",
+    "fuzz-campaign-verification": "Fuzz-campaign integrity and eligibility for governed assurance use.",
 }
 
 
@@ -2459,6 +2476,42 @@ def industry_validation_portfolio_report_verification_schema(schema_id: str, dra
     )
 
 
+def sarif_fusion_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(schema_id, draft, title="PySFMEA SARIF fusion", format_value=SARIF_FUSION_FORMAT, fields={"generated_at": _text(), "authority": _text(), "analysis_binding": {"type": "object"}, "inputs": {"type": "array", "minItems": 1, "maxItems": 1_000, "items": {"type": "object"}}, "tools": {"type": "array", "maxItems": 1_000, "items": {"type": "object"}}, "results": {"type": "array", "maxItems": 1_000_000, "items": {"type": "object"}}, "clusters": {"type": "array", "maxItems": 1_000_000, "items": {"type": "object"}}, "summary": {"type": "object"}, "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 100_000, "uniqueItems": True, "items": _text()}, "claim_boundary": _text(), "content_sha256": _digest()})
+
+
+def sarif_fusion_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(schema_id, draft, title="PySFMEA SARIF fusion verification", format_value=SARIF_FUSION_VERIFICATION_FORMAT, fields={"valid": {"type": "boolean"}, "ready_for_triage": {"type": "boolean"}, "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "analysis_binding", "exact_regeneration"]), "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)}, "notice": _text(), "content_sha256": _digest()})
+
+
+def oscal_assessment_results_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return {"$schema": draft, "$id": schema_id, "title": "PySFMEA-supported OSCAL Assessment Results projection", "type": "object", "required": ["$schema", "assessment-results"], "properties": {"$schema": {"const": OSCAL_SCHEMA}, "assessment-results": {"type": "object", "required": ["uuid", "metadata", "import-ap", "results"], "properties": {"uuid": {"type": "string", "format": "uuid"}, "metadata": {"type": "object", "required": ["title", "last-modified", "version", "oscal-version", "props", "roles", "parties", "responsible-parties"]}, "import-ap": {"type": "object", "required": ["href"]}, "results": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "object"}}, "back-matter": {"type": "object"}}}}, "additionalProperties": False}
+
+
+def oscal_assessment_results_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(schema_id, draft, title="PySFMEA OSCAL Assessment Results verification", format_value=OSCAL_VERIFICATION_FORMAT, fields={"valid": {"type": "boolean"}, "ready_for_normative_validation": {"type": "boolean"}, "checks": _checks(["supported_subset", "analysis_binding", "exact_regeneration"]), "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)}, "notice": _text(), "content_sha256": _digest()})
+
+
+def industry_benchmark_catalog_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(schema_id, draft, title="PySFMEA external benchmark catalog", format_value=BENCHMARK_CATALOG_FORMAT, fields={"version": _text(), "suites": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object"}}, "notice": _text(), "content_sha256": _digest()})
+
+
+def benchmark_execution_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(schema_id, draft, title="PySFMEA benchmark execution evidence", format_value=BENCHMARK_EXECUTION_FORMAT, fields={"generated_at": _text(), "suite": {"type": "object"}, "authority": {"type": "object"}, "execution": {"type": "object"}, "outcome": {"type": "object"}, "evidence_refs": {"type": "array", "maxItems": 100_000, "items": _text()}, "limitations": {"type": "array", "maxItems": 10_000, "items": _text()}, "claim_boundary": _text(), "content_sha256": _digest()})
+
+
+def benchmark_execution_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(schema_id, draft, title="PySFMEA benchmark execution verification", format_value=BENCHMARK_EXECUTION_VERIFICATION_FORMAT, fields={"valid": {"type": "boolean"}, "eligible_for_benchmark_assessment": {"type": "boolean"}, "checks": _checks(["content_integrity", "closed_structure_and_isolation", "execution_and_governance_complete"]), "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)}, "notice": _text(), "content_sha256": _digest()})
+
+
+def fuzz_campaign_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(schema_id, draft, title="PySFMEA fuzz campaign evidence", format_value=FUZZ_CAMPAIGN_FORMAT, fields={"generated_at": _text(), "authority": {"type": "object"}, "target": {"type": "object"}, "engine": {"type": "object"}, "isolation": {"type": "object"}, "corpus": {"type": "object"}, "execution": {"type": "object"}, "crashes": {"type": "array", "maxItems": 100_000, "items": {"type": "object"}}, "evidence_refs": {"type": "array", "maxItems": 100_000, "items": _text()}, "limitations": {"type": "array", "maxItems": 10_000, "items": _text()}, "claim_boundary": _text(), "content_sha256": _digest()})
+
+
+def fuzz_campaign_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(schema_id, draft, title="PySFMEA fuzz campaign verification", format_value=FUZZ_CAMPAIGN_VERIFICATION_FORMAT, fields={"valid": {"type": "boolean"}, "eligible_for_assurance_use": {"type": "boolean"}, "checks": _checks(["content_integrity", "closed_structure_and_isolation", "campaign_complete"]), "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)}, "notice": _text(), "content_sha256": _digest()})
+
+
 def industry_schema_builders(
     schema_id: Callable[[str], str], draft: str
 ) -> dict[str, Callable[[], dict[str, Any]]]:
@@ -2534,6 +2587,15 @@ def industry_schema_builders(
         "industry-validation-portfolio-assessment": industry_validation_portfolio_assessment_schema,
         "industry-validation-portfolio-verification": industry_validation_portfolio_verification_schema,
         "industry-validation-portfolio-report-verification": industry_validation_portfolio_report_verification_schema,
+        "sarif-fusion": sarif_fusion_schema,
+        "sarif-fusion-verification": sarif_fusion_verification_schema,
+        "oscal-assessment-results": oscal_assessment_results_schema,
+        "oscal-assessment-results-verification": oscal_assessment_results_verification_schema,
+        "industry-benchmark-catalog": industry_benchmark_catalog_schema,
+        "benchmark-execution": benchmark_execution_schema,
+        "benchmark-execution-verification": benchmark_execution_verification_schema,
+        "fuzz-campaign": fuzz_campaign_schema,
+        "fuzz-campaign-verification": fuzz_campaign_verification_schema,
     }
 
     def bind(

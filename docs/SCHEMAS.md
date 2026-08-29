@@ -154,6 +154,15 @@ Available names:
 | `industry-validation-portfolio-assessment` | Reconciled industry-validation readiness gates over exact referenced artifacts |
 | `industry-validation-portfolio-verification` | Portfolio integrity, rehashed-summary rejection, and optional exact-source regeneration verdict |
 | `industry-validation-portfolio-report-verification` | Self-contained portfolio HTML payload/document integrity and exact-assessment binding verdict |
+| `sarif-fusion` | Exact-byte SARIF 2.1.0 inputs, producer runs, lossless results, conservative component mapping, and deterministic clusters |
+| `sarif-fusion-verification` | SARIF integrity, accounting, exact analysis binding, and optional source regeneration verdict |
+| `oscal-assessment-results` | Supported NIST OSCAL 1.2.3 Assessment Results projection of SFMEA observations |
+| `oscal-assessment-results-verification` | Supported-subset, analysis-binding, and exact-regeneration verdict; official NIST schema validation remains separate |
+| `industry-benchmark-catalog` | Governed OWASP Benchmark Python, BugsInPy, TestGenEval, TDD-Bench Verified, and SWE-bench Verified targets |
+| `benchmark-execution` | Pinned dataset/image, isolated execution, independent authorities, metrics, exclusions, and evidence receipt |
+| `benchmark-execution-verification` | Benchmark receipt integrity and downstream assessment eligibility verdict |
+| `fuzz-campaign` | Pinned target/configuration/corpus, isolated execution, coverage, and complete crash-triage receipt |
+| `fuzz-campaign-verification` | Fuzz receipt integrity and governed assurance-use eligibility verdict |
 | `independent-benchmark-report-verification-v2` | Self-contained benchmark HTML, embedded assessment, document integrity, and exact binding verdict |
 | `safety-lifecycle-authoring` | Exact-analysis-bound PHA/FHA/PSSA/SSA/operations and CCFA engineering workspace |
 | `safety-lifecycle-assessment` | Lifecycle traceability, residual-risk decision, and CCFA coverage assessment |

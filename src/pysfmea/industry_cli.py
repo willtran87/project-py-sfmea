@@ -51,8 +51,22 @@ from .dependability import (
     seal_dependability_authoring,
     verify_dependability_assessment_file,
 )
+from .fuzz_campaign import (
+    export_fuzz_campaign,
+    fuzz_campaign_template,
+    seal_fuzz_campaign,
+    verify_fuzz_campaign_file,
+)
 from .gsn import export_gsn_projection, gsn_projection, verify_gsn_projection_file
 from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
+from .industry_benchmarks import (
+    benchmark_execution_template,
+    benchmark_suite_catalog,
+    export_benchmark_catalog,
+    export_benchmark_execution,
+    seal_benchmark_execution_source,
+    verify_benchmark_execution_file,
+)
 from .industry_exchange import export_exchange, verify_exchange_file
 from .interchange import export_json_document
 from .interoperability_validation import (
@@ -75,6 +89,11 @@ from .lifecycle_model import (
     export_lifecycle_model,
     import_lifecycle_model,
     verify_lifecycle_model_file,
+)
+from .oscal_exchange import (
+    export_oscal_assessment_results,
+    oscal_assessment_results,
+    verify_oscal_assessment_results_file,
 )
 from .qualification_bases import qualification_bases_catalog
 from .quality_evaluation import (
@@ -108,6 +127,11 @@ from .safety_lifecycle import (
     safety_lifecycle_authoring_template,
     seal_safety_lifecycle_authoring,
     verify_safety_lifecycle_assessment_file,
+)
+from .sarif_ingestion import (
+    export_sarif_fusion,
+    sarif_fusion,
+    verify_sarif_fusion_file,
 )
 from .security_prioritization import (
     export_security_prioritization_assessment,
@@ -968,6 +992,97 @@ def add_industry_commands(subparsers: Any) -> None:
     portfolio_report_verify.add_argument("--assessment")
     portfolio_report_verify.add_argument("--json", action="store_true")
     portfolio_report_verify.set_defaults(handler=_validation_portfolio_report_verify)
+
+    sarif_import = subparsers.add_parser(
+        "sarif-fuse",
+        help="fuse exact SARIF 2.1.0 results into an analysis-bound triage artifact",
+    )
+    sarif_import.add_argument("analysis")
+    sarif_import.add_argument("sarif", nargs="+")
+    sarif_import.add_argument("--authority", required=True)
+    sarif_import.add_argument("--evidence-ref", action="append", required=True)
+    sarif_import.add_argument("-o", "--output", required=True)
+    sarif_import.set_defaults(handler=_sarif_fuse)
+
+    sarif_verify = subparsers.add_parser(
+        "sarif-fuse-verify", help="verify SARIF fusion integrity and optional exact regeneration"
+    )
+    sarif_verify.add_argument("fusion")
+    sarif_verify.add_argument("--analysis")
+    sarif_verify.add_argument("--sarif", action="append")
+    sarif_verify.add_argument("--json", action="store_true")
+    sarif_verify.set_defaults(handler=_sarif_fuse_verify)
+
+    oscal_export = subparsers.add_parser(
+        "oscal-assessment-results",
+        help="export exact-analysis-bound OSCAL Assessment Results observations",
+    )
+    oscal_export.add_argument("analysis")
+    oscal_export.add_argument("--authority", required=True)
+    oscal_export.add_argument("--title", default="PySFMEA software assurance assessment results")
+    oscal_export.add_argument("--assessment-plan-href")
+    oscal_export.add_argument("--evidence-base-href")
+    oscal_export.add_argument("-o", "--output", required=True)
+    oscal_export.set_defaults(handler=_oscal_assessment_results)
+
+    oscal_verify = subparsers.add_parser(
+        "oscal-assessment-results-verify",
+        help="verify the supported OSCAL subset and optional exact analysis binding",
+    )
+    oscal_verify.add_argument("oscal")
+    oscal_verify.add_argument("--analysis")
+    oscal_verify.add_argument("--json", action="store_true")
+    oscal_verify.set_defaults(handler=_oscal_assessment_results_verify)
+
+    benchmark_catalog = subparsers.add_parser(
+        "benchmark-suite-catalog", help="show governed external Python benchmark targets"
+    )
+    benchmark_catalog.add_argument("--json", action="store_true")
+    benchmark_catalog.add_argument("-o", "--output")
+    benchmark_catalog.set_defaults(handler=_benchmark_suite_catalog)
+
+    benchmark_execution_init = subparsers.add_parser(
+        "benchmark-execution-init", help="create an isolated benchmark execution evidence contract"
+    )
+    benchmark_execution_init.add_argument("--suite", required=True)
+    benchmark_execution_init.add_argument("--authority", required=True)
+    benchmark_execution_init.add_argument("-o", "--output", required=True)
+    benchmark_execution_init.set_defaults(handler=_benchmark_execution_init)
+
+    benchmark_execution_seal = subparsers.add_parser(
+        "benchmark-execution-seal", help="validate and seal an edited benchmark execution receipt"
+    )
+    benchmark_execution_seal.add_argument("source")
+    benchmark_execution_seal.add_argument("-o", "--output", required=True)
+    benchmark_execution_seal.set_defaults(handler=_benchmark_execution_seal)
+
+    benchmark_execution_verify = subparsers.add_parser(
+        "benchmark-execution-verify", help="verify benchmark execution integrity and governed-use eligibility"
+    )
+    benchmark_execution_verify.add_argument("receipt")
+    benchmark_execution_verify.add_argument("--json", action="store_true")
+    benchmark_execution_verify.set_defaults(handler=_benchmark_execution_verify)
+
+    fuzz_init = subparsers.add_parser(
+        "fuzz-campaign-init", help="create a governed isolated fuzz-campaign evidence contract"
+    )
+    fuzz_init.add_argument("--authority", required=True)
+    fuzz_init.add_argument("-o", "--output", required=True)
+    fuzz_init.set_defaults(handler=_fuzz_campaign_init)
+
+    fuzz_seal = subparsers.add_parser(
+        "fuzz-campaign-seal", help="validate and seal an edited fuzz-campaign receipt"
+    )
+    fuzz_seal.add_argument("source")
+    fuzz_seal.add_argument("-o", "--output", required=True)
+    fuzz_seal.set_defaults(handler=_fuzz_campaign_seal)
+
+    fuzz_verify = subparsers.add_parser(
+        "fuzz-campaign-verify", help="verify fuzz-campaign integrity and assurance-use eligibility"
+    )
+    fuzz_verify.add_argument("campaign")
+    fuzz_verify.add_argument("--json", action="store_true")
+    fuzz_verify.set_defaults(handler=_fuzz_campaign_verify)
 
     _add_industry_method_commands(subparsers)
 
@@ -1946,6 +2061,128 @@ def _validation_portfolio_report_verify(args: argparse.Namespace) -> int:
             f"Industry validation report: valid={result['valid']}, "
             f"portfolio passed={result['passed']}"
         )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _sarif_fuse(args: argparse.Namespace) -> int:
+    value = sarif_fusion(
+        load_analysis(args.analysis), args.sarif,
+        authority=args.authority, evidence_refs=args.evidence_ref,
+    )
+    destination = export_sarif_fusion(value, args.output)
+    print(f"Created analysis-bound SARIF fusion: {destination}")
+    print(
+        f"Results={value['summary']['results']}; mapped={value['summary']['mapped']}; "
+        f"multi-tool clusters={value['summary']['multi_tool_clusters']}."
+    )
+    print(value["claim_boundary"])
+    return 0
+
+
+def _sarif_fuse_verify(args: argparse.Namespace) -> int:
+    result = verify_sarif_fusion_file(
+        args.fusion,
+        analysis=load_analysis(args.analysis) if args.analysis else None,
+        sarif_sources=args.sarif,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(f"SARIF fusion: valid={result['valid']}, ready for triage={result['ready_for_triage']}")
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _oscal_assessment_results(args: argparse.Namespace) -> int:
+    value = oscal_assessment_results(
+        load_analysis(args.analysis), authority=args.authority, title=args.title,
+        assessment_plan_href=args.assessment_plan_href,
+        evidence_base_href=args.evidence_base_href,
+    )
+    destination = export_oscal_assessment_results(value, args.output)
+    observations = len(value["assessment-results"]["results"][0]["observations"])
+    print(f"Created OSCAL Assessment Results: {destination}")
+    print(f"Projected observations={observations}. Validate with the official NIST OSCAL schema before interchange.")
+    return 0
+
+
+def _oscal_assessment_results_verify(args: argparse.Namespace) -> int:
+    result = verify_oscal_assessment_results_file(
+        args.oscal, analysis=load_analysis(args.analysis) if args.analysis else None
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(f"OSCAL Assessment Results: valid={result['valid']}, ready for normative validation={result['ready_for_normative_validation']}")
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _benchmark_suite_catalog(args: argparse.Namespace) -> int:
+    value = benchmark_suite_catalog()
+    if args.output:
+        print(export_benchmark_catalog(args.output))
+    elif args.json:
+        print(json.dumps(value, indent=2, ensure_ascii=False))
+    else:
+        print("Governed external Python benchmark targets")
+        for suite in value["suites"]:
+            print(f"- {suite['id']}: {suite['title']}: {suite['use']}")
+        print(value["notice"])
+    return 0
+
+
+def _benchmark_execution_init(args: argparse.Namespace) -> int:
+    value = benchmark_execution_template(suite_id=args.suite, authority=args.authority)
+    destination = export_benchmark_execution(value, args.output)
+    print(f"Created benchmark execution evidence contract: {destination}")
+    print(value["claim_boundary"])
+    return 0
+
+
+def _benchmark_execution_seal(args: argparse.Namespace) -> int:
+    print(f"Sealed benchmark execution receipt: {seal_benchmark_execution_source(args.source, args.output)}")
+    return 0
+
+
+def _benchmark_execution_verify(args: argparse.Namespace) -> int:
+    result = verify_benchmark_execution_file(args.receipt)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(f"Benchmark execution: valid={result['valid']}, eligible={result['eligible_for_benchmark_assessment']}")
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _fuzz_campaign_init(args: argparse.Namespace) -> int:
+    value = fuzz_campaign_template(authority=args.authority)
+    destination = export_fuzz_campaign(value, args.output)
+    print(f"Created fuzz-campaign evidence contract: {destination}")
+    print(value["claim_boundary"])
+    return 0
+
+
+def _fuzz_campaign_seal(args: argparse.Namespace) -> int:
+    print(f"Sealed fuzz-campaign receipt: {seal_fuzz_campaign(args.source, args.output)}")
+    return 0
+
+
+def _fuzz_campaign_verify(args: argparse.Namespace) -> int:
+    result = verify_fuzz_campaign_file(args.campaign)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(f"Fuzz campaign: valid={result['valid']}, eligible={result['eligible_for_assurance_use']}")
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])

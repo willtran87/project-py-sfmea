@@ -371,7 +371,7 @@ received catalog is unavailable, malformed, drifted, or not the catalog shipped 
 
 ### Industry-assurance extension
 
-PySFMEA includes 71 selectable standards-navigation profiles and evidence workflows for:
+PySFMEA includes 78 selectable standards-navigation profiles and evidence workflows for:
 
 - exact validation against a project-supplied normative JSON or XML Schema;
 - independently attributable receiving-tool import/re-export evidence;
@@ -2759,18 +2759,39 @@ sfmea provenance sfmea-analysis.json -o sfmea-analysis.intoto.json
 sfmea provenance-verify sfmea-analysis.intoto.json --analysis sfmea-analysis.json --json
 sfmea slsa-policy-init --authority "Supply-chain authority" -o slsa-policy.json
 sfmea slsa-observation-init --verifier "Independent verifier" -o slsa-observation.json
+sfmea sarif-fuse sfmea-analysis.json bandit.sarif semgrep.sarif `
+  --authority "Security review board" --evidence-ref "evidence://scan/run-1" `
+  -o sarif-fusion.json
+sfmea sarif-fuse-verify sarif-fusion.json --analysis sfmea-analysis.json `
+  --sarif bandit.sarif --sarif semgrep.sarif --json
+sfmea oscal-assessment-results sfmea-analysis.json --authority "Assurance board" `
+  -o assessment-results.oscal.json
+sfmea oscal-assessment-results-verify assessment-results.oscal.json `
+  --analysis sfmea-analysis.json --json
+sfmea benchmark-suite-catalog
+sfmea benchmark-execution-init --suite bugsinpy --authority "Protocol owner" `
+  -o benchmark-execution.json
+sfmea fuzz-campaign-init --authority "Fuzz campaign owner" -o fuzz-campaign.json
 ```
 
-The 71-profile catalog covers general and automotive FMEA, aerospace, functional safety,
+The 78-profile catalog covers general and automotive FMEA, aerospace, functional safety,
 software lifecycle/process assessment, secure development, AI governance, automotive
 cybersecurity/SOTIF, medical, rail, industrial cybersecurity, process safety, requirements,
 architecture, system lifecycle, risk management, FTA, ETA, RCA, HAZOP, RBD, Markov methods,
 interoperability, source quality, independent V&V, CSAF, SLSA 1.2, component security,
-vulnerability prioritization, and AI data/system/functional-safety quality. Its objective
+vulnerability prioritization, NIST control assessment/systems security/supply-chain engineering,
+developer verification, software-assurance maturity, work-product review, IACS system security,
+and AI data/system/functional-safety quality. Its objective
 text is original navigation guidance, not reproduced normative text. Pre-registered benchmark
 assessment adds confidence bounds and reviewer agreement; the exact-bound qualification dossier
 organizes governed evidence without claiming qualification. Exact crosswalks expose objective-to-
-finding/evidence lineage. SACM, SFPM, ReqIF, SPDX, CycloneDX VEX, and CSAF outputs declare their
+finding/evidence lineage. Inbound SARIF fusion retains exact producer bytes and every result,
+maps only unambiguous source locations, and clusters only exact coordinate/taxonomy matches.
+The OSCAL Assessment Results projection exports findings as observations and must still pass the
+official NIST schema and receiving-tool checks. Governed benchmark and fuzz receipts require
+pinned snapshots/images, network isolation, read-only source, independent authorities, complete
+execution, evidence references, and closed crash triage before downstream assurance use. SACM,
+SFPM, ReqIF, SPDX, CycloneDX VEX, and CSAF outputs declare their
 supported subset and retain verifiable source binding; supplied normative schemas and independent
 receiving-tool observations add stronger interoperability evidence. The assurance case keeps claims, arguments, exact
 artifact evidence, assumptions, and unresolved defeaters distinct. See

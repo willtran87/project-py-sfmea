@@ -5,6 +5,17 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Add industry-standard external evidence intake: bounded, exact-byte SARIF 2.1.0 fusion with
+  conservative component mapping and cross-tool clustering; an exact-analysis-bound OSCAL 1.2.3
+  Assessment Results projection; governed OWASP Benchmark Python, BugsInPy, TestGenEval,
+  TDD-Bench Verified, and SWE-bench Verified execution contracts; and isolated Atheris/
+  ClusterFuzzLite-compatible fuzz-campaign evidence with corpus, coverage, and crash-triage gates.
+  The normative JSON Schema validator now evaluates Unicode-property patterns with a bounded
+  regex engine, allowing direct validation against the official OSCAL schema. Add nine public
+  schemas, CLI init/seal/verify workflows, rehashed-tamper tests, and seven
+  standards profiles for NIST SP 800-53/53A, 800-160, 800-161, NISTIR 8397, OWASP SAMM,
+  ISO/IEC 20246, and IEC 62443-3-3. External schemas, labels, labs, and certification remain
+  independently controlled evidence rather than generated claims.
 - Add an industry-validation portfolio that combines external benchmark-suite provenance,
   exact suite-to-repository strata, two-or-more comparator baselines, runtime coverage,
   independently attributable receiving-tool round trips, representative usability studies,

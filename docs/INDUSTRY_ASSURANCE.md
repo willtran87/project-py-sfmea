@@ -18,9 +18,16 @@ flowchart LR
     C --> O["Objective assessments"]
     O --> XW["Objective/finding/evidence crosswalk"]
     A --> E["Tests and reviewed evidence"]
+    SARIF["External SARIF 2.1.0 producers"] --> SF["Exact-byte SARIF fusion"]
+    SF --> A
+    A --> OSCAL["OSCAL Assessment Results observations"]
     E --> AC["Structured assurance case"]
     O --> AC
     Q["Independent qualification campaign"] --> B["Pre-registered benchmark assessment"]
+    REG["Governed external benchmark registry"] --> BX["Pinned isolated execution receipt"]
+    BX --> B
+    FUZZ["Atheris / ClusterFuzzLite campaign"] --> FE["Corpus, coverage, crash-triage receipt"]
+    FE --> E
     B --> RQ["Release non-inferiority and leakage gate"]
     B --> TQ["Tool qualification dossier"]
     TQ --> AC
@@ -68,7 +75,7 @@ sfmea standards-catalog --json
 sfmea standards-catalog -o standards-catalog.json
 ```
 
-The content-addressed catalog provides 71 selectable profiles. Select only profiles made
+The content-addressed catalog provides 78 selectable profiles. Select only profiles made
 applicable by the system, market, contract, and approved assurance plan.
 
 | Profile | Intended use | Normative text |
@@ -128,6 +135,54 @@ applicable by the system, market, contract, and approved assurance plan.
 Catalog objectives are original summaries and navigation aids. A project using a licensed
 standard must consult its controlled normative copy and record the adopted edition, tailoring,
 customer-specific requirements, and interpretation authority.
+
+## External analysis, OSCAL, benchmark, and fuzz evidence
+
+PySFMEA can now consume external scanner evidence without flattening provenance or treating tool
+agreement as truth:
+
+```powershell
+sfmea sarif-fuse analysis.json bandit.sarif semgrep.sarif `
+  --authority "Security review board" --evidence-ref "evidence://scanner/run-42" `
+  -o sarif-fusion.json
+sfmea sarif-fuse-verify sarif-fusion.json --analysis analysis.json `
+  --sarif bandit.sarif --sarif semgrep.sarif --json
+sfmea oscal-assessment-results analysis.json --authority "Assurance board" `
+  -o assessment-results.oscal.json
+sfmea oscal-assessment-results-verify assessment-results.oscal.json `
+  --analysis analysis.json --json
+```
+
+SARIF intake is bounded, version-gated to 2.1.0, exact-byte hashed, and lossless at the result
+level. Mapping requires one unambiguous component source range. Clusters require the same source
+coordinate and taxonomy/rule basis; they are an accounting view, never automatic deduplication.
+The OSCAL projection uses deterministic UUIDs and represents active SFMEA records as observations,
+not unsupported control-effectiveness findings. Use `industry-schema-validate` with the official
+NIST OSCAL schema and retain an independent receiving-tool round trip for interoperability credit.
+
+External benchmark and fuzz execution use editable governed contracts:
+
+```powershell
+sfmea benchmark-suite-catalog
+sfmea benchmark-execution-init --suite testgeneval --authority "Protocol owner" `
+  -o benchmark-execution.json
+# Record the pinned dataset revision/digest, digest-pinned local image, argv, resource budget,
+# independent roles, exact metrics, exclusions, and evidence references.
+sfmea benchmark-execution-seal benchmark-execution.json -o benchmark-execution.json
+sfmea benchmark-execution-verify benchmark-execution.json --json
+
+sfmea fuzz-campaign-init --authority "Campaign owner" -o fuzz-campaign.json
+# Record target/config/corpus digests, isolated execution, runtime coverage, and every crash triage.
+sfmea fuzz-campaign-seal fuzz-campaign.json -o fuzz-campaign.json
+sfmea fuzz-campaign-verify fuzz-campaign.json --json
+```
+
+Eligibility requires a digest-pinned image, exact non-placeholder source/corpus/configuration
+digests, `network=none`, a read-only source mount, explicit resource limits, complete execution,
+distinct governing identities, and evidence references. Fuzzing additionally requires coverage
+evidence and complete disposition of each reproducible crash. PySFMEA records and verifies these
+facts; it does not download third-party corpora, authenticate people, validate labels, accredit a
+laboratory, or turn a crash-free campaign into a defect-absence claim.
 
 ## Advanced method workbenches
 
@@ -401,7 +456,8 @@ sfmea industry-schema-verify reqif-schema-receipt.json `
 
 PySFMEA records the exact artifact and schema identities, validator implementation, publisher
 digest comparison, and validation errors. It does not download or substitute normative schemas.
-JSON Schema uses `jsonschema`; XML Schema uses `lxml`.
+JSON Schema uses `jsonschema` with the bounded `regex` engine for standards such as OSCAL that
+use Unicode property escapes; XML Schema uses `lxml`.
 
 After a separate tool and operator import and re-export the artifact, capture their observation
 record and seal it with the validation receipt:

@@ -62,7 +62,15 @@ def _json_schema_validate(
     artifact: BoundedFileSnapshot, schema: BoundedFileSnapshot
 ) -> tuple[str, str, list[str]]:
     try:
-        from jsonschema.validators import validator_for  # type: ignore[import-untyped]
+        import regex as unicode_regex  # type: ignore[import-untyped]
+        from jsonschema import (  # type: ignore[import-untyped]
+            FormatChecker,
+            ValidationError,
+        )
+        from jsonschema.validators import (  # type: ignore[import-untyped]
+            extend,
+            validator_for,
+        )
     except ImportError as exc:  # pragma: no cover - exercised in minimal installs
         raise RuntimeError(
             "JSON Schema validation requires the 'interop' or 'dev' optional dependency"
@@ -84,9 +92,42 @@ def _json_schema_validate(
     )
     if not isinstance(schema_value, dict):
         raise ValueError("normative JSON Schema root must be an object")
-    validator_type = validator_for(schema_value)
-    validator_type.check_schema(schema_value)
-    validator = validator_type(schema_value, format_checker=validator_type.FORMAT_CHECKER)
+    base_validator_type = validator_for(schema_value)
+    unicode_format_checker = FormatChecker()
+
+    @unicode_format_checker.checks("regex", raises=unicode_regex.error)  # type: ignore[untyped-decorator]
+    def unicode_regex_format(instance: Any) -> bool:
+        if not isinstance(instance, str):
+            return True
+        unicode_regex.compile(instance)
+        return True
+
+    base_validator_type.check_schema(
+        schema_value, format_checker=unicode_format_checker
+    )
+
+    def unicode_pattern(validator: Any, pattern: Any, instance: Any, schema: Any) -> Any:
+        """Evaluate JSON Schema patterns with Unicode-property support and a time bound."""
+
+        del validator, schema
+        if not isinstance(instance, str) or not isinstance(pattern, str):
+            return
+        try:
+            matched = unicode_regex.search(pattern, instance, timeout=0.25)
+        except (TimeoutError, unicode_regex.error) as exc:
+            yield ValidationError(f"pattern evaluation failed safely: {exc}")
+            return
+        if matched is None:
+            yield ValidationError(f"{instance!r} does not match {pattern!r}")
+
+    validator_type = extend(
+        base_validator_type,
+        {"pattern": unicode_pattern},
+        version=f"{base_validator_type.__name__}UnicodePattern",
+    )
+    validator = validator_type(
+        schema_value, format_checker=unicode_format_checker
+    )
     errors = sorted(
         validator.iter_errors(artifact_value),
         key=lambda error: (list(error.absolute_path), error.message),
@@ -98,8 +139,8 @@ def _json_schema_validate(
     if len(errors) > MAX_ERRORS:
         rendered.append(f"validation produced {len(errors) - MAX_ERRORS} additional errors")
     return (
-        f"jsonschema-{validator_type.__name__}",
-        importlib.metadata.version("jsonschema"),
+        f"jsonschema-{base_validator_type.__name__}+regex",
+        f"jsonschema {importlib.metadata.version('jsonschema')}; regex {importlib.metadata.version('regex')}",
         rendered,
     )
 
