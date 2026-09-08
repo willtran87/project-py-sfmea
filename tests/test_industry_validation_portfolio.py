@@ -6,6 +6,15 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+from pysfmea.benchmark_case_inventory import (
+    benchmark_case_inventory,
+    export_benchmark_case_inventory,
+)
+from pysfmea.benchmark_item_quality import (
+    CRITERIA,
+    benchmark_item_quality_audit,
+    export_benchmark_item_quality,
+)
 from pysfmea.benchmark_v2 import (
     BENCHMARK_OBSERVATIONS_V2_FORMAT,
     BENCHMARK_PROTOCOL_V2_FORMAT,
@@ -137,9 +146,9 @@ def _benchmark(root: Path) -> Path:
             "labeling_completed_at": "2026-08-28T02:00:00+00:00",
             "repositories": [
                 {
-                    "id": "owasp-python",
+                    "id": "owasp-benchmark-python",
                     "source_ref": "https://github.com/OWASP-Benchmark/BenchmarkPython",
-                    "strata": {"benchmark_suite": ["owasp-python"]},
+                    "strata": {"benchmark_suite": ["owasp-benchmark-python"]},
                     "metrics": {"finding_detection": copy.deepcopy(metric)},
                     "predictions": [],
                 },
@@ -180,7 +189,96 @@ def _benchmark(root: Path) -> Path:
     return assessment_path
 
 
-def test_runtime_coverage_is_exact_bound_and_does_not_claim_mcdc(tmp_path: Path) -> None:
+def _item_quality(root: Path, suite_id: str, case_id: str) -> dict[str, str]:
+    manifest_path = root / f"{suite_id}-cases.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "case_id": f"{case_id}-{i}",
+                        "evidence_refs": [f"evidence://{suite_id}/case"],
+                    }
+                    for i in range(40)
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    inventory = benchmark_case_inventory(
+        manifest_path,
+        suite_id=suite_id,
+        suite_revision="pinned revision",
+        authority="population custodian",
+        population_basis="Pre-registered closed suite population.",
+    )
+    inventory_path = root / f"{suite_id}-inventory.json"
+    export_benchmark_case_inventory(inventory, inventory_path)
+    reviews_path = root / f"{suite_id}-reviews.json"
+    criteria = {
+        name: {
+            "status": "pass",
+            "rationale": f"Independent evidence supports {name}.",
+            "evidence_refs": [f"evidence://{suite_id}/{name}"],
+        }
+        for name in CRITERIA
+    }
+    reviews_path.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": f"{case_id}-{i}",
+                    "disposition": "accepted",
+                    "criteria": criteria,
+                    "reviewers": ["quality-reviewer-a", "quality-reviewer-b"],
+                    "exclusion_reason": "",
+                    "notes": "Reviewed against exact retained evidence.",
+                }
+                for i in range(40)
+            ]
+        ),
+        encoding="utf-8",
+    )
+    audit = benchmark_item_quality_audit(
+        inventory_path,
+        reviews_path,
+        authority="item-quality-board",
+    )
+    audit_path = root / f"{suite_id}-item-quality.json"
+    export_benchmark_item_quality(audit, audit_path)
+    execution_path = root / f"{suite_id}-execution.json"
+    publish_json(
+        {
+            "format": "pysfmea-benchmark-case-results-1",
+            "suite_id": suite_id,
+            "suite_revision": "pinned revision",
+            "source_sha256": ("1" if suite_id == "owasp-benchmark-python" else "2") * 64,
+            "cases": [
+                {
+                    "case_id": f"{case_id}-{i}",
+                    "repository_id": case_id,
+                    "executed": True,
+                    "metrics": {
+                        "finding_detection": {"expected": i < 20, "predicted": i < 20}
+                    },
+                }
+                for i in range(40)
+            ],
+        },
+        execution_path,
+    )
+    return {
+        "execution_path": execution_path.name,
+        "suite_id": suite_id,
+        "audit_path": audit_path.name,
+        "population_path": inventory_path.name,
+        "reviews_path": reviews_path.name,
+    }
+
+
+def test_runtime_coverage_is_exact_bound_and_does_not_claim_mcdc(
+    tmp_path: Path,
+) -> None:
     coverage_path = tmp_path / "coverage.json"
     _coverage(coverage_path)
     analysis = _analysis()
@@ -256,19 +354,19 @@ def test_external_validation_portfolio_requires_traceable_composite_evidence(
     source["benchmark_assessment_paths"] = [benchmark_path.name]
     source["benchmark_suites"] = [
         {
-            "id": "owasp-python",
+            "id": "owasp-benchmark-python",
             "title": "OWASP Benchmark for Python",
             "publisher": "OWASP Foundation",
-            "version": "0.1 pinned revision",
+            "version": "pinned revision",
             "suite_type": "executable_synthetic",
             "language": "Python",
             "source_uri": "https://github.com/OWASP-Benchmark/BenchmarkPython",
             "source_sha256": "1" * 64,
             "license": "GPL-3.0",
             "taxonomy": ["CWE", "security"],
-            "repository_ids": ["owasp-python"],
+            "repository_ids": ["owasp-benchmark-python"],
             "label_authority": "OWASP Benchmark maintainers",
-            "evidence_ref": "evidence://suite/owasp-python",
+            "evidence_ref": "evidence://suite/owasp-benchmark-python",
         },
         {
             "id": "bugsinpy",
@@ -286,6 +384,10 @@ def test_external_validation_portfolio_requires_traceable_composite_evidence(
             "evidence_ref": "evidence://suite/bugsinpy",
         },
     ]
+    source["benchmark_item_quality_evidence"] = [
+        _item_quality(tmp_path, "owasp-benchmark-python", "owasp-benchmark-python"),
+        _item_quality(tmp_path, "bugsinpy", "bugsinpy"),
+    ]
     counts = {
         "finding_detection": {
             "true_positive": 10,
@@ -301,7 +403,7 @@ def test_external_validation_portfolio_requires_traceable_composite_evidence(
             "version": "pinned",
             "runner": "independent-security-lab",
             "independence_basis": "Separate organization.",
-            "suite_ids": ["owasp-python", "bugsinpy"],
+            "suite_ids": ["owasp-benchmark-python", "bugsinpy"],
             "metrics": copy.deepcopy(counts),
             "raw_result_ref": "evidence://comparators/bandit",
             "raw_result_sha256": "3" * 64,
@@ -312,7 +414,7 @@ def test_external_validation_portfolio_requires_traceable_composite_evidence(
             "version": "pinned",
             "runner": "independent-security-lab",
             "independence_basis": "Separate organization.",
-            "suite_ids": ["owasp-python", "bugsinpy"],
+            "suite_ids": ["owasp-benchmark-python", "bugsinpy"],
             "metrics": copy.deepcopy(counts),
             "raw_result_ref": "evidence://comparators/semgrep",
             "raw_result_sha256": "4" * 64,
@@ -335,7 +437,10 @@ def test_external_validation_portfolio_requires_traceable_composite_evidence(
             "satisfaction_score": 0.9,
             "minimum_satisfaction_score": 0.8,
             "accessibility_evidence_refs": ["evidence://a11y/report"],
-            "evidence_refs": ["evidence://usability/raw", "evidence://usability/report"],
+            "evidence_refs": [
+                "evidence://usability/raw",
+                "evidence://usability/report",
+            ],
         }
     ]
     source["evidence_refs"] = ["evidence://portfolio/approval-package"]
@@ -350,10 +455,10 @@ def test_external_validation_portfolio_requires_traceable_composite_evidence(
     assert {item["reference"] for item in assessment["artifacts"]} == {
         benchmark_path.name,
         coverage_observation_path.name,
+        "owasp-benchmark-python-item-quality.json",
+        "bugsinpy-item-quality.json",
     }
-    verdict = verify_validation_portfolio_assessment(
-        assessment, source=source_path
-    )
+    verdict = verify_validation_portfolio_assessment(assessment, source=source_path)
     assert verdict["valid"] is True
     assert verdict["passed"] is True
     Draft202012Validator(
@@ -378,7 +483,9 @@ def test_external_validation_portfolio_requires_traceable_composite_evidence(
         schema_document("industry-validation-portfolio-report-verification")
     ).validate(report_verdict)
     report_path.write_text(
-        report_path.read_text(encoding="utf-8").replace("Qualification gates", "Rewritten gates", 1),
+        report_path.read_text(encoding="utf-8").replace(
+            "Qualification gates", "Rewritten gates", 1
+        ),
         encoding="utf-8",
     )
     assert verify_validation_portfolio_report_file(report_path)["valid"] is False
@@ -387,7 +494,9 @@ def test_external_validation_portfolio_requires_traceable_composite_evidence(
     forged = seal(forged)
     forged_verdict = verify_validation_portfolio_assessment(forged)
     assert forged_verdict["valid"] is False
-    assert any("summary does not reconcile" in error for error in forged_verdict["errors"])
+    assert any(
+        "summary does not reconcile" in error for error in forged_verdict["errors"]
+    )
 
 
 def test_catalog_includes_current_governance_and_evaluation_profiles() -> None:

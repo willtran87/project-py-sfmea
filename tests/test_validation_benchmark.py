@@ -19,7 +19,9 @@ class ToolValidationBenchmarkTests(unittest.TestCase):
 
     def test_golden_corpus_has_exact_recall_and_precision(self) -> None:
         analysis = scan_repository(self.corpus / "repository")
-        expected = json.loads((self.corpus / "expected.json").read_text(encoding="utf-8"))
+        expected = json.loads(
+            (self.corpus / "expected.json").read_text(encoding="utf-8")
+        )
         result = evaluate_candidates(analysis, expected)
         self.assertEqual(result["missing"], [])
         self.assertEqual(result["unexpected"], [])
@@ -131,12 +133,8 @@ class ToolValidationBenchmarkTests(unittest.TestCase):
         )
 
     def test_regulatory_profile_citations_are_isolated(self) -> None:
-        commercial = citations_for_rule(
-            "functional.omission", ["faa_commercial_space"]
-        )
-        airworthiness = citations_for_rule(
-            "functional.omission", ["faa_airworthiness"]
-        )
+        commercial = citations_for_rule("functional.omission", ["faa_commercial_space"])
+        airworthiness = citations_for_rule("functional.omission", ["faa_airworthiness"])
         self.assertTrue(commercial)
         self.assertTrue(airworthiness)
         self.assertFalse(

@@ -51,7 +51,11 @@ def validation_portfolio_report_html(
     checks = assessment["checks"]
     summary = assessment["summary"]
     check_rows = [
-        {"name": name, "status": "PASS" if state else "BLOCK", "class": "pass" if state else "block"}
+        {
+            "name": name,
+            "status": "PASS" if state else "BLOCK",
+            "class": "pass" if state else "block",
+        }
         for name, state in sorted(checks.items())
     ]
     checks_html = "".join(
@@ -60,17 +64,20 @@ def validation_portfolio_report_html(
         for item in check_rows
     )
     artifacts = assessment["artifacts"]
-    artifact_rows = "".join(
-        "<tr>"
-        f"<td>{_escape(item.get('kind', ''))}</td>"
-        f"<td><code>{_escape(item.get('reference', ''))}</code></td>"
-        f"<td>{_escape(item.get('format_id', '—'))}</td>"
-        f"<td><span class=\"badge {'pass' if item.get('valid') else 'block'}\">{'valid' if item.get('valid') else 'invalid'}</span></td>"
-        f"<td><span class=\"badge {'pass' if item.get('passed') else 'block'}\">{'pass' if item.get('passed') else 'block'}</span></td>"
-        f"<td><code>{_escape(str(item.get('sha256', ''))[:16])}…</code></td>"
-        "</tr>"
-        for item in artifacts
-    ) or '<tr><td colspan="6">No referenced machine artifacts.</td></tr>'
+    artifact_rows = (
+        "".join(
+            "<tr>"
+            f"<td>{_escape(item.get('kind', ''))}</td>"
+            f"<td><code>{_escape(item.get('reference', ''))}</code></td>"
+            f"<td>{_escape(item.get('format_id', '—'))}</td>"
+            f'<td><span class="badge {"pass" if item.get("valid") else "block"}">{"valid" if item.get("valid") else "invalid"}</span></td>'
+            f'<td><span class="badge {"pass" if item.get("passed") else "block"}">{"pass" if item.get("passed") else "block"}</span></td>'
+            f"<td><code>{_escape(str(item.get('sha256', ''))[:16])}…</code></td>"
+            "</tr>"
+            for item in artifacts
+        )
+        or '<tr><td colspan="6">No referenced machine artifacts.</td></tr>'
+    )
     benchmark = assessment["benchmark"]
     interoperability = assessment["interoperability"]
     studies = assessment["usability_studies"]
@@ -92,14 +99,14 @@ main{{max-width:1450px;margin:auto;padding:28px clamp(14px,4vw,58px) 72px}}secti
 .status{{border-left:6px solid;padding:18px 20px;border-radius:12px;font-weight:760}}.status.pass{{color:var(--green);background:var(--green-bg)}}.status.block{{color:var(--red);background:var(--red-bg)}}.badge{{display:inline-block;border-radius:999px;padding:3px 9px;font-size:12px;font-weight:760}}.badge.pass{{color:var(--green);background:var(--green-bg)}}.badge.block{{color:var(--red);background:var(--red-bg)}}
 .table{{overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--card)}}table{{width:100%;border-collapse:collapse;min-width:700px}}th,td{{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}}th{{background:#edf2ff;color:#26375e;font-size:12px;text-transform:uppercase}}code{{overflow-wrap:anywhere}}ul{{padding-left:22px}}footer{{max-width:1450px;margin:auto;padding:0 clamp(14px,4vw,58px) 42px;color:var(--muted)}}
 </style></head><body><a class="skip" href="#main">Skip to report</a>
-<header><p class="muted" style="color:#cdd9ff;text-transform:uppercase;letter-spacing:.1em">PySFMEA evidence workbench</p><h1>{_escape(title)}</h1><p>{_escape(assessment['product']['name'])} {_escape(assessment['product']['version'])} · {_escape(assessment['product']['intended_use'])}</p><p>Exact assessment <code>{_escape(assessment['content_sha256'])}</code></p></header>
+<header><p class="muted" style="color:#cdd9ff;text-transform:uppercase;letter-spacing:.1em">PySFMEA evidence workbench</p><h1>{_escape(title)}</h1><p>{_escape(assessment["product"]["name"])} {_escape(assessment["product"]["version"])} · {_escape(assessment["product"]["intended_use"])}</p><p>Exact assessment <code>{_escape(assessment["content_sha256"])}</code></p></header>
 <nav aria-label="Report sections"><a href="#decision">Decision</a><a href="#checks">Checks</a><a href="#benchmark">Benchmark</a><a href="#artifacts">Artifacts</a><a href="#human">Human factors</a><a href="#scope">Scope</a></nav>
-<main id="main"><section id="decision"><h2>Decision readiness</h2><div class="status {status_class}">{_escape(summary['status'].replace('_',' ').title())}: {summary['checks_passed']} of {summary['checks_required']} gates pass.</div><div class="grid" style="margin-top:14px"><div class="card metric"><strong>{len(benchmark['suite_ids'])}</strong><span>external benchmark suites</span></div><div class="card metric"><strong>{len(benchmark['repository_ids'])}</strong><span>benchmark repositories</span></div><div class="card metric"><strong>{len(benchmark['comparator_tools'])}</strong><span>comparator tools</span></div><div class="card metric"><strong>{len(artifacts)}</strong><span>bound machine artifacts</span></div></div></section>
+<main id="main"><section id="decision"><h2>Decision readiness</h2><div class="status {status_class}">{_escape(summary["status"].replace("_", " ").title())}: {summary["checks_passed"]} of {summary["checks_required"]} gates pass.</div><div class="grid" style="margin-top:14px"><div class="card metric"><strong>{len(benchmark["suite_ids"])}</strong><span>external benchmark suites</span></div><div class="card metric"><strong>{len(benchmark["repository_ids"])}</strong><span>benchmark repositories</span></div><div class="card metric"><strong>{len(benchmark["comparator_tools"])}</strong><span>comparator tools</span></div><div class="card metric"><strong>{len(artifacts)}</strong><span>bound machine artifacts</span></div></div></section>
 <section id="checks"><h2>Qualification gates</h2><div class="table"><table><thead><tr><th>Gate</th><th>Status</th></tr></thead><tbody>{checks_html}</tbody></table></div></section>
-<section id="benchmark"><h2>Composite benchmark</h2><div class="grid"><div class="card"><h3>Suites</h3><ul>{''.join(f'<li><code>{_escape(item)}</code></li>' for item in benchmark['suite_ids']) or '<li>None</li>'}</ul></div><div class="card"><h3>Population types</h3><ul>{''.join(f'<li>{_escape(item)}</li>' for item in benchmark['suite_types']) or '<li>None</li>'}</ul></div><div class="card"><h3>Comparators</h3><ul>{''.join(f'<li>{_escape(item)}</li>' for item in benchmark['comparator_tools']) or '<li>None</li>'}</ul></div><div class="card"><h3>Trace controls</h3><p>External provenance: <b>{benchmark['external_suite_provenance']}</b></p><p>Exact suite/repository trace: <b>{benchmark['exact_suite_repository_trace']}</b></p><p>Independent comparator runners: <b>{benchmark['comparator_independence']}</b></p></div></div></section>
-<section id="artifacts"><h2>Exact evidence artifacts</h2><div class="table"><table><thead><tr><th>Kind</th><th>Reference</th><th>Format</th><th>Integrity</th><th>Outcome</th><th>SHA-256</th></tr></thead><tbody>{artifact_rows}</tbody></table></div><div class="card" style="margin-top:14px"><h3>Interoperability</h3><p><b>Required:</b> {_escape(', '.join(interoperability['required_formats']) or 'No formats selected')}</p><p><b>Passing:</b> {_escape(', '.join(interoperability['passing_formats']) or 'No passing round trips supplied')}</p></div></section>
-<section id="human"><h2>Human and operational validation</h2><div class="card"><h3>Representative usability</h3><div class="table"><table><thead><tr><th>Study</th><th>Participants</th><th>Task success</th><th>Critical errors</th><th>Status</th></tr></thead><tbody>{_rows(studies, ('id','participant_count','task_success_rate','critical_use_errors','passed'))}</tbody></table></div></div><div class="grid" style="margin-top:14px"><div class="card"><h3>Formal verification</h3><p>{len(formal)} governed record(s); {sum(item['passed'] for item in formal)} pass.</p></div><div class="card"><h3>Continuity exercises</h3><p>{len(continuity)} governed exercise(s); {sum(item['passed'] for item in continuity)} pass.</p></div></div></section>
-<section id="scope"><h2>Scope and authority boundary</h2><div class="card"><p><b>Operational scope:</b> {_escape(assessment['product']['operational_scope'])}</p><p><b>Authority:</b> {_escape(assessment['authority']['approval_authority'])}</p><h3>Limitations</h3><ul>{''.join(f'<li>{_escape(item)}</li>' for item in assessment['limitations']) or '<li>No additional limitations recorded.</li>'}</ul><p>{_escape(assessment['notice'])}</p></div></section>
+<section id="benchmark"><h2>Composite benchmark</h2><div class="grid"><div class="card"><h3>Suites</h3><ul>{"".join(f"<li><code>{_escape(item)}</code></li>" for item in benchmark["suite_ids"]) or "<li>None</li>"}</ul></div><div class="card"><h3>Population types</h3><ul>{"".join(f"<li>{_escape(item)}</li>" for item in benchmark["suite_types"]) or "<li>None</li>"}</ul></div><div class="card"><h3>Comparators</h3><ul>{"".join(f"<li>{_escape(item)}</li>" for item in benchmark["comparator_tools"]) or "<li>None</li>"}</ul></div><div class="card"><h3>Trace controls</h3><p>External provenance: <b>{benchmark["external_suite_provenance"]}</b></p><p>Exact suite/repository trace: <b>{benchmark["exact_suite_repository_trace"]}</b></p><p>Independent comparator runners: <b>{benchmark["comparator_independence"]}</b></p></div></div></section>
+<section id="artifacts"><h2>Exact evidence artifacts</h2><div class="table"><table><thead><tr><th>Kind</th><th>Reference</th><th>Format</th><th>Integrity</th><th>Outcome</th><th>SHA-256</th></tr></thead><tbody>{artifact_rows}</tbody></table></div><div class="card" style="margin-top:14px"><h3>Interoperability</h3><p><b>Required:</b> {_escape(", ".join(interoperability["required_formats"]) or "No formats selected")}</p><p><b>Passing:</b> {_escape(", ".join(interoperability["passing_formats"]) or "No passing round trips supplied")}</p></div></section>
+<section id="human"><h2>Human and operational validation</h2><div class="card"><h3>Representative usability</h3><div class="table"><table><thead><tr><th>Study</th><th>Participants</th><th>Task success</th><th>Critical errors</th><th>Status</th></tr></thead><tbody>{_rows(studies, ("id", "participant_count", "task_success_rate", "critical_use_errors", "passed"))}</tbody></table></div></div><div class="grid" style="margin-top:14px"><div class="card"><h3>Formal verification</h3><p>{len(formal)} governed record(s); {sum(item["passed"] for item in formal)} pass.</p></div><div class="card"><h3>Continuity exercises</h3><p>{len(continuity)} governed exercise(s); {sum(item["passed"] for item in continuity)} pass.</p></div></div></section>
+<section id="scope"><h2>Scope and authority boundary</h2><div class="card"><p><b>Operational scope:</b> {_escape(assessment["product"]["operational_scope"])}</p><p><b>Authority:</b> {_escape(assessment["authority"]["approval_authority"])}</p><h3>Limitations</h3><ul>{"".join(f"<li>{_escape(item)}</li>" for item in assessment["limitations"]) or "<li>No additional limitations recorded.</li>"}</ul><p>{_escape(assessment["notice"])}</p></div></section>
 <script id="pysfmea-assessment" type="application/octet-stream">{payload}</script></main><footer>Self-contained evidence projection. Verify with <code>sfmea validation-portfolio-report-verify</code>.</footer></body></html>"""
     digest = hashlib.sha256(document.encode("utf-8")).hexdigest()
     return document.replace(_DOCUMENT_MARKER, digest, 1)
@@ -166,9 +173,9 @@ def verify_validation_portfolio_report_file(
         assert document_match is not None
         assert payload_match is not None
         payload_bytes = base64.b64decode(payload_match.group(1), validate=True)
-        checks["payload_integrity"] = (
-            hashlib.sha256(payload_bytes).hexdigest() == payload_sha_match.group(1)
-        )
+        checks["payload_integrity"] = hashlib.sha256(
+            payload_bytes
+        ).hexdigest() == payload_sha_match.group(1)
         payload_value = json.loads(payload_bytes.decode("utf-8"))
         if not isinstance(payload_value, dict):
             raise ValueError("embedded portfolio assessment must be an object")

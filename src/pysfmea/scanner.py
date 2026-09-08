@@ -240,9 +240,7 @@ def _type_parameter_expressions(node: ast.AST) -> list[tuple[str, ast.AST]]:
                     if role == "bound" and isinstance(expression, ast.Tuple)
                     else role
                 )
-                expressions.append(
-                    (f"type-param:{name}:{expression_role}", expression)
-                )
+                expressions.append((f"type-param:{name}:{expression_role}", expression))
     return expressions
 
 
@@ -339,9 +337,7 @@ def _annotation_reference(node: ast.AST | None, aliases: dict[str, str]) -> str:
                 if not candidate:
                     return ""
                 union_candidates.add(candidate)
-            return (
-                next(iter(union_candidates)) if len(union_candidates) == 1 else ""
-            )
+            return next(iter(union_candidates)) if len(union_candidates) == 1 else ""
         return ""
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
         union_candidates = set()
@@ -877,7 +873,10 @@ def _statements_bind_name(statements: list[ast.stmt], name: str) -> bool:
             if value.name == name:
                 return True
         elif isinstance(value, ast.Import):
-            if any((alias.asname or alias.name.split(".")[0]) == name for alias in value.names):
+            if any(
+                (alias.asname or alias.name.split(".")[0]) == name
+                for alias in value.names
+            ):
                 return True
         elif isinstance(value, ast.ImportFrom):
             if any((alias.asname or alias.name) == name for alias in value.names):
@@ -1387,9 +1386,7 @@ def _static_expression_value(
             return False, None, "exceptional_literal_expression"
     if not isinstance(node, ast.BinOp):
         return False, None, "dynamic_or_unsupported_expression"
-    left_known, left, _left_basis = _static_expression_value(
-        node.left, depth=depth + 1
-    )
+    left_known, left, _left_basis = _static_expression_value(node.left, depth=depth + 1)
     right_known, right, _right_basis = _static_expression_value(
         node.right, depth=depth + 1
     )
@@ -1546,9 +1543,11 @@ def _static_truth_value(
                     outcomes.append(left in right)
                 elif isinstance(operator, ast.NotIn):
                     outcomes.append(left not in right)
-                elif isinstance(operator, (ast.Is, ast.IsNot)) and any(
-                    left is value for value in (None, True, False, Ellipsis)
-                ) and any(right is value for value in (None, True, False, Ellipsis)):
+                elif (
+                    isinstance(operator, (ast.Is, ast.IsNot))
+                    and any(left is value for value in (None, True, False, Ellipsis))
+                    and any(right is value for value in (None, True, False, Ellipsis))
+                ):
                     identical = left is right
                     outcomes.append(
                         not identical if isinstance(operator, ast.IsNot) else identical
@@ -1650,7 +1649,9 @@ def _static_match_pattern(
             return True, "irrefutable_pattern"
         return _static_match_pattern(subject, pattern.pattern)
     if isinstance(pattern, ast.MatchOr):
-        outcomes = [_static_match_pattern(subject, value)[0] for value in pattern.patterns]
+        outcomes = [
+            _static_match_pattern(subject, value)[0] for value in pattern.patterns
+        ]
         if True in outcomes:
             return True, "static_pattern_match"
         if outcomes and all(value is False for value in outcomes):
@@ -1692,9 +1693,7 @@ def _static_match_pattern(
         if type(subject) is not dict:
             return False, "static_pattern_mismatch"
         mapping_outcomes: list[tuple[bool | None, str]] = []
-        for key_node, value_pattern in zip(
-            pattern.keys, pattern.patterns, strict=True
-        ):
+        for key_node, value_pattern in zip(pattern.keys, pattern.patterns, strict=True):
             known, key = _static_literal_value(key_node)
             if not known:
                 return None, "dynamic_or_unsupported_pattern"
@@ -2041,9 +2040,7 @@ def _handler_statement_outcomes(
                 }
                 if _block_contains_current_loop_break(statement.body):
                     outcomes.add(("fallthrough", "", 0))
-                elif any(
-                    value[0] in {"fallthrough", "continue"} for value in body
-                ):
+                elif any(value[0] in {"fallthrough", "continue"} for value in body):
                     outcomes.add(("indeterminate", "", line))
                 return _bounded_handler_outcomes(outcomes, body_truncated)
         body, body_truncated = _handler_block_outcomes(
@@ -2506,8 +2503,7 @@ class _FactVisitor(ast.NodeVisitor):
         for reverse_index, decorator in enumerate(reversed(node.decorator_list)):
             original_index = len(node.decorator_list) - reverse_index - 1
             context = (
-                f"class-definition@{node.lineno}:decorator:"
-                f"{original_index}:application"
+                f"class-definition@{node.lineno}:decorator:{original_index}:application"
             )
             if isinstance(decorator, ast.Call):
                 self.control_context.append(context)
@@ -2542,11 +2538,16 @@ class _FactVisitor(ast.NodeVisitor):
         argument/result context.
         """
 
-        factory_raw = _callable_reference(
-            decorator.func,
-            allow_zero_argument_super=self.allow_zero_argument_super,
-        ) or ast.unparse(decorator.func)[:500]
-        factory_reference, factory_resolution = self._resolve_with_provenance(factory_raw)
+        factory_raw = (
+            _callable_reference(
+                decorator.func,
+                allow_zero_argument_super=self.allow_zero_argument_super,
+            )
+            or ast.unparse(decorator.func)[:500]
+        )
+        factory_reference, factory_resolution = self._resolve_with_provenance(
+            factory_raw
+        )
         raw_reference = f"{factory_raw or '<dynamic-decorator-factory>'}(...).__call__"
         reference = (
             f"{factory_reference or factory_raw or '<dynamic-decorator-factory>'}"
@@ -2958,9 +2959,7 @@ class _FactVisitor(ast.NodeVisitor):
                     self._visit_with_context(
                         case.guard, f"match@{node.lineno}:case-{index + 1}-guard"
                     )
-                self._visit_block(
-                    case.body, f"match@{node.lineno}:case-{index + 1}"
-                )
+                self._visit_block(case.body, f"match@{node.lineno}:case-{index + 1}")
             return
         for index, case in enumerate(node.cases):
             matched, basis = _static_match_pattern(subject, case.pattern)
@@ -2985,10 +2984,7 @@ class _FactVisitor(ast.NodeVisitor):
                     if remaining.guard is not None:
                         self._visit_with_context(
                             remaining.guard,
-                            (
-                                f"match@{node.lineno}:case-"
-                                f"{remaining_index + 1}-guard"
-                            ),
+                            (f"match@{node.lineno}:case-{remaining_index + 1}-guard"),
                         )
                     self._visit_block(
                         remaining.body,
@@ -3387,8 +3383,7 @@ class _FactVisitor(ast.NodeVisitor):
         ]
         outcome_kinds = sorted({str(value["kind"]) for value in outcomes})
         normalized_outcomes = {
-            (str(value["kind"]), str(value["exception_type"]))
-            for value in outcomes
+            (str(value["kind"]), str(value["exception_type"])) for value in outcomes
         }
         outcome_certainty = (
             "indeterminate"
@@ -3403,9 +3398,7 @@ class _FactVisitor(ast.NodeVisitor):
         if outcomes_truncated or "indeterminate" in outcome_kinds:
             terminal_basis = "indeterminate_or_truncated_outcomes"
         elif len(normalized_outcomes) == 1:
-            candidate_kind, candidate_exception_type = next(
-                iter(normalized_outcomes)
-            )
+            candidate_kind, candidate_exception_type = next(iter(normalized_outcomes))
             if candidate_kind == "return":
                 return_lines = {
                     int(value["line"])
@@ -3418,11 +3411,16 @@ class _FactVisitor(ast.NodeVisitor):
                     if isinstance(value, ast.Return)
                     and int(getattr(value, "lineno", 0) or 0) in return_lines
                 ]
-                if return_nodes and {
-                    int(getattr(value, "lineno", 0) or 0) for value in return_nodes
-                } == return_lines and all(
-                    value.value is None or isinstance(value.value, ast.Constant)
-                    for value in return_nodes
+                if (
+                    return_nodes
+                    and {
+                        int(getattr(value, "lineno", 0) or 0) for value in return_nodes
+                    }
+                    == return_lines
+                    and all(
+                        value.value is None or isinstance(value.value, ast.Constant)
+                        for value in return_nodes
+                    )
                 ):
                     terminal_kind = "return"
                     terminal_basis = "uniform_safe_terminal_outcome"
@@ -3552,13 +3550,10 @@ class _FactVisitor(ast.NodeVisitor):
         # Local variable annotations are never evaluated. Module/class annotations
         # are eager only when the source has not explicitly enabled postponed
         # evaluation through ``from __future__ import annotations``.
-        if (
-            not self.annotations_deferred
-            and (self.module_scope or self.class_definition_depth)
+        if not self.annotations_deferred and (
+            self.module_scope or self.class_definition_depth
         ):
-            annotation_scope = (
-                "class" if self.class_definition_depth else "module"
-            )
+            annotation_scope = "class" if self.class_definition_depth else "module"
             self._visit_annotation_with_context(
                 node.annotation,
                 f"{annotation_scope}-annotation@{node.lineno}",
@@ -3986,9 +3981,8 @@ class _ModuleCollector(ast.NodeVisitor):
         # Collector traversal exists to discover nested deferred expressions. Local
         # annotations and explicitly postponed annotations do not create values, so
         # their lambda/generator bodies must not become components either.
-        if (
-            not self.annotations_deferred
-            and (self.class_stack or self.function_depth == 0)
+        if not self.annotations_deferred and (
+            self.class_stack or self.function_depth == 0
         ):
             self.visit(node.annotation)
         if node.value is not None:
@@ -4863,9 +4857,7 @@ def _function_definition_requires_initialization_analysis(
                     node.args.vararg.annotation
                     if node.args.vararg is not None
                     else None,
-                    node.args.kwarg.annotation
-                    if node.args.kwarg is not None
-                    else None,
+                    node.args.kwarg.annotation if node.args.kwarg is not None else None,
                     node.returns,
                 ]
                 if annotation is not None
@@ -7561,9 +7553,7 @@ def _resolve_internal_targets(
             best = max(score for score, _target in scored)
             targets = [target for score, target in scored if score == best]
     elif (
-        called.startswith("super().")
-        and caller_class
-        and len(caller.class_bases) == 1
+        called.startswith("super().") and caller_class and len(caller.class_bases) == 1
     ):
         method = called.rsplit(".", 1)[-1]
         base = caller.class_bases[0]

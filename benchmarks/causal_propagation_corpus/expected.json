@@ -1,0 +1,14 @@
+{
+  "format": "pysfmea-causal-corpus-1",
+  "cases": [
+    {
+      "id": "timeout-opens-breaker",
+      "entrypoint": "repository.cascade.checkout",
+      "fault": "payment_timeout",
+      "ordered_effects": ["payment_unavailable", "retry_exhausted", "breaker_open", "checkout_degraded"],
+      "deadline_ms": 250,
+      "recovery": "half_open_probe_then_closed"
+    }
+  ],
+  "claim_boundary": "Public regression labels are not independent causal ground truth."
+}

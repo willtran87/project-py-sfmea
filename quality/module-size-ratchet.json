@@ -5,9 +5,10 @@
     "cross_reference.py": 11351,
     "schemas.py": 9825,
     "cli.py": 5704,
-    "program.py": 5458,
+    "program.py": 5460,
     "enhancements.py": 5264,
     "validation.py": 4186,
+    "industry_schemas.py": 4520,
     "report.py": 3897,
     "diagrams.py": 3271
   },

@@ -1,0 +1,11 @@
+{
+  "format": "pysfmea-interoperability-corpus-1",
+  "cases": [
+    {"id": "sarif-minimal-valid", "specification": "SARIF", "edition": "2.1.0", "expected": "accept"},
+    {"id": "sarif-unknown-version", "specification": "SARIF", "edition": "9.9", "expected": "reject"},
+    {"id": "cyclonedx-vex-status-preserved", "specification": "CycloneDX", "edition": "1.7", "expected": "roundtrip"},
+    {"id": "oscal-observation-identity", "specification": "OSCAL", "edition": "1.2.3", "expected": "roundtrip"},
+    {"id": "duplicate-json-key", "specification": "JSON", "edition": "RFC8259-profile", "expected": "reject"}
+  ],
+  "claim_boundary": "Canaries do not cover an entire external specification."
+}

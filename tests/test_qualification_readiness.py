@@ -30,7 +30,9 @@ class QualificationReadinessTests(unittest.TestCase):
             root = Path(directory)
             manifest = copy.deepcopy(template)
             manifest["title"] = "Independent retained scanner campaign"
-            manifest["purpose"] = "Measure exact scanner behavior on a preselected corpus."
+            manifest["purpose"] = (
+                "Measure exact scanner behavior on a preselected corpus."
+            )
             manifest["governance"] = {
                 "independent": True,
                 "labeled_by": "Benchmark Team",

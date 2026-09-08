@@ -21,6 +21,7 @@ from .test_generation import (
 
 JSON_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 
+
 def _schema_id(name: str) -> str:
     return f"urn:pysfmea:schema:{name}:1"
 
@@ -110,6 +111,8 @@ def _test_generation_response_schema(*, normalized: bool) -> dict[str, Any]:
         "properties": properties,
         "additionalProperties": False,
     }
+
+
 def _assurance_test_proposal_schema() -> dict[str, Any]:
     digest = {"type": "string", "pattern": r"^[0-9a-f]{64}$"}
     required_text = {"type": "string", "minLength": 1, "maxLength": 20_000}
@@ -241,6 +244,7 @@ def _assurance_test_proposal_schema() -> dict[str, Any]:
         "additionalProperties": False,
     }
 
+
 def _assurance_test_proposal_verification_schema() -> dict[str, Any]:
     checks = {
         name: {"type": ["boolean", "null"]}
@@ -301,7 +305,11 @@ def _assurance_test_proposal_stage_schema() -> dict[str, Any]:
                 "properties": {
                     "path": {"type": "string", "pattern": r"^tests/.+\.py$"},
                     "sha256": digest,
-                    "bytes": {"type": "integer", "minimum": 1, "maximum": MAX_TEST_FILE_BYTES},
+                    "bytes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_TEST_FILE_BYTES,
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -394,7 +402,11 @@ def _assurance_test_proposal_apply_receipt_schema() -> dict[str, Any]:
             "properties": {
                 "path": {"type": "string", "pattern": r"^tests/.+\.py$"},
                 "sha256": digest,
-                "bytes": {"type": "integer", "minimum": 1, "maximum": MAX_TEST_FILE_BYTES},
+                "bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": MAX_TEST_FILE_BYTES,
+                },
             },
             "additionalProperties": False,
         },

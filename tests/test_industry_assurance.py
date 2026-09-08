@@ -76,6 +76,16 @@ class IndustryAssuranceTests(unittest.TestCase):
         self.assertIn("sae-arp4754b-arp4761a", profile_ids)
         self.assertIn("iso-12207-2026", profile_ids)
         self.assertIn("openssf-osps-2026-02-19", profile_ids)
+        self.assertIn("openssf-osps-2026-08-28", profile_ids)
+        profiles = {profile["id"]: profile for profile in catalog["profiles"]}
+        self.assertEqual(
+            profiles["openssf-osps-2026-02-19"]["status"],
+            "superseded_public_baseline",
+        )
+        self.assertEqual(
+            profiles["openssf-osps-2026-08-28"]["status"],
+            "current_public_baseline",
+        )
         self.assertIn("medical-14971-62304-81001", profile_ids)
         Draft202012Validator(schema_document("standards-catalog")).validate(catalog)
 

@@ -35,22 +35,36 @@ def sarif_document(
         for value in analysis.get("items", [])
         if value.get("source_status", "active") == "active"
     ]
-    rule_ids = sorted({str(value.get("scanner", {}).get("rule_id", "manual")) for value in active})
+    rule_ids = sorted(
+        {str(value.get("scanner", {}).get("rule_id", "manual")) for value in active}
+    )
     rules = []
     for rule_id in rule_ids:
-        example = next(value for value in active if value.get("scanner", {}).get("rule_id") == rule_id)
+        example = next(
+            value
+            for value in active
+            if value.get("scanner", {}).get("rule_id") == rule_id
+        )
         rules.append(
             {
                 "id": rule_id,
                 "name": rule_id.replace(".", "_"),
-                "shortDescription": {"text": str(example.get("scanner", {}).get("guideword", rule_id))},
+                "shortDescription": {
+                    "text": str(example.get("scanner", {}).get("guideword", rule_id))
+                },
                 "fullDescription": {
                     "text": "SFMEA screening rule that generates a candidate for qualified engineering review."
                 },
-                "help": {"text": str(example.get("scanner", {}).get("failure_mode", ""))},
+                "help": {
+                    "text": str(example.get("scanner", {}).get("failure_mode", ""))
+                },
                 "properties": {
                     "precision": "medium",
-                    "tags": ["sfmea", "screening", str(example.get("scanner", {}).get("failure_class", ""))],
+                    "tags": [
+                        "sfmea",
+                        "screening",
+                        str(example.get("scanner", {}).get("failure_class", "")),
+                    ],
                 },
             }
         )
@@ -60,25 +74,45 @@ def sarif_document(
         review = item.get("review", {})
         source = item.get("source", {})
         priority = str(scanner.get("screening_priority", "low"))
-        level = "warning" if review.get("disposition") == "accepted" and priority == "high" else "note"
+        level = (
+            "warning"
+            if review.get("disposition") == "accepted" and priority == "high"
+            else "note"
+        )
         results.append(
             {
                 "ruleId": str(scanner.get("rule_id", "manual")),
                 "level": level,
                 "message": {
-                    "text": str(review.get("failure_mode") or scanner.get("failure_mode", "SFMEA candidate"))
+                    "text": str(
+                        review.get("failure_mode")
+                        or scanner.get("failure_mode", "SFMEA candidate")
+                    )
                 },
                 "locations": [
                     {
                         "physicalLocation": {
-                            "artifactLocation": {"uri": str(source.get("path", "")), "uriBaseId": "%SRCROOT%"},
+                            "artifactLocation": {
+                                "uri": str(source.get("path", "")),
+                                "uriBaseId": "%SRCROOT%",
+                            },
                             "region": {
                                 "startLine": max(1, int(source.get("line", 1) or 1)),
-                                "endLine": max(1, int(source.get("end_line", source.get("line", 1)) or 1)),
+                                "endLine": max(
+                                    1,
+                                    int(
+                                        source.get("end_line", source.get("line", 1))
+                                        or 1
+                                    ),
+                                ),
                             },
                         },
                         "logicalLocations": [
-                            {"fullyQualifiedName": str(item.get("component", {}).get("qualname", ""))}
+                            {
+                                "fullyQualifiedName": str(
+                                    item.get("component", {}).get("qualname", "")
+                                )
+                            }
                         ],
                     }
                 ],
@@ -90,7 +124,9 @@ def sarif_document(
                     "disposition": str(review.get("disposition", "unreviewed")),
                     "hazardIds": list(review.get("linked_hazards", [])),
                     "citationIds": list(scanner.get("citation_ids", [])),
-                    "baselineId": analysis.get("project", {}).get("baseline", {}).get("id", ""),
+                    "baselineId": analysis.get("project", {})
+                    .get("baseline", {})
+                    .get("id", ""),
                     "notice": "Candidate screening result; not a confirmed defect or compliance determination.",
                 },
             }
@@ -111,15 +147,16 @@ def sarif_document(
                 "automationDetails": {
                     "id": analysis.get("project", {}).get("baseline", {}).get("id", "")
                 },
-                "originalUriBaseIds": {
-                    "%SRCROOT%": {"uri": "./"}
-                },
+                "originalUriBaseIds": {"%SRCROOT%": {"uri": "./"}},
                 "results": results,
                 "invocations": [
                     {
                         "executionSuccessful": not bool(analysis.get("warnings")),
                         "toolExecutionNotifications": [
-                            {"level": "warning", "message": {"text": str(value.get("message", value))}}
+                            {
+                                "level": "warning",
+                                "message": {"text": str(value.get("message", value))},
+                            }
                             for value in analysis.get("warnings", [])[:100]
                         ],
                     }
@@ -130,8 +167,10 @@ def sarif_document(
 
 
 def cyclonedx_document(
-    analysis: dict[str, Any], *, generated_at: str | None = None,
-    tool_version: str | None = None
+    analysis: dict[str, Any],
+    *,
+    generated_at: str | None = None,
+    tool_version: str | None = None,
 ) -> dict[str, Any]:
     """Return a CycloneDX 1.7 inventory with explicit completeness semantics."""
 
@@ -145,11 +184,16 @@ def cyclonedx_document(
         is_manifest = name.startswith("manifest:")
         component: dict[str, Any] = {
             "type": "file" if is_manifest else "library",
-            "bom-ref": stable_id("DEP", name, specification, str(dependency.get("source", ""))),
+            "bom-ref": stable_id(
+                "DEP", name, specification, str(dependency.get("source", ""))
+            ),
             "name": name.removeprefix("manifest:"),
             "properties": [
                 {"name": "pysfmea:declared-specification", "value": specification},
-                {"name": "pysfmea:declaration-source", "value": str(dependency.get("source", ""))},
+                {
+                    "name": "pysfmea:declaration-source",
+                    "value": str(dependency.get("source", "")),
+                },
                 {"name": "pysfmea:resolution-status", "value": "declared-not-resolved"},
             ],
         }
@@ -165,20 +209,36 @@ def cyclonedx_document(
         "metadata": {
             "timestamp": generated_at or utc_now(),
             "lifecycles": [{"phase": "discovery"}],
-            "tools": {"components": [{"type": "application", "name": "PySFMEA", "version": producer_version}]},
+            "tools": {
+                "components": [
+                    {
+                        "type": "application",
+                        "name": "PySFMEA",
+                        "version": producer_version,
+                    }
+                ]
+            },
             "component": {
                 "type": "application",
                 "bom-ref": "project",
                 "name": project_name,
                 "version": baseline_id or "unversioned",
                 "properties": [
-                    {"name": "pysfmea:inventory-scope", "value": "declared dependencies only"},
-                    {"name": "pysfmea:resolution-notice", "value": "Versions and transitive dependencies are not resolved unless present in scanned manifests."},
+                    {
+                        "name": "pysfmea:inventory-scope",
+                        "value": "declared dependencies only",
+                    },
+                    {
+                        "name": "pysfmea:resolution-notice",
+                        "value": "Versions and transitive dependencies are not resolved unless present in scanned manifests.",
+                    },
                 ],
             },
         },
         "components": components,
-        "dependencies": [{"ref": "project", "dependsOn": [value["bom-ref"] for value in components]}],
+        "dependencies": [
+            {"ref": "project", "dependsOn": [value["bom-ref"] for value in components]}
+        ],
         "compositions": [
             {
                 "aggregate": "incomplete",
@@ -220,8 +280,16 @@ def differential_analysis(
 ) -> dict[str, Any]:
     """Compare two canonical runs and enumerate risk/evidence-relevant changes."""
 
-    old = {value.get("id"): value for value in previous.get("items", []) if value.get("source_status", "active") == "active"}
-    new = {value.get("id"): value for value in current.get("items", []) if value.get("source_status", "active") == "active"}
+    old = {
+        value.get("id"): value
+        for value in previous.get("items", [])
+        if value.get("source_status", "active") == "active"
+    }
+    new = {
+        value.get("id"): value
+        for value in current.get("items", [])
+        if value.get("source_status", "active") == "active"
+    }
     changed = []
     for finding_id in sorted(set(old) & set(new)):
         before = _item_state(old[finding_id])
@@ -233,17 +301,30 @@ def differential_analysis(
         }
         if fields:
             changed.append({"finding_id": finding_id, "fields": fields})
-    old_assumptions = previous.get("context", {}).get("project", {}).get("assumptions", [])
-    new_assumptions = current.get("context", {}).get("project", {}).get("assumptions", [])
+    old_assumptions = (
+        previous.get("context", {}).get("project", {}).get("assumptions", [])
+    )
+    new_assumptions = (
+        current.get("context", {}).get("project", {}).get("assumptions", [])
+    )
     previous_dependencies = previous.get("context", {}).get("dependencies", [])
     current_dependencies = current.get("context", {}).get("dependencies", [])
-    old_obligations = {value.get("finding_id"): value for value in previous.get("assurance", {}).get("obligations", [])}
-    new_obligations = {value.get("finding_id"): value for value in current.get("assurance", {}).get("obligations", [])}
+    old_obligations = {
+        value.get("finding_id"): value
+        for value in previous.get("assurance", {}).get("obligations", [])
+    }
+    new_obligations = {
+        value.get("finding_id"): value
+        for value in current.get("assurance", {}).get("obligations", [])
+    }
     invalidated = []
     for finding_id in sorted(set(old_obligations) & set(new_obligations)):
         before = old_obligations[finding_id]
         after = new_obligations[finding_id]
-        if before.get("evidence_status") == "sufficient" and after.get("evidence_status") != "sufficient":
+        if (
+            before.get("evidence_status") == "sufficient"
+            and after.get("evidence_status") != "sufficient"
+        ):
             invalidated.append(
                 {
                     "finding_id": finding_id,
@@ -255,16 +336,24 @@ def differential_analysis(
     return {
         "schema_version": "pysfmea-diff-1",
         "generated_at": generated_at or utc_now(),
-        "previous_baseline_id": previous.get("project", {}).get("baseline", {}).get("id", ""),
-        "current_baseline_id": current.get("project", {}).get("baseline", {}).get("id", ""),
+        "previous_baseline_id": previous.get("project", {})
+        .get("baseline", {})
+        .get("id", ""),
+        "current_baseline_id": current.get("project", {})
+        .get("baseline", {})
+        .get("id", ""),
         "summary": {
             "new_findings": len(set(new) - set(old)),
             "removed_findings": len(set(old) - set(new)),
             "changed_findings": len(changed),
             "invalidated_verifications": len(invalidated),
             "assumptions_changed": old_assumptions != new_assumptions,
-            "dependency_baseline_changed": previous_dependencies != current_dependencies,
-            "configuration_changed": previous.get("project", {}).get("baseline", {}).get("config_digest") != current.get("project", {}).get("baseline", {}).get("config_digest"),
+            "dependency_baseline_changed": previous_dependencies
+            != current_dependencies,
+            "configuration_changed": previous.get("project", {})
+            .get("baseline", {})
+            .get("config_digest")
+            != current.get("project", {}).get("baseline", {}).get("config_digest"),
         },
         "new_findings": sorted(set(new) - set(old)),
         "removed_findings": sorted(set(old) - set(new)),

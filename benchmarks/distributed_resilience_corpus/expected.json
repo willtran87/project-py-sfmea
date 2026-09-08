@@ -1,0 +1,19 @@
+{
+  "format": "pysfmea-distributed-resilience-corpus-1",
+  "cases": [
+    {
+      "id": "idempotent-retry",
+      "entrypoint": "repository.resilience.deliver",
+      "expected_attempts": 3,
+      "expected_effect": "delivered_once",
+      "required_controls": ["bounded_retry", "idempotency_key", "backoff"]
+    },
+    {
+      "id": "cancelled-work",
+      "entrypoint": "repository.resilience.cancel_work",
+      "expected_effect": "cancelled_without_commit",
+      "required_controls": ["cancellation_propagation", "transaction_boundary"]
+    }
+  ],
+  "claim_boundary": "Controlled cases require project-specific runtime corroboration."
+}

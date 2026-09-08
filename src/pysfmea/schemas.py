@@ -139,7 +139,7 @@ from .schema_primitives import (
 from .schema_primitives import (
     text_schema as _text_schema,
 )
-from .schema_registry import SCHEMA_CATALOG_FILENAME, SCHEMA_FILENAMES
+from .schema_registry import SCHEMA_CATALOG_FILENAME, SCHEMA_FILENAMES, schema_urn
 from .sdk import (
     PLUGIN_MANIFEST_FORMAT,
     PLUGIN_REQUEST_FORMAT,
@@ -200,7 +200,7 @@ PACKAGE_PROVENANCE_VERIFICATION_FORMAT = "pysfmea-package-provenance-verificatio
 
 
 def _schema_id(name: str) -> str:
-    return f"urn:pysfmea:schema:{name}:1"
+    return schema_urn(name)
 
 
 def _diagram_definition() -> dict[str, Any]:

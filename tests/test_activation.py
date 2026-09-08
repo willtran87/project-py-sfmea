@@ -51,17 +51,19 @@ class ActivationWorkflowTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_test_attribution_explains_static_mapping(self) -> None:
-        result = build_test_attribution(
-            self.analysis, self.root, ["tests/test_app.py"]
-        )
+        result = build_test_attribution(self.analysis, self.root, ["tests/test_app.py"])
 
         self.assertEqual(result["format"], "pysfmea-test-attribution-1")
         self.assertEqual(result["summary"]["tests"], 1)
         self.assertNotEqual(result["tests"][0]["status"], "unmapped")
         self.assertTrue(result["tests"][0]["component_matches"])
-        self.assertIn("module_import", result["tests"][0]["component_matches"][0]["reasons"])
+        self.assertIn(
+            "module_import", result["tests"][0]["component_matches"][0]["reasons"]
+        )
 
-    def test_workspace_records_verifies_and_applies_exact_finding_decision(self) -> None:
+    def test_workspace_records_verifies_and_applies_exact_finding_decision(
+        self,
+    ) -> None:
         workspace = activation_workspace(self.analysis, self.root)
         self.assertEqual(workspace["format"], ACTIVATION_WORKSPACE_FORMAT)
         self.assertTrue(workspace["queues"]["finding_reviews"])
@@ -107,7 +109,9 @@ class ActivationWorkflowTests(unittest.TestCase):
             json.loads(workspace_path.read_text(encoding="utf-8")),
         )
 
-        reviewed = next(value for value in updated["items"] if value["id"] == finding_id)
+        reviewed = next(
+            value for value in updated["items"] if value["id"] == finding_id
+        )
         self.assertEqual(reviewed["review"]["disposition"], "needs_information")
         self.assertEqual(reviewed["review"]["reviewer"], "Independent Reviewer")
         self.assertEqual(receipt["format"], ACTIVATION_APPLY_RECEIPT_FORMAT)
@@ -115,9 +119,13 @@ class ActivationWorkflowTests(unittest.TestCase):
         Draft202012Validator(schema_document("activation-apply-receipt")).validate(
             receipt
         )
-        self.assertEqual(self.analysis["items"][0]["review"]["disposition"], "unreviewed")
+        self.assertEqual(
+            self.analysis["items"][0]["review"]["disposition"], "unreviewed"
+        )
 
-    def test_named_consolidation_creates_canonical_group_without_removing_members(self) -> None:
+    def test_named_consolidation_creates_canonical_group_without_removing_members(
+        self,
+    ) -> None:
         (self.root / "app.py").write_text(
             "def publish_one(value):\n    return value\n\n"
             "def publish_two(value):\n    return value\n",
@@ -148,7 +156,9 @@ class ActivationWorkflowTests(unittest.TestCase):
         self.assertEqual(registry["summary"]["source_findings_removed"], 0)
         record = registry["records"][0]
         self.assertEqual(record["member_finding_ids"], candidate["member_finding_ids"])
-        self.assertEqual(record["canonical_finding_id"], candidate["canonical_finding_id"])
+        self.assertEqual(
+            record["canonical_finding_id"], candidate["canonical_finding_id"]
+        )
         self.assertEqual(len(updated["items"]), len(analysis["items"]))
         members = {
             value["id"]: value
@@ -197,11 +207,9 @@ class ActivationWorkflowTests(unittest.TestCase):
         self.assertEqual(receipt["finding_consolidations_applied"], 0)
 
         tampered = activation_workspace(analysis, self.root)
-        tampered["queues"]["finding_consolidations"][0][
-            "canonical_finding_id"
-        ] = tampered["queues"]["finding_consolidations"][0][
-            "member_finding_ids"
-        ][1]
+        tampered["queues"]["finding_consolidations"][0]["canonical_finding_id"] = (
+            tampered["queues"]["finding_consolidations"][0]["member_finding_ids"][1]
+        )
         tampered.pop("content_sha256")
         tampered["content_sha256"] = canonical_json_sha256(tampered)
         workspace_path.write_text(json.dumps(tampered) + "\n", encoding="utf-8")
@@ -239,7 +247,9 @@ class ActivationWorkflowTests(unittest.TestCase):
         self.assertFalse(verdict["valid"])
         self.assertFalse(verdict["checks"]["analysis_binding"])
 
-    def test_interface_decisions_use_the_subject_specific_queue_vocabulary(self) -> None:
+    def test_interface_decisions_use_the_subject_specific_queue_vocabulary(
+        self,
+    ) -> None:
         (self.root / "routes.py").write_text(
             "from fastapi import APIRouter\n"
             "router = APIRouter()\n"

@@ -82,7 +82,9 @@ class PluginSdkTests(unittest.TestCase):
             verification
         )
         self.assertTrue(verification["valid"])
-        self.assertTrue(all(value is not False for value in verification["checks"].values()))
+        self.assertTrue(
+            all(value is not False for value in verification["checks"].values())
+        )
 
         run_path = export_plugin_run(result, self.root / "plugin-run.json")
         output = io.StringIO()

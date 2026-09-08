@@ -36,9 +36,7 @@ from .version import __version__
 PROGRAM_FORMAT = "pysfmea-assurance-program-1"
 PROGRAM_VERIFICATION_FORMAT = "pysfmea-assurance-program-verification-1"
 PROGRAM_REPORT_FORMAT = "pysfmea-assurance-program-report-1"
-PROGRAM_REPORT_VERIFICATION_FORMAT = (
-    "pysfmea-assurance-program-report-verification-1"
-)
+PROGRAM_REPORT_VERIFICATION_FORMAT = "pysfmea-assurance-program-report-verification-1"
 PROGRAM_VERIFICATION_CHECKS = (
     "input",
     "format",
@@ -149,6 +147,7 @@ class _LlmValidationRecord(TypedDict):
     subject_binding_verified: bool
     duplicate_evidence: bool
 
+
 RELATIONSHIP_KINDS = {
     "calls",
     "publishes",
@@ -196,7 +195,6 @@ def _program_material(program: dict[str, Any]) -> dict[str, Any]:
 
 def seal_program(program: dict[str, Any]) -> dict[str, Any]:
     """Return *program* with deterministic content integrity metadata."""
-
     sealed = json.loads(json.dumps(program, ensure_ascii=False))
     sealed.pop("integrity", None)
     sealed["integrity"] = {
@@ -277,9 +275,7 @@ def build_program_template(
         json.dumps(list(validation_cohorts), ensure_ascii=False)
     )
     if len(cohort_records) > MAX_PROGRAM_COHORTS:
-        raise ValueError(
-            f"program exceeds the {MAX_PROGRAM_COHORTS}-cohort limit"
-        )
+        raise ValueError(f"program exceeds the {MAX_PROGRAM_COHORTS}-cohort limit")
     program = {
         "format": PROGRAM_FORMAT,
         "name": _bounded_text(name, label="program name", limit=500),
@@ -668,7 +664,6 @@ def _evaluation_result_matches_cohort(
     cohort: dict[str, Any],
 ) -> bool:
     """Reconcile one retained evaluator result with its cohort projection."""
-
     if not isinstance(result, dict):
         return False
     corpus = result.get("corpus")
@@ -778,8 +773,10 @@ def _semantic_output_matches_cohort(result: Any, cohort: dict[str, Any]) -> bool
         )
     ):
         return False
-    expected, actual, matched = cast(int, counts[0]), cast(int, counts[1]), cast(
-        int, counts[2]
+    expected, actual, matched = (
+        cast(int, counts[0]),
+        cast(int, counts[1]),
+        cast(int, counts[2]),
     )
     return bool(
         expected == semantic_case_count
@@ -815,11 +812,9 @@ def _llm_corpus_evidence_fingerprint(
     if (
         evaluation.get("corpus_format") not in {None, projection.corpus_format}
         or evaluation.get("subject_bound", False) is not projection.subject_bound
-        or claimed_fingerprint
-        not in {None, projection.evidence_fingerprint_sha256}
+        or claimed_fingerprint not in {None, projection.evidence_fingerprint_sha256}
         or evaluation.get("sample_count") != projection.sample_count
-        or evaluation.get("grounded_sample_count")
-        != projection.grounded_sample_count
+        or evaluation.get("grounded_sample_count") != projection.grounded_sample_count
         or evaluation.get("citation_correct_sample_count")
         != projection.citation_correct_sample_count
         or evaluation.get("claim_count") != projection.claim_count
@@ -827,8 +822,7 @@ def _llm_corpus_evidence_fingerprint(
         != projection.unsupported_claim_count
         or evaluation.get("grounding") != projection.grounding
         or evaluation.get("citation_accuracy") != projection.citation_accuracy
-        or evaluation.get("unsupported_claim_rate")
-        != projection.unsupported_claim_rate
+        or evaluation.get("unsupported_claim_rate") != projection.unsupported_claim_rate
     ):
         return None
     return projection.evidence_fingerprint_sha256
@@ -2122,7 +2116,6 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 location,
             )
             continue
-
         count_fields = {
             "matched_count",
             "actual_matched_count",
@@ -2219,7 +2212,6 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                     location,
                 )
                 count_backed = False
-
         call_count_fields = {
             "call_matched_count",
             "call_actual_matched_count",
@@ -2292,7 +2284,6 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                     call_count_backed = False
         if call_case_count and count_backed and not supplied_call_count_fields:
             call_count_backed = False
-
         semantic_case_count = cohort.get("semantic_case_count", 0)
         if (
             not isinstance(semantic_case_count, int)
@@ -2312,10 +2303,13 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 cohort.get("semantic_output_recall"), label="cohort semantic recall"
             )
             semantic_precision_value = _ratio(
-                cohort.get("semantic_output_precision"), label="cohort semantic precision"
+                cohort.get("semantic_output_precision"),
+                label="cohort semantic precision",
             )
         except ValueError as exc:
-            _finding(findings, "validation.semantic_metric", "error", str(exc), location)
+            _finding(
+                findings, "validation.semantic_metric", "error", str(exc), location
+            )
             continue
         if semantic_case_count and (
             semantic_recall_value is None or semantic_precision_value is None
@@ -2349,7 +2343,10 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         semantic_matched_count: int | None = None
         semantic_actual_matched_count: int | None = None
         semantic_actual_count: int | None = None
-        if semantic_count_backed and supplied_semantic_count_fields != semantic_count_fields:
+        if (
+            semantic_count_backed
+            and supplied_semantic_count_fields != semantic_count_fields
+        ):
             _finding(
                 findings,
                 "validation.semantic_count_provenance_incomplete",
@@ -2374,18 +2371,18 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 semantic_count_backed = False
             else:
                 semantic_matched_count = cast(int, cohort.get("semantic_matched_count"))
-                semantic_actual_matched_count = cast(int, cohort.get("semantic_actual_matched_count"))
+                semantic_actual_matched_count = cast(
+                    int, cohort.get("semantic_actual_matched_count")
+                )
                 semantic_actual_count = cast(int, cohort.get("semantic_actual_count"))
                 if (
                     semantic_actual_count < 1
                     or semantic_matched_count > semantic_case_count
                     or semantic_actual_matched_count > semantic_actual_count
-                    or semantic_recall_value != round(
-                        semantic_matched_count / semantic_case_count, 4
-                    )
-                    or semantic_precision_value != round(
-                        semantic_actual_matched_count / semantic_actual_count, 4
-                    )
+                    or semantic_recall_value
+                    != round(semantic_matched_count / semantic_case_count, 4)
+                    or semantic_precision_value
+                    != round(semantic_actual_matched_count / semantic_actual_count, 4)
                 ):
                     _finding(
                         findings,
@@ -2496,7 +2493,9 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                             )
                         elif not (
                             _evaluation_result_matches_cohort(evaluation_result, cohort)
-                            and _semantic_output_matches_cohort(evaluation_result, cohort)
+                            and _semantic_output_matches_cohort(
+                                evaluation_result, cohort
+                            )
                         ):
                             _finding(
                                 findings,
@@ -2569,9 +2568,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 "recall": recall,
                 "precision": precision,
                 "call_recall": call_recall if call_recall is not None else 0.0,
-                "call_precision": call_precision
-                if call_precision is not None
-                else 0.0,
+                "call_precision": call_precision if call_precision is not None else 0.0,
                 "independent": independent,
                 "case_count": case_count,
                 "call_case_count": call_case_count,
@@ -2601,11 +2598,14 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 else 0.0,
                 "semantic_count_backed": semantic_count_backed,
                 "semantic_matched_count": semantic_matched_count
-                if semantic_matched_count is not None else 0,
+                if semantic_matched_count is not None
+                else 0,
                 "semantic_actual_matched_count": semantic_actual_matched_count
-                if semantic_actual_matched_count is not None else 0,
+                if semantic_actual_matched_count is not None
+                else 0,
                 "semantic_actual_count": semantic_actual_count
-                if semantic_actual_count is not None else 0,
+                if semantic_actual_count is not None
+                else 0,
                 "evaluation_artifact_verified": evaluation_artifact_verified,
                 "duplicate_evidence": duplicate_evidence,
             }
@@ -2620,9 +2620,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         value for value in validation_records if value["semantic_case_count"] > 0
     ]
     call_validation_records = [
-        value
-        for value in credited_validation_records
-        if value["call_case_count"] > 0
+        value for value in credited_validation_records if value["call_case_count"] > 0
     ]
     count_backed_records = [
         value for value in credited_validation_records if value["count_backed"]
@@ -2841,8 +2839,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             "validation_cohorts",
         )
     if require_count_backed_validation and sum(
-        value["semantic_count_backed"]
-        for value in declared_semantic_validation_records
+        value["semantic_count_backed"] for value in declared_semantic_validation_records
     ) < len(declared_semantic_validation_records):
         _finding(
             findings,
@@ -2921,7 +2918,6 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 f"Micro call-resolution {metric} {value:.4f} is below the configured {threshold:.4f} threshold.",
                 "validation_cohorts",
             )
-
     for metric in ("recall", "precision"):
         value = validation_summary[f"macro_semantic_output_{metric}"]
         threshold = _quality_ratio(
@@ -2962,7 +2958,6 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 f"Micro semantic-output {metric} {value:.4f} is below the configured {threshold:.4f} threshold.",
                 "validation_cohorts",
             )
-
     llm_records: list[_LlmValidationRecord] = []
     total_llm_corpus_bytes = 0
     llm_corpus_cache: dict[Path, tuple[int, str, Any]] = {}
@@ -3045,8 +3040,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             not isinstance(evidence_fingerprint_claim, str)
             or len(evidence_fingerprint_claim) != 64
             or any(
-                char not in "0123456789abcdef"
-                for char in evidence_fingerprint_claim
+                char not in "0123456789abcdef" for char in evidence_fingerprint_claim
             )
         ):
             _finding(
@@ -3078,7 +3072,10 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 }
                 or not isinstance(subject_bound_value, bool)
                 or subject_bound_value
-                != (corpus_format in {"pysfmea-llm-quality-corpus-2", "pysfmea-llm-quality-corpus-3"})
+                != (
+                    corpus_format
+                    in {"pysfmea-llm-quality-corpus-2", "pysfmea-llm-quality-corpus-3"}
+                )
             ):
                 _finding(
                     findings,
@@ -3118,7 +3115,6 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                 f"llm_evaluations[{index}]",
             )
             continue
-
         llm_count_fields = {
             "grounded_sample_count",
             "citation_correct_sample_count",
@@ -3186,7 +3182,6 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                         location,
                     )
                     llm_count_backed = False
-
         corpus_artifact = evaluation.get("corpus_artifact")
         corpus_artifact_declared = corpus_artifact is not None
         corpus_artifact_verified = False
@@ -3425,9 +3420,7 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
         else None,
         "aggregation_method": "count-backed"
         if llm_counts_complete
-        else (
-            "legacy-sample-weighted" if credited_llm_records else "unavailable"
-        ),
+        else ("legacy-sample-weighted" if credited_llm_records else "unavailable"),
         "grounding": round(
             sum(value["grounded_count"] for value in llm_count_backed_records)
             / llm_samples,
@@ -3516,7 +3509,6 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                     f"LLM {field.replace('_', ' ')} {value:.4f} does not satisfy the configured {threshold:.4f} threshold.",
                     "llm_evaluations",
                 )
-
     governance = program.get("governance", {})
     if not isinstance(governance, dict):
         governance = {}
@@ -3699,18 +3691,18 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
             continue
         decision, reviewer = decisions[0]
         if decision == "approved":
-                approved_roles.add(role)
-                program_role_reviewers.setdefault(role, set()).add(
-                    reviewer
-                )
-                credited_program_approvals += 1
+            approved_roles.add(role)
+            program_role_reviewers.setdefault(role, set()).add(reviewer)
+            credited_program_approvals += 1
         else:
             rejected_program_roles.add(role)
     program_approved = credited_program_approvals > 0
     required_role_values = governance.get("required_roles", [])
-    if not isinstance(required_role_values, list) or not all(
-        isinstance(value, str) for value in required_role_values
-    ) or len(required_role_values) > 10_000:
+    if (
+        not isinstance(required_role_values, list)
+        or not all(isinstance(value, str) for value in required_role_values)
+        or len(required_role_values) > 10_000
+    ):
         required_role_values = []
         _finding(
             findings,
@@ -3803,7 +3795,6 @@ def verify_assurance_program(source: str | Path) -> dict[str, Any]:
                     f"Completed evidence {evidence_id} requires distinct named producer and reviewer identities.",
                     f"external_evidence.{evidence_id}",
                 )
-
     checks = {
         "input": True,
         "format": format_valid,
@@ -4099,7 +4090,9 @@ def _program_report_rejection(
         "binding_requested": binding_requested,
         "binding_checked": False,
         "failed_checks": sorted(key for key, value in checks.items() if value is False),
-        "unchecked_checks": sorted(key for key, value in checks.items() if value is None),
+        "unchecked_checks": sorted(
+            key for key, value in checks.items() if value is None
+        ),
         "errors": [
             {
                 "code": "program_report.input_rejected",
@@ -4177,7 +4170,9 @@ def _program_report_verification_contract(value: Any) -> bool:
         )
         or not isinstance(checks, dict)
         or set(checks) != set(PROGRAM_REPORT_VERIFICATION_CHECKS)
-        or not all(isinstance(state, bool) or state is None for state in checks.values())
+        or not all(
+            isinstance(state, bool) or state is None for state in checks.values()
+        )
         or not isinstance(declared, dict)
         or not isinstance(current, dict)
         or not isinstance(value.get("binding_requested"), bool)
@@ -4187,7 +4182,9 @@ def _program_report_verification_contract(value: Any) -> bool:
         or not value["notice"]
     ):
         return False
-    if value["bytes"] > 0 and not re.fullmatch(r"[0-9a-f]{64}", value["artifact_sha256"]):
+    if value["bytes"] > 0 and not re.fullmatch(
+        r"[0-9a-f]{64}", value["artifact_sha256"]
+    ):
         return False
     if not value["artifact_sha256"] and value["bytes"] != 0:
         return False
@@ -4207,7 +4204,10 @@ def _program_report_verification_contract(value: Any) -> bool:
             return False
     failed = sorted(name for name, state in checks.items() if state is False)
     unchecked = sorted(name for name, state in checks.items() if state is None)
-    if value.get("failed_checks") != failed or value.get("unchecked_checks") != unchecked:
+    if (
+        value.get("failed_checks") != failed
+        or value.get("unchecked_checks") != unchecked
+    ):
         return False
     if not all(
         isinstance(error, dict)
@@ -4225,8 +4225,22 @@ def _program_report_verification_contract(value: Any) -> bool:
     artifact_checked = value["artifact_binding_checked"]
     artifact_state = checks["artifact_identity"]
     if (
-        (not artifact_requested and (value["expected_artifact_sha256"] or artifact_checked or artifact_state is not None))
-        or (artifact_checked and (not artifact_requested or not value["expected_artifact_sha256"] or not isinstance(artifact_state, bool)))
+        (
+            not artifact_requested
+            and (
+                value["expected_artifact_sha256"]
+                or artifact_checked
+                or artifact_state is not None
+            )
+        )
+        or (
+            artifact_checked
+            and (
+                not artifact_requested
+                or not value["expected_artifact_sha256"]
+                or not isinstance(artifact_state, bool)
+            )
+        )
         or (not artifact_checked and artifact_state is not None)
     ):
         return False
@@ -4257,7 +4271,11 @@ def _program_report_verification_contract(value: Any) -> bool:
             or not isinstance(checks["program_verification"], bool)
         ):
             return False
-    elif current or checks["program_content"] is not None or checks["program_verification"] is not None:
+    elif (
+        current
+        or checks["program_content"] is not None
+        or checks["program_verification"] is not None
+    ):
         return False
 
     internal_names = set(PROGRAM_REPORT_VERIFICATION_CHECKS) - {
@@ -4267,12 +4285,13 @@ def _program_report_verification_contract(value: Any) -> bool:
     }
     internal_valid = all(checks[name] is True for name in internal_names)
     binding_matches = (
-        checks["program_content"] is True
-        and checks["program_verification"] is True
+        checks["program_content"] is True and checks["program_verification"] is True
         if binding_checked
         else None
     )
-    expected_valid = internal_valid and artifact_state is not False and binding_matches is not False
+    expected_valid = (
+        internal_valid and artifact_state is not False and binding_matches is not False
+    )
     expected_status = (
         "invalid"
         if not internal_valid or artifact_state is False
@@ -4306,7 +4325,12 @@ def _program_report_verification_contract(value: Any) -> bool:
         if publication["status"] == "not_published":
             if (
                 publication.get("phase")
-                not in {"input_validation", "program_verification", "generation", "publication"}
+                not in {
+                    "input_validation",
+                    "program_verification",
+                    "generation",
+                    "publication",
+                }
                 or value["valid"]
                 or value["bytes"] != 0
                 or value["artifact_sha256"]
@@ -4315,18 +4339,23 @@ def _program_report_verification_contract(value: Any) -> bool:
             ):
                 return False
         elif (
-            publication.get("phase") == "complete"
-            and not (
-                value["valid"]
-                and value["status"] == "matched"
-                and binding_requested
-                and binding_checked
-                and not publication["prior_destination_preserved"]
+            (
+                publication.get("phase") == "complete"
+                and not (
+                    value["valid"]
+                    and value["status"] == "matched"
+                    and binding_requested
+                    and binding_checked
+                    and not publication["prior_destination_preserved"]
+                )
             )
-        ) or (
-            publication.get("phase") == "post_publication_verification"
-            and (value["valid"] or publication["prior_destination_preserved"])
-        ) or publication.get("phase") not in {"complete", "post_publication_verification"}:
+            or (
+                publication.get("phase") == "post_publication_verification"
+                and (value["valid"] or publication["prior_destination_preserved"])
+            )
+            or publication.get("phase")
+            not in {"complete", "post_publication_verification"}
+        ):
             return False
     return True
 
@@ -4407,8 +4436,7 @@ def _program_verification_payload_contract(value: Any) -> bool:
         if (
             not isinstance(finding, dict)
             or set(finding) != {"code", "level", "message", "location"}
-            or finding.get("level")
-            not in {"error", "warning", "information"}
+            or finding.get("level") not in {"error", "warning", "information"}
             or not isinstance(finding.get("code"), str)
             or not finding["code"]
             or not finding_code_pattern.fullmatch(finding["code"])
@@ -4437,8 +4465,7 @@ def _program_verification_payload_contract(value: Any) -> bool:
     # reached. They must not smuggle producer summaries into an unchecked result.
     if set(checks) != set(PROGRAM_VERIFICATION_CHECKS):
         rejection_checks = (
-            checks == {"input": False}
-            and program["content_sha256"] == ""
+            checks == {"input": False} and program["content_sha256"] == ""
         ) or (
             checks == {"input": True, "format": False}
             and bool(re.fullmatch(r"[0-9a-f]{64}", program["content_sha256"]))
@@ -4468,12 +4495,10 @@ def _program_verification_payload_contract(value: Any) -> bool:
             finding["code"].startswith("program.") for finding in error_findings
         ),
         "relationships": not any(
-            finding["code"].startswith("relationship.")
-            for finding in error_findings
+            finding["code"].startswith("relationship.") for finding in error_findings
         ),
         "requirements": not any(
-            finding["code"].startswith("requirements.")
-            for finding in error_findings
+            finding["code"].startswith("requirements.") for finding in error_findings
         ),
         "external_evidence": not any(
             finding["code"].startswith("evidence.") for finding in error_findings
@@ -4485,8 +4510,7 @@ def _program_verification_payload_contract(value: Any) -> bool:
             finding["code"].startswith("llm.") for finding in error_findings
         ),
         "governance": not any(
-            finding["code"].startswith("governance.")
-            for finding in error_findings
+            finding["code"].startswith("governance.") for finding in error_findings
         ),
     }
     if any(checks[name] is not state for name, state in expected_checks.items()):
@@ -4600,8 +4624,7 @@ def _program_verification_payload_contract(value: Any) -> bool:
         or not set(approved_roles).isdisjoint(conflicting_program_roles)
         or not isinstance(summary["program_approval"], bool)
         or summary["validated_approvals"] > summary["approvals"]
-        or summary["credited_program_approvals"]
-        > summary["validated_approvals"]
+        or summary["credited_program_approvals"] > summary["validated_approvals"]
         or len(approved_roles) != summary["credited_program_approvals"]
         or summary["program_approval"]
         is not (summary["credited_program_approvals"] > 0)
@@ -4626,10 +4649,9 @@ def _program_verification_payload_contract(value: Any) -> bool:
         if finding["location"].startswith(conflict_prefix)
         and finding["location"][len(conflict_prefix) :]
     }
-    if (
-        len(conflict_findings) != len(conflicting_program_roles)
-        or actual_conflicting_roles != set(conflicting_program_roles)
-    ):
+    if len(conflict_findings) != len(
+        conflicting_program_roles
+    ) or actual_conflicting_roles != set(conflicting_program_roles):
         return False
     repository_binding_expected = bool(summary["repositories"]) and (
         summary["bound_repositories"] == summary["repositories"]
@@ -4646,8 +4668,7 @@ def _program_verification_payload_contract(value: Any) -> bool:
         finding["code"] == "evidence.status" for finding in error_findings
     )
     duplicate_evidence_errors = sum(
-        finding["code"] == "evidence.duplicate_claim"
-        for finding in error_findings
+        finding["code"] == "evidence.duplicate_claim" for finding in error_findings
     )
     if (
         checks["repository_bindings"] is not repository_binding_expected
@@ -4731,15 +4752,11 @@ def _program_verification_payload_contract(value: Any) -> bool:
         temporal_status = relationship["temporal_status"]
         resilience_status = relationship["resilience_status"]
         if temporal_status == "supported" and (
-            observed_max is None
-            or observed_max > deadline
-            or not evidence_ids
+            observed_max is None or observed_max > deadline or not evidence_ids
         ):
             return False
         if temporal_status == "violated" and (
-            observed_max is None
-            or observed_max <= deadline
-            or not evidence_ids
+            observed_max is None or observed_max <= deadline or not evidence_ids
         ):
             return False
         if (
@@ -4893,11 +4910,9 @@ def _program_verification_payload_contract(value: Any) -> bool:
         or validation["call_resolution_cohorts"] > validation["credited_cohorts"]
         or validation["call_count_backed_cohorts"]
         > validation["call_resolution_cohorts"]
-        or validation["call_count_backed_cohorts"]
-        > validation["count_backed_cohorts"]
+        or validation["call_count_backed_cohorts"] > validation["count_backed_cohorts"]
         or validation["cases"] < validation["credited_cohorts"]
-        or validation["count_backed_cases"]
-        < validation["count_backed_cohorts"]
+        or validation["count_backed_cases"] < validation["count_backed_cohorts"]
         or validation["count_backed_cases"] > validation["cases"]
         or validation["call_cases"] < validation["call_resolution_cohorts"]
         or validation["call_count_backed_cases"]
@@ -5006,8 +5021,7 @@ def _program_verification_payload_contract(value: Any) -> bool:
                 "semantic_fingerprinted_evaluations",
             )
         )
-        or llm_quality["verified_corpus_artifacts"]
-        > llm_quality["corpus_artifacts"]
+        or llm_quality["verified_corpus_artifacts"] > llm_quality["corpus_artifacts"]
     ):
         return False
     claims = llm_quality["claim_count"]
@@ -5043,10 +5057,8 @@ def _program_verification_payload_contract(value: Any) -> bool:
     ):
         return False
     if llm_quality["aggregation_method"] == "count-backed":
-        if (
-            claims is None
-            or llm_quality["unsupported_claim_rate"]
-            != round(unsupported_claims / claims, 4)
+        if claims is None or llm_quality["unsupported_claim_rate"] != round(
+            unsupported_claims / claims, 4
         ):
             return False
     elif claims is not None:
@@ -5121,9 +5133,7 @@ def verify_program_report_file(
         "document_sha256": "pysfmea-program-report-document-sha256",
     }
     metadata_values = {
-        key: re.findall(
-            rf'<meta name="{re.escape(name)}" content="([^"]*)">', document
-        )
+        key: re.findall(rf'<meta name="{re.escape(name)}" content="([^"]*)">', document)
         for key, name in metadata_names.items()
     }
     declared = {
@@ -5154,14 +5164,11 @@ def verify_program_report_file(
     digest_pattern = re.compile(r"^[0-9a-f]{64}$")
     payload_digest = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
     payload_result_digest = (
-        _program_verification_state_sha256(payload)
-        if isinstance(payload, dict)
-        else ""
+        _program_verification_state_sha256(payload) if isinstance(payload, dict) else ""
     )
     embedded_program_digest = (
         str(payload.get("program", {}).get("content_sha256", ""))
-        if isinstance(payload, dict)
-        and isinstance(payload.get("program"), dict)
+        if isinstance(payload, dict) and isinstance(payload.get("program"), dict)
         else ""
     )
     document_digest = ""
@@ -5231,17 +5238,14 @@ def verify_program_report_file(
             "verifier": current_result.get("verifier", {}),
             "assurance_valid": bool(current_result.get("valid")),
         }
-        checks["program_content"] = (
-            current_program_digest == declared["program_sha256"]
-        )
+        checks["program_content"] = current_program_digest == declared["program_sha256"]
         checks["program_verification"] = (
             current_result_digest == declared["verification_result_sha256"]
         )
         binding_checked = True
 
     binding_matches = (
-        checks["program_content"] is True
-        and checks["program_verification"] is True
+        checks["program_content"] is True and checks["program_verification"] is True
         if binding_checked
         else None
     )
@@ -5319,9 +5323,9 @@ def export_program_verification(
     program_path = result.get("program", {}).get("path")
     if isinstance(program_path, str) and program_path:
         try:
-            source_path = Path(os.path.abspath(Path(program_path).expanduser())).resolve(
-                strict=True
-            )
+            source_path = Path(
+                os.path.abspath(Path(program_path).expanduser())
+            ).resolve(strict=True)
         except OSError as exc:
             if format == "html":
                 raise ProgramReportPublicationError(
@@ -5410,9 +5414,7 @@ def export_program_verification(
         )
     except (OSError, RuntimeError, ValueError) as exc:
         if format == "html":
-            raise ProgramReportPublicationError(
-                "publication", str(exc)
-            ) from exc
+            raise ProgramReportPublicationError("publication", str(exc)) from exc
         raise
 
 

@@ -113,9 +113,14 @@ class SynthesisWorkspaceTests(unittest.TestCase):
         self.assertEqual(receipt["applied_suggestion_ids"], ["SUG-TEST"])
         suggestion = self.analysis["suggestions"][0]
         self.assertEqual(suggestion["status"], "accepted")
-        self.assertEqual(suggestion["content"]["local_effect"], "bounded request failure")
+        self.assertEqual(
+            suggestion["content"]["local_effect"], "bounded request failure"
+        )
         self.assertTrue(
-            any(value["event"] == "human_synthesis_edit" for value in suggestion["history"])
+            any(
+                value["event"] == "human_synthesis_edit"
+                for value in suggestion["history"]
+            )
         )
 
     def test_verifier_rejects_stale_or_tampered_workspace(self) -> None:
@@ -217,9 +222,7 @@ class SynthesisWorkspaceTests(unittest.TestCase):
             receipt
         )
         result_analysis = load_analysis(analysis_path)
-        self.assertEqual(
-            receipt["source_analysis_state_sha256"], source_state_sha256
-        )
+        self.assertEqual(receipt["source_analysis_state_sha256"], source_state_sha256)
         self.assertEqual(
             receipt["result_analysis_state_sha256"],
             canonical_json_sha256(result_analysis),

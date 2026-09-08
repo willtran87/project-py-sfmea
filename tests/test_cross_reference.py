@@ -1783,11 +1783,13 @@ class CrossReferenceTests(unittest.TestCase):
         analysis = scan_repository(self.root)
         fabric = build_cross_reference_index(analysis)
         decision = next(
-            value for value in analysis["static_control_flow_model"]["decisions"]
+            value
+            for value in analysis["static_control_flow_model"]["decisions"]
             if value["component_reference"] == "pruned.py:choose"
         )
         entity = next(
-            value for value in fabric["entities"]
+            value
+            for value in fabric["entities"]
             if value["id"] == f"static_control_flow_decision:{decision['id']}"
         )
         self.assertEqual(entity["kind"], "static_control_flow_decision")

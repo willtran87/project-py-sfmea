@@ -1,0 +1,10 @@
+{
+  "format": "pysfmea-framework-negative-control-corpus-1",
+  "cases": [
+    {"id": "decorated-route", "symbol": "repository.cases.health", "label": "benign_interface"},
+    {"id": "descriptor-read", "symbol": "repository.cases.Configuration.endpoint", "label": "benign_dynamic_access"},
+    {"id": "unbounded-task-retry", "symbol": "repository.cases.process", "label": "hazardous_control"},
+    {"id": "dependency-provider", "symbol": "repository.cases.handler", "label": "benign_injection"}
+  ],
+  "claim_boundary": "Structural analogues do not replace exact framework integration tests."
+}

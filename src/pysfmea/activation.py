@@ -40,9 +40,7 @@ MAX_ACTIVATION_FINDINGS = 50_000
 
 DECISION_CHOICES: dict[str, frozenset[str]] = {
     "finding": frozenset({"accepted", "rejected", "needs_information"}),
-    "consolidation": frozenset(
-        {"consolidate", "retain_separate", "needs_information"}
-    ),
+    "consolidation": frozenset({"consolidate", "retain_separate", "needs_information"}),
     "guidance": frozenset(
         {"map_direct", "supporting_only", "not_applicable", "needs_source"}
     ),
@@ -129,7 +127,9 @@ def _finding_consolidation_queue(
         canonical_id = str(cluster.get("representative_finding_id", ""))
         if canonical_id not in member_ids:
             continue
-        contracts = [_finding_consolidation_contract(items[value]) for value in member_ids]
+        contracts = [
+            _finding_consolidation_contract(items[value]) for value in member_ids
+        ]
         candidates.append(
             {
                 "id": stable_id("CONSOLIDATION-CANDIDATE", str(cluster.get("id", ""))),
@@ -406,18 +406,14 @@ def _finding_review_queue(
                 "kind": "complete_register",
                 "parent_id": "",
                 "rule_id": str(item.get("scanner", {}).get("rule_id", "")),
-                "priority": str(
-                    item.get("scanner", {}).get("screening_priority", "")
-                ),
+                "priority": str(item.get("scanner", {}).get("screening_priority", "")),
                 "component": str(item.get("component", {}).get("qualname", "")),
                 "source": item.get("source", {}),
                 "failure_mode": str(
                     review.get("failure_mode")
                     or item.get("scanner", {}).get("failure_mode", "")
                 ),
-                "current_disposition": str(
-                    review.get("disposition", "unreviewed")
-                ),
+                "current_disposition": str(review.get("disposition", "unreviewed")),
             }
         )
     return units[:MAX_ACTIVATION_FINDINGS]
@@ -531,9 +527,7 @@ def activation_workspace(
         for value in analysis.get("items", [])
     )
     architecture_records = []
-    for value in workbench.get("architecture_mapping_queue", {}).get(
-        "proposals", []
-    ):
+    for value in workbench.get("architecture_mapping_queue", {}).get("proposals", []):
         if not isinstance(value, dict):
             continue
         component_id = str(value.get("component_id", ""))
@@ -592,11 +586,26 @@ def activation_workspace(
         "decisions": [],
         "assignments": [],
         "workflow": [
-            {"step": 1, "action": "Review evidence onboarding diagnostics and repair scope or evidence inputs."},
-            {"step": 2, "action": "Assign and review finding representatives, calibration samples, and complete consolidation candidates."},
-            {"step": 3, "action": "Record explicit consolidation, guidance, SFTA, architecture, and interface dispositions."},
-            {"step": 4, "action": "Verify the workspace against the unchanged source analysis."},
-            {"step": 5, "action": "Apply finding reviews and approved canonical review groups; route approved SFTA and configuration inputs through their dedicated authoring workflows before rescanning."},
+            {
+                "step": 1,
+                "action": "Review evidence onboarding diagnostics and repair scope or evidence inputs.",
+            },
+            {
+                "step": 2,
+                "action": "Assign and review finding representatives, calibration samples, and complete consolidation candidates.",
+            },
+            {
+                "step": 3,
+                "action": "Record explicit consolidation, guidance, SFTA, architecture, and interface dispositions.",
+            },
+            {
+                "step": 4,
+                "action": "Verify the workspace against the unchanged source analysis.",
+            },
+            {
+                "step": 5,
+                "action": "Apply finding reviews and approved canonical review groups; route approved SFTA and configuration inputs through their dedicated authoring workflows before rescanning.",
+            },
         ],
         "guardrails": [
             "No repository code is executed by this workspace.",
@@ -620,17 +629,18 @@ def export_activation_workspace(
     )
     workspace = activation_workspace(analysis, repository)
     if not _verify_value(workspace, analysis=analysis)["valid"]:
-        raise RuntimeError("generated activation workspace failed internal verification")
+        raise RuntimeError(
+            "generated activation workspace failed internal verification"
+        )
     return atomic_publish_text(
         destination,
         json.dumps(workspace, indent=2, ensure_ascii=False) + "\n",
         label="activation workspace",
         max_bytes=MAX_ACTIVATION_BYTES,
         expected_destination=expected_destination,
-        staged_verifier=lambda path: verify_activation_workspace_file(
-            path, analysis=analysis
-        )["valid"]
-        is True,
+        staged_verifier=lambda path: (
+            verify_activation_workspace_file(path, analysis=analysis)["valid"] is True
+        ),
     )
 
 
@@ -645,9 +655,7 @@ def activation_records_template(workspace: dict[str, Any]) -> dict[str, Any]:
         "workspace_binding": {
             "content_sha256": str(workspace.get("content_sha256", "")),
             "analysis_state_sha256": str(
-                workspace.get("analysis_binding", {}).get(
-                    "analysis_state_sha256", ""
-                )
+                workspace.get("analysis_binding", {}).get("analysis_state_sha256", "")
             ),
         },
         "decision_choices": {
@@ -723,7 +731,10 @@ def import_activation_records(
         max_nodes=MAX_ACTIVATION_NODES,
     )
     records = records_document.value
-    if not isinstance(records, dict) or records.get("format") != ACTIVATION_RECORDS_FORMAT:
+    if (
+        not isinstance(records, dict)
+        or records.get("format") != ACTIVATION_RECORDS_FORMAT
+    ):
         raise ValueError("activation records format is missing or unsupported")
     binding = records.get("workspace_binding", {})
     if not isinstance(binding, dict) or binding != {
@@ -741,7 +752,9 @@ def import_activation_records(
         or not all(isinstance(value, dict) for value in incoming_assignments)
         or not all(isinstance(value, dict) for value in incoming_decisions)
     ):
-        raise ValueError("activation assignments and decisions must be lists of objects")
+        raise ValueError(
+            "activation assignments and decisions must be lists of objects"
+        )
     if len(incoming_assignments) + len(incoming_decisions) > 50_000:
         raise ValueError("activation bulk import exceeds the 50,000-record limit")
     ids = _queue_ids(workspace)
@@ -757,10 +770,14 @@ def import_activation_records(
         due_date = str(value.get("due_date", "")).strip()
         key = (kind, subject_id)
         if key in assignment_keys:
-            raise ValueError(f"activation assignment {index} duplicates {kind}:{subject_id}")
+            raise ValueError(
+                f"activation assignment {index} duplicates {kind}:{subject_id}"
+            )
         assignment_keys.add(key)
         if kind not in DECISION_CHOICES or subject_id not in ids.get(kind, set()):
-            raise ValueError(f"activation assignment {index} targets an unknown subject")
+            raise ValueError(
+                f"activation assignment {index} targets an unknown subject"
+            )
         if not assignee:
             raise ValueError(f"activation assignment {index} requires assignee")
         if due_date:
@@ -788,7 +805,9 @@ def import_activation_records(
         rationale = str(value.get("rationale", "")).strip()
         key = (kind, subject_id)
         if key in decision_keys:
-            raise ValueError(f"activation decision {index} duplicates {kind}:{subject_id}")
+            raise ValueError(
+                f"activation decision {index} duplicates {kind}:{subject_id}"
+            )
         decision_keys.add(key)
         if kind not in DECISION_CHOICES or subject_id not in ids.get(kind, set()):
             raise ValueError(f"activation decision {index} targets an unknown subject")
@@ -835,9 +854,7 @@ def import_activation_records(
     updated["decisions"].sort(
         key=lambda value: (str(value["kind"]), str(value["subject_id"]))
     )
-    updated.setdefault("summary", {})["assigned_items"] = len(
-        updated["assignments"]
-    )
+    updated.setdefault("summary", {})["assigned_items"] = len(updated["assignments"])
     updated["summary"]["recorded_decisions"] = len(updated["decisions"])
     updated.pop("content_sha256", None)
     updated["content_sha256"] = canonical_json_sha256(updated)
@@ -850,8 +867,9 @@ def import_activation_records(
         label="activation workspace",
         max_bytes=MAX_ACTIVATION_BYTES,
         expected_destination=expected_destination,
-        staged_verifier=lambda path: verify_activation_workspace_file(path)["valid"]
-        is True,
+        staged_verifier=lambda path: (
+            verify_activation_workspace_file(path)["valid"] is True
+        ),
     )
     receipt = {
         "format": "pysfmea-activation-records-import-receipt-1",
@@ -879,7 +897,12 @@ def _verify_value(
             findings.append({"code": code, "message": message})
 
     shape = isinstance(value, dict)
-    check("object_shape", shape, "activation.invalid_shape", "Workspace root must be an object.")
+    check(
+        "object_shape",
+        shape,
+        "activation.invalid_shape",
+        "Workspace root must be an object.",
+    )
     if not shape:
         return {
             "format": ACTIVATION_VERIFICATION_FORMAT,
@@ -921,9 +944,7 @@ def _verify_value(
         "activation.duplicate_queue_identifier",
         "Queued subject identifiers must be unique within each decision kind.",
     )
-    consolidation_candidates = value.get("queues", {}).get(
-        "finding_consolidations", []
-    )
+    consolidation_candidates = value.get("queues", {}).get("finding_consolidations", [])
     consolidation_structure = isinstance(consolidation_candidates, list) and all(
         isinstance(candidate, dict)
         and set(candidate)
@@ -1073,7 +1094,11 @@ def _verify_value(
     return {
         "format": ACTIVATION_VERIFICATION_FORMAT,
         "valid": valid,
-        "status": "matched" if valid and analysis is not None else "internally_valid" if valid else "invalid",
+        "status": "matched"
+        if valid and analysis is not None
+        else "internally_valid"
+        if valid
+        else "invalid",
         "analysis_checked": analysis is not None,
         "checks": checks,
         "decision_count": len(decisions) if isinstance(decisions, list) else 0,
@@ -1166,7 +1191,9 @@ def record_activation_decision(
     at = utc_now()
     decisions.append(
         {
-            "id": stable_id("ACTIVATION-DECISION", kind, subject_id, decision, reviewer, rationale),
+            "id": stable_id(
+                "ACTIVATION-DECISION", kind, subject_id, decision, reviewer, rationale
+            ),
             "kind": kind,
             "subject_id": subject_id,
             "decision": decision,
@@ -1186,8 +1213,9 @@ def record_activation_decision(
         label="activation workspace",
         max_bytes=MAX_ACTIVATION_BYTES,
         expected_destination=expected_destination,
-        staged_verifier=lambda path: verify_activation_workspace_file(path)["valid"]
-        is True,
+        staged_verifier=lambda path: (
+            verify_activation_workspace_file(path)["valid"] is True
+        ),
     )
 
 
@@ -1248,9 +1276,7 @@ def record_activation_assignment(
             "assigned_at": utc_now(),
         }
     )
-    assignments.sort(
-        key=lambda entry: (str(entry["kind"]), str(entry["subject_id"]))
-    )
+    assignments.sort(key=lambda entry: (str(entry["kind"]), str(entry["subject_id"])))
     value["assignments"] = assignments
     value.setdefault("summary", {})["assigned_items"] = len(assignments)
     value.pop("content_sha256", None)
@@ -1261,8 +1287,9 @@ def record_activation_assignment(
         label="activation workspace",
         max_bytes=MAX_ACTIVATION_BYTES,
         expected_destination=expected_destination,
-        staged_verifier=lambda path: verify_activation_workspace_file(path)["valid"]
-        is True,
+        staged_verifier=lambda path: (
+            verify_activation_workspace_file(path)["valid"] is True
+        ),
     )
 
 
@@ -1275,9 +1302,7 @@ def _apply_finding_consolidation(
     candidate = next(
         (
             value
-            for value in workspace.get("queues", {}).get(
-                "finding_consolidations", []
-            )
+            for value in workspace.get("queues", {}).get("finding_consolidations", [])
             if isinstance(value, dict) and str(value.get("id", "")) == subject_id
         ),
         None,

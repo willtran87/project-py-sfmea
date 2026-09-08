@@ -160,7 +160,9 @@ class EvidenceOnboardingTests(unittest.TestCase):
     def test_external_execution_manifest_is_fully_validated_before_apply(self) -> None:
         obligation = self.analysis["assurance"]["obligations"][0]
         test_path = self.root / "test_external.py"
-        test_path.write_text("def test_external():\n    assert True\n", encoding="utf-8")
+        test_path.write_text(
+            "def test_external():\n    assert True\n", encoding="utf-8"
+        )
         external = self.root / "external"
         external.mkdir()
         log = external / "pytest.log"
@@ -201,9 +203,7 @@ class EvidenceOnboardingTests(unittest.TestCase):
         )
         self.assertEqual(planned, self.analysis)
         self.assertEqual(plan["selected_evidence"][0]["status"], "validated")
-        self.assertNotIn(
-            "evidence_directory", plan["selected_evidence"][0]["result"]
-        )
+        self.assertNotIn("evidence_directory", plan["selected_evidence"][0]["result"])
         self.assertEqual(plan["summary"]["prospective"]["assurance"]["executions"], 1)
 
         updated, receipt, _queue = onboard_evidence(
@@ -300,9 +300,9 @@ class EvidenceOnboardingTests(unittest.TestCase):
         persisted = load_analysis(destination)
         receipt_document = json.loads(receipt.read_text(encoding="utf-8"))
         self.assertTrue(
-            verify_evidence_onboarding_receipt(
-                receipt_document, analysis=persisted
-            )["valid"]
+            verify_evidence_onboarding_receipt(receipt_document, analysis=persisted)[
+                "valid"
+            ]
         )
         self.assertTrue(queue.is_file())
         verdict_path = self.root / "onboarding-verification.json"

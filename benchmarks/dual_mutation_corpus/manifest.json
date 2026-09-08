@@ -1,0 +1,14 @@
+{
+  "format": "pysfmea-dual-mutation-corpus-1",
+  "revision": "2026.08.31",
+  "cases": [
+    {
+      "id": "arithmetic-boundary-001",
+      "subject": "subjects/arithmetic.py",
+      "canonical_mutant": "replace-lt-with-lte:2:12",
+      "expected_disposition": "killable",
+      "required_engines": 2
+    }
+  ],
+  "claim_boundary": "A deterministic mapping canary only; no engine qualification, representativeness, or equivalent-mutant conclusion is bundled."
+}

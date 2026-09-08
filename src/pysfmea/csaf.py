@@ -40,9 +40,12 @@ def csaf_document(
     project_name = str(analysis.get("project", {}).get("name", "python-project"))
     state_sha = analysis_state_sha256(analysis)
     decision_sha = canonical_json_sha256(decisions)
-    tracking_id = "PY-SFMEA-" + hashlib.sha256(
-        f"{project_name}:{decision_sha}".encode("utf-8")
-    ).hexdigest()[:20].upper()
+    tracking_id = (
+        "PY-SFMEA-"
+        + hashlib.sha256(f"{project_name}:{decision_sha}".encode("utf-8"))
+        .hexdigest()[:20]
+        .upper()
+    )
     vulnerabilities: list[dict[str, Any]] = []
     for entry in decisions["vulnerabilities"]:
         status = _STATUS[str(entry["state"])]
@@ -135,8 +138,7 @@ def verify_csaf(
         expected = csaf_document(analysis, decisions)
         structure = bool(
             document.get("document", {}).get("csaf_version") == CSAF_VERSION
-            and document.get("document", {}).get("category")
-            == "csaf_security_advisory"
+            and document.get("document", {}).get("category") == "csaf_security_advisory"
             and isinstance(document.get("product_tree"), dict)
             and isinstance(document.get("vulnerabilities"), list)
         )
@@ -220,9 +222,7 @@ def verify_csaf_file(
         return {
             "path": str(artifact_document.path),
             "sha256": hashlib.sha256(artifact_document.raw).hexdigest(),
-            **verify_csaf(
-                artifact_document.value, analysis, decisions_document.value
-            ),
+            **verify_csaf(artifact_document.value, analysis, decisions_document.value),
         }
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return {

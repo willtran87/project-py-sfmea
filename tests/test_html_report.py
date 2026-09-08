@@ -157,7 +157,8 @@ class HtmlReportTests(unittest.TestCase):
         self.assertNotIn(
             "missing",
             next(
-                value for value in analysis["components"]
+                value
+                for value in analysis["components"]
                 if value["qualname"] == "choose"
             )["calls"],
         )

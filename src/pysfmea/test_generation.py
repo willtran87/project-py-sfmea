@@ -142,7 +142,9 @@ def _bounded_text_list(value: Any, *, label: str) -> list[str]:
 def _repository_root(analysis: dict[str, Any]) -> Path:
     root = Path(str(analysis.get("project", {}).get("root", ""))).expanduser().resolve()
     if not root.is_dir() or root.is_symlink():
-        raise ValueError("analysis repository root must be an available regular directory")
+        raise ValueError(
+            "analysis repository root must be an available regular directory"
+        )
     return root
 
 
@@ -280,7 +282,9 @@ def build_test_generation_packet(
             break
         consumed += int(record["bytes"])
         source_context.append(record)
-    if not source_context or source_context[0]["path"] != primary_path.replace("\\", "/"):
+    if not source_context or source_context[0]["path"] != primary_path.replace(
+        "\\", "/"
+    ):
         raise ValueError("primary analyzed source could not be retained in the packet")
 
     design_bundle = synthesize_assurance_test_designs(analysis, [obligation])
@@ -407,7 +411,10 @@ def _mapping_list(
     normalized: list[dict[str, Any]] = []
     seen: set[int] = set()
     for entry in value:
-        if not isinstance(entry, dict) or set(entry) != {"index", "assertion_reference"}:
+        if not isinstance(entry, dict) or set(entry) != {
+            "index",
+            "assertion_reference",
+        }:
             raise ValueError(f"{label} entries must match the closed mapping contract")
         index = entry.get("index")
         if not isinstance(index, int) or isinstance(index, bool) or index in seen:
@@ -448,7 +455,9 @@ def _bound_names(node: ast.AST) -> set[str]:
     return set()
 
 
-def _lexical_scope_nodes(scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.AST]:
+def _lexical_scope_nodes(
+    scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[ast.AST]:
     """Return nodes evaluated in *scope* without entering deferred child scopes."""
 
     pending: list[ast.AST] = list(reversed(scope.body))
@@ -456,7 +465,9 @@ def _lexical_scope_nodes(scope: ast.Module | ast.FunctionDef | ast.AsyncFunction
     while pending:
         node = pending.pop()
         nodes.append(node)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
             continue
         pending.extend(reversed(list(ast.iter_child_nodes(node))))
     return nodes
@@ -481,7 +492,9 @@ def _import_bindings(
             import_nodes.add(id(node))
             for alias in node.names:
                 local = alias.asname or alias.name.split(".")[0]
-                imports[local] = alias.name if alias.asname else alias.name.split(".")[0]
+                imports[local] = (
+                    alias.name if alias.asname else alias.name.split(".")[0]
+                )
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             import_nodes.add(id(node))
             for alias in node.names:
@@ -593,7 +606,9 @@ def _validate_test_source(
     assertions = [node for node in ast.walk(tree) if isinstance(node, ast.Assert)]
     if not tests:
         raise ValueError("generated test file must define at least one pytest test")
-    if expected_test_name and not any(node.name == expected_test_name for node in tests):
+    if expected_test_name and not any(
+        node.name == expected_test_name for node in tests
+    ):
         raise ValueError("generated test file does not define the obligation test name")
     if not assertions:
         raise ValueError("generated test file must contain explicit assertions")
@@ -603,16 +618,25 @@ def _validate_test_source(
             raise ValueError("generated test file must not contain pass placeholders")
         if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
             if _call_name(node.exc).endswith("NotImplementedError"):
-                raise ValueError("generated test file must not raise NotImplementedError")
+                raise ValueError(
+                    "generated test file must not raise NotImplementedError"
+                )
         if isinstance(node, ast.Call):
             call_name = _call_name(node)
             called_names.add(call_name)
             if call_name in {"pytest.skip", "pytest.xfail", "unittest.skip"}:
-                raise ValueError("generated test file must not skip or xfail obligations")
-            if call_name in {"eval", "exec", "__import__", "os.system"} or call_name.startswith(
-                "subprocess."
-            ):
-                raise ValueError("generated test file must not execute hidden dynamic or shell commands")
+                raise ValueError(
+                    "generated test file must not skip or xfail obligations"
+                )
+            if call_name in {
+                "eval",
+                "exec",
+                "__import__",
+                "os.system",
+            } or call_name.startswith("subprocess."):
+                raise ValueError(
+                    "generated test file must not execute hidden dynamic or shell commands"
+                )
         if isinstance(node, ast.Assert) and isinstance(node.test, ast.Constant):
             if node.test.value is True:
                 raise ValueError("generated test file must not use assert True")
@@ -627,7 +651,9 @@ def _validate_test_source(
                 in {"socket", "subprocess", "requests", "httpx", "urllib"}
                 for name in imported
             ):
-                raise ValueError("generated test file must not import direct network or shell clients")
+                raise ValueError(
+                    "generated test file must not import direct network or shell clients"
+                )
     target_test = next(
         (node for node in tests if node.name == expected_test_name),
         tests[0],
@@ -677,8 +703,14 @@ def validate_test_generation_response(
     oracles = [str(value) for value in obligation.get("oracles", [])]
     criteria = [str(value) for value in obligation.get("acceptance_criteria", [])]
     if decision == "refused":
-        if files or response.get("oracle_mappings") or response.get("criterion_mappings"):
-            raise ValueError("a refused response must not contain implementation or mappings")
+        if (
+            files
+            or response.get("oracle_mappings")
+            or response.get("criterion_mappings")
+        ):
+            raise ValueError(
+                "a refused response must not contain implementation or mappings"
+            )
         if not questions:
             raise ValueError("a refused response must state unresolved questions")
         return {
@@ -695,9 +727,15 @@ def validate_test_generation_response(
     if not packet.get("generation_eligibility", {}).get("eligible"):
         raise ValueError("model proposed a test for an ineligible assurance obligation")
     if len(files) != 1 or questions:
-        raise ValueError("a proposed implementation requires one file and no unresolved questions")
+        raise ValueError(
+            "a proposed implementation requires one file and no unresolved questions"
+        )
     file_value = files[0]
-    if not isinstance(file_value, dict) or set(file_value) != {"path", "content", "purpose"}:
+    if not isinstance(file_value, dict) or set(file_value) != {
+        "path",
+        "content",
+        "purpose",
+    }:
         raise ValueError("generated file must match the closed file contract")
     path = _bounded_text(file_value.get("path"), label="generated file path")
     if path not in packet.get("allowed_changes", {}).get("paths", []):
@@ -809,7 +847,9 @@ def create_test_proposal(
         if response is None or normalized is None:
             raise RuntimeError("test generation ended without a validated response")
     else:
-        reasons = [str(value) for value in packet["generation_eligibility"]["blocking_reasons"]]
+        reasons = [
+            str(value) for value in packet["generation_eligibility"]["blocking_reasons"]
+        ]
         response = {
             "decision": "refused",
             "rationale": "PySFMEA policy refused generation before provider invocation.",
@@ -864,7 +904,9 @@ def create_test_proposal(
         ),
     }
     proposal["content_sha256"] = canonical_json_sha256(proposal)
-    encoded = json.dumps(proposal, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(proposal, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
     if len(encoded) > MAX_PROPOSAL_BYTES:
         raise ValueError("test proposal exceeds the 3 MB limit")
     return proposal
@@ -905,11 +947,10 @@ def _current_contract_and_source_binding(
         root = _repository_root(analysis)
     except ValueError:
         return False
-    if (
-        obligation.get("provenance", {}).get("contract_sha256")
-        != binding.get("contract_sha256")
-        or component.get("source_fingerprint")
-        != packet.get("component", {}).get("source_fingerprint")
+    if obligation.get("provenance", {}).get("contract_sha256") != binding.get(
+        "contract_sha256"
+    ) or component.get("source_fingerprint") != packet.get("component", {}).get(
+        "source_fingerprint"
     ):
         return False
     for record in packet.get("source_context", []):
@@ -917,11 +958,7 @@ def _current_contract_and_source_binding(
             return False
         relative = Path(str(record.get("path", "")))
         path = (root / relative).resolve()
-        if (
-            relative.is_absolute()
-            or ".." in relative.parts
-            or not _inside(root, path)
-        ):
+        if relative.is_absolute() or ".." in relative.parts or not _inside(root, path):
             return False
         try:
             snapshot = load_bounded_file_snapshot(
@@ -964,7 +1001,9 @@ def verify_test_proposal(
             raise ValueError("test proposal prompt version is unsupported")
         generation = proposal.get("generation")
         if not isinstance(generation, dict) or set(generation) != _GENERATION_FIELDS:
-            raise ValueError("test proposal generation metadata must match the closed contract")
+            raise ValueError(
+                "test proposal generation metadata must match the closed contract"
+            )
         maximum_attempts = generation.get("maximum_attempts")
         attempts_used = generation.get("attempts_used")
         records = generation.get("attempt_records")
@@ -988,23 +1027,37 @@ def verify_test_proposal(
                 "accepted",
                 "validation_error",
             }:
-                raise ValueError("test proposal attempt record must match the closed contract")
-            if record.get("attempt") != index or not isinstance(record.get("accepted"), bool):
+                raise ValueError(
+                    "test proposal attempt record must match the closed contract"
+                )
+            if record.get("attempt") != index or not isinstance(
+                record.get("accepted"), bool
+            ):
                 raise ValueError("test proposal attempt ordering is invalid")
             accepted = bool(record["accepted"])
             accepted_attempts += int(accepted)
             error = record.get("validation_error")
-            if not isinstance(error, str) or (accepted and error) or (not accepted and not error):
+            if (
+                not isinstance(error, str)
+                or (accepted and error)
+                or (not accepted and not error)
+            ):
                 raise ValueError("test proposal attempt validation outcome is invalid")
         if records:
             if accepted_attempts != 1 or not records[-1]["accepted"]:
-                raise ValueError("test proposal must retain one final accepted provider attempt")
+                raise ValueError(
+                    "test proposal must retain one final accepted provider attempt"
+                )
             if records[-1]["response_sha256"] != canonical_json_sha256(
                 proposal.get("provider_response")
             ):
-                raise ValueError("final provider response does not match attempt provenance")
+                raise ValueError(
+                    "final provider response does not match attempt provenance"
+                )
         elif producer.get("provider") != "pysfmea-policy":
-            raise ValueError("provider proposal must retain generation attempt provenance")
+            raise ValueError(
+                "provider proposal must retain generation attempt provenance"
+            )
         expected_digest = str(proposal.get("content_sha256", ""))
         digest_payload = dict(proposal)
         digest_payload.pop("content_sha256", None)
@@ -1087,14 +1140,18 @@ def stage_test_proposal(
     path = Path(destination).expanduser().resolve()
     repository = _repository_root(analysis)
     if _inside(repository, path):
-        raise ValueError("test proposal staging must remain outside the analyzed repository")
+        raise ValueError(
+            "test proposal staging must remain outside the analyzed repository"
+        )
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
         raise ValueError("test proposal staging destination must be empty")
     path.parent.mkdir(parents=True, exist_ok=True)
     response = proposal["response"]
     file_value = response["files"][0]
     relative = Path(str(file_value["path"]))
-    staging = Path(tempfile.mkdtemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent))
+    staging = Path(
+        tempfile.mkdtemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    )
     try:
         target = (staging / relative).resolve()
         if not _inside(staging, target):
@@ -1160,7 +1217,9 @@ def verify_test_proposal_stage(
         root = root.resolve()
         repository = _repository_root(analysis)
         if _inside(repository, root):
-            raise ValueError("proposal stage must remain outside the analyzed repository")
+            raise ValueError(
+                "proposal stage must remain outside the analyzed repository"
+            )
         checks["directory"] = True
         entries = list(root.rglob("*"))
         manifest_path = root / "pysfmea-test-proposal-stage.json"
@@ -1190,11 +1249,17 @@ def verify_test_proposal_stage(
         ):
             raise ValueError("proposal stage format or status is unsupported")
         files = manifest.get("files")
-        if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], dict):
+        if (
+            not isinstance(files, list)
+            or len(files) != 1
+            or not isinstance(files[0], dict)
+        ):
             raise ValueError("proposal stage must declare exactly one generated test")
         file_record = files[0]
         if set(file_record) != {"path", "sha256", "bytes"}:
-            raise ValueError("proposal stage file record must match the closed contract")
+            raise ValueError(
+                "proposal stage file record must match the closed contract"
+            )
         checks["manifest_contract"] = True
         digest_payload = dict(manifest)
         claimed_manifest_digest = str(digest_payload.pop("content_sha256", ""))
@@ -1289,7 +1354,9 @@ def apply_test_proposal(
     target = (repository / relative).resolve()
     if not _inside(repository, target):
         raise ValueError("approved test path escapes the analyzed repository")
-    target_state = inspect_artifact_destination(target, label="generated assurance test")
+    target_state = inspect_artifact_destination(
+        target, label="generated assurance test"
+    )
     if target_state.snapshot is not None:
         raise ValueError("generated assurance test destination already exists")
     receipt_state = inspect_artifact_destination(
@@ -1334,8 +1401,7 @@ def apply_test_proposal(
 
     def verify_test(path: Path) -> bool:
         return bool(
-            hashlib.sha256(path.read_bytes()).hexdigest()
-            == source_validation["sha256"]
+            hashlib.sha256(path.read_bytes()).hexdigest() == source_validation["sha256"]
         )
 
     def verify_receipt(path: Path) -> bool:
@@ -1511,7 +1577,9 @@ def generation_readiness(
         obligation = _obligation(analysis, obligation_id)
     except ValueError:
         obligation = {}
-    automation = obligation.get("automation", {}) if isinstance(obligation, dict) else {}
+    automation = (
+        obligation.get("automation", {}) if isinstance(obligation, dict) else {}
+    )
     file_value = receipt.get("file", {}) if isinstance(receipt, dict) else {}
     implementation_registered = bool(
         automation.get("implementation_status") == "implemented"

@@ -270,30 +270,22 @@ class FaultInjectionPluginTests(unittest.TestCase):
             "algorithm": "sha256",
             "content_sha256": canonical_json_sha256(unsafe),
         }
-        verification = verify_fault_injection_plan(
-            unsafe, obligation=self.obligation
-        )
+        verification = verify_fault_injection_plan(unsafe, obligation=self.obligation)
         self.assertFalse(verification["valid"])
         self.assertFalse(verification["checks"]["contract"])
         self.assertFalse(verification["checks"]["execution_policy"])
 
         with self.assertRaisesRegex(ValueError, "starter fails"):
-            complete_fault_injection_plan(
-                unsafe, case, obligation=self.obligation
-            )
+            complete_fault_injection_plan(unsafe, case, obligation=self.obligation)
 
         wrong_obligation = {**self.obligation, "id": "VO-DIFFERENT"}
-        mismatch = verify_fault_injection_plan(
-            completed, obligation=wrong_obligation
-        )
+        mismatch = verify_fault_injection_plan(completed, obligation=wrong_obligation)
         self.assertIn(
             "fault_plan.binding_mismatch",
             {value["code"] for value in mismatch["findings"]},
         )
         with self.assertRaisesRegex(ValueError, "starter fails"):
-            complete_fault_injection_plan(
-                plan, case, obligation=wrong_obligation
-            )
+            complete_fault_injection_plan(plan, case, obligation=wrong_obligation)
 
         tampered = json.loads(json.dumps(completed))
         tampered["notice"] = "changed without updating integrity"
@@ -306,7 +298,11 @@ class FaultInjectionPluginTests(unittest.TestCase):
         )
         for field, value, code in (
             ("format", "pysfmea-fault-injection-plan-0", "fault_plan.format_invalid"),
-            ("plugin", {"id": "unknown", "recommended_plugin_ids": []}, "fault_plan.plugin_invalid"),
+            (
+                "plugin",
+                {"id": "unknown", "recommended_plugin_ids": []},
+                "fault_plan.plugin_invalid",
+            ),
         ):
             invalid = json.loads(json.dumps(completed))
             invalid[field] = value
@@ -315,9 +311,7 @@ class FaultInjectionPluginTests(unittest.TestCase):
                 "algorithm": "sha256",
                 "content_sha256": canonical_json_sha256(invalid),
             }
-            verdict = verify_fault_injection_plan(
-                invalid, obligation=self.obligation
-            )
+            verdict = verify_fault_injection_plan(invalid, obligation=self.obligation)
             self.assertIn(code, {item["code"] for item in verdict["findings"]})
         unhashable_plugin = json.loads(json.dumps(completed))
         unhashable_plugin["plugin"]["recommended_plugin_ids"] = [{}]
@@ -327,14 +321,12 @@ class FaultInjectionPluginTests(unittest.TestCase):
             "content_sha256": canonical_json_sha256(unhashable_plugin),
         }
         self.assertFalse(
-            verify_fault_injection_plan(
-                unhashable_plugin, obligation=self.obligation
-            )["checks"]["plugin"]
+            verify_fault_injection_plan(unhashable_plugin, obligation=self.obligation)[
+                "checks"
+            ]["plugin"]
         )
         with self.assertRaisesRegex(ValueError, "binding_required starter"):
-            complete_fault_injection_plan(
-                completed, case, obligation=self.obligation
-            )
+            complete_fault_injection_plan(completed, case, obligation=self.obligation)
 
     def test_contract_rejects_state_metadata_and_outcome_ambiguity(self) -> None:
         plan = build_fault_injection_plan(
@@ -357,9 +349,7 @@ class FaultInjectionPluginTests(unittest.TestCase):
             },
         }
         with self.assertRaisesRegex(ValueError, "unsupported fields"):
-            complete_fault_injection_plan(
-                plan, case, obligation=self.obligation
-            )
+            complete_fault_injection_plan(plan, case, obligation=self.obligation)
 
         invalid_state = json.loads(json.dumps(plan))
         invalid_state["completed_at"] = "2026-08-05T00:00:00Z"
@@ -427,9 +417,7 @@ class FaultInjectionPluginTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not resolve to a callable"):
             fault_module._resolve_subject("pysfmea_fault_fixture:not_callable")
         with self.assertRaisesRegex(ValueError, "500 characters"):
-            fault_module._exception(
-                {"exception": "TimeoutError", "message": "x" * 501}
-            )
+            fault_module._exception({"exception": "TimeoutError", "message": "x" * 501})
         with self.assertRaisesRegex(ValueError, "requires value"):
             fault_module._event_side_effect({"kind": "return"})
         with self.assertRaisesRegex(ValueError, "must be raise or return"):
@@ -448,16 +436,15 @@ class FaultInjectionPluginTests(unittest.TestCase):
             ),
         )
         for expected, message in invalid_outcomes:
-            with self.subTest(message=message), self.assertRaisesRegex(
-                ValueError, message
+            with (
+                self.subTest(message=message),
+                self.assertRaisesRegex(ValueError, message),
             ):
                 fault_module._expected_outcomes({"expected": expected}, 1)
 
         case = {
             "expected": {
-                "outcomes": [
-                    {"outcome": "raises", "exception_type": "TimeoutError"}
-                ]
+                "outcomes": [{"outcome": "raises", "exception_type": "TimeoutError"}]
             }
         }
         result = {

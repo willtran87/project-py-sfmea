@@ -1136,9 +1136,7 @@ class ScannerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "10-byte safety limit"):
                 load_organizational_guidance_pack(oversized)
 
-        with patch(
-            "pysfmea.json_ingestion._is_symbolic_link_mode", return_value=True
-        ):
+        with patch("pysfmea.json_ingestion._is_symbolic_link_mode", return_value=True):
             with self.assertRaisesRegex(ValueError, "non-symbolic-link"):
                 load_organizational_guidance_pack(pack_path)
 
@@ -2740,9 +2738,7 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(
             {
                 value["reference"]
-                for value in components["consumer.py:mixed"][
-                    "external_call_candidates"
-                ]
+                for value in components["consumer.py:mixed"]["external_call_candidates"]
             },
             {"provider.transmit"},
         )
@@ -2851,9 +2847,7 @@ class ScannerTests(unittest.TestCase):
             components["factories.py:maybe_client"]["return_annotation_nullable"]
         )
         self.assertTrue(
-            components["factories.py:legacy_maybe_client"][
-                "return_annotation_nullable"
-            ]
+            components["factories.py:legacy_maybe_client"]["return_annotation_nullable"]
         )
         for reference in (
             "factories.py:ambiguous_client",
@@ -3438,9 +3432,7 @@ class ScannerTests(unittest.TestCase):
             "finalizers.py:nonempty_loop_suppressed",
         ):
             edge = edges[(reference, "finalizers.py:leaf", "ValueError")]
-            self.assertEqual(
-                edge["disposition"], "suppressed_by_finally_control_flow"
-            )
+            self.assertEqual(edge["disposition"], "suppressed_by_finally_control_flow")
             record = next(
                 value
                 for value in model["finalizers"]
@@ -3448,9 +3440,7 @@ class ScannerTests(unittest.TestCase):
             )
             self.assertEqual(record["terminal_kind"], "return")
             self.assertEqual(record["outcome_certainty"], "uniform")
-            self.assertEqual(
-                record["terminal_basis"], "uniform_safe_terminal_outcome"
-            )
+            self.assertEqual(record["terminal_basis"], "uniform_safe_terminal_outcome")
             self.assertFalse(edge["propagates_original"])
 
         uniform_replacement = edges[
@@ -4584,9 +4574,7 @@ class ScannerTests(unittest.TestCase):
             "coverage JSON has no files object",
         )
         coverage.write_text(json.dumps(coverage_payload), encoding="utf-8")
-        with patch(
-            "pysfmea.json_ingestion._is_symbolic_link_mode", return_value=True
-        ):
+        with patch("pysfmea.json_ingestion._is_symbolic_link_mode", return_value=True):
             linked, linked_warnings = _load_coverage(coverage, self.root.resolve())
         self.assertEqual(linked, {})
         self.assertIn("regular non-symbolic-link", linked_warnings[0]["message"])
@@ -4970,7 +4958,9 @@ class ScannerTests(unittest.TestCase):
             generator_component["ordered_calls"],
             ["condition", "deferred"],
         )
-        self.assertEqual(generator_component["return_values"][0]["statement_kind"], "yield")
+        self.assertEqual(
+            generator_component["return_values"][0]["statement_kind"], "yield"
+        )
         lambda_default_site = components["build_lambda"]["call_sites"][0]
         self.assertTrue(
             any("lambda@" in value for value in lambda_default_site["control_context"])
@@ -5018,7 +5008,9 @@ class ScannerTests(unittest.TestCase):
                 for value in excluded_components.values()
             )
         )
-        self.assertEqual(excluded_components["build_lambda"]["ordered_calls"], ["source"])
+        self.assertEqual(
+            excluded_components["build_lambda"]["ordered_calls"], ["source"]
+        )
         self.assertEqual(
             excluded_components["build_generator"]["ordered_calls"], ["source"]
         )
@@ -5090,14 +5082,10 @@ class ScannerTests(unittest.TestCase):
         )
         self.assertFalse(factory_application["dynamic_target"])
         self.assertEqual(
-            factory_application["decorator_factory"][
-                "returned_component_reference"
-            ],
+            factory_application["decorator_factory"]["returned_component_reference"],
             f"definitions.py:{decorator_lambda['qualname']}",
         )
-        self.assertEqual(
-            factory_application["arguments"][0]["expression"], "endpoint"
-        )
+        self.assertEqual(factory_application["arguments"][0]["expression"], "endpoint")
         self.assertEqual(
             factory_application["result_context"],
             {
@@ -5134,15 +5122,16 @@ class ScannerTests(unittest.TestCase):
             decorator_lambda["called_by"],
             ["definitions.py:<module initialization>"],
         )
-        decorator_failure_callers = set(components["decorator_application"]["called_by"])
+        decorator_failure_callers = set(
+            components["decorator_application"]["called_by"]
+        )
         self.assertEqual(
             decorator_failure_callers,
             {f"definitions.py:{decorator_lambda['qualname']}"},
         )
         self.assertTrue(
             any(
-                value["caller_reference"]
-                == "definitions.py:<module initialization>"
+                value["caller_reference"] == "definitions.py:<module initialization>"
                 and value["callee_reference"]
                 == f"definitions.py:{decorator_lambda['qualname']}"
                 and value["exception_type"] == "RuntimeError"
@@ -5319,10 +5308,21 @@ class ScannerTests(unittest.TestCase):
             for value in eager["<module initialization>"]["call_sites"]
             if value["reference"] == "annotation_value"
         ]
-        self.assertTrue(any(":annotation:positional:value:" in value for value in annotation_contexts))
-        self.assertTrue(any(":annotation:return" in value for value in annotation_contexts))
-        self.assertTrue(any("module-annotation" in value for value in annotation_contexts))
-        self.assertTrue(any("class-definition" in value for value in annotation_contexts))
+        self.assertTrue(
+            any(
+                ":annotation:positional:value:" in value
+                for value in annotation_contexts
+            )
+        )
+        self.assertTrue(
+            any(":annotation:return" in value for value in annotation_contexts)
+        )
+        self.assertTrue(
+            any("module-annotation" in value for value in annotation_contexts)
+        )
+        self.assertTrue(
+            any("class-definition" in value for value in annotation_contexts)
+        )
         annotation_callers = set(eager["annotation_value"]["called_by"])
         self.assertEqual(
             annotation_callers,
@@ -5338,9 +5338,7 @@ class ScannerTests(unittest.TestCase):
             and value["exception_type"] == "RuntimeError"
         }
         self.assertEqual(propagation_callers, annotation_callers)
-        eager_lambdas = [
-            value for value in eager.values() if value["kind"] == "lambda"
-        ]
+        eager_lambdas = [value for value in eager.values() if value["kind"] == "lambda"]
         self.assertEqual(len(eager_lambdas), 1)
         self.assertEqual(eager_lambdas[0]["ordered_calls"], ["runtime_call"])
 
@@ -6017,7 +6015,7 @@ class ScannerTests(unittest.TestCase):
             "        return dead()\n"
             "    return live()\n\n"
             "def oversized_width():\n"
-            "    if f\"{1:1000000d}\":\n"
+            '    if f"{1:1000000d}":\n'
             "        return dead()\n"
             "    return live()\n\n"
             "def unicode_sensitive():\n"
@@ -6759,9 +6757,7 @@ def try_handler_fallthrough():
         self.assertEqual(
             set(components["shadowed_set_call"]["calls"]), {"dead", "live", "set"}
         )
-        self.assertEqual(
-            set(components["dynamic_match"]["calls"]), {"dead", "live"}
-        )
+        self.assertEqual(set(components["dynamic_match"]["calls"]), {"dead", "live"})
         for name in (
             "oversized_literal_expression",
             "exceptional_literal_expression",
@@ -6813,14 +6809,10 @@ def try_handler_fallthrough():
         ][0]
         self.assertEqual(subscript_handler["outcome_certainty"], "uniform")
         self.assertEqual(subscript_handler["outcome_kinds"], ["reraise"])
-        unpack_handler = components["handler_unpack_condition"][
-            "exception_handlers"
-        ][0]
+        unpack_handler = components["handler_unpack_condition"]["exception_handlers"][0]
         self.assertEqual(unpack_handler["outcome_certainty"], "uniform")
         self.assertEqual(unpack_handler["outcome_kinds"], ["reraise"])
-        method_handler = components["handler_method_condition"][
-            "exception_handlers"
-        ][0]
+        method_handler = components["handler_method_condition"]["exception_handlers"][0]
         self.assertEqual(method_handler["outcome_certainty"], "uniform")
         self.assertEqual(method_handler["outcome_kinds"], ["reraise"])
         match_handler = components["handler_match"]["exception_handlers"][0]
@@ -6901,7 +6893,8 @@ def try_handler_fallthrough():
             model["summary"]["decision_kinds"]["try_else_clause"], 1
         )
         repeated = [
-            value for value in model["decisions"]
+            value
+            for value in model["decisions"]
             if value["component_reference"] == "branches.py:repeated_short_circuit"
         ]
         self.assertEqual(len(repeated), 2)
@@ -6961,8 +6954,7 @@ def try_handler_fallthrough():
         decision_ids = {value["id"] for value in model["decisions"]}
         for component in components.values():
             self.assertTrue(
-                set(component["static_control_flow"]["decision_ids"])
-                <= decision_ids
+                set(component["static_control_flow"]["decision_ids"]) <= decision_ids
             )
 
         dead_id = components["dead"]["id"]
@@ -7041,9 +7033,9 @@ def try_handler_fallthrough():
             {value["rule_id"] for value in validate_analysis(analysis)["findings"]},
         )
         tampered_limit = json.loads(json.dumps(analysis))
-        tampered_limit["static_control_flow_model"]["limits"][
-            "format_spec_length"
-        ] = 129
+        tampered_limit["static_control_flow_model"]["limits"]["format_spec_length"] = (
+            129
+        )
         self.assertIn(
             "analysis.invalid_static_control_flow_model",
             {
@@ -7052,9 +7044,9 @@ def try_handler_fallthrough():
             },
         )
         tampered = json.loads(json.dumps(analysis))
-        tampered["static_control_flow_model"]["decisions"][0]["decision"] = not tampered[
-            "static_control_flow_model"
-        ]["decisions"][0]["decision"]
+        tampered["static_control_flow_model"]["decisions"][0][
+            "decision"
+        ] = not tampered["static_control_flow_model"]["decisions"][0]["decision"]
         self.assertIn(
             "analysis.invalid_static_control_flow_model",
             {value["rule_id"] for value in validate_analysis(tampered)["findings"]},

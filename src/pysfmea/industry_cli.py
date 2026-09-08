@@ -12,10 +12,20 @@ from .assurance_case import (
     export_assurance_case,
     verify_assurance_case_file,
 )
+from .benchmark_adapter import (
+    benchmark_adapter_template,
+    export_benchmark_adapter,
+    seal_benchmark_adapter,
+    verify_benchmark_adapter_file,
+)
 from .benchmark_assurance import (
     benchmark_assessment,
     export_benchmark_assessment,
     verify_benchmark_assessment_file,
+)
+from .benchmark_observations import (
+    seal_benchmark_observations,
+    verify_benchmark_observations_file,
 )
 from .benchmark_report_v2 import (
     export_benchmark_v2_report,
@@ -26,6 +36,11 @@ from .benchmark_v2 import (
     export_benchmark_v2_assessment,
     seal_benchmark_v2_source,
     verify_benchmark_v2_assessment_file,
+)
+from .campaign_runner import (
+    repository_snapshot_sha256,
+    run_benchmark_campaign,
+    run_fuzz_campaign,
 )
 from .conformance import (
     APPLICABILITY,
@@ -57,6 +72,7 @@ from .fuzz_campaign import (
     seal_fuzz_campaign,
     verify_fuzz_campaign_file,
 )
+from .gap_cli import register_gap_commands
 from .gsn import export_gsn_projection, gsn_projection, verify_gsn_projection_file
 from .guidance import GUIDANCE_SOURCES, GUIDELINE_PROFILES, METHODOLOGY_NOTICE
 from .industry_benchmarks import (
@@ -94,6 +110,14 @@ from .oscal_exchange import (
     export_oscal_assessment_results,
     oscal_assessment_results,
     verify_oscal_assessment_results_file,
+)
+from .oscal_lifecycle import (
+    export_oscal_assessment_plan,
+    export_oscal_poam,
+    oscal_assessment_plan,
+    oscal_poam,
+    verify_oscal_assessment_plan_file,
+    verify_oscal_poam_file,
 )
 from .qualification_bases import qualification_bases_catalog
 from .quality_evaluation import (
@@ -141,6 +165,15 @@ from .security_prioritization import (
     security_prioritization_template,
     verify_security_prioritization_assessment_file,
 )
+from .security_taxonomy import (
+    export_security_taxonomy,
+    import_security_taxonomy,
+    verify_security_taxonomy_file,
+)
+from .sigstore_verification import (
+    execute_sigstore_verification,
+    verify_sigstore_verification_file,
+)
 from .slsa import (
     export_slsa_provenance,
     slsa_provenance_statement,
@@ -170,6 +203,12 @@ from .standards_crosswalk import (
     export_standards_crosswalk,
     standards_crosswalk,
     verify_standards_crosswalk_file,
+)
+from .standards_lifecycle import (
+    export_standards_lifecycle,
+    seal_standards_lifecycle,
+    standards_lifecycle_template,
+    verify_standards_lifecycle_file,
 )
 from .store import load_analysis
 from .stpa_cast import (
@@ -278,43 +317,62 @@ _UNBOUND_METHODS: dict[str, dict[str, Any]] = {
 
 def _add_industry_method_commands(subparsers: Any) -> None:
     for name, spec in _BOUND_METHODS.items():
-        init = subparsers.add_parser(f"{name}-init", help=f"create an exact-analysis-bound {spec['label']} workspace")
+        init = subparsers.add_parser(
+            f"{name}-init",
+            help=f"create an exact-analysis-bound {spec['label']} workspace",
+        )
         init.add_argument("analysis")
         init.add_argument("--authority", required=True)
         init.add_argument("-o", "--output", required=True)
         init.set_defaults(handler=_bound_method_init, industry_method=name)
-        seal_command = subparsers.add_parser(f"{name}-seal", help=f"reseal and validate edited {spec['label']} evidence")
+        seal_command = subparsers.add_parser(
+            f"{name}-seal", help=f"reseal and validate edited {spec['label']} evidence"
+        )
         seal_command.add_argument("analysis")
         seal_command.add_argument("source")
         seal_command.add_argument("-o", "--output", required=True)
         seal_command.set_defaults(handler=_bound_method_seal, industry_method=name)
-        assess = subparsers.add_parser(f"{name}-assess", help=f"derive a deterministic {spec['label']} assessment")
+        assess = subparsers.add_parser(
+            f"{name}-assess", help=f"derive a deterministic {spec['label']} assessment"
+        )
         assess.add_argument("analysis")
         assess.add_argument("source")
         assess.add_argument("-o", "--output", required=True)
         assess.set_defaults(handler=_bound_method_assess, industry_method=name)
-        verify = subparsers.add_parser(f"{name}-verify", help=f"verify {spec['label']} integrity and optional exact regeneration")
+        verify = subparsers.add_parser(
+            f"{name}-verify",
+            help=f"verify {spec['label']} integrity and optional exact regeneration",
+        )
         verify.add_argument("assessment")
         verify.add_argument("--analysis")
         verify.add_argument("--source")
         verify.add_argument("--json", action="store_true")
         verify.set_defaults(handler=_bound_method_verify, industry_method=name)
     for name, spec in _UNBOUND_METHODS.items():
-        init = subparsers.add_parser(f"{name}-init", help=f"create a governed {spec['label']} workspace")
+        init = subparsers.add_parser(
+            f"{name}-init", help=f"create a governed {spec['label']} workspace"
+        )
         init.add_argument("--authority", required=True)
         if name == "laboratory-governance":
             init.add_argument("--subject-sha256", default="0" * 64)
         init.add_argument("-o", "--output", required=True)
         init.set_defaults(handler=_unbound_method_init, industry_method=name)
-        seal_command = subparsers.add_parser(f"{name}-seal", help=f"reseal and validate edited {spec['label']} evidence")
+        seal_command = subparsers.add_parser(
+            f"{name}-seal", help=f"reseal and validate edited {spec['label']} evidence"
+        )
         seal_command.add_argument("source")
         seal_command.add_argument("-o", "--output", required=True)
         seal_command.set_defaults(handler=_unbound_method_seal, industry_method=name)
-        assess = subparsers.add_parser(f"{name}-assess", help=f"derive a deterministic {spec['label']} assessment")
+        assess = subparsers.add_parser(
+            f"{name}-assess", help=f"derive a deterministic {spec['label']} assessment"
+        )
         assess.add_argument("source")
         assess.add_argument("-o", "--output", required=True)
         assess.set_defaults(handler=_unbound_method_assess, industry_method=name)
-        verify = subparsers.add_parser(f"{name}-verify", help=f"verify {spec['label']} integrity and optional exact regeneration")
+        verify = subparsers.add_parser(
+            f"{name}-verify",
+            help=f"verify {spec['label']} integrity and optional exact regeneration",
+        )
         verify.add_argument("assessment")
         verify.add_argument("--source")
         verify.add_argument("--json", action="store_true")
@@ -464,7 +522,9 @@ def add_industry_commands(subparsers: Any) -> None:
         help="export SACM, SFPM, ReqIF, or SPDX 3 standards-oriented interchange",
     )
     exchange.add_argument("kind", choices=("sacm", "sfpm", "reqif", "spdx"))
-    exchange.add_argument("source", help="assurance case for SACM; analysis for other kinds")
+    exchange.add_argument(
+        "source", help="assurance case for SACM; analysis for other kinds"
+    )
     exchange.add_argument("-o", "--output", required=True)
     exchange.set_defaults(handler=_industry_exchange)
 
@@ -485,7 +545,9 @@ def add_industry_commands(subparsers: Any) -> None:
     schema_validate.add_argument("artifact")
     schema_validate.add_argument("schema")
     schema_validate.add_argument(
-        "--schema-kind", choices=("json-schema", "xml-schema"), required=True
+        "--schema-kind",
+        choices=("json-schema", "yaml-json-schema", "xml-schema"),
+        required=True,
     )
     schema_validate.add_argument("--standard", required=True)
     schema_validate.add_argument("--edition", required=True)
@@ -571,7 +633,8 @@ def add_industry_commands(subparsers: Any) -> None:
     slsa_policy_init.set_defaults(handler=_slsa_policy_init)
 
     slsa_observation_init = subparsers.add_parser(
-        "slsa-observation-init", help="create an external-verifier evidence intake record"
+        "slsa-observation-init",
+        help="create an external-verifier evidence intake record",
     )
     slsa_observation_init.add_argument("--verifier", required=True)
     slsa_observation_init.add_argument("-o", "--output", required=True)
@@ -585,14 +648,16 @@ def add_industry_commands(subparsers: Any) -> None:
     slsa_policy_seal.set_defaults(handler=_slsa_policy_seal)
 
     slsa_observation_seal = subparsers.add_parser(
-        "slsa-observation-seal", help="reseal and validate external SLSA verification evidence"
+        "slsa-observation-seal",
+        help="reseal and validate external SLSA verification evidence",
     )
     slsa_observation_seal.add_argument("source")
     slsa_observation_seal.add_argument("-o", "--output", required=True)
     slsa_observation_seal.set_defaults(handler=_slsa_observation_seal)
 
     slsa_policy_assess = subparsers.add_parser(
-        "slsa-policy-assess", help="evaluate SLSA 1.2 Build and Source levels against local trust policy"
+        "slsa-policy-assess",
+        help="evaluate SLSA 1.2 Build and Source levels against local trust policy",
     )
     slsa_policy_assess.add_argument("provenance")
     slsa_policy_assess.add_argument("policy")
@@ -601,7 +666,8 @@ def add_industry_commands(subparsers: Any) -> None:
     slsa_policy_assess.set_defaults(handler=_slsa_policy_assess)
 
     slsa_policy_verify = subparsers.add_parser(
-        "slsa-policy-verify", help="verify SLSA policy accounting and optional exact-source regeneration"
+        "slsa-policy-verify",
+        help="verify SLSA policy accounting and optional exact-source regeneration",
     )
     slsa_policy_verify.add_argument("assessment")
     slsa_policy_verify.add_argument("--provenance")
@@ -610,15 +676,42 @@ def add_industry_commands(subparsers: Any) -> None:
     slsa_policy_verify.add_argument("--json", action="store_true")
     slsa_policy_verify.set_defaults(handler=_slsa_policy_verify)
 
+    sigstore_verify = subparsers.add_parser(
+        "sigstore-verify",
+        help="verify an exact artifact against an offline Sigstore bundle with cosign",
+    )
+    sigstore_verify.add_argument("artifact")
+    sigstore_verify.add_argument("bundle")
+    sigstore_verify.add_argument("--trusted-root", required=True)
+    sigstore_verify.add_argument("--certificate-identity", required=True)
+    sigstore_verify.add_argument("--certificate-oidc-issuer", required=True)
+    sigstore_verify.add_argument("--authority", required=True)
+    sigstore_verify.add_argument("--cosign", default="cosign")
+    sigstore_verify.add_argument("-o", "--output", required=True)
+    sigstore_verify.set_defaults(handler=_sigstore_verify)
+
+    sigstore_receipt_verify = subparsers.add_parser(
+        "sigstore-receipt-verify",
+        help="verify a Sigstore receipt and optional exact artifact/bundle bindings",
+    )
+    sigstore_receipt_verify.add_argument("receipt")
+    sigstore_receipt_verify.add_argument("--artifact")
+    sigstore_receipt_verify.add_argument("--bundle")
+    sigstore_receipt_verify.add_argument("--trusted-root")
+    sigstore_receipt_verify.add_argument("--json", action="store_true")
+    sigstore_receipt_verify.set_defaults(handler=_sigstore_receipt_verify)
+
     ssvc_policy_init = subparsers.add_parser(
-        "ssvc-policy-init", help="create a controlled SSVC-style decision-table template"
+        "ssvc-policy-init",
+        help="create a controlled SSVC-style decision-table template",
     )
     ssvc_policy_init.add_argument("--authority", required=True)
     ssvc_policy_init.add_argument("-o", "--output", required=True)
     ssvc_policy_init.set_defaults(handler=_ssvc_policy_init)
 
     ssvc_observations_init = subparsers.add_parser(
-        "ssvc-observations-init", help="create policy-bound vulnerability evidence intake"
+        "ssvc-observations-init",
+        help="create policy-bound vulnerability evidence intake",
     )
     ssvc_observations_init.add_argument("--policy-digest", required=True)
     ssvc_observations_init.add_argument("--authority", required=True)
@@ -642,7 +735,8 @@ def add_industry_commands(subparsers: Any) -> None:
     ssvc_assess.set_defaults(handler=_ssvc_assess)
 
     ssvc_verify = subparsers.add_parser(
-        "ssvc-verify", help="verify SSVC outcome accounting and optional exact regeneration"
+        "ssvc-verify",
+        help="verify SSVC outcome accounting and optional exact regeneration",
     )
     ssvc_verify.add_argument("assessment")
     ssvc_verify.add_argument("--policy")
@@ -695,6 +789,8 @@ def add_industry_commands(subparsers: Any) -> None:
     benchmark.add_argument("protocol")
     benchmark.add_argument("qualification_result")
     benchmark.add_argument("qualification_manifest")
+    benchmark.add_argument("--execution-started-at", required=True)
+    benchmark.add_argument("--execution-evidence-ref", required=True)
     benchmark.add_argument("-o", "--output", required=True)
     benchmark.set_defaults(handler=_benchmark_assess)
 
@@ -740,7 +836,8 @@ def add_industry_commands(subparsers: Any) -> None:
     benchmark_v2_verify.set_defaults(handler=_benchmark_verify_v2)
 
     benchmark_v2_report = subparsers.add_parser(
-        "benchmark-report-v2", help="publish a self-contained advanced benchmark review report"
+        "benchmark-report-v2",
+        help="publish a self-contained advanced benchmark review report",
     )
     benchmark_v2_report.add_argument("assessment")
     benchmark_v2_report.add_argument("--title", default="Independent benchmark review")
@@ -748,7 +845,8 @@ def add_industry_commands(subparsers: Any) -> None:
     benchmark_v2_report.set_defaults(handler=_benchmark_report_v2)
 
     benchmark_v2_report_verify = subparsers.add_parser(
-        "benchmark-report-verify-v2", help="verify benchmark report integrity and optional assessment binding"
+        "benchmark-report-verify-v2",
+        help="verify benchmark report integrity and optional assessment binding",
     )
     benchmark_v2_report_verify.add_argument("report")
     benchmark_v2_report_verify.add_argument("--assessment")
@@ -830,7 +928,8 @@ def add_industry_commands(subparsers: Any) -> None:
     dependability_verify.set_defaults(handler=_dependability_verify)
 
     safety_init = subparsers.add_parser(
-        "safety-lifecycle-init", help="create exact-bound PHA/FHA/PSSA/SSA/operations and CCFA review scope"
+        "safety-lifecycle-init",
+        help="create exact-bound PHA/FHA/PSSA/SSA/operations and CCFA review scope",
     )
     safety_init.add_argument("analysis")
     safety_init.add_argument("--authority", required=True)
@@ -838,7 +937,8 @@ def add_industry_commands(subparsers: Any) -> None:
     safety_init.set_defaults(handler=_safety_lifecycle_init)
 
     safety_seal = subparsers.add_parser(
-        "safety-lifecycle-seal", help="reseal edited safety lifecycle authoring against its analysis"
+        "safety-lifecycle-seal",
+        help="reseal edited safety lifecycle authoring against its analysis",
     )
     safety_seal.add_argument("analysis")
     safety_seal.add_argument("authoring")
@@ -846,7 +946,8 @@ def add_industry_commands(subparsers: Any) -> None:
     safety_seal.set_defaults(handler=_safety_lifecycle_seal)
 
     safety_assess = subparsers.add_parser(
-        "safety-lifecycle-assess", help="assess safety lifecycle traceability and CCFA coverage"
+        "safety-lifecycle-assess",
+        help="assess safety lifecycle traceability and CCFA coverage",
     )
     safety_assess.add_argument("analysis")
     safety_assess.add_argument("authoring")
@@ -854,7 +955,8 @@ def add_industry_commands(subparsers: Any) -> None:
     safety_assess.set_defaults(handler=_safety_lifecycle_assess)
 
     safety_verify = subparsers.add_parser(
-        "safety-lifecycle-verify", help="verify safety lifecycle accounting and optional exact-source regeneration"
+        "safety-lifecycle-verify",
+        help="verify safety lifecycle accounting and optional exact-source regeneration",
     )
     safety_verify.add_argument("assessment")
     safety_verify.add_argument("--analysis")
@@ -1005,7 +1107,8 @@ def add_industry_commands(subparsers: Any) -> None:
     sarif_import.set_defaults(handler=_sarif_fuse)
 
     sarif_verify = subparsers.add_parser(
-        "sarif-fuse-verify", help="verify SARIF fusion integrity and optional exact regeneration"
+        "sarif-fuse-verify",
+        help="verify SARIF fusion integrity and optional exact regeneration",
     )
     sarif_verify.add_argument("fusion")
     sarif_verify.add_argument("--analysis")
@@ -1019,7 +1122,9 @@ def add_industry_commands(subparsers: Any) -> None:
     )
     oscal_export.add_argument("analysis")
     oscal_export.add_argument("--authority", required=True)
-    oscal_export.add_argument("--title", default="PySFMEA software assurance assessment results")
+    oscal_export.add_argument(
+        "--title", default="PySFMEA software assurance assessment results"
+    )
     oscal_export.add_argument("--assessment-plan-href")
     oscal_export.add_argument("--evidence-base-href")
     oscal_export.add_argument("-o", "--output", required=True)
@@ -1034,15 +1139,130 @@ def add_industry_commands(subparsers: Any) -> None:
     oscal_verify.add_argument("--json", action="store_true")
     oscal_verify.set_defaults(handler=_oscal_assessment_results_verify)
 
+    oscal_plan = subparsers.add_parser(
+        "oscal-assessment-plan",
+        help="export an exact-analysis-bound OSCAL Assessment Plan scaffold",
+    )
+    oscal_plan.add_argument("analysis")
+    oscal_plan.add_argument("--authority", required=True)
+    oscal_plan.add_argument("--ssp-href", required=True)
+    oscal_plan.add_argument(
+        "--title", default="PySFMEA software assurance assessment plan"
+    )
+    oscal_plan.add_argument("-o", "--output", required=True)
+    oscal_plan.set_defaults(handler=_oscal_assessment_plan)
+
+    oscal_plan_verify = subparsers.add_parser(
+        "oscal-assessment-plan-verify",
+        help="verify the OSCAL Assessment Plan subset and optional exact analysis binding",
+    )
+    oscal_plan_verify.add_argument("oscal")
+    oscal_plan_verify.add_argument("--analysis")
+    oscal_plan_verify.add_argument("--json", action="store_true")
+    oscal_plan_verify.set_defaults(handler=_oscal_assessment_plan_verify)
+
+    oscal_poam_parser = subparsers.add_parser(
+        "oscal-poam",
+        help="export open findings as exact-analysis-bound OSCAL POA&M items",
+    )
+    oscal_poam_parser.add_argument("analysis")
+    oscal_poam_parser.add_argument("--authority", required=True)
+    oscal_poam_parser.add_argument("--ssp-href", required=True)
+    oscal_poam_parser.add_argument(
+        "--title", default="PySFMEA plan of action and milestones"
+    )
+    oscal_poam_parser.add_argument("-o", "--output", required=True)
+    oscal_poam_parser.set_defaults(handler=_oscal_poam)
+
+    oscal_poam_verify = subparsers.add_parser(
+        "oscal-poam-verify",
+        help="verify the OSCAL POA&M subset and optional exact analysis binding",
+    )
+    oscal_poam_verify.add_argument("oscal")
+    oscal_poam_verify.add_argument("--analysis")
+    oscal_poam_verify.add_argument("--json", action="store_true")
+    oscal_poam_verify.set_defaults(handler=_oscal_poam_verify)
+
     benchmark_catalog = subparsers.add_parser(
-        "benchmark-suite-catalog", help="show governed external Python benchmark targets"
+        "benchmark-suite-catalog",
+        help="show governed external Python benchmark targets",
     )
     benchmark_catalog.add_argument("--json", action="store_true")
     benchmark_catalog.add_argument("-o", "--output")
     benchmark_catalog.set_defaults(handler=_benchmark_suite_catalog)
 
+    adapter_init = subparsers.add_parser(
+        "benchmark-adapter-init",
+        help="create a governed suite-specific benchmark adapter contract",
+    )
+    adapter_init.add_argument("--suite", required=True)
+    adapter_init.add_argument("--authority", required=True)
+    adapter_init.add_argument("-o", "--output", required=True)
+    adapter_init.set_defaults(handler=_benchmark_adapter_init)
+
+    adapter_seal = subparsers.add_parser(
+        "benchmark-adapter-seal",
+        help="validate and seal an edited benchmark adapter contract",
+    )
+    adapter_seal.add_argument("source")
+    adapter_seal.add_argument("-o", "--output", required=True)
+    adapter_seal.set_defaults(handler=_benchmark_adapter_seal)
+
+    adapter_verify = subparsers.add_parser(
+        "benchmark-adapter-verify",
+        help="verify adapter integrity, provenance, normalization, and independent review",
+    )
+    adapter_verify.add_argument("adapter")
+    adapter_verify.add_argument("--json", action="store_true")
+    adapter_verify.set_defaults(handler=_benchmark_adapter_verify)
+
+    taxonomy_import = subparsers.add_parser(
+        "security-taxonomy-import",
+        help="import an exact official MITRE CWE or CAPEC XML release",
+    )
+    taxonomy_import.add_argument("source")
+    taxonomy_import.add_argument("--authority", required=True)
+    taxonomy_import.add_argument("--kind", choices=("cwe", "capec"))
+    taxonomy_import.add_argument("--version")
+    taxonomy_import.add_argument("-o", "--output", required=True)
+    taxonomy_import.set_defaults(handler=_security_taxonomy_import)
+
+    taxonomy_verify = subparsers.add_parser(
+        "security-taxonomy-verify",
+        help="verify taxonomy integrity and optional exact XML regeneration",
+    )
+    taxonomy_verify.add_argument("artifact")
+    taxonomy_verify.add_argument("--source")
+    taxonomy_verify.add_argument("--json", action="store_true")
+    taxonomy_verify.set_defaults(handler=_security_taxonomy_verify)
+
+    lifecycle_init = subparsers.add_parser(
+        "standards-lifecycle-init",
+        help="create an exact-catalog standards revision review ledger",
+    )
+    lifecycle_init.add_argument("--authority", required=True)
+    lifecycle_init.add_argument("-o", "--output", required=True)
+    lifecycle_init.set_defaults(handler=_standards_lifecycle_init)
+
+    lifecycle_seal = subparsers.add_parser(
+        "standards-lifecycle-seal",
+        help="recompute and seal an edited standards revision ledger",
+    )
+    lifecycle_seal.add_argument("source")
+    lifecycle_seal.add_argument("-o", "--output", required=True)
+    lifecycle_seal.set_defaults(handler=_standards_lifecycle_seal)
+
+    lifecycle_verify = subparsers.add_parser(
+        "standards-lifecycle-verify",
+        help="verify standards review completeness, currency, and reapproval state",
+    )
+    lifecycle_verify.add_argument("ledger")
+    lifecycle_verify.add_argument("--json", action="store_true")
+    lifecycle_verify.set_defaults(handler=_standards_lifecycle_verify)
+
     benchmark_execution_init = subparsers.add_parser(
-        "benchmark-execution-init", help="create an isolated benchmark execution evidence contract"
+        "benchmark-execution-init",
+        help="create an isolated benchmark execution evidence contract",
     )
     benchmark_execution_init.add_argument("--suite", required=True)
     benchmark_execution_init.add_argument("--authority", required=True)
@@ -1050,21 +1270,61 @@ def add_industry_commands(subparsers: Any) -> None:
     benchmark_execution_init.set_defaults(handler=_benchmark_execution_init)
 
     benchmark_execution_seal = subparsers.add_parser(
-        "benchmark-execution-seal", help="validate and seal an edited benchmark execution receipt"
+        "benchmark-execution-seal",
+        help="validate and seal an edited benchmark execution receipt",
     )
     benchmark_execution_seal.add_argument("source")
     benchmark_execution_seal.add_argument("-o", "--output", required=True)
     benchmark_execution_seal.set_defaults(handler=_benchmark_execution_seal)
 
     benchmark_execution_verify = subparsers.add_parser(
-        "benchmark-execution-verify", help="verify benchmark execution integrity and governed-use eligibility"
+        "benchmark-execution-verify",
+        help="verify benchmark execution integrity and governed-use eligibility",
     )
     benchmark_execution_verify.add_argument("receipt")
     benchmark_execution_verify.add_argument("--json", action="store_true")
     benchmark_execution_verify.set_defaults(handler=_benchmark_execution_verify)
 
+    benchmark_observations_seal = subparsers.add_parser(
+        "benchmark-observations-seal",
+        help="validate, recompute, and seal case-level benchmark observations",
+    )
+    benchmark_observations_seal.add_argument("source")
+    benchmark_observations_seal.add_argument("-o", "--output", required=True)
+    benchmark_observations_seal.set_defaults(handler=_benchmark_observations_seal)
+
+    benchmark_observations_verify = subparsers.add_parser(
+        "benchmark-observations-verify",
+        help="verify case-level benchmark evidence and aggregate metrics",
+    )
+    benchmark_observations_verify.add_argument("observations")
+    benchmark_observations_verify.add_argument("--json", action="store_true")
+    benchmark_observations_verify.set_defaults(handler=_benchmark_observations_verify)
+
+    benchmark_run = subparsers.add_parser(
+        "benchmark-execution-run",
+        help="execute a pinned benchmark in a network-denied read-only container",
+    )
+    benchmark_run.add_argument("receipt")
+    benchmark_run.add_argument("suite_source")
+    benchmark_run.add_argument("--adapter", required=True)
+    benchmark_run.add_argument("--evidence-directory", required=True)
+    benchmark_run.add_argument(
+        "--engine", choices=["auto", "docker", "podman"], default="auto"
+    )
+    benchmark_run.add_argument("-o", "--output", required=True)
+    benchmark_run.set_defaults(handler=_benchmark_execution_run)
+
+    snapshot = subparsers.add_parser(
+        "campaign-snapshot",
+        help="calculate the deterministic source-tree SHA-256 used by campaign contracts",
+    )
+    snapshot.add_argument("source")
+    snapshot.set_defaults(handler=_campaign_snapshot)
+
     fuzz_init = subparsers.add_parser(
-        "fuzz-campaign-init", help="create a governed isolated fuzz-campaign evidence contract"
+        "fuzz-campaign-init",
+        help="create a governed isolated fuzz-campaign evidence contract",
     )
     fuzz_init.add_argument("--authority", required=True)
     fuzz_init.add_argument("-o", "--output", required=True)
@@ -1078,11 +1338,27 @@ def add_industry_commands(subparsers: Any) -> None:
     fuzz_seal.set_defaults(handler=_fuzz_campaign_seal)
 
     fuzz_verify = subparsers.add_parser(
-        "fuzz-campaign-verify", help="verify fuzz-campaign integrity and assurance-use eligibility"
+        "fuzz-campaign-verify",
+        help="verify fuzz-campaign integrity and assurance-use eligibility",
     )
     fuzz_verify.add_argument("campaign")
     fuzz_verify.add_argument("--json", action="store_true")
     fuzz_verify.set_defaults(handler=_fuzz_campaign_verify)
+
+    fuzz_run = subparsers.add_parser(
+        "fuzz-campaign-run",
+        help="execute a pinned fuzz campaign in a network-denied read-only container",
+    )
+    fuzz_run.add_argument("campaign")
+    fuzz_run.add_argument("repository")
+    fuzz_run.add_argument("--evidence-directory", required=True)
+    fuzz_run.add_argument(
+        "--engine", choices=["auto", "docker", "podman"], default="auto"
+    )
+    fuzz_run.add_argument("-o", "--output", required=True)
+    fuzz_run.set_defaults(handler=_fuzz_campaign_run)
+
+    register_gap_commands(subparsers)
 
     _add_industry_method_commands(subparsers)
 
@@ -1293,7 +1569,9 @@ def _gsn_project(args: argparse.Namespace) -> int:
 
 
 def _gsn_verify(args: argparse.Namespace) -> int:
-    result = verify_gsn_projection_file(args.projection, assurance_case_source=args.case)
+    result = verify_gsn_projection_file(
+        args.projection, assurance_case_source=args.case
+    )
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
@@ -1379,9 +1657,7 @@ def _industry_schema_verify(args: argparse.Namespace) -> int:
 
 
 def _industry_roundtrip_seal(args: argparse.Namespace) -> int:
-    value = independent_roundtrip_evidence(
-        args.validation_receipt, args.observation
-    )
+    value = independent_roundtrip_evidence(args.validation_receipt, args.observation)
     destination = export_independent_roundtrip_evidence(value, args.output)
     print(f"Created independent round-trip evidence: {destination}")
     print(
@@ -1501,9 +1777,7 @@ def _vex_verify(args: argparse.Namespace) -> int:
 
 
 def _csaf(args: argparse.Namespace) -> int:
-    destination = export_csaf(
-        load_analysis(args.analysis), args.decisions, args.output
-    )
+    destination = export_csaf(load_analysis(args.analysis), args.decisions, args.output)
     print(f"Published governed OASIS CSAF 2.0 advisory: {destination}")
     print(
         "Product status came only from the supplied governed decisions. Validate the "
@@ -1513,9 +1787,7 @@ def _csaf(args: argparse.Namespace) -> int:
 
 
 def _csaf_verify(args: argparse.Namespace) -> int:
-    result = verify_csaf_file(
-        args.csaf, load_analysis(args.analysis), args.decisions
-    )
+    result = verify_csaf_file(args.csaf, load_analysis(args.analysis), args.decisions)
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
@@ -1531,7 +1803,11 @@ def _csaf_verify(args: argparse.Namespace) -> int:
 
 def _benchmark_assess(args: argparse.Namespace) -> int:
     assessment = benchmark_assessment(
-        args.protocol, args.qualification_result, args.qualification_manifest
+        args.protocol,
+        args.qualification_result,
+        args.qualification_manifest,
+        execution_started_at=args.execution_started_at,
+        execution_evidence_ref=args.execution_evidence_ref,
     )
     result = export_benchmark_assessment(assessment, args.output)
     print(f"Created independent benchmark assessment: {result}")
@@ -1603,9 +1879,7 @@ def _benchmark_verify_v2(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(
-            f"Advanced benchmark: valid={result['valid']}, passed={result['passed']}"
-        )
+        print(f"Advanced benchmark: valid={result['valid']}, passed={result['passed']}")
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
@@ -1627,7 +1901,9 @@ def _benchmark_report_verify_v2(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"Advanced benchmark report: valid={result['valid']}, passed={result['passed']}")
+        print(
+            f"Advanced benchmark report: valid={result['valid']}, passed={result['passed']}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
@@ -1652,7 +1928,9 @@ def _release_qualification_assess(args: argparse.Namespace) -> int:
     value = release_qualification_assessment(args.source, args.candidate, args.baseline)
     destination = export_release_qualification_assessment(value, args.output)
     print(f"Created release qualification assessment: {destination}")
-    print(f"Status={value['summary']['status']}; failed checks={len(value['summary']['failed_checks'])}.")
+    print(
+        f"Status={value['summary']['status']}; failed checks={len(value['summary']['failed_checks'])}."
+    )
     print(value["notice"])
     return 0
 
@@ -1667,7 +1945,9 @@ def _release_qualification_verify(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"Release qualification: valid={result['valid']}, passed={result['passed']}")
+        print(
+            f"Release qualification: valid={result['valid']}, passed={result['passed']}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
@@ -1712,9 +1992,7 @@ def _safety_lifecycle_seal(args: argparse.Namespace) -> int:
 
 
 def _safety_lifecycle_assess(args: argparse.Namespace) -> int:
-    value = safety_lifecycle_assessment(
-        load_analysis(args.analysis), args.authoring
-    )
+    value = safety_lifecycle_assessment(load_analysis(args.analysis), args.authoring)
     destination = export_safety_lifecycle_assessment(value, args.output)
     print(f"Created safety lifecycle assessment: {destination}")
     print(
@@ -1793,7 +2071,53 @@ def _slsa_policy_verify(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"SLSA policy assessment: valid={result['valid']}, passed={result['passed']}")
+        print(
+            f"SLSA policy assessment: valid={result['valid']}, passed={result['passed']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _sigstore_verify(args: argparse.Namespace) -> int:
+    destination = execute_sigstore_verification(
+        args.artifact,
+        args.bundle,
+        args.trusted_root,
+        certificate_identity=args.certificate_identity,
+        certificate_oidc_issuer=args.certificate_oidc_issuer,
+        authority=args.authority,
+        destination=args.output,
+        cosign=args.cosign,
+    )
+    result = verify_sigstore_verification_file(
+        destination,
+        artifact=args.artifact,
+        bundle=args.bundle,
+        trusted_root=args.trusted_root,
+    )
+    print(
+        f"Sigstore verification receipt: {destination}; "
+        f"authenticated={result['authenticated']}"
+    )
+    return 0 if result["authenticated"] else 1
+
+
+def _sigstore_receipt_verify(args: argparse.Namespace) -> int:
+    result = verify_sigstore_verification_file(
+        args.receipt,
+        artifact=args.artifact,
+        bundle=args.bundle,
+        trusted_root=args.trusted_root,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Sigstore receipt: valid={result['valid']}, "
+            f"authenticated={result['authenticated']}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
@@ -1827,7 +2151,9 @@ def _ssvc_assess(args: argparse.Namespace) -> int:
     value = ssvc_assessment(args.policy, args.observations)
     destination = export_ssvc_assessment(value, args.output)
     print(f"Created SSVC assessment: {destination}")
-    print(f"Vulnerabilities={value['summary']['vulnerabilities']}; outcomes={value['summary']['outcomes']}.")
+    print(
+        f"Vulnerabilities={value['summary']['vulnerabilities']}; outcomes={value['summary']['outcomes']}."
+    )
     print(value["notice"])
     return 0
 
@@ -1841,7 +2167,9 @@ def _ssvc_verify(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"SSVC assessment: valid={result['valid']}, complete={result['complete']}")
+        print(
+            f"SSVC assessment: valid={result['valid']}, complete={result['complete']}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
@@ -1849,9 +2177,7 @@ def _ssvc_verify(args: argparse.Namespace) -> int:
 
 
 def _dependability_assess(args: argparse.Namespace) -> int:
-    value = dependability_assessment(
-        load_analysis(args.analysis), args.authoring
-    )
+    value = dependability_assessment(load_analysis(args.analysis), args.authoring)
     destination = export_dependability_assessment(value, args.output)
     print(f"Created dependability assessment: {destination}")
     print(
@@ -2069,8 +2395,10 @@ def _validation_portfolio_report_verify(args: argparse.Namespace) -> int:
 
 def _sarif_fuse(args: argparse.Namespace) -> int:
     value = sarif_fusion(
-        load_analysis(args.analysis), args.sarif,
-        authority=args.authority, evidence_refs=args.evidence_ref,
+        load_analysis(args.analysis),
+        args.sarif,
+        authority=args.authority,
+        evidence_refs=args.evidence_ref,
     )
     destination = export_sarif_fusion(value, args.output)
     print(f"Created analysis-bound SARIF fusion: {destination}")
@@ -2091,7 +2419,9 @@ def _sarif_fuse_verify(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"SARIF fusion: valid={result['valid']}, ready for triage={result['ready_for_triage']}")
+        print(
+            f"SARIF fusion: valid={result['valid']}, ready for triage={result['ready_for_triage']}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
@@ -2100,14 +2430,18 @@ def _sarif_fuse_verify(args: argparse.Namespace) -> int:
 
 def _oscal_assessment_results(args: argparse.Namespace) -> int:
     value = oscal_assessment_results(
-        load_analysis(args.analysis), authority=args.authority, title=args.title,
+        load_analysis(args.analysis),
+        authority=args.authority,
+        title=args.title,
         assessment_plan_href=args.assessment_plan_href,
         evidence_base_href=args.evidence_base_href,
     )
     destination = export_oscal_assessment_results(value, args.output)
     observations = len(value["assessment-results"]["results"][0]["observations"])
     print(f"Created OSCAL Assessment Results: {destination}")
-    print(f"Projected observations={observations}. Validate with the official NIST OSCAL schema before interchange.")
+    print(
+        f"Projected observations={observations}. Validate with the official NIST OSCAL schema before interchange."
+    )
     return 0
 
 
@@ -2118,11 +2452,72 @@ def _oscal_assessment_results_verify(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"OSCAL Assessment Results: valid={result['valid']}, ready for normative validation={result['ready_for_normative_validation']}")
+        print(
+            f"OSCAL Assessment Results: valid={result['valid']}, ready for normative validation={result['ready_for_normative_validation']}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
     return 0 if result["valid"] else 1
+
+
+def _print_oscal_verdict(label: str, result: dict[str, Any], *, as_json: bool) -> int:
+    if as_json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"{label}: valid={result['valid']}, "
+            f"ready for normative validation={result['ready_for_normative_validation']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _oscal_assessment_plan(args: argparse.Namespace) -> int:
+    value = oscal_assessment_plan(
+        load_analysis(args.analysis),
+        authority=args.authority,
+        ssp_href=args.ssp_href,
+        title=args.title,
+    )
+    destination = export_oscal_assessment_plan(value, args.output)
+    print(f"Created OSCAL Assessment Plan: {destination}")
+    print(
+        f"Activities={len(value['assessment-plan']['local-definitions']['activities'])}; "
+        f"tasks={len(value['assessment-plan']['tasks'])}."
+    )
+    return 0
+
+
+def _oscal_assessment_plan_verify(args: argparse.Namespace) -> int:
+    result = verify_oscal_assessment_plan_file(
+        args.oscal, analysis=load_analysis(args.analysis) if args.analysis else None
+    )
+    return _print_oscal_verdict("OSCAL Assessment Plan", result, as_json=args.json)
+
+
+def _oscal_poam(args: argparse.Namespace) -> int:
+    value = oscal_poam(
+        load_analysis(args.analysis),
+        authority=args.authority,
+        ssp_href=args.ssp_href,
+        title=args.title,
+    )
+    destination = export_oscal_poam(value, args.output)
+    print(f"Created OSCAL POA&M: {destination}")
+    print(
+        f"Open remediation items={len(value['plan-of-action-and-milestones']['poam-items'])}."
+    )
+    return 0
+
+
+def _oscal_poam_verify(args: argparse.Namespace) -> int:
+    result = verify_oscal_poam_file(
+        args.oscal, analysis=load_analysis(args.analysis) if args.analysis else None
+    )
+    return _print_oscal_verdict("OSCAL POA&M", result, as_json=args.json)
 
 
 def _benchmark_suite_catalog(args: argparse.Namespace) -> int:
@@ -2147,8 +2542,101 @@ def _benchmark_execution_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _benchmark_adapter_init(args: argparse.Namespace) -> int:
+    value = benchmark_adapter_template(suite_id=args.suite, authority=args.authority)
+    destination = export_benchmark_adapter(value, args.output)
+    print(f"Created benchmark adapter contract: {destination}")
+    print(value["claim_boundary"])
+    return 0
+
+
+def _benchmark_adapter_seal(args: argparse.Namespace) -> int:
+    print(
+        f"Sealed benchmark adapter: {seal_benchmark_adapter(args.source, args.output)}"
+    )
+    return 0
+
+
+def _benchmark_adapter_verify(args: argparse.Namespace) -> int:
+    result = verify_benchmark_adapter_file(args.adapter)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Benchmark adapter: valid={result['valid']}, "
+            f"eligible={result['eligible_for_execution']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _security_taxonomy_import(args: argparse.Namespace) -> int:
+    value = import_security_taxonomy(
+        args.source,
+        authority=args.authority,
+        expected_kind=args.kind,
+        expected_version=args.version,
+    )
+    destination = export_security_taxonomy(value, args.output)
+    print(
+        f"Imported {value['taxonomy']['kind'].upper()} {value['taxonomy']['version']}: "
+        f"{destination}; entries={value['summary']['entries']}"
+    )
+    return 0
+
+
+def _security_taxonomy_verify(args: argparse.Namespace) -> int:
+    result = verify_security_taxonomy_file(args.artifact, source=args.source)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Security taxonomy: valid={result['valid']}, "
+            f"eligible={result['eligible_for_mapping']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _standards_lifecycle_init(args: argparse.Namespace) -> int:
+    value = standards_lifecycle_template(authority=args.authority)
+    destination = export_standards_lifecycle(value, args.output)
+    print(f"Created standards lifecycle ledger: {destination}")
+    print(value["claim_boundary"])
+    return 0
+
+
+def _standards_lifecycle_seal(args: argparse.Namespace) -> int:
+    print(
+        f"Sealed standards lifecycle ledger: "
+        f"{seal_standards_lifecycle(args.source, args.output)}"
+    )
+    return 0
+
+
+def _standards_lifecycle_verify(args: argparse.Namespace) -> int:
+    result = verify_standards_lifecycle_file(args.ledger)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Standards lifecycle: valid={result['valid']}, "
+            f"eligible={result['eligible_as_current_catalog_evidence']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
 def _benchmark_execution_seal(args: argparse.Namespace) -> int:
-    print(f"Sealed benchmark execution receipt: {seal_benchmark_execution_source(args.source, args.output)}")
+    print(
+        f"Sealed benchmark execution receipt: {seal_benchmark_execution_source(args.source, args.output)}"
+    )
     return 0
 
 
@@ -2157,11 +2645,56 @@ def _benchmark_execution_verify(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"Benchmark execution: valid={result['valid']}, eligible={result['eligible_for_benchmark_assessment']}")
+        print(
+            f"Benchmark execution: valid={result['valid']}, eligible={result['eligible_for_benchmark_assessment']}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
     return 0 if result["valid"] else 1
+
+
+def _benchmark_observations_seal(args: argparse.Namespace) -> int:
+    destination = seal_benchmark_observations(args.source, args.output)
+    print(f"Sealed benchmark observations: {destination}")
+    return 0
+
+
+def _benchmark_observations_verify(args: argparse.Namespace) -> int:
+    result = verify_benchmark_observations_file(args.observations)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"Benchmark observations: valid={result['valid']}, "
+            f"eligible={result['eligible_for_execution_receipt']}"
+        )
+        for error in result["errors"]:
+            print(f"- {error}")
+        print(result["notice"])
+    return 0 if result["valid"] else 1
+
+
+def _benchmark_execution_run(args: argparse.Namespace) -> int:
+    destination = run_benchmark_campaign(
+        args.receipt,
+        args.suite_source,
+        args.adapter,
+        args.evidence_directory,
+        args.output,
+        engine=args.engine,
+    )
+    result = verify_benchmark_execution_file(destination)
+    print(
+        f"Executed benchmark campaign: {destination}; "
+        f"eligible={result['eligible_for_benchmark_assessment']}"
+    )
+    return 0 if result["eligible_for_benchmark_assessment"] else 1
+
+
+def _campaign_snapshot(args: argparse.Namespace) -> int:
+    print(repository_snapshot_sha256(args.source))
+    return 0
 
 
 def _fuzz_campaign_init(args: argparse.Namespace) -> int:
@@ -2173,7 +2706,9 @@ def _fuzz_campaign_init(args: argparse.Namespace) -> int:
 
 
 def _fuzz_campaign_seal(args: argparse.Namespace) -> int:
-    print(f"Sealed fuzz-campaign receipt: {seal_fuzz_campaign(args.source, args.output)}")
+    print(
+        f"Sealed fuzz-campaign receipt: {seal_fuzz_campaign(args.source, args.output)}"
+    )
     return 0
 
 
@@ -2182,11 +2717,29 @@ def _fuzz_campaign_verify(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"Fuzz campaign: valid={result['valid']}, eligible={result['eligible_for_assurance_use']}")
+        print(
+            f"Fuzz campaign: valid={result['valid']}, eligible={result['eligible_for_assurance_use']}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
     return 0 if result["valid"] else 1
+
+
+def _fuzz_campaign_run(args: argparse.Namespace) -> int:
+    destination = run_fuzz_campaign(
+        args.campaign,
+        args.repository,
+        args.evidence_directory,
+        args.output,
+        engine=args.engine,
+    )
+    result = verify_fuzz_campaign_file(destination)
+    print(
+        f"Executed fuzz campaign: {destination}; "
+        f"eligible={result['eligible_for_assurance_use']}"
+    )
+    return 0 if result["eligible_for_assurance_use"] else 1
 
 
 def _bound_method_init(args: argparse.Namespace) -> int:
@@ -2224,8 +2777,12 @@ def _bound_method_verify(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        status = result.get("complete", result.get("eligible_for_authorized_conclusion", False))
-        print(f"{spec['label'].title()}: valid={result['valid']}, complete/eligible={status}")
+        status = result.get(
+            "complete", result.get("eligible_for_authorized_conclusion", False)
+        )
+        print(
+            f"{spec['label'].title()}: valid={result['valid']}, complete/eligible={status}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])
@@ -2267,7 +2824,9 @@ def _unbound_method_verify(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         status = result.get("complete", result.get("eligible_for_governed_use", False))
-        print(f"{spec['label'].title()}: valid={result['valid']}, complete/eligible={status}")
+        print(
+            f"{spec['label'].title()}: valid={result['valid']}, complete/eligible={status}"
+        )
         for error in result["errors"]:
             print(f"- {error}")
         print(result["notice"])

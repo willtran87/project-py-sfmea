@@ -94,7 +94,9 @@ def _sha256_file_bounded(path: Path, *, limit: int, label: str) -> tuple[str, in
             while chunk := source_file.read(1024 * 1024):
                 consumed += len(chunk)
                 if consumed > limit:
-                    raise ValueError(f"{label} exceeds the {limit}-byte consumption limit")
+                    raise ValueError(
+                        f"{label} exceeds the {limit}-byte consumption limit"
+                    )
                 digest.update(chunk)
     except OSError as exc:
         raise ValueError(f"{label} could not be read safely") from exc
@@ -119,7 +121,9 @@ def _copy_file_bounded(
             while chunk := source_file.read(1024 * 1024):
                 consumed += len(chunk)
                 if consumed > limit:
-                    raise ValueError(f"{label} exceeds the {limit}-byte consumption limit")
+                    raise ValueError(
+                        f"{label} exceeds the {limit}-byte consumption limit"
+                    )
                 target_file.write(chunk)
                 digest.update(chunk)
     except OSError as exc:
@@ -135,9 +139,7 @@ def _inside(root: Path, value: Path) -> bool:
         return False
 
 
-def _obligation(
-    analysis: dict[str, Any], obligation_id: str
-) -> dict[str, Any]:
+def _obligation(analysis: dict[str, Any], obligation_id: str) -> dict[str, Any]:
     register = ensure_assurance_register(analysis)
     value = next(
         (
@@ -187,9 +189,13 @@ def register_test_implementation(
     if status not in {"proposed", "implemented"}:
         raise ValueError("test implementation status must be proposed or implemented")
     if origin not in {"human", "llm_generated", "imported"}:
-        raise ValueError("test implementation origin must be human, llm_generated, or imported")
+        raise ValueError(
+            "test implementation origin must be human, llm_generated, or imported"
+        )
     if not author.strip():
-        raise ValueError("test implementation requires an author or generating agent identity")
+        raise ValueError(
+            "test implementation requires an author or generating agent identity"
+        )
     obligation = _obligation(analysis, obligation_id)
     root = _repository_root(analysis)
     path = _test_file(root, test_path)
@@ -235,7 +241,14 @@ def _git_state(root: Path) -> dict[str, Any]:
             timeout=10,
         )
         status = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"],
+            [
+                "git",
+                "-C",
+                str(root),
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -272,26 +285,35 @@ def prepare_sandbox_execution(
     if not initiated_by.strip():
         raise ValueError("sandbox execution requires an initiating identity")
     if not 1 <= timeout_seconds <= MAX_TIMEOUT_SECONDS:
-        raise ValueError(f"sandbox timeout must be from 1 through {MAX_TIMEOUT_SECONDS} seconds")
+        raise ValueError(
+            f"sandbox timeout must be from 1 through {MAX_TIMEOUT_SECONDS} seconds"
+        )
     obligation = _obligation(analysis, obligation_id)
     automation = obligation.get("automation", {})
     if automation.get("implementation_status") != "implemented":
-        raise ValueError("assurance test must be registered as implemented before execution")
+        raise ValueError(
+            "assurance test must be registered as implemented before execution"
+        )
     root = _repository_root(analysis)
     test_path = _test_file(root, str(automation.get("implemented_test_path", "")))
     actual_test_sha = _sha256_file(test_path)
     if actual_test_sha != automation.get("test_sha256"):
-        raise ValueError("registered assurance test hash is stale; register the implementation again")
+        raise ValueError(
+            "registered assurance test hash is stale; register the implementation again"
+        )
     baseline = analysis.get("project", {}).get("baseline", {})
     if obligation.get("baseline_id") != baseline.get("id"):
-        raise ValueError("assurance obligation is stale for the current analysis baseline")
+        raise ValueError(
+            "assurance obligation is stale for the current analysis baseline"
+        )
     current_vcs = _git_state(root)
     recorded_vcs = baseline.get("vcs", {})
-    if (
-        recorded_vcs.get("revision")
-        and current_vcs.get("revision") != recorded_vcs.get("revision")
+    if recorded_vcs.get("revision") and current_vcs.get("revision") != recorded_vcs.get(
+        "revision"
     ):
-        raise ValueError("repository revision differs from the analyzed baseline; rescan first")
+        raise ValueError(
+            "repository revision differs from the analyzed baseline; rescan first"
+        )
     if current_vcs.get("dirty") and not allow_dirty:
         raise ValueError(
             "repository is dirty; commit and rescan or use --allow-dirty with an explicit weaker-freshness record"
@@ -363,7 +385,9 @@ def prepare_sandbox_execution(
         "evidence_directory": str(evidence),
         "acceptance_criteria": [
             {"index": index, "text": text, "result": "unassessed", "evidence_ids": []}
-            for index, text in enumerate(obligation.get("acceptance_criteria", []), start=1)
+            for index, text in enumerate(
+                obligation.get("acceptance_criteria", []), start=1
+            )
         ],
         "stimulus_observed": None,
         "status": "planned",
@@ -417,7 +441,9 @@ def _junit_summary(path: Path) -> dict[str, Any]:
     return summary
 
 
-def _artifact(execution_id: str, kind: str, path: Path, run_directory: Path) -> dict[str, Any]:
+def _artifact(
+    execution_id: str, kind: str, path: Path, run_directory: Path
+) -> dict[str, Any]:
     digest = _sha256_file(path)
     return {
         "id": stable_id("EVID", execution_id, kind, digest),
@@ -505,7 +531,9 @@ def run_sandbox_execution(
     )
     run_directory = root / contract["id"]
     if run_directory.exists():
-        raise ValueError(f"execution evidence destination already exists: {run_directory}")
+        raise ValueError(
+            f"execution evidence destination already exists: {run_directory}"
+        )
     preview.mkdir(parents=True, exist_ok=False)
     # The mount argument embeds the path, so build against the staging destination.
     argv = sandbox_command(
@@ -644,22 +672,35 @@ def import_execution_evidence(
     obligation = _obligation(analysis, obligation_id)
     baseline = analysis.get("project", {}).get("baseline", {})
     if supplied.get("baseline_id") != baseline.get("id"):
-        raise ValueError("imported evidence does not identify the current analysis baseline")
+        raise ValueError(
+            "imported evidence does not identify the current analysis baseline"
+        )
     recorded_revision = str(baseline.get("vcs", {}).get("revision", ""))
     supplied_revision = str(supplied.get("repository_revision", ""))
     if recorded_revision and supplied_revision != recorded_revision:
-        raise ValueError("imported evidence repository revision differs from the analysis baseline")
+        raise ValueError(
+            "imported evidence repository revision differs from the analysis baseline"
+        )
     status = str(supplied.get("status", ""))
     if status not in EXECUTION_STATUSES - {"planned"}:
-        raise ValueError("imported execution status must be passed, failed, timeout, or error")
+        raise ValueError(
+            "imported execution status must be passed, failed, timeout, or error"
+        )
     command_argv = supplied.get("command_argv")
-    if not isinstance(command_argv, list) or not command_argv or not all(
-        isinstance(value, str) and value and "\x00" not in value for value in command_argv
+    if (
+        not isinstance(command_argv, list)
+        or not command_argv
+        or not all(
+            isinstance(value, str) and value and "\x00" not in value
+            for value in command_argv
+        )
     ):
         raise ValueError("imported command_argv must be a non-empty string array")
     test = supplied.get("test")
     if not isinstance(test, dict) or not isinstance(test.get("path"), str):
-        raise ValueError("imported evidence must identify the repository-relative test path")
+        raise ValueError(
+            "imported evidence must identify the repository-relative test path"
+        )
     root = _repository_root(analysis)
     test_path = _test_file(root, str(test["path"]))
     test_sha, _test_size = _sha256_file_bounded(
@@ -668,14 +709,19 @@ def import_execution_evidence(
         label="imported assurance test",
     )
     if test.get("sha256") != test_sha:
-        raise ValueError("imported evidence test hash does not match the current test source")
+        raise ValueError(
+            "imported evidence test hash does not match the current test source"
+        )
     automation = obligation.get("automation", {})
     registration_required = automation.get("implementation_status") != "implemented"
     if not registration_required and (
-        automation.get("implemented_test_path") != test_path.relative_to(root).as_posix()
+        automation.get("implemented_test_path")
+        != test_path.relative_to(root).as_posix()
         or automation.get("test_sha256") != test_sha
     ):
-        raise ValueError("imported evidence does not match the registered test implementation")
+        raise ValueError(
+            "imported evidence does not match the registered test implementation"
+        )
     implementation_origin = (
         "imported"
         if registration_required
@@ -717,12 +763,16 @@ def import_execution_evidence(
             raise ValueError("imported evidence exceeds the total size limit")
         claimed_sha = str(artifact.get("sha256", ""))
         if claimed_sha and claimed_sha != actual_sha:
-            raise ValueError(f"artifact {index} digest does not match its manifest claim")
+            raise ValueError(
+                f"artifact {index} digest does not match its manifest claim"
+            )
         sources.append((kind.casefold(), source, actual_sha, size))
     supplied_digest = hashlib.sha256(
         json.dumps(supplied, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    execution_id = stable_id("EXEC", obligation_id, baseline.get("id", ""), supplied_digest)
+    execution_id = stable_id(
+        "EXEC", obligation_id, baseline.get("id", ""), supplied_digest
+    )
     register = ensure_assurance_register(analysis)
     existing = next(
         (
@@ -738,14 +788,22 @@ def import_execution_evidence(
     destination_root.mkdir(parents=True, exist_ok=True)
     run_directory = destination_root / execution_id
     if run_directory.exists():
-        raise ValueError(f"execution evidence destination already exists: {run_directory}")
+        raise ValueError(
+            f"execution evidence destination already exists: {run_directory}"
+        )
     preview = destination_root / f".import-{uuid.uuid4().hex}"
     preview.mkdir(parents=True, exist_ok=False)
     artifacts: list[dict[str, Any]] = []
     try:
         copied_total = 0
-        for index, (kind, source, actual_sha, source_size) in enumerate(sources, start=1):
-            suffix = source.suffix[:16] if re.fullmatch(r"\.[A-Za-z0-9._-]+", source.suffix) else ""
+        for index, (kind, source, actual_sha, source_size) in enumerate(
+            sources, start=1
+        ):
+            suffix = (
+                source.suffix[:16]
+                if re.fullmatch(r"\.[A-Za-z0-9._-]+", source.suffix)
+                else ""
+            )
             destination = preview / f"artifact-{index:03d}-{kind}{suffix}"
             copied_sha, copied_size = _copy_file_bounded(
                 source,
@@ -755,7 +813,9 @@ def import_execution_evidence(
             )
             copied_total += copied_size
             if copied_total > MAX_IMPORTED_EVIDENCE_BYTES:
-                raise ValueError("imported evidence exceeds the total size limit during copy")
+                raise ValueError(
+                    "imported evidence exceeds the total size limit during copy"
+                )
             if copied_sha != actual_sha or copied_size != source_size:
                 raise ValueError(f"artifact {index} changed while it was imported")
             artifacts.append(_artifact(execution_id, kind, destination, preview))
@@ -791,8 +851,15 @@ def import_execution_evidence(
             "dependency_lock": supplied.get("dependency_lock", {}),
             "evidence_directory": str(run_directory),
             "acceptance_criteria": [
-                {"index": index, "text": text, "result": "unassessed", "evidence_ids": []}
-                for index, text in enumerate(obligation.get("acceptance_criteria", []), start=1)
+                {
+                    "index": index,
+                    "text": text,
+                    "result": "unassessed",
+                    "evidence_ids": [],
+                }
+                for index, text in enumerate(
+                    obligation.get("acceptance_criteria", []), start=1
+                )
             ],
             "stimulus_observed": None,
             "status": status,
@@ -866,7 +933,10 @@ def _verify_execution_manifest(execution: dict[str, Any]) -> tuple[bool, str]:
     mutable_after_collection = {"acceptance_criteria", "reviews", "stimulus_observed"}
     for key, value in on_disk.items():
         if key not in mutable_after_collection and execution.get(key) != value:
-            return False, "execution manifest content does not match the analysis record"
+            return (
+                False,
+                "execution manifest content does not match the analysis record",
+            )
     return True, ""
 
 
@@ -935,16 +1005,17 @@ def verify_execution_artifacts(
         }
     if evidence_root is not None:
         allowed_root = Path(evidence_root).expanduser().absolute().resolve()
-        execution_root = Path(
-            str(execution.get("evidence_directory", ""))
-        ).expanduser().absolute().resolve()
+        execution_root = (
+            Path(str(execution.get("evidence_directory", "")))
+            .expanduser()
+            .absolute()
+            .resolve()
+        )
         if not _inside(allowed_root, execution_root):
             return {
                 "valid": False,
                 "execution_id": execution_id,
-                "manifest_sha256": str(
-                    execution.get("execution_manifest_sha256", "")
-                ),
+                "manifest_sha256": str(execution.get("execution_manifest_sha256", "")),
                 "artifact_ids": [
                     str(value) for value in execution.get("artifacts", [])
                 ],
@@ -988,11 +1059,15 @@ def review_execution_evidence(
     if execution is None:
         raise KeyError(execution_id)
     if reviewer.strip() == str(execution.get("initiated_by", "")).strip():
-        raise ValueError("evidence reviewer must be independent from the execution initiator")
+        raise ValueError(
+            "evidence reviewer must be independent from the execution initiator"
+        )
     obligation = _obligation(analysis, str(execution.get("obligation_id", "")))
     criteria = obligation.get("acceptance_criteria", [])
     if set(criterion_results) != set(range(1, len(criteria) + 1)):
-        raise ValueError("evidence review requires exactly one result for every acceptance criterion")
+        raise ValueError(
+            "evidence review requires exactly one result for every acceptance criterion"
+        )
     if any(value not in CRITERION_RESULTS for value in criterion_results.values()):
         raise ValueError("invalid acceptance-criterion result")
     artifacts_valid, artifact_errors = _verify_artifacts(register, execution)
@@ -1018,7 +1093,11 @@ def review_execution_evidence(
         "rationale": rationale.strip(),
         "stimulus_observed": stimulus_observed,
         "criterion_results": [
-            {"index": index, "text": criteria[index - 1], "result": criterion_results[index]}
+            {
+                "index": index,
+                "text": criteria[index - 1],
+                "result": criterion_results[index],
+            }
             for index in range(1, len(criteria) + 1)
         ],
         "artifact_integrity_valid": artifacts_valid,

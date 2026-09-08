@@ -12,16 +12,20 @@ import statistics
 import sys
 import time
 import tracemalloc
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from pysfmea.file_publication import atomic_publish_text
+from pysfmea.integrity import canonical_json_sha256
+from pysfmea.model import utc_now
 from pysfmea.scanner import scan_repository
 from pysfmea.store import save_analysis
 from pysfmea.version import __version__
 
-FORMAT = "pysfmea-scan-performance-1"
+FORMAT = "pysfmea-scan-performance-2"
 MAX_REPEATS = 20
+MAX_WARMUPS = 10
 
 
 def _process_peak_rss_bytes() -> int | None:
@@ -43,10 +47,44 @@ def _process_peak_rss_bytes() -> int | None:
     return value * multiplier if value > 0 else None
 
 
+def _measure_scan_worker(repository: str) -> dict[str, Any]:
+    """Measure one scan in a fresh worker process."""
+
+    telemetry: dict[str, Any] = {}
+    tracemalloc.start()
+    started = time.perf_counter_ns()
+    try:
+        analysis = scan_repository(repository, telemetry=telemetry)
+        elapsed_ns = time.perf_counter_ns() - started
+        _current, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return {
+        "elapsed_seconds": round(elapsed_ns / 1_000_000_000, 6),
+        "peak_traced_bytes": peak_bytes,
+        "process_peak_rss_bytes": _process_peak_rss_bytes(),
+        "phases_seconds": telemetry.get("phases_seconds", {}),
+        "fact_cache": telemetry.get("fact_cache", {}),
+        "baseline_id": str(
+            analysis.get("project", {}).get("baseline", {}).get("id", "")
+        ),
+    }
+
+
+def _fresh_process_measurements(root: Path, count: int) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    with ProcessPoolExecutor(max_workers=1, max_tasks_per_child=1) as executor:
+        for _index in range(count):
+            results.append(executor.submit(_measure_scan_worker, str(root)).result())
+    return results
+
+
 def benchmark_repository(
     repository: str | Path,
     *,
     repeats: int = 3,
+    warmups: int = 1,
+    process_isolation: bool | None = None,
     reuse_facts: bool = False,
     max_median_seconds: float | None = None,
     max_peak_bytes: int | None = None,
@@ -56,8 +94,26 @@ def benchmark_repository(
     min_candidates: int | None = None,
     analysis_output: str | Path | None = None,
 ) -> dict[str, Any]:
-    if not isinstance(repeats, int) or isinstance(repeats, bool) or not 1 <= repeats <= MAX_REPEATS:
+    if (
+        not isinstance(repeats, int)
+        or isinstance(repeats, bool)
+        or not 1 <= repeats <= MAX_REPEATS
+    ):
         raise ValueError(f"repeats must be between 1 and {MAX_REPEATS}")
+    if (
+        not isinstance(warmups, int)
+        or isinstance(warmups, bool)
+        or not 0 <= warmups <= MAX_WARMUPS
+    ):
+        raise ValueError(f"warmups must be between 0 and {MAX_WARMUPS}")
+    if process_isolation is None:
+        process_isolation = not reuse_facts
+    if not isinstance(process_isolation, bool):
+        raise ValueError("process_isolation must be boolean")
+    if process_isolation and reuse_facts:
+        raise ValueError(
+            "fact reuse requires explicitly selected in-process measurement"
+        )
     if max_median_seconds is not None and max_median_seconds <= 0:
         raise ValueError("max_median_seconds must be greater than zero")
     if max_peak_bytes is not None and (
@@ -80,41 +136,50 @@ def benchmark_repository(
     runs: list[dict[str, Any]] = []
     baseline_ids: set[str] = set()
     last_analysis: dict[str, Any] = {}
-    fact_cache: dict[str, Any] | None = {} if reuse_facts else None
-    for index in range(repeats):
-        telemetry: dict[str, Any] = {}
-        tracemalloc.start()
-        started = time.perf_counter_ns()
-        try:
-            analysis = scan_repository(
-                root,
-                telemetry=telemetry,
-                fact_cache=fact_cache,
-            )
-            elapsed_ns = time.perf_counter_ns() - started
-            _current, peak_bytes = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
-        last_analysis = analysis
-        baseline_ids.add(str(analysis.get("project", {}).get("baseline", {}).get("id", "")))
-        runs.append(
-            {
-                "run": index + 1,
-                "elapsed_seconds": round(elapsed_ns / 1_000_000_000, 6),
-                "peak_traced_bytes": peak_bytes,
-                "process_peak_rss_bytes": _process_peak_rss_bytes(),
-                "phases_seconds": telemetry.get("phases_seconds", {}),
-                "fact_cache": telemetry.get("fact_cache", {}),
-            }
+    if process_isolation:
+        _fresh_process_measurements(root, warmups)
+        measured = _fresh_process_measurements(root, repeats)
+        for index, run in enumerate(measured):
+            baseline_ids.add(str(run.pop("baseline_id")))
+            runs.append({"run": index + 1, **run})
+        last_analysis = scan_repository(root)
+        baseline_ids.add(
+            str(last_analysis.get("project", {}).get("baseline", {}).get("id", ""))
         )
+    else:
+        fact_cache: dict[str, Any] | None = {} if reuse_facts else None
+        for _index in range(warmups):
+            scan_repository(root, fact_cache=fact_cache)
+        for index in range(repeats):
+            telemetry: dict[str, Any] = {}
+            tracemalloc.start()
+            started = time.perf_counter_ns()
+            try:
+                analysis = scan_repository(
+                    root, telemetry=telemetry, fact_cache=fact_cache
+                )
+                elapsed_ns = time.perf_counter_ns() - started
+                _current, peak_bytes = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            last_analysis = analysis
+            baseline_ids.add(
+                str(analysis.get("project", {}).get("baseline", {}).get("id", ""))
+            )
+            runs.append(
+                {
+                    "run": index + 1,
+                    "elapsed_seconds": round(elapsed_ns / 1_000_000_000, 6),
+                    "peak_traced_bytes": peak_bytes,
+                    "process_peak_rss_bytes": _process_peak_rss_bytes(),
+                    "phases_seconds": telemetry.get("phases_seconds", {}),
+                    "fact_cache": telemetry.get("fact_cache", {}),
+                }
+            )
     durations = sorted(float(value["elapsed_seconds"]) for value in runs)
     peaks = [int(value["peak_traced_bytes"]) for value in runs]
     phase_names = sorted(
-        {
-            str(name)
-            for run in runs
-            for name in run.get("phases_seconds", {})
-        }
+        {str(name) for run in runs for name in run.get("phases_seconds", {})}
     )
     phase_samples = {
         name: [
@@ -139,11 +204,18 @@ def benchmark_repository(
     p95_index = max(0, math.ceil(len(durations) * 0.95) - 1)
     stable = len(baseline_ids) == 1 and "" not in baseline_ids
     median_seconds = round(statistics.median(durations), 6)
+    mean_seconds = statistics.fmean(durations)
+    standard_deviation_seconds = (
+        statistics.stdev(durations) if len(durations) > 1 else 0.0
+    )
+    median_absolute_deviation_seconds = statistics.median(
+        [abs(value - median_seconds) for value in durations]
+    )
     cold_start_seconds = float(runs[0]["elapsed_seconds"])
     warm_durations = [
         float(value["elapsed_seconds"])
         for value in runs[1:]
-        if int(value.get("fact_cache", {}).get("hits", 0)) > 0
+        if not process_isolation and int(value.get("fact_cache", {}).get("hits", 0)) > 0
     ]
     steady_state_median_seconds = (
         round(statistics.median(warm_durations), 6) if warm_durations else None
@@ -170,9 +242,7 @@ def benchmark_repository(
     candidate_count = len(last_analysis.get("items", []))
     budget_checks = {
         "median_seconds": (
-            None
-            if max_median_seconds is None
-            else median_seconds <= max_median_seconds
+            None if max_median_seconds is None else median_seconds <= max_median_seconds
         ),
         "peak_traced_bytes": (
             None if max_peak_bytes is None else maximum_peak_bytes <= max_peak_bytes
@@ -197,11 +267,28 @@ def benchmark_repository(
     budgets_passed = all(value is not False for value in budget_checks.values())
     result: dict[str, Any] = {
         "format": FORMAT,
+        "generated_at": utc_now(),
         "tool": {"name": "PySFMEA", "version": __version__},
         "environment": {
             "python": platform.python_version(),
             "implementation": platform.python_implementation(),
             "platform": platform.platform(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "logical_cpu_count": os.cpu_count(),
+        },
+        "measurement_policy": {
+            "clock": "time.perf_counter_ns",
+            "memory": "tracemalloc peak with optional process high-water RSS",
+            "warmup_runs": warmups,
+            "process_model": "fresh spawned worker per measured scan"
+            if process_isolation
+            else "repeated scans in one interpreter",
+            "process_isolation": process_isolation,
+            "calibration": "fixed governed repeat and warmup counts; compare only like-for-like policies",
+            "outlier_policy": "retain every finite measured run; report median, MAD, standard deviation, coefficient of variation, and extrema",
+            "network_required": False,
+            "historical_comparison_requires_matching_environment": True,
         },
         "repository": {
             "path": str(root),
@@ -246,6 +333,16 @@ def benchmark_repository(
             "steady_state_median_seconds": steady_state_median_seconds,
             "warm_speedup_percent": warm_speedup_percent,
             "median_seconds": median_seconds,
+            "mean_seconds": round(mean_seconds, 6),
+            "standard_deviation_seconds": round(standard_deviation_seconds, 6),
+            "median_absolute_deviation_seconds": round(
+                median_absolute_deviation_seconds, 6
+            ),
+            "coefficient_of_variation_percent": (
+                round(standard_deviation_seconds / mean_seconds * 100, 3)
+                if mean_seconds > 0
+                else 0.0
+            ),
             "p95_seconds": durations[p95_index],
             "minimum_seconds": durations[0],
             "maximum_seconds": durations[-1],
@@ -256,8 +353,7 @@ def benchmark_repository(
                 for name, values in phase_samples.items()
             },
             "phase_maximums_seconds": {
-                name: round(max(values), 6)
-                for name, values in phase_samples.items()
+                name: round(max(values), 6) for name, values in phase_samples.items()
             },
         },
         "notice": (
@@ -280,6 +376,7 @@ def benchmark_repository(
             "sha256": digest.hexdigest(),
             "outside_timed_scan": True,
         }
+    result["content_sha256"] = canonical_json_sha256(result)
     return result
 
 
@@ -287,6 +384,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("repository")
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--warmups", type=int, default=1)
+    parser.add_argument(
+        "--in-process",
+        action="store_true",
+        help="measure repeated scans in one interpreter; required for --reuse-facts",
+    )
     parser.add_argument(
         "--reuse-facts",
         action="store_true",
@@ -319,6 +422,8 @@ def main(argv: list[str] | None = None) -> int:
     result = benchmark_repository(
         args.repository,
         repeats=args.repeats,
+        warmups=args.warmups,
+        process_isolation=not args.in_process,
         reuse_facts=args.reuse_facts,
         max_median_seconds=args.max_median_seconds,
         max_peak_bytes=args.max_peak_bytes,
@@ -337,8 +442,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sys.stdout.write(rendered)
     return int(
-        not result["repository"]["stable_baseline"]
-        or not result["budgets"]["passed"]
+        not result["repository"]["stable_baseline"] or not result["budgets"]["passed"]
     )
 
 

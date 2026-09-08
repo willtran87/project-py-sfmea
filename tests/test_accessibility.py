@@ -89,7 +89,9 @@ class AccessibilityEvidenceTests(unittest.TestCase):
         self.assertFalse(result["qualified"])
         self.assertFalse(result["checks"]["manual_scenarios_complete"])
 
-    def test_closed_contract_and_missing_file_return_schema_backed_rejections(self) -> None:
+    def test_closed_contract_and_missing_file_return_schema_backed_rejections(
+        self,
+    ) -> None:
         evidence = build_accessibility_evidence(self.report)
         evidence["format"] = "pysfmea-accessibility-evidence-1"
         evidence["unexpected"] = True

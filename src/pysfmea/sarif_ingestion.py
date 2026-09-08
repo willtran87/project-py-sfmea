@@ -53,7 +53,9 @@ def _path(value: Any) -> str:
 def _source_index(analysis: dict[str, Any]) -> list[tuple[str, int, int, str]]:
     result: list[tuple[str, int, int, str]] = []
     for component in analysis.get("components", []):
-        if not isinstance(component, dict) or not isinstance(component.get("source"), dict):
+        if not isinstance(component, dict) or not isinstance(
+            component.get("source"), dict
+        ):
             continue
         source = component["source"]
         try:
@@ -74,7 +76,11 @@ def _matching_component(
     candidates = [
         item
         for item in index
-        if (item[0] == path or item[0].endswith("/" + path) or path.endswith("/" + item[0]))
+        if (
+            item[0] == path
+            or item[0].endswith("/" + path)
+            or path.endswith("/" + item[0])
+        )
         and item[1] <= line <= item[2]
     ]
     if not candidates:
@@ -91,7 +97,9 @@ def _message(result: dict[str, Any]) -> str:
     message = result.get("message")
     if not isinstance(message, dict):
         raise ValueError("SARIF result message must be an object")
-    return bounded_text(message.get("text") or message.get("markdown"), "SARIF result message")
+    return bounded_text(
+        message.get("text") or message.get("markdown"), "SARIF result message"
+    )
 
 
 def _taxa(result: dict[str, Any]) -> list[str]:
@@ -107,7 +115,9 @@ def _taxa(result: dict[str, Any]) -> list[str]:
                 raw = [raw]
             if isinstance(raw, list):
                 for item in raw:
-                    if isinstance(item, str) and (key != "tags" or "cwe" in item.lower()):
+                    if isinstance(item, str) and (
+                        key != "tags" or "cwe" in item.lower()
+                    ):
                         values.add(bounded_text(item, "SARIF taxonomy value"))
     return sorted(values)
 
@@ -124,10 +134,16 @@ def _normalize_result(
     if not isinstance(result, dict):
         raise ValueError("SARIF result must be an object")
     locations = result.get("locations")
-    if not isinstance(locations, list) or not locations or not isinstance(locations[0], dict):
+    if (
+        not isinstance(locations, list)
+        or not locations
+        or not isinstance(locations[0], dict)
+    ):
         raise ValueError("SARIF result must have a primary physical location")
     physical = locations[0].get("physicalLocation")
-    if not isinstance(physical, dict) or not isinstance(physical.get("artifactLocation"), dict):
+    if not isinstance(physical, dict) or not isinstance(
+        physical.get("artifactLocation"), dict
+    ):
         raise ValueError("SARIF primary location must identify an artifact")
     path = _path(physical["artifactLocation"].get("uri"))
     region = physical.get("region", {})
@@ -136,14 +152,22 @@ def _normalize_result(
     line = region.get("startLine", 1)
     end_line = region.get("endLine", line)
     column = region.get("startColumn", 1)
-    if any(not isinstance(v, int) or isinstance(v, bool) or v < 1 for v in (line, end_line, column)) or end_line < line:
+    if (
+        any(
+            not isinstance(v, int) or isinstance(v, bool) or v < 1
+            for v in (line, end_line, column)
+        )
+        or end_line < line
+    ):
         raise ValueError("SARIF result coordinates are invalid")
     component_id, mapping = _matching_component(index, path, line)
     fingerprints = result.get("partialFingerprints", {})
     if not isinstance(fingerprints, dict):
         fingerprints = {}
     clean_fingerprints = {
-        bounded_text(k, "SARIF fingerprint name"): bounded_text(v, "SARIF fingerprint value")
+        bounded_text(k, "SARIF fingerprint name"): bounded_text(
+            v, "SARIF fingerprint value"
+        )
         for k, v in sorted(fingerprints.items())
         if isinstance(k, str) and isinstance(v, str)
     }
@@ -158,7 +182,12 @@ def _normalize_result(
         "rule_id": rule_id,
         "level": bounded_text(result.get("level", "warning"), "SARIF result level"),
         "message": _message(result),
-        "location": {"path": path, "start_line": line, "end_line": end_line, "start_column": column},
+        "location": {
+            "path": path,
+            "start_line": line,
+            "end_line": end_line,
+            "start_column": column,
+        },
         "taxa": _taxa(result),
         "fingerprints": clean_fingerprints,
         "component_id": component_id,
@@ -187,26 +216,67 @@ def sarif_fusion(
     normalized: list[dict[str, Any]] = []
     total_runs = 0
     for source_number, source in enumerate(sarif_sources):
-        document = load_bounded_json_document(source, label="SARIF", max_bytes=MAX_SARIF_BYTES, max_depth=100, max_nodes=8_000_000)
+        document = load_bounded_json_document(
+            source,
+            label="SARIF",
+            max_bytes=MAX_SARIF_BYTES,
+            max_depth=100,
+            max_nodes=8_000_000,
+        )
         raw = document.value
-        if not isinstance(raw, dict) or raw.get("version") != "2.1.0" or not isinstance(raw.get("runs"), list):
+        if (
+            not isinstance(raw, dict)
+            or raw.get("version") != "2.1.0"
+            or not isinstance(raw.get("runs"), list)
+        ):
             raise ValueError("SARIF must be a version 2.1.0 document with runs")
         total_runs += len(raw["runs"])
         if total_runs > MAX_RUNS:
             raise ValueError("SARIF run population exceeds the limit")
-        inputs.append({"reference": document.path.name, "bytes": document.size, "sha256": hashlib.sha256(document.raw).hexdigest()})
+        inputs.append(
+            {
+                "reference": document.path.name,
+                "bytes": document.size,
+                "sha256": hashlib.sha256(document.raw).hexdigest(),
+            }
+        )
         for local_run, run in enumerate(raw["runs"]):
-            if not isinstance(run, dict) or not isinstance(run.get("tool"), dict) or not isinstance(run["tool"].get("driver"), dict):
+            if (
+                not isinstance(run, dict)
+                or not isinstance(run.get("tool"), dict)
+                or not isinstance(run["tool"].get("driver"), dict)
+            ):
                 raise ValueError("SARIF run tool driver is missing")
             driver = run["tool"]["driver"]
             tool = bounded_text(driver.get("name"), "SARIF tool name")
-            version = bounded_text(driver.get("semanticVersion") or driver.get("version") or "unknown", "SARIF tool version")
+            version = bounded_text(
+                driver.get("semanticVersion") or driver.get("version") or "unknown",
+                "SARIF tool version",
+            )
             results = run.get("results", [])
-            if not isinstance(results, list) or len(normalized) + len(results) > MAX_RESULTS:
+            if (
+                not isinstance(results, list)
+                or len(normalized) + len(results) > MAX_RESULTS
+            ):
                 raise ValueError("SARIF result population exceeds the limit")
-            tools.append({"source_index": source_number, "run_index": local_run, "name": tool, "version": version, "results": len(results)})
+            tools.append(
+                {
+                    "source_index": source_number,
+                    "run_index": local_run,
+                    "name": tool,
+                    "version": version,
+                    "results": len(results),
+                }
+            )
             normalized.extend(
-                _normalize_result(item, tool=tool, source_index=source_number, run_index=local_run, result_index=i, index=source_index)
+                _normalize_result(
+                    item,
+                    tool=tool,
+                    source_index=source_number,
+                    run_index=local_run,
+                    result_index=i,
+                    index=source_index,
+                )
                 for i, item in enumerate(results)
             )
     # A cluster is an accounting projection, not deduplication. Every result remains above.
@@ -217,7 +287,14 @@ def sarif_fusion(
         key = (loc["path"], loc["start_line"], loc["start_column"], taxonomy)
         groups.setdefault(key, []).append(item["id"])
     clusters = [
-        {"id": "cluster-" + hashlib.sha256(repr(key).encode()).hexdigest()[:20], "result_ids": sorted(ids), "multi_tool": len({next(r["tool"] for r in normalized if r["id"] == rid) for rid in ids}) > 1}
+        {
+            "id": "cluster-" + hashlib.sha256(repr(key).encode()).hexdigest()[:20],
+            "result_ids": sorted(ids),
+            "multi_tool": len(
+                {next(r["tool"] for r in normalized if r["id"] == rid) for rid in ids}
+            )
+            > 1,
+        }
         for key, ids in sorted(groups.items(), key=lambda item: repr(item[0]))
     ]
     mapped = sum(item["mapping"] == "mapped" for item in normalized)
@@ -232,10 +309,17 @@ def sarif_fusion(
         "results": normalized,
         "clusters": clusters,
         "summary": {
-            "inputs": len(inputs), "runs": len(tools), "tools": len({item["name"] for item in tools}),
-            "results": len(normalized), "mapped": mapped, "ambiguous": ambiguous,
-            "unmapped": len(normalized) - mapped - ambiguous, "clusters": len(clusters),
-            "multi_tool_clusters": sum(1 for item in clusters if item["multi_tool"] is True),
+            "inputs": len(inputs),
+            "runs": len(tools),
+            "tools": len({item["name"] for item in tools}),
+            "results": len(normalized),
+            "mapped": mapped,
+            "ambiguous": ambiguous,
+            "unmapped": len(normalized) - mapped - ambiguous,
+            "clusters": len(clusters),
+            "multi_tool_clusters": sum(
+                1 for item in clusters if item["multi_tool"] is True
+            ),
         },
         "evidence_refs": refs,
         "claim_boundary": "This artifact proves bounded SARIF intake, exact-byte provenance, deterministic location mapping, and conservative clustering. It does not prove tool correctness, finding validity, semantic equivalence, completeness, or certification.",
@@ -276,78 +360,170 @@ def _semantics(value: dict[str, Any]) -> bool:
         run_counts: dict[tuple[int, int, str], int] = {}
         expected_groups: dict[tuple[Any, ...], list[str]] = {}
         for item in results:
-            if not isinstance(item, dict) or set(item) != {
-                "id", "tool", "source_index", "run_index", "result_index",
-                "rule_id", "level", "message", "location", "taxa",
-                "fingerprints", "component_id", "mapping",
-            } or item["mapping"] not in {"mapped", "ambiguous", "unmapped"}:
+            if (
+                not isinstance(item, dict)
+                or set(item)
+                != {
+                    "id",
+                    "tool",
+                    "source_index",
+                    "run_index",
+                    "result_index",
+                    "rule_id",
+                    "level",
+                    "message",
+                    "location",
+                    "taxa",
+                    "fingerprints",
+                    "component_id",
+                    "mapping",
+                }
+                or item["mapping"] not in {"mapped", "ambiguous", "unmapped"}
+            ):
                 return False
             source_index = item["source_index"]
             run_index = item["run_index"]
             result_index = item["result_index"]
-            if any(not isinstance(number, int) or number < 0 for number in (source_index, run_index, result_index)):
+            if any(
+                not isinstance(number, int) or number < 0
+                for number in (source_index, run_index, result_index)
+            ):
                 return False
             tool_key = (source_index, run_index, item["tool"])
-            if tool_key not in {(tool["source_index"], tool["run_index"], tool["name"]) for tool in tools}:
+            if tool_key not in {
+                (tool["source_index"], tool["run_index"], tool["name"])
+                for tool in tools
+            }:
                 return False
             run_counts[tool_key] = run_counts.get(tool_key, 0) + 1
             location = item["location"]
-            if not isinstance(location, dict) or set(location) != {"path", "start_line", "end_line", "start_column"}:
+            if not isinstance(location, dict) or set(location) != {
+                "path",
+                "start_line",
+                "end_line",
+                "start_column",
+            }:
                 return False
             path = _path(location["path"])
-            line, end_line, column = location["start_line"], location["end_line"], location["start_column"]
-            if any(not isinstance(number, int) or number < 1 for number in (line, end_line, column)) or end_line < line:
+            line, end_line, column = (
+                location["start_line"],
+                location["end_line"],
+                location["start_column"],
+            )
+            if (
+                any(
+                    not isinstance(number, int) or number < 1
+                    for number in (line, end_line, column)
+                )
+                or end_line < line
+            ):
                 return False
             stable = f"{item['tool']}\0{source_index}\0{run_index}\0{result_index}\0{path}\0{line}\0{column}\0{item['rule_id']}"
-            if item["id"] != "sarif-" + hashlib.sha256(stable.encode()).hexdigest()[:20]:
+            if (
+                item["id"]
+                != "sarif-" + hashlib.sha256(stable.encode()).hexdigest()[:20]
+            ):
                 return False
-            if not isinstance(item["taxa"], list) or len(item["taxa"]) != len(set(item["taxa"])) or not isinstance(item["fingerprints"], dict):
+            if (
+                not isinstance(item["taxa"], list)
+                or len(item["taxa"]) != len(set(item["taxa"]))
+                or not isinstance(item["fingerprints"], dict)
+            ):
                 return False
-            if item["mapping"] == "mapped" and not isinstance(item["component_id"], str):
+            if item["mapping"] == "mapped" and not isinstance(
+                item["component_id"], str
+            ):
                 return False
             if item["mapping"] != "mapped" and item["component_id"] is not None:
                 return False
             taxonomy = tuple(item["taxa"]) or (item["rule_id"],)
-            expected_groups.setdefault((path, line, column, taxonomy), []).append(item["id"])
-        if any(run_counts.get((tool["source_index"], tool["run_index"], tool["name"]), 0) != tool["results"] for tool in tools):
+            expected_groups.setdefault((path, line, column, taxonomy), []).append(
+                item["id"]
+            )
+        if any(
+            run_counts.get((tool["source_index"], tool["run_index"], tool["name"]), 0)
+            != tool["results"]
+            for tool in tools
+        ):
             return False
-        cluster_ids = [rid for cluster in value["clusters"] for rid in cluster["result_ids"]]
+        cluster_ids = [
+            rid for cluster in value["clusters"] for rid in cluster["result_ids"]
+        ]
         if sorted(cluster_ids) != sorted(ids):
             return False
         expected_clusters = [
             {
                 "id": "cluster-" + hashlib.sha256(repr(key).encode()).hexdigest()[:20],
                 "result_ids": sorted(group_ids),
-                "multi_tool": len({next(result["tool"] for result in results if result["id"] == result_id) for result_id in group_ids}) > 1,
+                "multi_tool": len(
+                    {
+                        next(
+                            result["tool"]
+                            for result in results
+                            if result["id"] == result_id
+                        )
+                        for result_id in group_ids
+                    }
+                )
+                > 1,
             }
-            for key, group_ids in sorted(expected_groups.items(), key=lambda group: repr(group[0]))
+            for key, group_ids in sorted(
+                expected_groups.items(), key=lambda group: repr(group[0])
+            )
         ]
         if value["clusters"] != expected_clusters:
             return False
         mapped = sum(item["mapping"] == "mapped" for item in results)
         ambiguous = sum(item["mapping"] == "ambiguous" for item in results)
         summary = value["summary"]
-        return bool(summary == {
-            "inputs": len(inputs), "runs": len(tools),
-            "tools": len({item["name"] for item in tools}), "results": len(results),
-            "mapped": mapped, "ambiguous": ambiguous, "unmapped": len(results) - mapped - ambiguous,
-            "clusters": len(value["clusters"]), "multi_tool_clusters": sum(1 for item in value["clusters"] if item["multi_tool"] is True),
-        })
+        return bool(
+            summary
+            == {
+                "inputs": len(inputs),
+                "runs": len(tools),
+                "tools": len({item["name"] for item in tools}),
+                "results": len(results),
+                "mapped": mapped,
+                "ambiguous": ambiguous,
+                "unmapped": len(results) - mapped - ambiguous,
+                "clusters": len(value["clusters"]),
+                "multi_tool_clusters": sum(
+                    1 for item in value["clusters"] if item["multi_tool"] is True
+                ),
+            }
+        )
     except (KeyError, TypeError):
         return False
 
 
 def verify_sarif_fusion(
-    value: dict[str, Any], *, analysis: dict[str, Any] | None = None,
+    value: dict[str, Any],
+    *,
+    analysis: dict[str, Any] | None = None,
     sarif_sources: list[str | Path] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
-    required = {"format", "generated_at", "authority", "analysis_binding", "inputs", "tools", "results", "clusters", "summary", "evidence_refs", "claim_boundary", "content_sha256"}
+    required = {
+        "format",
+        "generated_at",
+        "authority",
+        "analysis_binding",
+        "inputs",
+        "tools",
+        "results",
+        "clusters",
+        "summary",
+        "evidence_refs",
+        "claim_boundary",
+        "content_sha256",
+    }
     structure = isinstance(value, dict) and set(value) == required
     if not structure:
         errors.append("SARIF fusion fields are invalid")
     try:
-        checked = verify_seal(value, label="SARIF fusion", format_value=SARIF_FUSION_FORMAT)
+        checked = verify_seal(
+            value, label="SARIF fusion", format_value=SARIF_FUSION_FORMAT
+        )
         integrity = True
     except (TypeError, ValueError) as exc:
         checked, integrity = value, False
@@ -368,7 +544,13 @@ def verify_sarif_fusion(
         try:
             if analysis is None:
                 raise ValueError("analysis is required for exact SARIF regeneration")
-            expected = sarif_fusion(analysis, sarif_sources, authority=checked["authority"], evidence_refs=checked["evidence_refs"], generated_at=checked["generated_at"])
+            expected = sarif_fusion(
+                analysis,
+                sarif_sources,
+                authority=checked["authority"],
+                evidence_refs=checked["evidence_refs"],
+                generated_at=checked["generated_at"],
+            )
             regeneration = expected == checked
             if not regeneration:
                 errors.append("SARIF fusion does not exactly regenerate")
@@ -376,18 +558,66 @@ def verify_sarif_fusion(
             regeneration = False
             if str(exc) not in errors:
                 errors.append(str(exc))
-    valid = structure and integrity and semantic and binding is not False and regeneration is not False
-    return seal({"format": SARIF_FUSION_VERIFICATION_FORMAT, "valid": valid, "ready_for_triage": bool(valid and checked.get("summary", {}).get("results", 0)), "checks": {"closed_structure": structure, "content_integrity": integrity, "semantic_reconciliation": semantic, "analysis_binding": binding, "exact_regeneration": regeneration}, "errors": errors, "notice": "Verification establishes receipt integrity and accounting, not the correctness or completeness of external analyzers."})
+    valid = (
+        structure
+        and integrity
+        and semantic
+        and binding is not False
+        and regeneration is not False
+    )
+    return seal(
+        {
+            "format": SARIF_FUSION_VERIFICATION_FORMAT,
+            "valid": valid,
+            "ready_for_triage": bool(
+                valid and checked.get("summary", {}).get("results", 0)
+            ),
+            "checks": {
+                "closed_structure": structure,
+                "content_integrity": integrity,
+                "semantic_reconciliation": semantic,
+                "analysis_binding": binding,
+                "exact_regeneration": regeneration,
+            },
+            "errors": errors,
+            "notice": "Verification establishes receipt integrity and accounting, not the correctness or completeness of external analyzers.",
+        }
+    )
 
 
 def verify_sarif_fusion_file(source: str | Path, **kwargs: Any) -> dict[str, Any]:
     try:
-        document = load_bounded_json_document(source, label="SARIF fusion", max_bytes=64 * 1024 * 1024, max_depth=100, max_nodes=3_000_000)
+        document = load_bounded_json_document(
+            source,
+            label="SARIF fusion",
+            max_bytes=64 * 1024 * 1024,
+            max_depth=100,
+            max_nodes=3_000_000,
+        )
         if not isinstance(document.value, dict):
             raise ValueError("SARIF fusion must contain an object")
         return verify_sarif_fusion(document.value, **kwargs)
     except (OSError, TypeError, ValueError) as exc:
-        return seal({"format": SARIF_FUSION_VERIFICATION_FORMAT, "valid": False, "ready_for_triage": False, "checks": {"closed_structure": False, "content_integrity": False, "semantic_reconciliation": False, "analysis_binding": False if kwargs.get("analysis") is not None else None, "exact_regeneration": False if kwargs.get("sarif_sources") is not None else None}, "errors": [str(exc)], "notice": "SARIF fusion verification failed closed."})
+        return seal(
+            {
+                "format": SARIF_FUSION_VERIFICATION_FORMAT,
+                "valid": False,
+                "ready_for_triage": False,
+                "checks": {
+                    "closed_structure": False,
+                    "content_integrity": False,
+                    "semantic_reconciliation": False,
+                    "analysis_binding": False
+                    if kwargs.get("analysis") is not None
+                    else None,
+                    "exact_regeneration": False
+                    if kwargs.get("sarif_sources") is not None
+                    else None,
+                },
+                "errors": [str(exc)],
+                "notice": "SARIF fusion verification failed closed.",
+            }
+        )
 
 
 def export_sarif_fusion(value: dict[str, Any], destination: str | Path) -> Path:

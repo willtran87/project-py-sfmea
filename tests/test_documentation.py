@@ -34,8 +34,7 @@ def _anchors(document: Path) -> set[str]:
     content = CODE_FENCE_RE.sub("", document.read_text(encoding="utf-8"))
     seen: Counter[str] = Counter()
     return {
-        _github_anchor(match.group(1), seen)
-        for match in HEADING_RE.finditer(content)
+        _github_anchor(match.group(1), seen) for match in HEADING_RE.finditer(content)
     }
 
 
@@ -44,7 +43,9 @@ class DocumentationLinksTests(unittest.TestCase):
         documents = sorted(
             document
             for document in ROOT.rglob("*.md")
-            if not (set(document.relative_to(ROOT).parts) & DOCUMENT_EXCLUDED_DIRECTORIES)
+            if not (
+                set(document.relative_to(ROOT).parts) & DOCUMENT_EXCLUDED_DIRECTORIES
+            )
         )
         failures: list[str] = []
         anchor_cache: dict[Path, set[str]] = {}
@@ -58,9 +59,14 @@ class DocumentationLinksTests(unittest.TestCase):
                     continue
                 path_text = unquote(parsed.path)
                 target_document = (
-                    document if not path_text else (document.parent / path_text).resolve()
+                    document
+                    if not path_text
+                    else (document.parent / path_text).resolve()
                 )
-                if not target_document.is_relative_to(ROOT) or not target_document.exists():
+                if (
+                    not target_document.is_relative_to(ROOT)
+                    or not target_document.exists()
+                ):
                     failures.append(f"{document.relative_to(ROOT)} -> {target}")
                     continue
                 if parsed.fragment:
@@ -70,9 +76,13 @@ class DocumentationLinksTests(unittest.TestCase):
                     if parsed.fragment not in anchors:
                         failures.append(f"{document.relative_to(ROOT)} -> {target}")
 
-        self.assertEqual(failures, [], "Broken local documentation links:\n" + "\n".join(failures))
+        self.assertEqual(
+            failures, [], "Broken local documentation links:\n" + "\n".join(failures)
+        )
 
-    def test_generated_test_governance_documentation_matches_current_contract(self) -> None:
+    def test_generated_test_governance_documentation_matches_current_contract(
+        self,
+    ) -> None:
         documents = {
             name: (ROOT / name).read_text(encoding="utf-8")
             for name in (
@@ -122,9 +132,7 @@ class DocumentationLinksTests(unittest.TestCase):
         self.assertIn("`assurance-test-generation-quality-result-v3`", schemas)
         self.assertIn("`assurance-test-generation-fault-evidence`", schemas)
         self.assertIn("`assurance-test-generation-campaign-plan`", schemas)
-        self.assertIn(
-            "`assurance-test-generation-campaign-plan-verification`", schemas
-        )
+        self.assertIn("`assurance-test-generation-campaign-plan-verification`", schemas)
         self.assertIn("`json-evidence-signature`", schemas)
         self.assertIn("`json-evidence-signature-verification`", schemas)
 
@@ -138,9 +146,7 @@ class DocumentationLinksTests(unittest.TestCase):
         self.assertEqual(documented, published)
 
     def test_runtime_evidence_guide_covers_capture_and_claim_boundaries(self) -> None:
-        content = (ROOT / "docs" / "RUNTIME_EVIDENCE.md").read_text(
-            encoding="utf-8"
-        )
+        content = (ROOT / "docs" / "RUNTIME_EVIDENCE.md").read_text(encoding="utf-8")
         for expected in (
             "sequenceDiagram",
             "RuntimeTraceRecorder",

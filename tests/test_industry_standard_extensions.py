@@ -97,7 +97,9 @@ class IndustryStandardExtensionTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def test_catalog_includes_interoperability_quality_and_dependability_profiles(self) -> None:
+    def test_catalog_includes_interoperability_quality_and_dependability_profiles(
+        self,
+    ) -> None:
         identifiers = {profile["id"] for profile in standards_catalog()["profiles"]}
         self.assertGreaterEqual(len(identifiers), 61)
         self.assertTrue(
@@ -132,23 +134,40 @@ class IndustryStandardExtensionTests(unittest.TestCase):
 
     def test_safety_lifecycle_and_common_cause_workbench(self) -> None:
         self.analysis["context"]["hazards"] = [
-            {"id": "HZ-1", "description": "Service unavailable", "end_effect": "Mission delay", "severity_category": "major"}
+            {
+                "id": "HZ-1",
+                "description": "Service unavailable",
+                "end_effect": "Mission delay",
+                "severity_category": "major",
+            }
         ]
         authoring = safety_lifecycle_authoring_template(
-            self.analysis, authority="system-safety-authority", generated_at="2026-08-28T10:00:00+00:00"
+            self.analysis,
+            authority="system-safety-authority",
+            generated_at="2026-08-28T10:00:00+00:00",
         )
         for stage in authoring["stages"]:
-            stage.update({"status": "approved", "rationale": "Lifecycle evidence reviewed for the exact baseline.", "reviewer": "independent-safety-reviewer", "reviewed_at": "2026-08-28", "evidence_refs": [f"evidence://safety/{stage['stage'].lower()}"]})
+            stage.update(
+                {
+                    "status": "approved",
+                    "rationale": "Lifecycle evidence reviewed for the exact baseline.",
+                    "reviewer": "independent-safety-reviewer",
+                    "reviewed_at": "2026-08-28",
+                    "evidence_refs": [f"evidence://safety/{stage['stage'].lower()}"],
+                }
+            )
         hazard = authoring["hazards"][0]
-        hazard.update({
-            "classification_rationale": "Project hazard classification reviewed.",
-            "safety_objectives": ["Prevent loss of required service."],
-            "allocated_requirement_ids": ["REQ-SAFE-1"],
-            "verification_refs": ["evidence://verification/safe-1"],
-            "residual_risk_disposition": "accepted",
-            "decision_authority": "system-safety-authority",
-            "decision_rationale": "Acceptance is limited to the declared operating context.",
-        })
+        hazard.update(
+            {
+                "classification_rationale": "Project hazard classification reviewed.",
+                "safety_objectives": ["Prevent loss of required service."],
+                "allocated_requirement_ids": ["REQ-SAFE-1"],
+                "verification_refs": ["evidence://verification/safe-1"],
+                "residual_risk_disposition": "accepted",
+                "decision_authority": "system-safety-authority",
+                "decision_rationale": "Acceptance is limited to the declared operating context.",
+            }
+        )
         authoring["assumptions"] = ["The declared system boundary is controlled."]
         authoring["operational_feedback"].update(
             {
@@ -164,19 +183,27 @@ class IndustryStandardExtensionTests(unittest.TestCase):
             self.analysis, authoring_path, generated_at="2026-08-28T11:00:00+00:00"
         )
         self.assertTrue(assessment["summary"]["complete"])
-        Draft202012Validator(schema_document("safety-lifecycle-assessment")).validate(assessment)
+        Draft202012Validator(schema_document("safety-lifecycle-assessment")).validate(
+            assessment
+        )
         output = self.root / "safety-assessment.json"
         export_safety_lifecycle_assessment(assessment, output)
-        verdict = verify_safety_lifecycle_assessment_file(output, analysis=self.analysis, authoring_source=authoring_path)
+        verdict = verify_safety_lifecycle_assessment_file(
+            output, analysis=self.analysis, authoring_source=authoring_path
+        )
         self.assertTrue(verdict["valid"], verdict["errors"])
 
     def test_slsa_1_2_deny_by_default_policy(self) -> None:
         analysis_path = self.root / "analysis.json"
         analysis_path.write_text(json.dumps(self.analysis), encoding="utf-8")
-        provenance = slsa_provenance_statement(self.analysis, analysis_path, generated_at="2026-08-28T12:00:00+00:00")
+        provenance = slsa_provenance_statement(
+            self.analysis, analysis_path, generated_at="2026-08-28T12:00:00+00:00"
+        )
         provenance_path = self.root / "provenance.json"
         export_slsa_provenance(provenance, provenance_path)
-        policy = slsa_trust_policy_template(authority="supply-chain-authority", generated_at="2026-08-28T12:00:00+00:00")
+        policy = slsa_trust_policy_template(
+            authority="supply-chain-authority", generated_at="2026-08-28T12:00:00+00:00"
+        )
         policy["trusted_builders"] = [SLSA_BUILDER_ID]
         policy["trusted_signer_identities"] = ["https://example.test/workflow/main"]
         policy["allowed_build_types"] = [SLSA_BUILD_TYPE]
@@ -185,27 +212,50 @@ class IndustryStandardExtensionTests(unittest.TestCase):
         policy_path = self.root / "slsa-policy.json"
         export_slsa_trust_policy(policy, policy_path)
         seal_slsa_trust_policy(policy_path, policy_path)
-        observation = slsa_verification_observation_template(verifier="independent-verifier", generated_at="2026-08-28T12:00:00+00:00")
-        observation.update({
-            "verification_tool": "cosign", "verification_tool_version": "verified-version",
-            "signature_verified": True, "signer_identity": "https://example.test/workflow/main",
-            "verification_evidence_ref": "evidence://signature/receipt", "hosted_build": True,
-            "isolated_builds": True, "ephemeral_environment": True, "parameterless_rebuild": True,
-            "source_repository": "https://example.test/repository", "source_two_party_reviewed": True,
-            "source_provenance_verified": True, "source_history_retained": True,
-            "evidence_refs": ["evidence://builder/controls"],
-        })
+        observation = slsa_verification_observation_template(
+            verifier="independent-verifier", generated_at="2026-08-28T12:00:00+00:00"
+        )
+        observation.update(
+            {
+                "verification_tool": "cosign",
+                "verification_tool_version": "verified-version",
+                "signature_verified": True,
+                "signer_identity": "https://example.test/workflow/main",
+                "verification_evidence_ref": "evidence://signature/receipt",
+                "hosted_build": True,
+                "isolated_builds": True,
+                "ephemeral_environment": True,
+                "parameterless_rebuild": True,
+                "source_repository": "https://example.test/repository",
+                "source_two_party_reviewed": True,
+                "source_provenance_verified": True,
+                "source_history_retained": True,
+                "evidence_refs": ["evidence://builder/controls"],
+            }
+        )
         observation_path = self.root / "slsa-observation.json"
         export_slsa_verification_observation(observation, observation_path)
         seal_slsa_verification_observation(observation_path, observation_path)
-        assessment = slsa_policy_assessment(provenance_path, policy_path, observation_path, generated_at="2026-08-28T13:00:00+00:00")
+        assessment = slsa_policy_assessment(
+            provenance_path,
+            policy_path,
+            observation_path,
+            generated_at="2026-08-28T13:00:00+00:00",
+        )
         self.assertTrue(assessment["summary"]["passed"])
         self.assertEqual(assessment["levels"]["build_track_achieved"], 3)
         self.assertEqual(assessment["levels"]["source_track_achieved"], 2)
-        Draft202012Validator(schema_document("slsa-policy-assessment")).validate(assessment)
+        Draft202012Validator(schema_document("slsa-policy-assessment")).validate(
+            assessment
+        )
         output = self.root / "slsa-assessment.json"
         export_slsa_policy_assessment(assessment, output)
-        verdict = verify_slsa_policy_assessment_file(output, provenance_source=provenance_path, policy_source=policy_path, observation_source=observation_path)
+        verdict = verify_slsa_policy_assessment_file(
+            output,
+            provenance_source=provenance_path,
+            policy_source=policy_path,
+            observation_source=observation_path,
+        )
         self.assertTrue(verdict["valid"], verdict["errors"])
 
     def test_normative_json_schema_receipt_and_independent_roundtrip(self) -> None:
@@ -278,9 +328,9 @@ class IndustryStandardExtensionTests(unittest.TestCase):
             generated_at="2026-08-27T13:00:00+00:00",
         )
         self.assertTrue(roundtrip["passed"])
-        Draft202012Validator(schema_document("independent-roundtrip-evidence")).validate(
-            roundtrip
-        )
+        Draft202012Validator(
+            schema_document("independent-roundtrip-evidence")
+        ).validate(roundtrip)
         roundtrip_path = self.root / "roundtrip.json"
         export_independent_roundtrip_evidence(roundtrip, roundtrip_path)
         verdict = verify_independent_roundtrip_evidence_file(
@@ -299,9 +349,14 @@ class IndustryStandardExtensionTests(unittest.TestCase):
 
     def test_reqif_sysml_and_oslc_lifecycle_bridges_regenerate(self) -> None:
         reqif = self.root / "analysis.reqif"
-        export_exchange("reqif", self.analysis, reqif, generated_at="2026-08-27T12:00:00+00:00")
+        export_exchange(
+            "reqif", self.analysis, reqif, generated_at="2026-08-27T12:00:00+00:00"
+        )
         reqif_model = import_lifecycle_model(
-            "reqif", reqif, analysis=self.analysis, generated_at="2026-08-27T13:00:00+00:00"
+            "reqif",
+            reqif,
+            analysis=self.analysis,
+            generated_at="2026-08-27T13:00:00+00:00",
         )
         reqif_output = self.root / "reqif-model.json"
         export_lifecycle_model(reqif_model, reqif_output)
@@ -340,7 +395,9 @@ class IndustryStandardExtensionTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        sysml_model = import_lifecycle_model("sysml2-json", sysml, analysis=self.analysis)
+        sysml_model = import_lifecycle_model(
+            "sysml2-json", sysml, analysis=self.analysis
+        )
         self.assertEqual(sysml_model["summary"]["code_links"], 1)
         self.assertEqual(sysml_model["summary"]["relationships"], 1)
 
@@ -514,7 +571,9 @@ class IndustryStandardExtensionTests(unittest.TestCase):
             "Rates are homogeneous over the one-hour mission and independently reviewed."
         ]
         for node in authoring["hazop"]["nodes"]:
-            node["design_intent"] = "Return the specified output within the declared timing contract."
+            node["design_intent"] = (
+                "Return the specified output within the declared timing contract."
+            )
             node["deviations"] = [
                 {
                     "parameter": parameter,
@@ -532,7 +591,9 @@ class IndustryStandardExtensionTests(unittest.TestCase):
             ]
         block = authoring["rbd"]["blocks"][0]
         block["reliability"] = 0.99
-        authoring["rbd"]["success_criterion"] = "The delivery function returns a valid result."
+        authoring["rbd"]["success_criterion"] = (
+            "The delivery function returns a valid result."
+        )
         authoring["rbd"]["top_gate_id"] = block["id"]
         authoring["markov_models"] = [
             {

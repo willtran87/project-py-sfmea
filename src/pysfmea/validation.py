@@ -1127,9 +1127,8 @@ def validate_analysis(
                     or int(decision.get("column", 0)) < 0
                     or not isinstance(decision.get("end_column"), int)
                     or isinstance(decision.get("end_column"), bool)
-                    or int(decision.get("end_column", 0)) < int(
-                        decision.get("column", 0)
-                    )
+                    or int(decision.get("end_column", 0))
+                    < int(decision.get("column", 0))
                     or not isinstance(decision.get("pruned_operand_count"), int)
                     or isinstance(decision.get("pruned_operand_count"), bool)
                     or int(decision.get("pruned_operand_count", 0)) < 0
@@ -1164,17 +1163,19 @@ def validate_analysis(
                 int(value.get("control_flow_decisions_omitted", 0))
                 for value in components_by_id.values()
                 if isinstance(value.get("control_flow_decisions_omitted", 0), int)
-                and not isinstance(
-                    value.get("control_flow_decisions_omitted", 0), bool
-                )
+                and not isinstance(value.get("control_flow_decisions_omitted", 0), bool)
                 and int(value.get("control_flow_decisions_omitted", 0)) >= 0
             )
             expected_omitted = source_omitted + source_records - len(decisions)
             expected_kinds = dict(
-                sorted(Counter(str(value.get("kind", "")) for value in decisions).items())
+                sorted(
+                    Counter(str(value.get("kind", "")) for value in decisions).items()
+                )
             )
             expected_bases = dict(
-                sorted(Counter(str(value.get("basis", "")) for value in decisions).items())
+                sorted(
+                    Counter(str(value.get("basis", "")) for value in decisions).items()
+                )
             )
             summary_integers = (
                 control_flow_summary.get("decisions_discovered"),
@@ -1204,8 +1205,7 @@ def validate_analysis(
                 != sum(int(value.get("pruned_operand_count", 0)) for value in decisions)
                 or control_flow_summary.get("pruned_statements")
                 != sum(
-                    int(value.get("pruned_statement_count", 0))
-                    for value in decisions
+                    int(value.get("pruned_statement_count", 0)) for value in decisions
                 )
                 or control_flow_summary.get("decision_kinds") != expected_kinds
                 or control_flow_summary.get("decision_bases") != expected_bases
@@ -1218,8 +1218,7 @@ def validate_analysis(
                 if (
                     not isinstance(index, dict)
                     or index.get("decision_ids") != expected[:1_000]
-                    or index.get("decisions_omitted")
-                    != max(0, len(expected) - 1_000)
+                    or index.get("decisions_omitted") != max(0, len(expected) - 1_000)
                 ):
                     control_flow_valid = False
         if not control_flow_valid:

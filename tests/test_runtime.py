@@ -206,10 +206,7 @@ class RuntimeNormalizationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "dispatch.py").write_text(
-                "def target():\n"
-                "    return 1\n\n"
-                "def dispatch(fn):\n"
-                "    return fn()\n",
+                "def target():\n    return 1\n\ndef dispatch(fn):\n    return fn()\n",
                 encoding="utf-8",
             )
             analysis = scan_repository(root)
@@ -230,9 +227,7 @@ class RuntimeNormalizationTests(unittest.TestCase):
                                 "span_id": "C",
                                 "parent_span_id": "P",
                                 "name": "target",
-                                "attributes": {
-                                    "sfmea.caller.callsite.line": call_line
-                                },
+                                "attributes": {"sfmea.caller.callsite.line": call_line},
                             },
                         ]
                     }

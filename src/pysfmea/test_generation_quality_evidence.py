@@ -137,10 +137,14 @@ def _verified_execution(
     label: str,
     evidence_root: str | Path,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    execution_id = _text(run.get("execution_id"), f"fault-detection {label} execution id")
+    execution_id = _text(
+        run.get("execution_id"), f"fault-detection {label} execution id"
+    )
     declared_status = run.get("status")
     if declared_status != expected_status:
-        raise ValueError(f"fault-detection {label} must declare status {expected_status}")
+        raise ValueError(
+            f"fault-detection {label} must declare status {expected_status}"
+        )
     declared_manifest = _digest(
         run.get("evidence_sha256"), f"fault-detection {label} evidence"
     )
@@ -148,7 +152,9 @@ def _verified_execution(
     if execution.get("status") != declared_status:
         raise ValueError(f"fault-detection {label} status does not match the execution")
     if execution.get("test", {}).get("sha256") != test_sha256:
-        raise ValueError(f"fault-detection {label} test does not match the generated test")
+        raise ValueError(
+            f"fault-detection {label} test does not match the generated test"
+        )
     verification = verify_execution_artifacts(
         analysis, execution_id, evidence_root=evidence_root
     )
@@ -195,7 +201,9 @@ def verify_fault_detection_evidence(
         raise ValueError("fault-detection seeded run must match the closed contract")
     _text(seeded.get("fault_id"), "fault-detection fault id")
     if baseline.get("execution_id") == seeded.get("execution_id"):
-        raise ValueError("fault-detection baseline and seeded executions must be distinct")
+        raise ValueError(
+            "fault-detection baseline and seeded executions must be distinct"
+        )
     baseline_execution, baseline_verification = _verified_execution(
         analysis,
         baseline,
@@ -212,8 +220,13 @@ def verify_fault_detection_evidence(
         label="seeded",
         evidence_root=evidence_root,
     )
-    if baseline_verification["manifest_sha256"] == seeded_verification["manifest_sha256"]:
-        raise ValueError("fault-detection baseline and seeded manifests must be distinct")
+    if (
+        baseline_verification["manifest_sha256"]
+        == seeded_verification["manifest_sha256"]
+    ):
+        raise ValueError(
+            "fault-detection baseline and seeded manifests must be distinct"
+        )
     return {
         "detected": True,
         "baseline_execution_id": str(baseline_execution["id"]),

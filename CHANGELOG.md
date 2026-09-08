@@ -5,6 +5,169 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Harden evidence acceptance in 0.83.0: authenticate scope approval using external Ed25519 trust
+  policy; require paired evaluation populations, telemetry collection accounting, timed sequential
+  breaker replay, and approved Inspect schema identities. Add exact-source callgraph comparison,
+  four public input/report schemas, mutation/fuzz targets and a manual attested release-candidate
+  workflow. Strengthened receipts use major 3; raw evaluation/control inputs use major 2.
+  Hosted workflows and independent campaigns still require execution; no qualification is implied.
+
+- Raise evidence-linkage assurance to 0.82.0: reconcile audited benchmark cases and exact
+  revisions to scored confusion counts; compare Inspect exported configuration with its log;
+  recompute TEVV measurements from retained request/evaluation/control events and replay deployment
+  changes. Support the explicitly pinned OpenTelemetry GenAI 1.37.0 development mapping and its
+  TEVV bridge. Add conservative Harbor single-step binary-result intake, approved applicability
+  scopes, five raw-input schemas, and major-2 contracts for strengthened assurance outputs.
+  Unsupported adapters, missing evidence, and inconsistent populations still fail closed.
+
+- Raise the executable benchmark and deployed-system assurance tranche to 0.81.0. Add a
+  suite-neutral, exact-source benchmark case inventory so contract-only suites can enter the same
+  independently reviewed item-quality gate as native adapters; make validation portfolios require
+  exact replay of every declared suite's population and review evidence. Preserve SWE-bench Live's
+  success, failure, incomplete, and error outcomes instead of collapsing them into a binary pass.
+  Add official-schema Inspect AI conformance receipts, version-pinned OpenTelemetry GenAI
+  normalization with exact raw-span replay, and deterministic deployed-system TEVV campaigns
+  covering identity, baseline, repeated evaluation, thresholds, incidents, circuit breakers,
+  rollback, change traceability, and the six NIST AI 800-4 testing categories. Add ISO/IEC/IEEE
+  29119-11:2020 guidance and a contract-only Terminal-Bench 2.0 target. The 144-profile and
+  41-suite catalogs remain navigation and governed execution contracts—not certification,
+  accreditation, source acquisition, benchmark qualification, or release approval.
+
+- Raise the benchmark-validity and deployed-AI TEVV tranche to 0.80.0. Add an exact-population,
+  independently reviewed benchmark item-quality audit covering task completeness, oracles, hidden
+  tests, coverage and mutation strength, harness reproducibility, ambiguity, gold patches,
+  regressions, exclusions, and reviewer separation. Add SWE-bench Live as a revision-pinned native
+  benchmark target and exact-byte Inspect AI evaluation-log intake with configuration, sample,
+  score, transcript, tool-event, error, and token-usage identities. Add NIST AI 800-4 deployed-AI
+  monitoring as current public guidance and keep the NIST AI 200-2 TEVV-Athlon initial draft on the
+  non-normative watchlist. The then-current 143-profile and 40-suite catalogs did not claim that unacquired
+  sources, unaudited labels, contract-only adapters, or independent evidence have been completed.
+
+- Raise the independent-evidence tranche to 0.79.0. Add a distinct OWASP GenAI LLM Top 10
+  2026 profile and keep ISO/IEC DIS 42007 in the non-normative development watchlist. Expand
+  the governed benchmark registry from 36 to 39 targets with AgentDojo, the 113-task Python
+  stratum of SWE-PolyBench Verified, and the IDoFT Python population. Add native normalization
+  for their official result or source shapes and a `benchmark-source-qualify` workflow that
+  computes snapshot and license-evidence digests from local bytes, requires a detached reviewer,
+  enforces review dates and canonical URLs, and leaves aggregate execution eligibility closed
+  until every catalog source is complete. Registry entries, local qualification records, and
+  normalized upstream output are evidence inputs—not independent benchmark results, conformity,
+  accreditation, certification, or release approval.
+
+- Raise the emerging-assurance tranche to 0.78.0. Expand the governed catalog from 132 to
+  141 profiles with NIST AI 100-2 adversarial-ML taxonomy, OWASP agentic-AI and API guidance,
+  ISO/IEC 12792 transparency, ISO/IEC 24027/12791 bias assessment and treatment, ISO/IEC 27004
+  security measurement, IEC 61508-7 techniques, ISO 26262 supporting and ASIL-oriented analyses,
+  and TMMi 2.0 test-process maturity. Expand the benchmark registry from 32 to 36 targets with
+  CyberSecEval 4, CrossCodeEval Python, CrossCodeLongEval Python, and a checked-in governed
+  nondeterminism/concurrency corpus. New external suites remain contract-only until exact lawful
+  snapshots, reviewed adapters, labels, runners, licenses, and independent evidence are supplied;
+  registry inclusion never claims benchmark execution, conformity, or qualification.
+
+- Raise the evidence-qualification tranche to 0.77.0. Expand the governed catalog from 124 to
+  132 profiles with NIST RMF/continuous monitoring, SQuaRE quality-model use and quality in use,
+  EU AI Act evidence readiness, MITRE ATLAS, ICT continuity, digital-evidence investigation,
+  lifecycle management, and governing-body AI oversight. Expand the benchmark registry from 26
+  to 32 targets with LiveCodeBench, FuzzBench repeated trials, QuixBugs, BigCodeBench, dual
+  mutation-engine qualification, and scale/resource-exhaustion evaluation. Add case-paired
+  differential comparison with per-tool confusion metrics, exact McNemar tests, independent
+  disagreement adjudication, exact source replay, public schemas and CLI, and validation-portfolio
+  consumption. External labels, hidden-corpus custody, lawful source approval, proficiency
+  participants, accreditation, and conformity decisions remain external and fail closed.
+
+- Raise the benchmark-governance tranche to 0.76.0. Expand the catalog from 118 to 124
+  standards-navigation profiles with benchmark proficiency, software supply chain, service and
+  DevOps management, incident response, cloud-native DevSecOps, and 2026 cloud-control guidance.
+  Expand the benchmark registry from 20 to 26 targets with checked-in mutation, fuzz,
+  framework-negative-control, Python/platform, temporal-holdout, and cross-organization
+  proficiency assets. Add exact corpus inventory/replay plus ISO/IEC 17043 and ISO 13528-inspired
+  proficiency scoring with controlled assigned values, z-score warning/action limits,
+  qualitative agreement, homogeneity, stability, population, and authority-separation gates.
+  Qualification readiness now requires exact six-artifact replay, including the proficiency
+  source and assessment; these controls do not claim accreditation, conformity, certification,
+  representativeness, or regulatory approval.
+
+- Raise the qualification-readiness tranche to 0.75.0. Expand the governed standards catalog
+  from 108 to 118 profiles with direct NASA software engineering/assurance, software quality
+  management, inspection/validation/verification/audit, product-certification claim boundaries,
+  configuration management, machinery, ground aviation/data, nuclear, defense system safety, and
+  medical QMS/CSA navigation. Expand the benchmark registry from fifteen to twenty targets with
+  modern Python dynamic resolution, distributed temporal resilience, interoperability conformance,
+  longitudinal drift, and Pynguin/SBFT comparison. Add a fail-closed, exact-byte-bound industry
+  qualification readiness assessment that joins the standards lifecycle ledger, benchmark source
+  health, adapter maturity, independent validation portfolio, and separated authorities. A local
+  pass is never review eligibility: exact four-artifact replay, including portfolio-source
+  regeneration, is mandatory, and incomplete reviews,
+  unpinned sources, contract-only adapters, incomplete evidence, or role conflicts remain explicit
+  blockers rather than generated claims.
+
+- Raise the industry-validation tranche to 0.74.0. Expand the governed catalog to 108 profiles
+  with ISO/IEC/IEEE 15939 measurement, ISO/IEC 25020 quality measurement, ISO/IEC 25041
+  evaluator-role guidance, ISO/IEC 25012/25024 data quality, FAA DO-356A/DO-355A security,
+  NIST container and cloud-native zero-trust, OpenSSF Security Insights, and EU Cyber Resilience
+  Act evidence-readiness navigation. Expand the benchmark registry from ten to fifteen targets
+  with a governed causal-propagation corpus, PyCG, JARVIS, DyPyBench, and TestExplora. Causal
+  validation format 2 now uses conventional precision/recall denominators, scenario-local edge
+  accounting, exact ordered-path/effect rates, and explicit timing/breaker/recovery populations,
+  preventing evidence from one scenario from satisfying another. Every new target has a closed
+  normalization blueprint and retains immutable-source, license, isolation, independent-review,
+  representativeness, and qualification gates.
+
+- Raise the qualification-strengthening tranche to 0.73.0. Correct TDD-Bench Verified source
+  identity and preserve the superseded OpenSSF OSPS baseline while adding the current
+  2026.08.28 profile. Add a closed benchmark source-health ledger; native OWASP, TestGenEval,
+  TDD-Bench, and SWE-bench result normalization; confidence calibration with Brier, ECE,
+  Wilson, strata, and risk-coverage metrics; runtime causal path/effect/timing/circuit-breaker/
+  recovery validation; official-schema plus semantic SARIF conformance; controlled OpenSSF
+  Scorecard-to-OSPS/SSDF/SLSA evidence candidates; and a non-normative standards-development
+  watchlist. Public schemas, CLI workflows, exact-byte bindings, reconciliation, tamper tests,
+  and independent-authority gates keep review eligibility distinct from qualification.
+
+- The preceding 0.72.0 industry-evidence tranche added a direct, exact-corpus SFMEA semantic
+  benchmark for findings, call resolution, control detection, and semantic claims; exact
+  CycloneDX/OSV version applicability; and a governed reachability-to-VEX/CSAF/POA&M
+  vulnerability workflow. Add ISO/IEC/IEEE 29119-aligned test dossiers, NIST SP 500-268/-270
+  capability/test-plan assessments with Wilson intervals, and content-addressed
+  ClusterFuzzLite artifact intake. The catalog exposed 98 profiles, the benchmark catalog
+  exposes ten targets, and fresh-process performance measurements make warmups, calibration,
+  cache state, and comparability explicit. ClusterFuzzLite now covers PR, batch, continuous-build,
+  corpus-pruning, and coverage modes with pinned actions and exact checkout. New schemas,
+  verifiers, CLI workflows, tamper tests, diagrams, and documentation preserve the boundary
+  between generated project evidence and independent qualification or certification.
+
+- Close the remaining high-impact industry-validation gaps for 0.71.0. The governed catalog now
+  exposes 94 profiles, adding NIST SAMATE SP 500-268/-270 evaluation, ISO/IEC/IEEE 29119-3 test
+  documentation, 29119-4 test techniques, ISO/IEC TS 42119-2 AI testing, and OSV/CISA KEV/FIRST
+  EPSS intelligence governance. Add exact local feed normalization and SBOM identity matching,
+  nine suite-specific benchmark normalization blueprints, comparable multi-release runtime and
+  memory ratchets, an Atheris fuzz target, immutable-SHA-pinned ClusterFuzzLite PR/batch CI, five
+  public schemas, fail-closed verifiers, tests, diagrams, and operator documentation. Identity
+  matches remain unresolved until version, reachability, exposure, system impact, and authorized
+  disposition evidence exists; external benchmark results and independent review are not
+  manufactured by the package.
+
+- Raise the industry evidence layer to format 0.70.0: add IEEE 730:2026, OWASP WSTG, and
+  NIST SP 800-115 profiles; exact official MITRE CWE/CAPEC XML import and regeneration; a
+  catalog-bound standards edition/status/freshness review ledger; and independently reviewed
+  benchmark adapter contracts. Benchmark and fuzz runners now verify the bytes of every input,
+  label, generated output/test, environment, execution, coverage, mutation, crash input, stack,
+  and reproducer artifact before granting eligibility. Add a NIST SARD cross-language control,
+  variability-aware content-addressed performance receipts, six public schemas, CLI workflows,
+  fail-closed verifiers, and adversarial tests. Human authority, controlled standards copies,
+  independent labels, representativeness, qualification, certification, and risk acceptance
+  remain external.
+
+- Add an executable industry-readiness evidence tranche. The standards catalog now exposes 89
+  profiles, adding IEC 62443-3-2 security risk assessment, FAA DO-331/DO-332 navigation,
+  ISO/IEC/IEEE 15026-1/-3/-4 assurance lifecycle and assessment guidance, OpenChain ISO/IEC
+  5230/18974 program governance, and ECMA-424/ISO/IEC 5962 SBOM guidance. Add deterministic,
+  exact-analysis-bound OSCAL 1.2.3 Assessment Plan and POA&M projections, both validated against
+  the official NIST schemas. Add shell-free, network-denied, read-only Docker/Podman benchmark and
+  fuzz execution; case-level pass@k, coverage, mutation, flakiness, unsafe-oracle, latency, token,
+  cost, and confusion-matrix evidence; RealVuln, PySASTBench, and PatchEval targets; and exact
+  offline Sigstore/cosign receipts binding bundle and locally supplied trusted-root bytes. Eight new public schemas, fail-closed
+  verifiers, CLI workflows, and tamper tests preserve the boundary between generated evidence and
+  independent qualification, certification, or acceptance.
 - Add industry-standard external evidence intake: bounded, exact-byte SARIF 2.1.0 fusion with
   conservative component mapping and cross-tool clustering; an exact-analysis-bound OSCAL 1.2.3
   Assessment Results projection; governed OWASP Benchmark Python, BugsInPy, TestGenEval,

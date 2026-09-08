@@ -6,6 +6,7 @@ dist/
 *.egg-info/
 .tmp-*
 .coverage
+.coverage.enforcement
 coverage.json
 coverage.xml
 /.artifacts/

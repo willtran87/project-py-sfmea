@@ -390,24 +390,28 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         if not isinstance(execution_id, str) or not execution_id:
             raise ValueError(f"analysis assurance execution {index} requires an ID")
         if execution_id in execution_ids:
-            raise ValueError(f"analysis assurance execution ID is duplicated: {execution_id}")
+            raise ValueError(
+                f"analysis assurance execution ID is duplicated: {execution_id}"
+            )
         execution_ids.add(execution_id)
         if execution.get("status") not in EXECUTION_STATUSES:
-            raise ValueError(f"analysis assurance execution {index} has an invalid status")
+            raise ValueError(
+                f"analysis assurance execution {index} has an invalid status"
+            )
         for field in ("command_argv", "test_command_argv", "artifacts", "reviews"):
             if not isinstance(execution.get(field, []), list):
                 raise ValueError(
                     f"analysis assurance execution {index} {field} must be a list"
                 )
     artifact_ids: set[str] = set()
-    for index, artifact in enumerate(
-        assurance.get("evidence_artifacts", []), start=1
-    ):
+    for index, artifact in enumerate(assurance.get("evidence_artifacts", []), start=1):
         artifact_id = artifact.get("id", "")
         if not isinstance(artifact_id, str) or not artifact_id:
             raise ValueError(f"analysis evidence artifact {index} requires an ID")
         if artifact_id in artifact_ids:
-            raise ValueError(f"analysis evidence artifact ID is duplicated: {artifact_id}")
+            raise ValueError(
+                f"analysis evidence artifact ID is duplicated: {artifact_id}"
+            )
         artifact_ids.add(artifact_id)
     obligation_ids: set[str] = set()
     for index, obligation in enumerate(assurance.get("obligations", []), start=1):
@@ -417,18 +421,27 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         if not isinstance(obligation_id, str) or not obligation_id:
             raise ValueError(f"analysis assurance obligation {index} requires an ID")
         if obligation_id in obligation_ids:
-            raise ValueError(f"analysis assurance obligation ID is duplicated: {obligation_id}")
+            raise ValueError(
+                f"analysis assurance obligation ID is duplicated: {obligation_id}"
+            )
         obligation_ids.add(obligation_id)
         if obligation.get("assurance_status") not in ASSURANCE_STATUSES:
-            raise ValueError(f"analysis assurance obligation {index} has an invalid status")
+            raise ValueError(
+                f"analysis assurance obligation {index} has an invalid status"
+            )
         if obligation.get("evidence_status") not in EVIDENCE_STATUSES:
-            raise ValueError(f"analysis assurance obligation {index} has an invalid evidence status")
+            raise ValueError(
+                f"analysis assurance obligation {index} has an invalid evidence status"
+            )
         if obligation.get("verification_method") not in VERIFICATION_METHODS:
-            raise ValueError(f"analysis assurance obligation {index} has an invalid method")
+            raise ValueError(
+                f"analysis assurance obligation {index} has an invalid method"
+            )
         automation = obligation.get("automation", {})
-        if not isinstance(automation, dict) or automation.get(
-            "implementation_status"
-        ) not in IMPLEMENTATION_STATUSES:
+        if (
+            not isinstance(automation, dict)
+            or automation.get("implementation_status") not in IMPLEMENTATION_STATUSES
+        ):
             raise ValueError(
                 f"analysis assurance obligation {index} has invalid automation metadata"
             )
@@ -473,7 +486,9 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         not isinstance(runtime_evidence.get(field, []), list)
         for field in ("imports", "spans", "edges")
     ):
-        raise ValueError("analysis runtime_evidence must contain list-valued imports, spans, and edges")
+        raise ValueError(
+            "analysis runtime_evidence must contain list-valued imports, spans, and edges"
+        )
     sfta = analysis.get("sfta", {})
     if not isinstance(sfta, dict) or not isinstance(sfta.get("trees", []), list):
         raise ValueError("analysis sfta must contain a trees list")
@@ -484,7 +499,9 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         or not isinstance(run_manifest.get("adapters", {}).get("adapters", []), list)
         or not run_manifest.get("manifest_sha256")
     ):
-        raise ValueError("analysis run_manifest is missing required reproducibility fields")
+        raise ValueError(
+            "analysis run_manifest is missing required reproducibility fields"
+        )
     system_context = analysis.get("system_context", {})
     if (
         not isinstance(system_context, dict)
@@ -501,7 +518,9 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         or not isinstance(inventory.get("regions", []), list)
         or not inventory.get("inventory_sha256")
     ):
-        raise ValueError("analysis repository_inventory is missing required coverage fields")
+        raise ValueError(
+            "analysis repository_inventory is missing required coverage fields"
+        )
     adapter_runs = analysis.get("adapter_runs", {})
     if (
         not isinstance(adapter_runs, dict)
@@ -523,12 +542,19 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
     for index, suggestion in enumerate(analysis.get("suggestions", []), start=1):
         if not isinstance(suggestion, dict):
             raise ValueError(f"analysis suggestion {index} must be an object")
-        if suggestion.get("status") not in {"proposed", "accepted", "rejected", "stale"}:
+        if suggestion.get("status") not in {
+            "proposed",
+            "accepted",
+            "rejected",
+            "stale",
+        }:
             raise ValueError(f"analysis suggestion {index} has an invalid status")
         if not isinstance(suggestion.get("content", {}), dict) or not isinstance(
             suggestion.get("provenance", {}), dict
         ):
-            raise ValueError(f"analysis suggestion {index} content and provenance must be objects")
+            raise ValueError(
+                f"analysis suggestion {index} content and provenance must be objects"
+            )
         for field in (
             "evidence_ids",
             "proposed_citation_ids",
@@ -541,8 +567,12 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
         if not isinstance(suggestion.get("id", ""), str) or not suggestion.get("id"):
             raise ValueError(f"analysis suggestion {index} requires an ID")
     for collection in ("spans", "edges", "imports"):
-        if not all(isinstance(value, dict) for value in runtime_evidence.get(collection, [])):
-            raise ValueError(f"analysis runtime_evidence.{collection} entries must be objects")
+        if not all(
+            isinstance(value, dict) for value in runtime_evidence.get(collection, [])
+        ):
+            raise ValueError(
+                f"analysis runtime_evidence.{collection} entries must be objects"
+            )
     context = analysis.get("context", {})
     if not isinstance(context, dict):
         raise ValueError("analysis context must be an object")
@@ -565,7 +595,9 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
             if not isinstance(value, list) or not all(
                 isinstance(entry, str) for entry in value
             ):
-                raise ValueError(f"analysis item {index} scanner.{field} must be a string list")
+                raise ValueError(
+                    f"analysis item {index} scanner.{field} must be a string list"
+                )
         citations = item["scanner"].get("citations", [])
         if not isinstance(citations, list) or not all(
             isinstance(entry, dict) for entry in citations
@@ -588,23 +620,34 @@ def _validate_analysis_structure(analysis: dict[str, Any]) -> None:
             if not isinstance(value, list) or not all(
                 isinstance(entry, str) for entry in value
             ):
-                raise ValueError(f"analysis item {index} review.{field} must be a string list")
+                raise ValueError(
+                    f"analysis item {index} review.{field} must be a string list"
+                )
         for field in RATING_FIELDS:
             try:
                 validate_rating(review.get(field))
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"analysis item {index} review.{field} is invalid") from exc
+                raise ValueError(
+                    f"analysis item {index} review.{field} is invalid"
+                ) from exc
         if not isinstance(review.get("revalidation_required", False), bool):
             raise ValueError(
                 f"analysis item {index} review.revalidation_required must be boolean"
             )
-        for field in EDITABLE_REVIEW_FIELDS - LIST_FIELDS - RATING_FIELDS - {
-            "revalidation_required"
-        }:
+        for field in (
+            EDITABLE_REVIEW_FIELDS
+            - LIST_FIELDS
+            - RATING_FIELDS
+            - {"revalidation_required"}
+        ):
             if field in review and not isinstance(review[field], str):
-                raise ValueError(f"analysis item {index} review.{field} must be a string")
+                raise ValueError(
+                    f"analysis item {index} review.{field} must be a string"
+                )
         for history_index, event in enumerate(item.get("review_history", []), start=1):
-            if not isinstance(event, dict) or not isinstance(event.get("changes", {}), dict):
+            if not isinstance(event, dict) or not isinstance(
+                event.get("changes", {}), dict
+            ):
                 raise ValueError(
                     f"analysis item {index} review_history entry {history_index} is invalid"
                 )
@@ -850,9 +893,7 @@ def _without_last_saved_at(analysis: dict[str, Any]) -> dict[str, Any]:
     return snapshot
 
 
-def _reconcile_last_saved_at(
-    destination: Path, analysis: dict[str, Any]
-) -> None:
+def _reconcile_last_saved_at(destination: Path, analysis: dict[str, Any]) -> None:
     """Preserve byte identity for no-op saves and advance time for real changes."""
 
     summary = analysis.setdefault("summary", {})
@@ -945,9 +986,13 @@ def merge_rescan(previous: dict[str, Any], scanned: dict[str, Any]) -> dict[str,
                 "analysis_context_fingerprint", ""
             )
             source_changed = bool(
-                old_fingerprint and new_fingerprint and old_fingerprint != new_fingerprint
+                old_fingerprint
+                and new_fingerprint
+                and old_fingerprint != new_fingerprint
             )
-            context_changed = bool(old_context and new_context and old_context != new_context)
+            context_changed = bool(
+                old_context and new_context and old_context != new_context
+            )
             analysis_context_changed = bool(
                 old_analysis_context
                 and new_analysis_context
@@ -1023,7 +1068,11 @@ def merge_rescan(previous: dict[str, Any], scanned: dict[str, Any]) -> dict[str,
         item["source_change"] = "impacted"
         item["change_reasons"] = [
             *(f"called component changed: {value}" for value in sorted(dependencies)),
-            *(["declared dependency baseline changed"] if changed_dependency_baseline else []),
+            *(
+                ["declared dependency baseline changed"]
+                if changed_dependency_baseline
+                else []
+            ),
         ]
         change_counts["unchanged"] -= 1
         change_counts["impacted"] += 1
@@ -1037,7 +1086,10 @@ def merge_rescan(previous: dict[str, Any], scanned: dict[str, Any]) -> dict[str,
     for old_item in previous.get("items", []):
         if old_item.get("id") in active_ids or old_item.get("id") in matched_old_ids:
             continue
-        if old_item.get("scanner", {}).get("rule_id") in {"manual", "machine_suggestion"}:
+        if old_item.get("scanner", {}).get("rule_id") in {
+            "manual",
+            "machine_suggestion",
+        }:
             merged_items.append(old_item)
             change_counts["manual"] += 1
             continue
@@ -1177,7 +1229,9 @@ def update_item_review(
         elif key in LIST_FIELDS:
             if isinstance(value, str):
                 value = [line.strip() for line in value.splitlines() if line.strip()]
-            if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
+            if not isinstance(value, list) or not all(
+                isinstance(entry, str) for entry in value
+            ):
                 raise ValueError(f"{key} must be a list of strings")
             normalized[key] = [entry.strip() for entry in value if entry.strip()]
         elif key == "disposition":
@@ -1224,7 +1278,9 @@ def update_item_review(
         category = normalized.get(category_field)
         if category:
             categories = set(
-                analysis.get("context", {}).get("risk", {}).get("severity_categories", [])
+                analysis.get("context", {})
+                .get("risk", {})
+                .get("severity_categories", [])
             )
             if category not in categories:
                 raise ValueError(
@@ -1331,9 +1387,15 @@ def update_item_review(
     return item
 
 
-def add_manual_item(analysis: dict[str, Any], component_id: str | None = None) -> dict[str, Any]:
+def add_manual_item(
+    analysis: dict[str, Any], component_id: str | None = None
+) -> dict[str, Any]:
     component = next(
-        (entry for entry in analysis.get("components", []) if entry.get("id") == component_id),
+        (
+            entry
+            for entry in analysis.get("components", [])
+            if entry.get("id") == component_id
+        ),
         None,
     )
     review = empty_review()
@@ -1349,7 +1411,9 @@ def add_manual_item(analysis: dict[str, Any], component_id: str | None = None) -
         "component_id": component_id or "",
         "source_status": "active",
         "source_change": "manual",
-        "source": (component or {}).get("source", {"path": "", "line": "", "end_line": ""}),
+        "source": (component or {}).get(
+            "source", {"path": "", "line": "", "end_line": ""}
+        ),
         "component": {
             "kind": (component or {}).get("kind", "manual"),
             "qualname": (component or {}).get("qualname", "Unassigned component"),
@@ -1425,7 +1489,9 @@ def refresh_summary(analysis: dict[str, Any]) -> None:
         failure_classes[failure_class] = failure_classes.get(failure_class, 0) + 1
         priority = item.get("scanner", {}).get("screening_priority", "unknown")
         screening_priorities[priority] = screening_priorities.get(priority, 0) + 1
-        item_subsystems = item.get("component", {}).get("subsystems", []) or ["unmapped"]
+        item_subsystems = item.get("component", {}).get("subsystems", []) or [
+            "unmapped"
+        ]
         for subsystem in item_subsystems:
             subsystems[subsystem] = subsystems.get(subsystem, 0) + 1
     summary["source_changes"] = source_changes
@@ -1451,9 +1517,7 @@ def refresh_summary(analysis: dict[str, Any]) -> None:
     summary["assurance"] = copy.deepcopy(assurance.get("summary", {}))
     previous_saved_at = previous_summary.get("last_saved_at")
     previous_content = {
-        key: value
-        for key, value in previous_summary.items()
-        if key != "last_saved_at"
+        key: value for key, value in previous_summary.items() if key != "last_saved_at"
     }
     current_content = {
         key: value for key, value in summary.items() if key != "last_saved_at"

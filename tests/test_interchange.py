@@ -52,8 +52,15 @@ class InterchangeTests(unittest.TestCase):
         self.assertEqual(result["level"], "note")
         self.assertTrue(result["properties"]["pysfmeaCandidate"])
         self.assertIn("not a confirmed defect", result["properties"]["notice"])
-        self.assertEqual(result["partialFingerprints"]["pysfmeaFindingId"], self.analysis["items"][0]["id"])
-        self.assertFalse(result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].startswith("C:"))
+        self.assertEqual(
+            result["partialFingerprints"]["pysfmeaFindingId"],
+            self.analysis["items"][0]["id"],
+        )
+        self.assertFalse(
+            result["locations"][0]["physicalLocation"]["artifactLocation"][
+                "uri"
+            ].startswith("C:")
+        )
 
     def test_cyclonedx_labels_inventory_as_declared_not_resolved(self) -> None:
         document = cyclonedx_document(
@@ -65,21 +72,25 @@ class InterchangeTests(unittest.TestCase):
         self.assertEqual(document["specVersion"], "1.7")
         self.assertEqual(document["metadata"]["lifecycles"], [{"phase": "discovery"}])
         self.assertEqual(document["compositions"][0]["aggregate"], "incomplete")
-        self.assertEqual(
-            document["metadata"]["timestamp"], "2026-08-04T12:00:00+00:00"
-        )
+        self.assertEqual(document["metadata"]["timestamp"], "2026-08-04T12:00:00+00:00")
         self.assertEqual(
             document["metadata"]["tools"]["components"][0]["version"],
             "0.55.0",
         )
         names = {value["name"] for value in document["components"]}
         self.assertIn("requests", names)
-        request = next(value for value in document["components"] if value["name"] == "requests")
+        request = next(
+            value for value in document["components"] if value["name"] == "requests"
+        )
         properties = {value["name"]: value["value"] for value in request["properties"]}
-        self.assertEqual(properties["pysfmea:resolution-status"], "declared-not-resolved")
+        self.assertEqual(
+            properties["pysfmea:resolution-status"], "declared-not-resolved"
+        )
         json.dumps(document)
 
-    def test_diff_reports_changed_risk_assumptions_and_invalidated_evidence(self) -> None:
+    def test_diff_reports_changed_risk_assumptions_and_invalidated_evidence(
+        self,
+    ) -> None:
         previous = copy.deepcopy(self.analysis)
         current = copy.deepcopy(self.analysis)
         finding_id = current["items"][0]["id"]

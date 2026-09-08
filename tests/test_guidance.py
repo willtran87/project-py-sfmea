@@ -107,9 +107,7 @@ class GuidanceTraceabilityTests(unittest.TestCase):
             analysis["guidance"]["applicability_summary"]["missing_profile_ids"],
             [],
         )
-        rules = {
-            value["rule_id"] for value in validate_analysis(analysis)["findings"]
-        }
+        rules = {value["rule_id"] for value in validate_analysis(analysis)["findings"]}
         self.assertNotIn("guidance.missing_applicability_decision", rules)
 
         persisted = self.root / "governed-analysis.json.gz"
@@ -125,9 +123,7 @@ class GuidanceTraceabilityTests(unittest.TestCase):
         )
 
         analysis["context"]["guidance_applicability"] = []
-        rules = {
-            value["rule_id"] for value in validate_analysis(analysis)["findings"]
-        }
+        rules = {value["rule_id"] for value in validate_analysis(analysis)["findings"]}
         self.assertIn("guidance.missing_applicability_decision", rules)
 
     def test_project_reviewed_rule_mapping_is_applied_without_claiming_approval(

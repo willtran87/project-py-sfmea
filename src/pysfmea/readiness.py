@@ -53,7 +53,11 @@ def repository_readiness(
         checks.append(check)
 
     if not root.is_dir():
-        add("repository.directory", "error", f"Repository directory does not exist: {root}")
+        add(
+            "repository.directory",
+            "error",
+            f"Repository directory does not exist: {root}",
+        )
         return _result(root, None, checks)
     add("repository.directory", "pass", f"Repository: {root}")
 
@@ -64,7 +68,10 @@ def repository_readiness(
             relative = resolved.relative_to(root)
         except (OSError, ValueError):
             continue
-        if any(part in DEFAULT_EXCLUDES or part.startswith(".") for part in relative.parts[:-1]):
+        if any(
+            part in DEFAULT_EXCLUDES or part.startswith(".")
+            for part in relative.parts[:-1]
+        ):
             continue
         python_files.append(resolved)
     if python_files:
@@ -103,7 +110,9 @@ def repository_readiness(
                 value.get("description") == "Example unacceptable system condition"
                 for value in config["hazards"]
             ),
-            any(value.get("name") == "Example reviewer" for value in config["reviewers"]),
+            any(
+                value.get("name") == "Example reviewer" for value in config["reviewers"]
+            ),
             any(
                 str(value.get("pattern", "")).startswith("src/example/")
                 for value in config["component_mappings"]
@@ -121,9 +130,17 @@ def repository_readiness(
     project = config["project"]
     for field in ("name", "purpose", "boundary", "operating_context"):
         if project.get(field, "").strip():
-            add(f"project.{field}", "pass", f"Project {field.replace('_', ' ')} is configured.")
+            add(
+                f"project.{field}",
+                "pass",
+                f"Project {field.replace('_', ' ')} is configured.",
+            )
         else:
-            add(f"project.{field}", "error", f"Project {field.replace('_', ' ')} is blank.")
+            add(
+                f"project.{field}",
+                "error",
+                f"Project {field.replace('_', ' ')} is blank.",
+            )
     resolved_context = build_system_context(config)
     add(
         "project.context_completeness",
@@ -196,7 +213,11 @@ def repository_readiness(
     if not reviewers:
         add("review.team", "error", "No reviewers are configured.")
     else:
-        roles = {value.get("role", "").strip() for value in reviewers if value.get("role", "").strip()}
+        roles = {
+            value.get("role", "").strip()
+            for value in reviewers
+            if value.get("role", "").strip()
+        }
         add("review.team", "pass", f"Configured {len(reviewers)} named reviewer(s).")
         add(
             "review.role_diversity",
@@ -250,10 +271,10 @@ def repository_readiness(
                 "line-coverage evidence."
             ),
             next_action=(
-                f"Set scan.coverage_json = \"{discovered_coverage.as_posix()}\"."
+                f'Set scan.coverage_json = "{discovered_coverage.as_posix()}".'
                 if discovered_coverage
                 else "Run `coverage run -m pytest && coverage json -o coverage.json`, "
-                "then set scan.coverage_json = \"coverage.json\"."
+                'then set scan.coverage_json = "coverage.json".'
             ),
         )
     test_files = [
@@ -277,7 +298,9 @@ def repository_readiness(
     return _result(root, resolved_config, checks)
 
 
-def _result(root: Path, config_path: Path | None, checks: list[dict[str, str]]) -> dict[str, Any]:
+def _result(
+    root: Path, config_path: Path | None, checks: list[dict[str, str]]
+) -> dict[str, Any]:
     counts = Counter(check["status"] for check in checks)
     return {
         "repository": str(root),

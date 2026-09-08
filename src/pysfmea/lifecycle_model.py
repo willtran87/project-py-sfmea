@@ -69,7 +69,9 @@ def _reference_id(value: Any) -> str:
 
 def _reference_ids(value: Any) -> list[str]:
     values = value if isinstance(value, list) else [value]
-    return sorted({identifier for item in values if (identifier := _reference_id(item))})
+    return sorted(
+        {identifier for item in values if (identifier := _reference_id(item))}
+    )
 
 
 def _local_type(value: Any) -> str:
@@ -130,7 +132,9 @@ def _relationship(
     }
 
 
-def _reqif(snapshot: BoundedFileSnapshot) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+def _reqif(
+    snapshot: BoundedFileSnapshot,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     try:
         root = DefusedET.fromstring(snapshot.raw)
     except (ET.ParseError, DefusedXmlException) as exc:
@@ -148,24 +152,31 @@ def _reqif(snapshot: BoundedFileSnapshot) -> tuple[list[dict[str, Any]], list[di
         if not identifier:
             continue
         properties: dict[str, Any] = {}
-        for attribute in node.findall(
-            f".//{{{REQIF_NS}}}ATTRIBUTE-VALUE-STRING"
-        )[:MAX_PROPERTIES]:
+        for attribute in node.findall(f".//{{{REQIF_NS}}}ATTRIBUTE-VALUE-STRING")[
+            :MAX_PROPERTIES
+        ]:
             reference = attribute.find(
                 f".//{{{REQIF_NS}}}ATTRIBUTE-DEFINITION-STRING-REF"
             )
             key = definitions.get(
                 reference.text if reference is not None and reference.text else "",
-                reference.text if reference is not None and reference.text else "attribute",
+                reference.text
+                if reference is not None and reference.text
+                else "attribute",
             )
             properties[_bounded(key)] = _bounded(attribute.get("THE-VALUE", ""))
         type_ref = node.find(f".//{{{REQIF_NS}}}SPEC-OBJECT-TYPE-REF")
-        type_name = type_ref.text if type_ref is not None and type_ref.text else "SpecObject"
+        type_name = (
+            type_ref.text if type_ref is not None and type_ref.text else "SpecObject"
+        )
         description = next(
             (
                 str(value)
                 for key, value in properties.items()
-                if any(token in key.casefold() for token in ("description", "text", "statement"))
+                if any(
+                    token in key.casefold()
+                    for token in ("description", "text", "statement")
+                )
             ),
             "",
         )
@@ -186,7 +197,9 @@ def _reqif(snapshot: BoundedFileSnapshot) -> tuple[list[dict[str, Any]], list[di
         if source is not None and source.text and target is not None and target.text:
             relationships.append(
                 _relationship(
-                    type_ref.text if type_ref is not None and type_ref.text else "related",
+                    type_ref.text
+                    if type_ref is not None and type_ref.text
+                    else "related",
                     source.text,
                     target.text,
                     "explicit ReqIF SPEC-RELATION",
@@ -196,7 +209,9 @@ def _reqif(snapshot: BoundedFileSnapshot) -> tuple[list[dict[str, Any]], list[di
     total_entities = len(root.findall(f".//{{{REQIF_NS}}}SPEC-OBJECT"))
     total_relationships = len(root.findall(f".//{{{REQIF_NS}}}SPEC-RELATION"))
     if total_entities > MAX_ENTITIES:
-        limitations.append(f"ReqIF entities truncated from {total_entities} to {MAX_ENTITIES}")
+        limitations.append(
+            f"ReqIF entities truncated from {total_entities} to {MAX_ENTITIES}"
+        )
     if total_relationships > MAX_RELATIONSHIPS:
         limitations.append(
             f"ReqIF relationships truncated from {total_relationships} to {MAX_RELATIONSHIPS}"
@@ -216,7 +231,9 @@ def _json_elements(value: Any) -> list[dict[str, Any]]:
     return [value]
 
 
-def _sysml2(snapshot: BoundedFileSnapshot) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+def _sysml2(
+    snapshot: BoundedFileSnapshot,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     value = parse_bounded_json_bytes(
         snapshot.raw,
         label="SysML v2 JSON snapshot",
@@ -296,7 +313,9 @@ def _iter_oslc_links(element: dict[str, Any]) -> Iterable[tuple[str, str]]:
             yield key, identifier
 
 
-def _oslc(snapshot: BoundedFileSnapshot) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+def _oslc(
+    snapshot: BoundedFileSnapshot,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     value = parse_bounded_json_bytes(
         snapshot.raw,
         label="OSLC JSON-LD snapshot",
@@ -345,7 +364,9 @@ def _oslc(snapshot: BoundedFileSnapshot) -> tuple[list[dict[str, Any]], list[dic
     return entities, relationships, sorted(set(omissions))[:1_000]
 
 
-def _component_indexes(analysis: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+def _component_indexes(
+    analysis: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, str]]:
     by_identity: dict[str, str] = {}
     by_source_qualname: dict[str, str] = {}
     for component in analysis.get("components", []):
@@ -524,9 +545,7 @@ def verify_lifecycle_model(value: dict[str, Any]) -> dict[str, Any]:
                 if endpoint not in source_ids
             }
         )
-        unresolved = value["summary"][
-            "unresolved_explicit_code_link_entity_ids"
-        ]
+        unresolved = value["summary"]["unresolved_explicit_code_link_entity_ids"]
         expected_summary = {
             "entities": len(value["entities"]),
             "relationships": len(value["relationships"]),
@@ -565,7 +584,9 @@ def verify_lifecycle_model(value: dict[str, Any]) -> dict[str, Any]:
     return {
         "format": LIFECYCLE_MODEL_VERIFICATION_FORMAT,
         "valid": bool(structure and semantic and integrity),
-        "complete": bool(structure and semantic and value.get("summary", {}).get("complete")),
+        "complete": bool(
+            structure and semantic and value.get("summary", {}).get("complete")
+        ),
         "checks": {
             "closed_structure": structure,
             "content_integrity": integrity,

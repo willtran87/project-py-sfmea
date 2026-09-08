@@ -159,9 +159,8 @@ def atomic_publish_bytes(
                 )
                 staged_descriptor = os.open(temporary, flags)
                 opened_stage = os.fstat(staged_descriptor)
-                if (
-                    not stat.S_ISREG(opened_stage.st_mode)
-                    or not os.path.samestat(verified_stage, opened_stage)
+                if not stat.S_ISREG(opened_stage.st_mode) or not os.path.samestat(
+                    verified_stage, opened_stage
                 ):
                     raise ValueError(f"staged {label} changed during verification")
                 with os.fdopen(staged_descriptor, "rb") as staged_file:
@@ -173,9 +172,7 @@ def atomic_publish_bytes(
             except ValueError:
                 raise
             except OSError as exc:
-                raise ValueError(
-                    f"staged {label} changed during verification"
-                ) from exc
+                raise ValueError(f"staged {label} changed during verification") from exc
             finally:
                 if staged_descriptor is not None:
                     try:
@@ -260,7 +257,9 @@ def _read_destination_snapshot_bytes(
     except ValueError:
         raise
     except OSError as exc:
-        raise ValueError(f"{label} destination could not be retained for rollback") from exc
+        raise ValueError(
+            f"{label} destination could not be retained for rollback"
+        ) from exc
     finally:
         if descriptor is not None:
             try:
@@ -299,7 +298,9 @@ def atomic_publish_pair(
         secondary_destination, label=secondary_label
     )
     if expected_primary is not None and primary_state != expected_primary:
-        raise ValueError(f"{primary_label} destination changed before coordinated staging")
+        raise ValueError(
+            f"{primary_label} destination changed before coordinated staging"
+        )
     if expected_secondary is not None and secondary_state != expected_secondary:
         raise ValueError(
             f"{secondary_label} destination changed before coordinated staging"
@@ -343,7 +344,9 @@ def atomic_publish_pair(
                     )
                 current.path.unlink()
                 if _destination_snapshot(current.path) is not None:
-                    raise ValueError(f"{secondary_label} rollback did not remove the file")
+                    raise ValueError(
+                        f"{secondary_label} rollback did not remove the file"
+                    )
             else:
                 atomic_publish_bytes(
                     secondary_state.path,

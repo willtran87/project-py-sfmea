@@ -60,10 +60,14 @@ class IndustryReleaseControlTests(unittest.TestCase):
     def _passing_benchmark(self, name: str) -> Path:
         examples = Path(__file__).resolve().parents[1] / "examples"
         protocol = json.loads(
-            (examples / "independent-benchmark-protocol-v2.json").read_text(encoding="utf-8")
+            (examples / "independent-benchmark-protocol-v2.json").read_text(
+                encoding="utf-8"
+            )
         )
         observations = json.loads(
-            (examples / "independent-benchmark-observations-v2.json").read_text(encoding="utf-8")
+            (examples / "independent-benchmark-observations-v2.json").read_text(
+                encoding="utf-8"
+            )
         )
         protocol["statistics"]["metric_thresholds"]["propagation_paths"] = {
             "minimum_recall_lower": 0.5,
@@ -95,7 +99,9 @@ class IndustryReleaseControlTests(unittest.TestCase):
         export_benchmark_v2_assessment(value, output)
         return output
 
-    def test_release_qualification_enforces_holdout_noninferiority_and_budgets(self) -> None:
+    def test_release_qualification_enforces_holdout_noninferiority_and_budgets(
+        self,
+    ) -> None:
         candidate = self._passing_benchmark("candidate")
         baseline = self._passing_benchmark("baseline")
         source = release_qualification_source_template(authority="protocol-owner")
@@ -110,8 +116,16 @@ class IndustryReleaseControlTests(unittest.TestCase):
                     "approval_authority": "release-approval-authority",
                     "independence_basis": "Distinct organizations and reporting lines.",
                 },
-                "candidate": {"version": "0.65.0", "subject_sha256": "9" * 64, "assessment_ref": candidate.name},
-                "baseline": {"version": "0.64.0", "subject_sha256": "a" * 64, "assessment_ref": baseline.name},
+                "candidate": {
+                    "version": "0.65.0",
+                    "subject_sha256": "9" * 64,
+                    "assessment_ref": candidate.name,
+                },
+                "baseline": {
+                    "version": "0.64.0",
+                    "subject_sha256": "a" * 64,
+                    "assessment_ref": baseline.name,
+                },
                 "corpus": {
                     "temporal_cutoff": "2026-01-01T00:00:00+00:00",
                     "similarity_threshold": 0.9,
@@ -154,8 +168,18 @@ class IndustryReleaseControlTests(unittest.TestCase):
                     "maximum_artifact_size_ratio": 1.1,
                 },
                 "performance": {
-                    "candidate": {"duration_seconds": 10.0, "peak_rss_bytes": 1000, "artifact_size_bytes": 1000, "evidence_ref": "evidence://performance/candidate"},
-                    "baseline": {"duration_seconds": 10.0, "peak_rss_bytes": 1000, "artifact_size_bytes": 1000, "evidence_ref": "evidence://performance/baseline"},
+                    "candidate": {
+                        "duration_seconds": 10.0,
+                        "peak_rss_bytes": 1000,
+                        "artifact_size_bytes": 1000,
+                        "evidence_ref": "evidence://performance/candidate",
+                    },
+                    "baseline": {
+                        "duration_seconds": 10.0,
+                        "peak_rss_bytes": 1000,
+                        "artifact_size_bytes": 1000,
+                        "evidence_ref": "evidence://performance/baseline",
+                    },
                 },
                 "evidence_refs": ["evidence://release/campaign"],
             }
@@ -171,7 +195,9 @@ class IndustryReleaseControlTests(unittest.TestCase):
             generated_at="2026-08-28T13:00:00+00:00",
         )
         self.assertTrue(result["summary"]["passed"])
-        Draft202012Validator(schema_document("release-qualification-assessment")).validate(result)
+        Draft202012Validator(
+            schema_document("release-qualification-assessment")
+        ).validate(result)
         output = self.root / "release-assessment.json"
         export_release_qualification_assessment(result, output)
         verdict = verify_release_qualification_assessment_file(
@@ -185,7 +211,9 @@ class IndustryReleaseControlTests(unittest.TestCase):
 
         unrelated = json.loads(source_path.read_text(encoding="utf-8"))
         unrelated["corpus"]["candidate_repositories"][0]["id"] = "unrelated-repository"
-        unrelated["corpus"]["pairwise_similarity_evidence"][0]["candidate_id"] = "unrelated-repository"
+        unrelated["corpus"]["pairwise_similarity_evidence"][0]["candidate_id"] = (
+            "unrelated-repository"
+        )
         unrelated["content_sha256"] = "0" * 64
         unrelated_path = self.root / "unrelated-release-source.json"
         export_release_qualification_source(unrelated, unrelated_path)
@@ -203,7 +231,10 @@ class IndustryReleaseControlTests(unittest.TestCase):
                 "rules": [
                     {
                         "id": "RULE-INCOMPLETE",
-                        "conditions": {name: [values[0]] for name, values in DECISION_POINTS.items()},
+                        "conditions": {
+                            name: [values[0]]
+                            for name, values in DECISION_POINTS.items()
+                        },
                         "outcome": "track",
                         "rationale": "Deliberately incomplete negative control.",
                     }
@@ -224,7 +255,10 @@ class IndustryReleaseControlTests(unittest.TestCase):
                 "rules": [
                     {
                         "id": "RULE-ALL-ATTEND",
-                        "conditions": {name: list(values) for name, values in DECISION_POINTS.items()},
+                        "conditions": {
+                            name: list(values)
+                            for name, values in DECISION_POINTS.items()
+                        },
                         "outcome": "attend",
                         "rationale": "Controlled test policy covering the complete decision space.",
                     }
@@ -238,8 +272,11 @@ class IndustryReleaseControlTests(unittest.TestCase):
         sealed_policy = json.loads(policy_path.read_text(encoding="utf-8"))
 
         observations = ssvc_observations_template(
-            policy_id=sealed_policy["content_sha256"], authority="vulnerability-review-board"
+            policy_id=sealed_policy["content_sha256"],
+            authority="vulnerability-review-board",
         )
+        # Keep the retained review interval independent of the wall-clock date.
+        observations["observed_at"] = "2026-08-28T10:30:00+00:00"
         observations["vulnerabilities"] = [
             {
                 "id": "CVE-2099-0001",
@@ -256,7 +293,9 @@ class IndustryReleaseControlTests(unittest.TestCase):
         observations["content_sha256"] = "0" * 64
         observations_path = self.root / "ssvc-observations.json"
         export_ssvc_source(observations, observations_path)
-        seal_ssvc_source(observations_path, observations_path, policy_source=policy_path)
+        seal_ssvc_source(
+            observations_path, observations_path, policy_source=policy_path
+        )
         result = ssvc_assessment(
             policy_path, observations_path, generated_at="2026-08-28T11:00:00+00:00"
         )
@@ -269,7 +308,9 @@ class IndustryReleaseControlTests(unittest.TestCase):
         )
         self.assertTrue(verdict["valid"], verdict["errors"])
 
-    def test_gsn_projection_retains_assumptions_defeaters_and_exact_binding(self) -> None:
+    def test_gsn_projection_retains_assumptions_defeaters_and_exact_binding(
+        self,
+    ) -> None:
         analysis_path = self.root / "analysis.json"
         save_analysis(analysis_path, self.analysis)
         case_value = assurance_case(
@@ -289,7 +330,11 @@ class IndustryReleaseControlTests(unittest.TestCase):
 
         forged = copy.deepcopy(projection)
         forged["edges"].append(
-            {"source": projection["top_node_id"], "target": "missing-node", "kind": "supported_by"}
+            {
+                "source": projection["top_node_id"],
+                "target": "missing-node",
+                "kind": "supported_by",
+            }
         )
         forged["summary"]["edges"] += 1
         forged["summary"]["dangling_edges"] = 1

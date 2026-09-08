@@ -209,9 +209,14 @@ def evaluate_test_generation_quality_campaign(
         set(corpus) != _ROOT_FIELDS
         or corpus.get("format") != TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT
     ):
-        raise ValueError("stratified quality corpus must match the closed root contract")
+        raise ValueError(
+            "stratified quality corpus must match the closed root contract"
+        )
     governance = corpus.get("governance")
-    if not isinstance(governance, dict) or set(governance) != _CAMPAIGN_GOVERNANCE_FIELDS:
+    if (
+        not isinstance(governance, dict)
+        or set(governance) != _CAMPAIGN_GOVERNANCE_FIELDS
+    ):
         raise ValueError("stratified quality governance must match the closed contract")
     frozen_text, frozen_at = _timestamp(
         governance.get("selection_frozen_at"), "governance selection_frozen_at"
@@ -256,7 +261,9 @@ def evaluate_test_generation_quality_campaign(
 
     for index, sample in enumerate(source_samples, start=1):
         if not isinstance(sample, dict) or set(sample) != _SAMPLE_FIELDS:
-            raise ValueError(f"stratified quality sample {index} must match the closed contract")
+            raise ValueError(
+                f"stratified quality sample {index} must match the closed contract"
+            )
         sample_id = _text(sample.get("id"), f"quality sample {index} id")
         if sample_id in sample_ids:
             raise ValueError("quality sample ids must be unique")
@@ -270,7 +277,9 @@ def evaluate_test_generation_quality_campaign(
         sample_frameworks = _labels(
             sample.get("frameworks"), f"quality sample {index} frameworks"
         )
-        sample_domains = _labels(sample.get("domains"), f"quality sample {index} domains")
+        sample_domains = _labels(
+            sample.get("domains"), f"quality sample {index} domains"
+        )
         category_value = sample.get("fault_category")
         category = (
             None
@@ -290,12 +299,18 @@ def evaluate_test_generation_quality_campaign(
         )
         actual_decision = proposal.get("response", {}).get("decision")
         if actual_decision not in {"proposed", "refused"}:
-            raise ValueError(f"quality sample {sample_id} proposal has no valid provider decision")
+            raise ValueError(
+                f"quality sample {sample_id} proposal has no valid provider decision"
+            )
         if actual_decision == "refused" and category is not None:
-            raise ValueError(f"refused quality sample {sample_id} must not declare a fault category")
+            raise ValueError(
+                f"refused quality sample {sample_id} must not declare a fault category"
+            )
         if actual_decision == "proposed":
             if category is None:
-                raise ValueError(f"proposed quality sample {sample_id} requires a fault category")
+                raise ValueError(
+                    f"proposed quality sample {sample_id} requires a fault category"
+                )
             fault, _ = load_quality_artifact_document(
                 evidence_root,
                 artifacts.get("fault_detection"),
@@ -423,7 +438,9 @@ def evaluate_test_generation_quality_campaign(
         _gate(
             "decision_balance_per_repository",
             passed=(not decision_balance) or balanced_repositories == len(repositories),
-            value=(len(repositories) if not decision_balance else balanced_repositories),
+            value=(
+                len(repositories) if not decision_balance else balanced_repositories
+            ),
             operator="==",
             threshold=len(repositories),
         ),
@@ -437,7 +454,9 @@ def evaluate_test_generation_quality_campaign(
     ]
 
     normalized_governance = {
-        **{field: copy.deepcopy(governance[field]) for field in _BASE_GOVERNANCE_FIELDS},
+        **{
+            field: copy.deepcopy(governance[field]) for field in _BASE_GOVERNANCE_FIELDS
+        },
         "selection_frozen_at": frozen_text,
         "outcomes_observed_at": observed_text,
     }
@@ -465,7 +484,9 @@ def evaluate_test_generation_quality_campaign(
         "max_single_repository_fraction": max_repository_fraction,
         "fault_category_population": [
             {"id": category, "samples": count}
-            for category, count in sorted(fault_population.items(), key=lambda item: item[0].casefold())
+            for category, count in sorted(
+                fault_population.items(), key=lambda item: item[0].casefold()
+            )
         ],
         "segments": {
             "repositories": repository_segments,
@@ -525,7 +546,9 @@ def verify_test_generation_quality_campaign_result(
     if not corpus_binding:
         errors.append("quality result does not bind the supplied corpus")
     if evidence_root is None:
-        errors.append("stratified artifact quality verification requires an evidence root")
+        errors.append(
+            "stratified artifact quality verification requires an evidence root"
+        )
         replayed = None
     else:
         replayed = evaluate_test_generation_quality_campaign(corpus, evidence_root)

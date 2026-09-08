@@ -10,6 +10,7 @@ JSON_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 SCHEMA_CATALOG_FORMAT = "pysfmea-schema-catalog-1"
 REVIEW_PACKAGE_FORMAT = "pysfmea-review-package-1"
 
+
 def _schema_id(name: str) -> str:
     return f"urn:pysfmea:schema:{name}:1"
 

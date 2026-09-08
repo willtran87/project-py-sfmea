@@ -65,7 +65,9 @@ def _mapping(value: Any) -> list[dict[str, Any]]:
         or set(value) != {"format", "links"}
         or value.get("format") != CROSSWALK_MAPPING_FORMAT
     ):
-        raise ValueError("standards crosswalk mapping fields or format do not match format 1")
+        raise ValueError(
+            "standards crosswalk mapping fields or format do not match format 1"
+        )
     links = value.get("links")
     if not isinstance(links, list) or len(links) > MAX_LINKS:
         raise ValueError("standards crosswalk links must be a bounded list")
@@ -100,8 +102,14 @@ def _mapping(value: Any) -> list[dict[str, Any]]:
                 or any(not isinstance(item, str) or not item.strip() for item in values)
             ):
                 raise ValueError(f"crosswalk {field} must contain unique identifiers")
-        if not link["finding_ids"] and not link["obligation_ids"] and not link["evidence_refs"]:
-            raise ValueError("crosswalk links require a finding, obligation, or evidence reference")
+        if (
+            not link["finding_ids"]
+            and not link["obligation_ids"]
+            and not link["evidence_refs"]
+        ):
+            raise ValueError(
+                "crosswalk links require a finding, obligation, or evidence reference"
+            )
         _text(link["rationale"], "crosswalk rationale")
         _text(link["authority"], "crosswalk authority")
         result.append(copy.deepcopy(link))
@@ -149,12 +157,16 @@ def standards_crosswalk(
         unknown_findings = set(link["finding_ids"]) - active_findings
         unknown_obligations = set(link["obligation_ids"]) - set(obligations)
         if unknown_findings or unknown_obligations:
-            raise ValueError("crosswalk refers to unknown active findings or obligations")
+            raise ValueError(
+                "crosswalk refers to unknown active findings or obligations"
+            )
         obligation_findings = {
             obligations[value] for value in link["obligation_ids"] if obligations[value]
         }
         if obligation_findings - active_findings:
-            raise ValueError("crosswalk obligation does not belong to an active finding")
+            raise ValueError(
+                "crosswalk obligation does not belong to an active finding"
+            )
     by_objective: dict[str, list[dict[str, Any]]] = {
         identifier: [] for identifier in objective_records
     }
@@ -180,9 +192,7 @@ def standards_crosswalk(
         ]
         for link in objective_links:
             mapped_findings.update(link["finding_ids"])
-            mapped_findings.update(
-                link["finding_ids_via_obligations"]
-            )
+            mapped_findings.update(link["finding_ids_via_obligations"])
         objectives.append(
             {
                 "profile_id": profile_id,
@@ -201,11 +211,11 @@ def standards_crosswalk(
                 ),
             }
         )
-    applicable = [
-        item for item in objectives if item["applicability"] == "applicable"
-    ]
+    applicable = [item for item in objectives if item["applicability"] == "applicable"]
     unlinked_objectives = [
-        item["objective_id"] for item in applicable if item["trace_status"] == "unlinked"
+        item["objective_id"]
+        for item in applicable
+        if item["trace_status"] == "unlinked"
     ]
     unmapped_findings = sorted(active_findings - mapped_findings)
     result: dict[str, Any] = {
@@ -239,7 +249,15 @@ def standards_crosswalk(
 
 def verify_standards_crosswalk(value: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
-    required = {"format", "generated_at", "binding", "objectives", "summary", "claim", "content_sha256"}
+    required = {
+        "format",
+        "generated_at",
+        "binding",
+        "objectives",
+        "summary",
+        "claim",
+        "content_sha256",
+    }
     closed = set(value) == required and value.get("format") == CROSSWALK_FORMAT
     if not closed:
         errors.append("crosswalk fields or format do not match format 1")
@@ -269,8 +287,14 @@ def verify_standards_crosswalk(value: dict[str, Any]) -> dict[str, Any]:
                 for item in objectives
             )
         )
-        applicable = [item for item in objectives if item["applicability"] == "applicable"]
-        unlinked = sorted(item["objective_id"] for item in applicable if item["trace_status"] == "unlinked")
+        applicable = [
+            item for item in objectives if item["applicability"] == "applicable"
+        ]
+        unlinked = sorted(
+            item["objective_id"]
+            for item in applicable
+            if item["trace_status"] == "unlinked"
+        )
         mapped = {
             finding
             for item in objectives
@@ -284,13 +308,17 @@ def verify_standards_crosswalk(value: dict[str, Any]) -> dict[str, Any]:
         semantic = semantic and bool(
             summary["objectives"] == len(objectives)
             and summary["applicable_objectives"] == len(applicable)
-            and summary["linked_applicable_objectives"] == len(applicable) - len(unlinked)
+            and summary["linked_applicable_objectives"]
+            == len(applicable) - len(unlinked)
             and summary["unlinked_objective_ids"] == unlinked
             and summary["mapped_findings"] == len(mapped)
             and summary["active_findings"]
             == len(mapped) + len(summary["unmapped_finding_ids"])
             and summary["trace_complete"]
-            == (not summary["unlinked_objective_ids"] and not summary["unmapped_finding_ids"])
+            == (
+                not summary["unlinked_objective_ids"]
+                and not summary["unmapped_finding_ids"]
+            )
         )
     except (KeyError, TypeError, ValueError):
         semantic = False
@@ -300,8 +328,15 @@ def verify_standards_crosswalk(value: dict[str, Any]) -> dict[str, Any]:
     return {
         "format": CROSSWALK_VERIFICATION_FORMAT,
         "valid": valid,
-        "trace_complete": bool(valid and value.get("summary", {}).get("trace_complete")),
-        "checks": {"closed_structure": closed, "content_integrity": integrity, "semantic_reconciliation": semantic, "source_regeneration": None},
+        "trace_complete": bool(
+            valid and value.get("summary", {}).get("trace_complete")
+        ),
+        "checks": {
+            "closed_structure": closed,
+            "content_integrity": integrity,
+            "semantic_reconciliation": semantic,
+            "source_regeneration": None,
+        },
         "errors": errors,
         "content_sha256": str(value.get("content_sha256", "")),
         "notice": "Verification establishes internal trace integrity; it does not authenticate authorities or establish standards conformity.",
@@ -319,13 +354,18 @@ def verify_standards_crosswalk_file(
         document = _document(source, "standards crosswalk")
         if not isinstance(document.value, dict):
             raise ValueError("standards crosswalk must contain an object")
-        verdict = {"path": str(document.path), **verify_standards_crosswalk(document.value)}
+        verdict = {
+            "path": str(document.path),
+            **verify_standards_crosswalk(document.value),
+        }
         supplied = (analysis_source, workspace_source, mapping_source)
         if any(item is not None for item in supplied):
             if not all(item is not None for item in supplied):
                 verdict["checks"]["source_regeneration"] = False
             else:
-                analysis_document = _document(analysis_source or "", "crosswalk analysis")
+                analysis_document = _document(
+                    analysis_source or "", "crosswalk analysis"
+                )
                 if not isinstance(analysis_document.value, dict):
                     raise ValueError("crosswalk analysis must contain an object")
                 regenerated = standards_crosswalk(
@@ -339,7 +379,9 @@ def verify_standards_crosswalk_file(
             if verdict["checks"]["source_regeneration"] is not True:
                 verdict["valid"] = False
                 verdict["trace_complete"] = False
-                verdict["errors"].append("crosswalk does not exactly regenerate from all supplied sources")
+                verdict["errors"].append(
+                    "crosswalk does not exactly regenerate from all supplied sources"
+                )
         return verdict
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return {
@@ -347,7 +389,12 @@ def verify_standards_crosswalk_file(
             "format": CROSSWALK_VERIFICATION_FORMAT,
             "valid": False,
             "trace_complete": False,
-            "checks": {"closed_structure": False, "content_integrity": False, "semantic_reconciliation": False, "source_regeneration": False},
+            "checks": {
+                "closed_structure": False,
+                "content_integrity": False,
+                "semantic_reconciliation": False,
+                "source_regeneration": False,
+            },
             "errors": [str(exc)],
             "content_sha256": "",
             "notice": "The standards crosswalk could not be safely verified.",

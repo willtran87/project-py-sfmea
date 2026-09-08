@@ -25,11 +25,7 @@ class GraphifyIntegrationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
         (self.root / "app.py").write_text(
-            "def caller():\n"
-            "    return callee()\n"
-            "\n"
-            "def callee():\n"
-            "    return 1\n",
+            "def caller():\n    return callee()\n\ndef callee():\n    return 1\n",
             encoding="utf-8",
         )
         self.graph = self.root / "graph.json"
@@ -77,9 +73,7 @@ class GraphifyIntegrationTests(unittest.TestCase):
         self.assertEqual(reconciliation["format"], GRAPHIFY_RECONCILIATION_FORMAT)
         self.assertEqual(reconciliation["summary"]["mapped_nodes"], 2)
         self.assertEqual(reconciliation["summary"]["corroborated_call_edges"], 1)
-        self.assertEqual(
-            reconciliation["edges"][0]["reconciliation"], "corroborated"
-        )
+        self.assertEqual(reconciliation["edges"][0]["reconciliation"], "corroborated")
         analysis["graphify_reconciliation"] = reconciliation
         graph = architecture_graph(analysis)
         self.assertTrue(
@@ -89,12 +83,8 @@ class GraphifyIntegrationTests(unittest.TestCase):
     def test_scan_imports_graphify_and_binds_artifact_to_manifest(self) -> None:
         analysis = scan_repository(self.root, graphify_json=self.graph)
 
-        self.assertEqual(
-            analysis["summary"]["graphify_correlated_call_edges"], 1
-        )
-        self.assertEqual(
-            analysis["summary"]["graphify_call_review_leads"], 0
-        )
+        self.assertEqual(analysis["summary"]["graphify_correlated_call_edges"], 1)
+        self.assertEqual(analysis["summary"]["graphify_call_review_leads"], 0)
         self.assertIn(
             "graphify_graph_json_sha256",
             analysis["run_manifest"]["resolved_inputs"],
@@ -124,7 +114,9 @@ class GraphifyIntegrationTests(unittest.TestCase):
         ]
         self.graph.write_text(json.dumps(graph), encoding="utf-8")
 
-        reconciliation = load_graphify_reconciliation(scan_repository(self.root), self.graph)
+        reconciliation = load_graphify_reconciliation(
+            scan_repository(self.root), self.graph
+        )
 
         self.assertEqual(
             reconciliation["summary"]["graphify_only_call_review_leads"], 1

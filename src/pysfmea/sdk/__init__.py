@@ -46,7 +46,9 @@ class Plugin(Protocol):
 
 def _bounded_text(value: Any, *, label: str, maximum: int = 500) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
-        raise ValueError(f"{label} must be a non-empty string up to {maximum} characters")
+        raise ValueError(
+            f"{label} must be a non-empty string up to {maximum} characters"
+        )
     return value.strip()
 
 
@@ -69,14 +71,18 @@ def validate_manifest(document: Any, *, path: str | Path) -> PluginManifest:
     }
     unknown = set(document) - allowed
     if unknown:
-        raise ValueError("plugin manifest contains unknown fields: " + ", ".join(sorted(unknown)))
+        raise ValueError(
+            "plugin manifest contains unknown fields: " + ", ".join(sorted(unknown))
+        )
     if document.get("format") != PLUGIN_MANIFEST_FORMAT:
         raise ValueError(f"plugin manifest format must be {PLUGIN_MANIFEST_FORMAT}")
     identifier = _bounded_text(document.get("id"), label="plugin id", maximum=120)
     if not re.fullmatch(r"[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+", identifier):
         raise ValueError("plugin id must be a lowercase, namespaced identifier")
     version = _bounded_text(document.get("version"), label="plugin version", maximum=40)
-    if not re.fullmatch(r"0|[1-9]\d*(?:\.(?:0|[1-9]\d*)){2}(?:[-+][0-9A-Za-z.-]+)?", version):
+    if not re.fullmatch(
+        r"0|[1-9]\d*(?:\.(?:0|[1-9]\d*)){2}(?:[-+][0-9A-Za-z.-]+)?", version
+    ):
         raise ValueError("plugin version must use semantic versioning")
     sdk_api = _bounded_text(document.get("sdk_api"), label="sdk_api", maximum=20)
     try:
@@ -92,7 +98,10 @@ def validate_manifest(document: Any, *, path: str | Path) -> PluginManifest:
     if (
         not isinstance(command, list)
         or not 1 <= len(command) <= 20
-        or any(not isinstance(value, str) or not value or len(value) > 1_000 for value in command)
+        or any(
+            not isinstance(value, str) or not value or len(value) > 1_000
+            for value in command
+        )
     ):
         raise ValueError("plugin command must contain 1-20 bounded argument strings")
     capabilities = document.get("capabilities")
@@ -105,7 +114,11 @@ def validate_manifest(document: Any, *, path: str | Path) -> PluginManifest:
     ):
         raise ValueError("plugin capabilities must be unique supported capability IDs")
     timeout = document.get("timeout_seconds", 30)
-    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 300:
+    if (
+        not isinstance(timeout, int)
+        or isinstance(timeout, bool)
+        or not 1 <= timeout <= 300
+    ):
         raise ValueError("plugin timeout_seconds must be from 1 through 300")
     deterministic = document.get("deterministic")
     if not isinstance(deterministic, bool):

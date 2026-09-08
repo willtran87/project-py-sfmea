@@ -48,8 +48,7 @@ class IndustryInteroperabilityTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
         (self.root / "service.py").write_text(
-            "def ratio(total: float, count: int) -> float:\n"
-            "    return total / count\n",
+            "def ratio(total: float, count: int) -> float:\n    return total / count\n",
             encoding="utf-8",
         )
         self.analysis = scan_repository(self.root)
@@ -180,12 +179,24 @@ class IndustryInteroperabilityTests(unittest.TestCase):
         )
         case_path = self.root / "case.json"
         export_assurance_case(case, case_path)
-        sources = {"sacm": case, "sfpm": self.analysis, "reqif": self.analysis, "spdx": self.analysis}
-        extensions = {"sacm": ".xmi", "sfpm": ".xmi", "reqif": ".reqif", "spdx": ".spdx.json"}
+        sources = {
+            "sacm": case,
+            "sfpm": self.analysis,
+            "reqif": self.analysis,
+            "spdx": self.analysis,
+        }
+        extensions = {
+            "sacm": ".xmi",
+            "sfpm": ".xmi",
+            "reqif": ".reqif",
+            "spdx": ".spdx.json",
+        }
         for kind, source in sources.items():
             with self.subTest(kind=kind):
                 output = self.root / f"exchange{extensions[kind]}"
-                export_exchange(kind, source, output, generated_at="2026-08-27T15:00:00+00:00")
+                export_exchange(
+                    kind, source, output, generated_at="2026-08-27T15:00:00+00:00"
+                )
                 verdict = verify_exchange_file(kind, output, source)
                 self.assertTrue(verdict["valid"], verdict["errors"])
                 Draft202012Validator(
@@ -203,19 +214,54 @@ class IndustryInteroperabilityTests(unittest.TestCase):
         sfpm = self.root / "sfpm-cli.xmi"
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
-                main(["standards-crosswalk", str(self.analysis_path), str(self.workspace_path), str(mapping), "-o", str(crosswalk)]),
+                main(
+                    [
+                        "standards-crosswalk",
+                        str(self.analysis_path),
+                        str(self.workspace_path),
+                        str(mapping),
+                        "-o",
+                        str(crosswalk),
+                    ]
+                ),
                 0,
             )
             self.assertEqual(
-                main(["standards-crosswalk-verify", str(crosswalk), "--analysis", str(self.analysis_path), "--conformance", str(self.workspace_path), "--mapping", str(mapping)]),
+                main(
+                    [
+                        "standards-crosswalk-verify",
+                        str(crosswalk),
+                        "--analysis",
+                        str(self.analysis_path),
+                        "--conformance",
+                        str(self.workspace_path),
+                        "--mapping",
+                        str(mapping),
+                    ]
+                ),
                 0,
             )
             self.assertEqual(
-                main(["industry-exchange", "sfpm", str(self.analysis_path), "-o", str(sfpm)]),
+                main(
+                    [
+                        "industry-exchange",
+                        "sfpm",
+                        str(self.analysis_path),
+                        "-o",
+                        str(sfpm),
+                    ]
+                ),
                 0,
             )
             self.assertEqual(
-                main(["industry-exchange-verify", "sfpm", str(sfpm), str(self.analysis_path)]),
+                main(
+                    [
+                        "industry-exchange-verify",
+                        "sfpm",
+                        str(sfpm),
+                        str(self.analysis_path),
+                    ]
+                ),
                 0,
             )
 
@@ -242,9 +288,7 @@ class IndustryInteroperabilityTests(unittest.TestCase):
         decisions_path.write_text(json.dumps(decisions), encoding="utf-8")
         output = self.root / "vex.cdx.json"
         export_cyclonedx_vex(self.analysis, decisions_path, output)
-        verdict = verify_cyclonedx_vex_file(
-            output, self.analysis, decisions_path
-        )
+        verdict = verify_cyclonedx_vex_file(output, self.analysis, decisions_path)
         self.assertTrue(verdict["valid"], verdict["errors"])
         Draft202012Validator(schema_document("vex-verification")).validate(verdict)
         decisions["vulnerabilities"][0]["justification"] = None

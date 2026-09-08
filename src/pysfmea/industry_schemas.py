@@ -5,12 +5,20 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from .assurance_case import ASSURANCE_CASE_FORMAT, ASSURANCE_CASE_VERIFICATION_FORMAT
+from .benchmark_adapter import (
+    BENCHMARK_ADAPTER_FORMAT,
+    BENCHMARK_ADAPTER_VERIFICATION_FORMAT,
+)
 from .benchmark_assurance import (
     BENCHMARK_ASSESSMENT_FORMAT,
     BENCHMARK_PROTOCOL_FORMAT,
     BENCHMARK_VERIFICATION_FORMAT,
     METRIC_NAMES,
     REQUALIFICATION_TRIGGERS,
+)
+from .benchmark_observations import (
+    BENCHMARK_OBSERVATIONS_FORMAT,
+    BENCHMARK_OBSERVATIONS_VERIFICATION_FORMAT,
 )
 from .benchmark_report_v2 import BENCHMARK_REPORT_V2_VERIFICATION_FORMAT
 from .benchmark_v2 import (
@@ -35,6 +43,7 @@ from .dependability import (
     DEPENDABILITY_VERIFICATION_FORMAT,
 )
 from .fuzz_campaign import FUZZ_CAMPAIGN_FORMAT, FUZZ_CAMPAIGN_VERIFICATION_FORMAT
+from .gap_evidence_schemas import GAP_SCHEMA_DESCRIPTIONS, gap_schema_builders
 from .gsn import GSN_PROJECTION_FORMAT, GSN_VERIFICATION_FORMAT
 from .industry_benchmarks import (
     BENCHMARK_CATALOG_FORMAT,
@@ -58,6 +67,12 @@ from .lifecycle_model import (
     LIFECYCLE_MODEL_VERIFICATION_FORMAT,
 )
 from .oscal_exchange import OSCAL_SCHEMA, OSCAL_VERIFICATION_FORMAT
+from .oscal_lifecycle import (
+    OSCAL_AP_VERIFICATION_FORMAT,
+    OSCAL_ASSESSMENT_PLAN_SCHEMA,
+    OSCAL_POAM_SCHEMA,
+    OSCAL_POAM_VERIFICATION_FORMAT,
+)
 from .qualification_bases import QUALIFICATION_BASES_FORMAT
 from .quality_evaluation import (
     QUALITY_EVALUATION_ASSESSMENT_FORMAT,
@@ -85,6 +100,14 @@ from .security_prioritization import (
     SECURITY_SOURCE_FORMAT,
     SECURITY_VERIFICATION_FORMAT,
 )
+from .security_taxonomy import (
+    SECURITY_TAXONOMY_FORMAT,
+    SECURITY_TAXONOMY_VERIFICATION_FORMAT,
+)
+from .sigstore_verification import (
+    SIGSTORE_VERIFICATION_FORMAT,
+    SIGSTORE_VERIFICATION_VERDICT_FORMAT,
+)
 from .slsa import (
     SLSA_BUILD_TYPE,
     SLSA_BUILDER_ID,
@@ -108,6 +131,10 @@ from .standards_crosswalk import (
     CROSSWALK_FORMAT,
     CROSSWALK_VERIFICATION_FORMAT,
     RELATIONSHIPS,
+)
+from .standards_lifecycle import (
+    STANDARDS_LIFECYCLE_FORMAT,
+    STANDARDS_LIFECYCLE_VERIFICATION_FORMAT,
 )
 from .stpa_cast import (
     STPA_CAST_ASSESSMENT_FORMAT,
@@ -144,6 +171,8 @@ INDUSTRY_SCHEMA_DESCRIPTIONS = {
     "standards-catalog": "Content-addressed public metadata and original objective summaries for selectable industry standards profiles.",
     "standards-crosswalk": "Exact-bound, authority-attributed standards-objective links to findings, obligations, and evidence.",
     "standards-crosswalk-verification": "Standards crosswalk integrity, semantic reconciliation, trace-completeness, and optional source-regeneration verdict.",
+    "standards-lifecycle": "Exact-catalog standards revision review ledger with publisher evidence, review dates, dispositions, and reapproval references.",
+    "standards-lifecycle-verification": "Standards ledger integrity, exact catalog binding, completeness, currency, and reapproval verdict.",
     "conformance-workspace": "Exact-analysis-bound applicability, tailoring, objective assessment, evidence-reference, and reviewer workspace.",
     "conformance-verification": "Conformance-workspace integrity, catalog, semantics, summary, and optional analysis-binding verdict.",
     "csaf-verification": "OASIS CSAF 2.0 structure, governed decision, and exact-source-regeneration verdict.",
@@ -158,6 +187,8 @@ INDUSTRY_SCHEMA_DESCRIPTIONS = {
     "slsa-verification-observation": "Attributable evidence intake record from an external provenance and signature verifier.",
     "slsa-policy-assessment": "SLSA 1.2 achieved-level and local trust-policy decision with exact source bindings.",
     "slsa-policy-verification": "SLSA policy assessment structure, digest, accounting, and optional source regeneration verdict.",
+    "sigstore-verification": "Offline cosign verification receipt binding exact artifact, Sigstore bundle, and trusted-root bytes to certificate identity and transparency-log verification.",
+    "sigstore-verification-verdict": "Sigstore receipt integrity, structure, authentication, and optional exact artifact/bundle/trusted-root binding verdict.",
     "independent-benchmark-assessment": "Pre-registered holdout design, Wilson confidence intervals, reviewer agreement, and exact qualification-campaign bindings.",
     "independent-benchmark-report-verification-v2": "Self-contained advanced benchmark HTML integrity, embedded assessment, and optional exact assessment binding verdict.",
     "independent-benchmark-verification": "Benchmark assessment integrity, statistical reconciliation, and optional exact-source regeneration verdict.",
@@ -214,12 +245,23 @@ INDUSTRY_SCHEMA_DESCRIPTIONS = {
     "sarif-fusion-verification": "SARIF fusion integrity, accounting, analysis binding, and optional exact regeneration verdict.",
     "oscal-assessment-results": "NIST OSCAL 1.2.3 Assessment Results projection of exact-analysis-bound SFMEA observations.",
     "oscal-assessment-results-verification": "Supported OSCAL subset, exact analysis binding, and optional regeneration verdict.",
+    "oscal-assessment-plan": "NIST OSCAL 1.2.3 Assessment Plan projection with exact analysis binding, activities, subjects, and tasks.",
+    "oscal-assessment-plan-verification": "Assessment Plan supported-subset, analysis-binding, and exact-regeneration verdict.",
+    "oscal-poam": "NIST OSCAL 1.2.3 POA&M projection of open SFMEA observations, risks, and remediation items.",
+    "oscal-poam-verification": "POA&M supported-subset, analysis-binding, population-reconciliation, and exact-regeneration verdict.",
     "industry-benchmark-catalog": "Governed external Python benchmark targets, intended measures, use, and limitations.",
     "benchmark-execution": "Pinned, isolated, independently governed external benchmark execution evidence contract.",
     "benchmark-execution-verification": "Benchmark execution integrity and eligibility for downstream statistical assessment.",
+    "benchmark-observations": "Case-level scanner and LLM-test benchmark evidence with pass@k, coverage, mutation, flakiness, unsafe-oracle, cost, latency, token, and classification metrics.",
+    "benchmark-observations-verification": "Observation integrity, closed case structure, and exact aggregate-metric reconciliation verdict.",
+    "benchmark-adapter": "Suite-specific, digest-pinned benchmark acquisition and normalization adapter contract with independent review.",
+    "benchmark-adapter-verification": "Benchmark adapter integrity, provenance, normalization, and independent-review eligibility verdict.",
+    "security-taxonomy": "Exact-byte MITRE CWE or CAPEC XML release normalized into versioned entries and relationships.",
+    "security-taxonomy-verification": "Security-taxonomy integrity, source-byte binding, summary reconciliation, and exact XML regeneration verdict.",
     "fuzz-campaign": "Pinned, isolated Python fuzz-campaign provenance, corpus, coverage, execution, and crash-triage evidence contract.",
     "fuzz-campaign-verification": "Fuzz-campaign integrity and eligibility for governed assurance use.",
 }
+INDUSTRY_SCHEMA_DESCRIPTIONS.update(GAP_SCHEMA_DESCRIPTIONS)
 
 
 def _digest() -> dict[str, Any]:
@@ -310,7 +352,7 @@ def standards_catalog_schema(schema_id: str, draft: str) -> dict[str, Any]:
             "profiles": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 100,
+                "maxItems": 256,
                 "items": profile,
             },
             "authority": _text(),
@@ -1077,6 +1119,7 @@ def independent_benchmark_assessment_schema(
         "qualification_eligible",
         "independent_governance",
         "frozen_blinded_holdout",
+        "temporal_preregistration",
         "holdout_population",
         "confidence_bounds",
         "reviewer_agreement",
@@ -1121,7 +1164,12 @@ def independent_benchmark_assessment_schema(
             },
             "statistics": {
                 "type": "object",
-                "required": ["confidence_intervals", "reviewer_agreement"],
+                "required": [
+                    "confidence_intervals",
+                    "reviewer_agreement",
+                    "execution_started_at",
+                    "execution_evidence_ref",
+                ],
                 "properties": {
                     "confidence_intervals": {
                         "type": "object",
@@ -1157,6 +1205,8 @@ def independent_benchmark_assessment_schema(
                         },
                         "additionalProperties": False,
                     },
+                    "execution_started_at": _text(),
+                    "execution_evidence_ref": _text(),
                 },
                 "additionalProperties": False,
             },
@@ -1505,25 +1555,58 @@ def standards_crosswalk_schema(schema_id: str, draft: str) -> dict[str, Any]:
         "properties": {
             "objective_id": _identifier(),
             "relationship": {"enum": sorted(RELATIONSHIPS)},
-            "finding_ids": {"type": "array", "maxItems": 100_000, "uniqueItems": True, "items": _identifier()},
-            "obligation_ids": {"type": "array", "maxItems": 100_000, "uniqueItems": True, "items": _identifier()},
+            "finding_ids": {
+                "type": "array",
+                "maxItems": 100_000,
+                "uniqueItems": True,
+                "items": _identifier(),
+            },
+            "obligation_ids": {
+                "type": "array",
+                "maxItems": 100_000,
+                "uniqueItems": True,
+                "items": _identifier(),
+            },
             "rationale": _text(),
             "authority": _text(),
-            "evidence_refs": {"type": "array", "maxItems": 100_000, "uniqueItems": True, "items": _text()},
-            "finding_ids_via_obligations": {"type": "array", "maxItems": 100_000, "uniqueItems": True, "items": _identifier()},
+            "evidence_refs": {
+                "type": "array",
+                "maxItems": 100_000,
+                "uniqueItems": True,
+                "items": _text(),
+            },
+            "finding_ids_via_obligations": {
+                "type": "array",
+                "maxItems": 100_000,
+                "uniqueItems": True,
+                "items": _identifier(),
+            },
         },
         "additionalProperties": False,
     }
     objective = {
         "type": "object",
-        "required": ["profile_id", "objective_id", "reference_locator", "applicability", "assessment_status", "workspace_evidence_refs", "links", "trace_status"],
+        "required": [
+            "profile_id",
+            "objective_id",
+            "reference_locator",
+            "applicability",
+            "assessment_status",
+            "workspace_evidence_refs",
+            "links",
+            "trace_status",
+        ],
         "properties": {
             "profile_id": _identifier(),
             "objective_id": _identifier(),
             "reference_locator": _text(),
             "applicability": {"enum": sorted(APPLICABILITY)},
             "assessment_status": {"enum": sorted(ASSESSMENT_STATUSES)},
-            "workspace_evidence_refs": {"type": "array", "maxItems": 100_000, "items": _text()},
+            "workspace_evidence_refs": {
+                "type": "array",
+                "maxItems": 100_000,
+                "items": _text(),
+            },
             "links": {"type": "array", "maxItems": 100_000, "items": link},
             "trace_status": {"enum": ["linked", "not_applicable", "unlinked"]},
         },
@@ -1531,11 +1614,39 @@ def standards_crosswalk_schema(schema_id: str, draft: str) -> dict[str, Any]:
     }
     summary = {
         "type": "object",
-        "required": ["objectives", "applicable_objectives", "linked_applicable_objectives", "active_findings", "mapped_findings", "unlinked_objective_ids", "unmapped_finding_ids", "trace_complete"],
+        "required": [
+            "objectives",
+            "applicable_objectives",
+            "linked_applicable_objectives",
+            "active_findings",
+            "mapped_findings",
+            "unlinked_objective_ids",
+            "unmapped_finding_ids",
+            "trace_complete",
+        ],
         "properties": {
-            **{name: {"type": "integer", "minimum": 0} for name in ("objectives", "applicable_objectives", "linked_applicable_objectives", "active_findings", "mapped_findings")},
-            "unlinked_objective_ids": {"type": "array", "maxItems": 100_000, "uniqueItems": True, "items": _identifier()},
-            "unmapped_finding_ids": {"type": "array", "maxItems": 100_000, "uniqueItems": True, "items": _identifier()},
+            **{
+                name: {"type": "integer", "minimum": 0}
+                for name in (
+                    "objectives",
+                    "applicable_objectives",
+                    "linked_applicable_objectives",
+                    "active_findings",
+                    "mapped_findings",
+                )
+            },
+            "unlinked_objective_ids": {
+                "type": "array",
+                "maxItems": 100_000,
+                "uniqueItems": True,
+                "items": _identifier(),
+            },
+            "unmapped_finding_ids": {
+                "type": "array",
+                "maxItems": 100_000,
+                "uniqueItems": True,
+                "items": _identifier(),
+            },
             "trace_complete": {"type": "boolean"},
         },
         "additionalProperties": False,
@@ -1545,14 +1656,26 @@ def standards_crosswalk_schema(schema_id: str, draft: str) -> dict[str, Any]:
         "$id": schema_id,
         "title": "PySFMEA standards objective crosswalk",
         "type": "object",
-        "required": ["format", "generated_at", "binding", "objectives", "summary", "claim", "content_sha256"],
+        "required": [
+            "format",
+            "generated_at",
+            "binding",
+            "objectives",
+            "summary",
+            "claim",
+            "content_sha256",
+        ],
         "properties": {
             "format": {"const": CROSSWALK_FORMAT},
             "generated_at": _text(),
             "binding": {
                 "type": "object",
                 "required": ["analysis", "conformance_workspace", "mapping"],
-                "properties": {"analysis": binding, "conformance_workspace": binding, "mapping": binding},
+                "properties": {
+                    "analysis": binding,
+                    "conformance_workspace": binding,
+                    "mapping": binding,
+                },
                 "additionalProperties": False,
             },
             "objectives": {"type": "array", "maxItems": 100_000, "items": objective},
@@ -1564,19 +1687,36 @@ def standards_crosswalk_schema(schema_id: str, draft: str) -> dict[str, Any]:
     }
 
 
-def standards_crosswalk_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def standards_crosswalk_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return {
         "$schema": draft,
         "$id": schema_id,
         "title": "PySFMEA standards crosswalk verification",
         "type": "object",
-        "required": ["format", "valid", "trace_complete", "checks", "errors", "content_sha256", "notice"],
+        "required": [
+            "format",
+            "valid",
+            "trace_complete",
+            "checks",
+            "errors",
+            "content_sha256",
+            "notice",
+        ],
         "properties": {
             "path": _text(),
             "format": {"const": CROSSWALK_VERIFICATION_FORMAT},
             "valid": {"type": "boolean"},
             "trace_complete": {"type": "boolean"},
-            "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "source_regeneration"]),
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
             "errors": {"type": "array", "maxItems": 1_000, "items": _text()},
             "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
             "notice": _text(),
@@ -1597,7 +1737,9 @@ def industry_exchange_verification_schema(schema_id: str, draft: str) -> dict[st
             "format": {"const": "pysfmea-industry-exchange-verification-1"},
             "kind": {"enum": ["reqif", "sacm", "sfpm", "spdx"]},
             "valid": {"type": "boolean"},
-            "checks": _checks(["standard_structure", "source_binding", "population_reconciliation"]),
+            "checks": _checks(
+                ["standard_structure", "source_binding", "population_reconciliation"]
+            ),
             "errors": {"type": "array", "maxItems": 1_000, "items": _text()},
             "notice": _text(),
         },
@@ -1611,13 +1753,26 @@ def vex_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
         "$id": schema_id,
         "title": "PySFMEA CycloneDX VEX verification",
         "type": "object",
-        "required": ["format", "valid", "checks", "vulnerabilities", "errors", "notice"],
+        "required": [
+            "format",
+            "valid",
+            "checks",
+            "vulnerabilities",
+            "errors",
+            "notice",
+        ],
         "properties": {
             "path": _text(),
             "sha256": _digest(),
             "format": {"const": VEX_VERIFICATION_FORMAT},
             "valid": {"type": "boolean"},
-            "checks": _checks(["cyclonedx_1_7_structure", "governed_decisions", "exact_source_regeneration"]),
+            "checks": _checks(
+                [
+                    "cyclonedx_1_7_structure",
+                    "governed_decisions",
+                    "exact_source_regeneration",
+                ]
+            ),
             "vulnerabilities": {"type": "integer", "minimum": 0},
             "errors": {"type": "array", "maxItems": 1_000, "items": _text()},
             "notice": _text(),
@@ -1632,13 +1787,22 @@ def csaf_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
         "$id": schema_id,
         "title": "PySFMEA OASIS CSAF 2.0 verification",
         "type": "object",
-        "required": ["format", "valid", "checks", "vulnerabilities", "errors", "notice"],
+        "required": [
+            "format",
+            "valid",
+            "checks",
+            "vulnerabilities",
+            "errors",
+            "notice",
+        ],
         "properties": {
             "path": _text(),
             "sha256": _digest(),
             "format": {"const": CSAF_VERIFICATION_FORMAT},
             "valid": {"type": "boolean"},
-            "checks": _checks(["csaf_2_structure", "governed_decisions", "exact_source_regeneration"]),
+            "checks": _checks(
+                ["csaf_2_structure", "governed_decisions", "exact_source_regeneration"]
+            ),
             "vulnerabilities": {"type": "integer", "minimum": 0},
             "errors": {"type": "array", "maxItems": 1_000, "items": _text()},
             "notice": _text(),
@@ -1656,7 +1820,18 @@ def tool_qualification_bases_schema(schema_id: str, draft: str) -> dict[str, Any
     }
     pack = {
         "type": "object",
-        "required": ["id", "title", "publisher", "edition", "reference_url", "access", "classification_authority_required", "classification_questions", "objective_crosswalk", "tailoring_notes"],
+        "required": [
+            "id",
+            "title",
+            "publisher",
+            "edition",
+            "reference_url",
+            "access",
+            "classification_authority_required",
+            "classification_questions",
+            "objective_crosswalk",
+            "tailoring_notes",
+        ],
         "properties": {
             "id": _identifier(),
             "title": _text(),
@@ -1665,9 +1840,24 @@ def tool_qualification_bases_schema(schema_id: str, draft: str) -> dict[str, Any
             "reference_url": {"type": "string", "format": "uri"},
             "access": {"const": "licensed_normative_text_required"},
             "classification_authority_required": {"const": True},
-            "classification_questions": {"type": "array", "minItems": 1, "maxItems": 100, "items": _text()},
-            "objective_crosswalk": {"type": "array", "minItems": 1, "maxItems": 100, "items": mapping},
-            "tailoring_notes": {"type": "array", "minItems": 1, "maxItems": 100, "items": _text()},
+            "classification_questions": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": _text(),
+            },
+            "objective_crosswalk": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": mapping,
+            },
+            "tailoring_notes": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": _text(),
+            },
         },
         "additionalProperties": False,
     }
@@ -1710,21 +1900,40 @@ def normative_schema_validation_schema(schema_id: str, draft: str) -> dict[str, 
     schema_binding = {
         **schema_binding,
         "required": [*schema_binding["required"], "identifier"],
-        "properties": {**schema_binding["properties"], "identifier": _text(required=False)},
+        "properties": {
+            **schema_binding["properties"],
+            "identifier": _text(required=False),
+        },
     }
     return {
         "$schema": draft,
         "$id": schema_id,
         "title": "PySFMEA normative schema validation receipt",
         "type": "object",
-        "required": ["format", "generated_at", "schema_kind", "standard", "validator", "artifact", "schema", "outcome", "claim", "content_sha256"],
+        "required": [
+            "format",
+            "generated_at",
+            "schema_kind",
+            "standard",
+            "validator",
+            "artifact",
+            "schema",
+            "outcome",
+            "claim",
+            "content_sha256",
+        ],
         "properties": {
             "format": {"const": NORMATIVE_VALIDATION_FORMAT},
             "generated_at": _text(),
-            "schema_kind": {"enum": ["json-schema", "xml-schema"]},
+            "schema_kind": {"enum": ["json-schema", "yaml-json-schema", "xml-schema"]},
             "standard": {
                 "type": "object",
-                "required": ["name", "edition", "normative_schema_uri", "publisher_schema_sha256"],
+                "required": [
+                    "name",
+                    "edition",
+                    "normative_schema_uri",
+                    "publisher_schema_sha256",
+                ],
                 "properties": {
                     "name": _text(),
                     "edition": _text(),
@@ -1758,19 +1967,36 @@ def normative_schema_validation_schema(schema_id: str, draft: str) -> dict[str, 
     }
 
 
-def normative_schema_validation_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def normative_schema_validation_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return {
         "$schema": draft,
         "$id": schema_id,
         "title": "PySFMEA normative schema validation verification",
         "type": "object",
-        "required": ["format", "valid", "schema_valid", "checks", "errors", "content_sha256", "notice"],
+        "required": [
+            "format",
+            "valid",
+            "schema_valid",
+            "checks",
+            "errors",
+            "content_sha256",
+            "notice",
+        ],
         "properties": {
             "path": _text(),
             "format": {"const": NORMATIVE_VALIDATION_VERIFICATION_FORMAT},
             "valid": {"type": "boolean"},
             "schema_valid": {"type": "boolean"},
-            "checks": _checks(["closed_structure", "content_integrity", "artifact_binding", "schema_binding"]),
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "artifact_binding",
+                    "schema_binding",
+                ]
+            ),
             "errors": {"type": "array", "maxItems": 1_000, "items": _text()},
             "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
             "notice": _text(),
@@ -1785,7 +2011,21 @@ def independent_roundtrip_evidence_schema(schema_id: str, draft: str) -> dict[st
         "$id": schema_id,
         "title": "PySFMEA independent receiving-tool round-trip evidence",
         "type": "object",
-        "required": ["format", "generated_at", "validation_receipt", "observation", "receiver", "operator", "independence_basis", "import", "reexport", "preservation", "passed", "claim", "content_sha256"],
+        "required": [
+            "format",
+            "generated_at",
+            "validation_receipt",
+            "observation",
+            "receiver",
+            "operator",
+            "independence_basis",
+            "import",
+            "reexport",
+            "preservation",
+            "passed",
+            "claim",
+            "content_sha256",
+        ],
         "properties": {
             "format": {"const": ROUNDTRIP_EVIDENCE_FORMAT},
             "generated_at": _text(),
@@ -1802,18 +2042,31 @@ def independent_roundtrip_evidence_schema(schema_id: str, draft: str) -> dict[st
             "import": {
                 "type": "object",
                 "required": ["succeeded", "evidence_ref"],
-                "properties": {"succeeded": {"type": "boolean"}, "evidence_ref": _text()},
+                "properties": {
+                    "succeeded": {"type": "boolean"},
+                    "evidence_ref": _text(),
+                },
                 "additionalProperties": False,
             },
             "reexport": _file_binding_schema(),
             "preservation": {
                 "type": "object",
-                "required": ["identity", "relationships", "extensions", "differences", "comparison_evidence_ref"],
+                "required": [
+                    "identity",
+                    "relationships",
+                    "extensions",
+                    "differences",
+                    "comparison_evidence_ref",
+                ],
                 "properties": {
                     "identity": {"type": "boolean"},
                     "relationships": {"type": "boolean"},
                     "extensions": {"type": "boolean"},
-                    "differences": {"type": "array", "maxItems": 1_000, "items": _text()},
+                    "differences": {
+                        "type": "array",
+                        "maxItems": 1_000,
+                        "items": _text(),
+                    },
                     "comparison_evidence_ref": _text(),
                 },
                 "additionalProperties": False,
@@ -1826,19 +2079,38 @@ def independent_roundtrip_evidence_schema(schema_id: str, draft: str) -> dict[st
     }
 
 
-def independent_roundtrip_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def independent_roundtrip_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return {
         "$schema": draft,
         "$id": schema_id,
         "title": "PySFMEA independent round-trip verification",
         "type": "object",
-        "required": ["format", "valid", "passed", "checks", "errors", "content_sha256", "notice"],
+        "required": [
+            "format",
+            "valid",
+            "passed",
+            "checks",
+            "errors",
+            "content_sha256",
+            "notice",
+        ],
         "properties": {
             "path": _text(),
             "format": {"const": ROUNDTRIP_VERIFICATION_FORMAT},
             "valid": {"type": "boolean"},
             "passed": {"type": "boolean"},
-            "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "validation_receipt_binding", "observation_binding", "reexport_binding"]),
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "validation_receipt_binding",
+                    "observation_binding",
+                    "reexport_binding",
+                ]
+            ),
             "errors": {"type": "array", "maxItems": 1_000, "items": _text()},
             "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
             "notice": _text(),
@@ -1850,7 +2122,15 @@ def independent_roundtrip_verification_schema(schema_id: str, draft: str) -> dic
 def lifecycle_model_schema(schema_id: str, draft: str) -> dict[str, Any]:
     entity = {
         "type": "object",
-        "required": ["id", "source_id", "kind", "standard_type", "name", "description", "properties"],
+        "required": [
+            "id",
+            "source_id",
+            "kind",
+            "standard_type",
+            "name",
+            "description",
+            "properties",
+        ],
         "properties": {
             "id": _identifier(),
             "source_id": _text(),
@@ -1858,14 +2138,26 @@ def lifecycle_model_schema(schema_id: str, draft: str) -> dict[str, Any]:
             "standard_type": _text(),
             "name": _text(),
             "description": _text(required=False),
-            "properties": {"type": "object", "maxProperties": 100, "additionalProperties": {"type": ["string", "number", "integer", "boolean", "null"]}},
+            "properties": {
+                "type": "object",
+                "maxProperties": 100,
+                "additionalProperties": {
+                    "type": ["string", "number", "integer", "boolean", "null"]
+                },
+            },
         },
         "additionalProperties": False,
     }
     relationship = {
         "type": "object",
         "required": ["id", "kind", "source_id", "target_id", "authority"],
-        "properties": {"id": _identifier(), "kind": _text(), "source_id": _text(), "target_id": _text(), "authority": _text()},
+        "properties": {
+            "id": _identifier(),
+            "kind": _text(),
+            "source_id": _text(),
+            "target_id": _text(),
+            "authority": _text(),
+        },
         "additionalProperties": False,
     }
     return {
@@ -1873,28 +2165,73 @@ def lifecycle_model_schema(schema_id: str, draft: str) -> dict[str, Any]:
         "$id": schema_id,
         "title": "PySFMEA normalized lifecycle model bridge",
         "type": "object",
-        "required": ["format", "generated_at", "source", "analysis_binding", "entities", "relationships", "code_links", "summary", "limitations", "notice", "content_sha256"],
+        "required": [
+            "format",
+            "generated_at",
+            "source",
+            "analysis_binding",
+            "entities",
+            "relationships",
+            "code_links",
+            "summary",
+            "limitations",
+            "notice",
+            "content_sha256",
+        ],
         "properties": {
             "format": {"const": LIFECYCLE_MODEL_FORMAT},
             "generated_at": _text(),
             "source": {
                 "type": "object",
                 "required": ["kind", "standard", "reference", "bytes", "sha256"],
-                "properties": {"kind": {"enum": sorted(LIFECYCLE_KINDS)}, "standard": _text(), "reference": _text(), "bytes": {"type": "integer", "minimum": 1}, "sha256": _digest()},
+                "properties": {
+                    "kind": {"enum": sorted(LIFECYCLE_KINDS)},
+                    "standard": _text(),
+                    "reference": _text(),
+                    "bytes": {"type": "integer", "minimum": 1},
+                    "sha256": _digest(),
+                },
                 "additionalProperties": False,
             },
             "analysis_binding": {
                 "anyOf": [
                     {"type": "null"},
-                    {"type": "object", "required": ["baseline_id", "analysis_state_sha256"], "properties": {"baseline_id": _text(required=False), "analysis_state_sha256": _digest()}, "additionalProperties": False},
+                    {
+                        "type": "object",
+                        "required": ["baseline_id", "analysis_state_sha256"],
+                        "properties": {
+                            "baseline_id": _text(required=False),
+                            "analysis_state_sha256": _digest(),
+                        },
+                        "additionalProperties": False,
+                    },
                 ]
             },
             "entities": {"type": "array", "maxItems": 250_000, "items": entity},
-            "relationships": {"type": "array", "maxItems": 1_000_000, "items": relationship},
+            "relationships": {
+                "type": "array",
+                "maxItems": 1_000_000,
+                "items": relationship,
+            },
             "code_links": {
                 "type": "array",
                 "maxItems": 250_000,
-                "items": {"type": "object", "required": ["model_entity_id", "component_id", "relationship", "authority"], "properties": {"model_entity_id": _identifier(), "component_id": _identifier(), "relationship": {"const": "explicit_identity_mapping"}, "authority": _text()}, "additionalProperties": False},
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "model_entity_id",
+                        "component_id",
+                        "relationship",
+                        "authority",
+                    ],
+                    "properties": {
+                        "model_entity_id": _identifier(),
+                        "component_id": _identifier(),
+                        "relationship": {"const": "explicit_identity_mapping"},
+                        "authority": _text(),
+                    },
+                    "additionalProperties": False,
+                },
             },
             "summary": {"type": "object"},
             "limitations": {"type": "array", "maxItems": 1_000, "items": _text()},
@@ -1911,13 +2248,28 @@ def lifecycle_model_verification_schema(schema_id: str, draft: str) -> dict[str,
         "$id": schema_id,
         "title": "PySFMEA lifecycle model verification",
         "type": "object",
-        "required": ["format", "valid", "complete", "checks", "errors", "content_sha256", "notice"],
+        "required": [
+            "format",
+            "valid",
+            "complete",
+            "checks",
+            "errors",
+            "content_sha256",
+            "notice",
+        ],
         "properties": {
             "path": _text(),
             "format": {"const": LIFECYCLE_MODEL_VERIFICATION_FORMAT},
             "valid": {"type": "boolean"},
             "complete": {"type": "boolean"},
-            "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "source_regeneration"]),
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
             "errors": {"type": "array", "maxItems": 1_000, "items": _text()},
             "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
             "notice": _text(),
@@ -1926,26 +2278,62 @@ def lifecycle_model_verification_schema(schema_id: str, draft: str) -> dict[str,
     }
 
 
-def independent_benchmark_assessment_v2_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def independent_benchmark_assessment_v2_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return {
         "$schema": draft,
         "$id": schema_id,
         "title": "PySFMEA advanced independent benchmark assessment",
         "type": "object",
-        "required": ["format", "generated_at", "protocol", "bindings", "metrics", "strata", "stratum_metrics", "calibration", "reviewer_agreement", "metric_checks", "stratum_checks", "stratum_metric_checks", "checks", "summary", "notice", "content_sha256"],
+        "required": [
+            "format",
+            "generated_at",
+            "protocol",
+            "bindings",
+            "metrics",
+            "strata",
+            "stratum_metrics",
+            "calibration",
+            "reviewer_agreement",
+            "metric_checks",
+            "stratum_checks",
+            "stratum_metric_checks",
+            "checks",
+            "summary",
+            "notice",
+            "content_sha256",
+        ],
         "properties": {
             "format": {"const": BENCHMARK_ASSESSMENT_V2_FORMAT},
             "generated_at": _text(),
             "protocol": {"type": "object"},
-            "bindings": {"type": "object", "required": ["protocol", "observations"], "properties": {"protocol": {"type": "object"}, "observations": {"type": "object"}}, "additionalProperties": False},
+            "bindings": {
+                "type": "object",
+                "required": ["protocol", "observations"],
+                "properties": {
+                    "protocol": {"type": "object"},
+                    "observations": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
             "metrics": {"type": "object", "minProperties": 1, "maxProperties": 100},
             "strata": {"type": "object"},
             "stratum_metrics": {"type": "object"},
             "calibration": {"type": "object"},
             "reviewer_agreement": {"type": "object"},
-            "metric_checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
-            "stratum_checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
-            "stratum_metric_checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
+            "metric_checks": {
+                "type": "object",
+                "additionalProperties": {"type": "boolean"},
+            },
+            "stratum_checks": {
+                "type": "object",
+                "additionalProperties": {"type": "boolean"},
+            },
+            "stratum_metric_checks": {
+                "type": "object",
+                "additionalProperties": {"type": "boolean"},
+            },
             "checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
             "summary": {"type": "object"},
             "notice": _text(),
@@ -1955,19 +2343,36 @@ def independent_benchmark_assessment_v2_schema(schema_id: str, draft: str) -> di
     }
 
 
-def independent_benchmark_verification_v2_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def independent_benchmark_verification_v2_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return {
         "$schema": draft,
         "$id": schema_id,
         "title": "PySFMEA advanced benchmark verification",
         "type": "object",
-        "required": ["format", "valid", "passed", "checks", "errors", "content_sha256", "notice"],
+        "required": [
+            "format",
+            "valid",
+            "passed",
+            "checks",
+            "errors",
+            "content_sha256",
+            "notice",
+        ],
         "properties": {
             "path": _text(),
             "format": {"const": BENCHMARK_VERIFICATION_V2_FORMAT},
             "valid": {"type": "boolean"},
             "passed": {"type": "boolean"},
-            "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "source_regeneration"]),
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
             "errors": {"type": "array", "maxItems": 1_000, "items": _text()},
             "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
             "notice": _text(),
@@ -1976,15 +2381,44 @@ def independent_benchmark_verification_v2_schema(schema_id: str, draft: str) -> 
     }
 
 
-def independent_benchmark_report_verification_v2_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def independent_benchmark_report_verification_v2_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return {
-        "$schema": draft, "$id": schema_id, "title": "PySFMEA advanced benchmark HTML report verification", "type": "object",
-        "required": ["path", "format", "valid", "passed", "checks", "errors", "document_sha256", "notice"],
+        "$schema": draft,
+        "$id": schema_id,
+        "title": "PySFMEA advanced benchmark HTML report verification",
+        "type": "object",
+        "required": [
+            "path",
+            "format",
+            "valid",
+            "passed",
+            "checks",
+            "errors",
+            "document_sha256",
+            "notice",
+        ],
         "properties": {
-            "path": _text(), "format": {"const": BENCHMARK_REPORT_V2_VERIFICATION_FORMAT}, "valid": {"type": "boolean"}, "passed": {"type": "boolean"},
-            "checks": _checks(["report_format", "payload_present", "payload_integrity", "payload_semantics", "document_integrity", "assessment_binding"]),
-            "errors": {"type": "array", "items": _text()}, "document_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"}, "notice": _text(),
-        }, "additionalProperties": False,
+            "path": _text(),
+            "format": {"const": BENCHMARK_REPORT_V2_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "passed": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "report_format",
+                    "payload_present",
+                    "payload_integrity",
+                    "payload_semantics",
+                    "document_integrity",
+                    "assessment_binding",
+                ]
+            ),
+            "errors": {"type": "array", "items": _text()},
+            "document_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
+            "notice": _text(),
+        },
+        "additionalProperties": False,
     }
 
 
@@ -1994,16 +2428,39 @@ def dependability_authoring_schema(schema_id: str, draft: str) -> dict[str, Any]
         "$id": schema_id,
         "title": "PySFMEA HAZOP, RBD, and Markov authoring",
         "type": "object",
-        "required": ["format", "generated_at", "authority", "analysis_binding", "assumptions", "hazop", "rbd", "markov_models", "notice", "content_sha256"],
+        "required": [
+            "format",
+            "generated_at",
+            "authority",
+            "analysis_binding",
+            "assumptions",
+            "hazop",
+            "rbd",
+            "markov_models",
+            "notice",
+            "content_sha256",
+        ],
         "properties": {
             "format": {"const": DEPENDABILITY_AUTHORING_FORMAT},
             "generated_at": _text(),
             "authority": _text(),
-            "analysis_binding": {"type": "object", "required": ["baseline_id", "analysis_state_sha256"], "properties": {"baseline_id": _text(required=False), "analysis_state_sha256": _digest()}, "additionalProperties": False},
+            "analysis_binding": {
+                "type": "object",
+                "required": ["baseline_id", "analysis_state_sha256"],
+                "properties": {
+                    "baseline_id": _text(required=False),
+                    "analysis_state_sha256": _digest(),
+                },
+                "additionalProperties": False,
+            },
             "assumptions": {"type": "array", "maxItems": 10_000, "items": _text()},
             "hazop": {"type": "object"},
             "rbd": {"type": "object"},
-            "markov_models": {"type": "array", "maxItems": 1_000, "items": {"type": "object"}},
+            "markov_models": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": {"type": "object"},
+            },
             "notice": _text(),
             "content_sha256": _digest(),
         },
@@ -2017,7 +2474,19 @@ def dependability_assessment_schema(schema_id: str, draft: str) -> dict[str, Any
         "$id": schema_id,
         "title": "PySFMEA dependability assessment",
         "type": "object",
-        "required": ["format", "generated_at", "binding", "authority", "hazop", "rbd", "markov_models", "checks", "summary", "notice", "content_sha256"],
+        "required": [
+            "format",
+            "generated_at",
+            "binding",
+            "authority",
+            "hazop",
+            "rbd",
+            "markov_models",
+            "checks",
+            "summary",
+            "notice",
+            "content_sha256",
+        ],
         "properties": {
             "format": {"const": DEPENDABILITY_ASSESSMENT_FORMAT},
             "generated_at": _text(),
@@ -2041,13 +2510,28 @@ def dependability_verification_schema(schema_id: str, draft: str) -> dict[str, A
         "$id": schema_id,
         "title": "PySFMEA dependability verification",
         "type": "object",
-        "required": ["format", "valid", "complete", "checks", "errors", "content_sha256", "notice"],
+        "required": [
+            "format",
+            "valid",
+            "complete",
+            "checks",
+            "errors",
+            "content_sha256",
+            "notice",
+        ],
         "properties": {
             "path": _text(),
             "format": {"const": DEPENDABILITY_VERIFICATION_FORMAT},
             "valid": {"type": "boolean"},
             "complete": {"type": "boolean"},
-            "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "source_regeneration"]),
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
             "errors": {"type": "array", "maxItems": 1_000, "items": _text()},
             "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
             "notice": _text(),
@@ -2058,91 +2542,292 @@ def dependability_verification_schema(schema_id: str, draft: str) -> dict[str, A
 
 def safety_lifecycle_authoring_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return {
-        "$schema": draft, "$id": schema_id, "title": "PySFMEA safety lifecycle and CCFA authoring",
+        "$schema": draft,
+        "$id": schema_id,
+        "title": "PySFMEA safety lifecycle and CCFA authoring",
         "type": "object",
-        "required": ["format", "generated_at", "authority", "analysis_binding", "stages", "hazards", "ccfa_candidates", "ccfa_reviews", "operational_feedback", "assumptions", "limitations", "notice", "content_sha256"],
+        "required": [
+            "format",
+            "generated_at",
+            "authority",
+            "analysis_binding",
+            "stages",
+            "hazards",
+            "ccfa_candidates",
+            "ccfa_reviews",
+            "operational_feedback",
+            "assumptions",
+            "limitations",
+            "notice",
+            "content_sha256",
+        ],
         "properties": {
-            "format": {"const": SAFETY_LIFECYCLE_AUTHORING_FORMAT}, "generated_at": _text(), "authority": _text(),
-            "analysis_binding": {"type": "object"}, "stages": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "object"}},
-            "hazards": {"type": "array", "maxItems": 250_000, "items": {"type": "object"}},
-            "ccfa_candidates": {"type": "array", "maxItems": 250_000, "items": {"type": "object"}},
-            "ccfa_reviews": {"type": "array", "maxItems": 250_000, "items": {"type": "object"}},
+            "format": {"const": SAFETY_LIFECYCLE_AUTHORING_FORMAT},
+            "generated_at": _text(),
+            "authority": _text(),
+            "analysis_binding": {"type": "object"},
+            "stages": {
+                "type": "array",
+                "minItems": 5,
+                "maxItems": 5,
+                "items": {"type": "object"},
+            },
+            "hazards": {
+                "type": "array",
+                "maxItems": 250_000,
+                "items": {"type": "object"},
+            },
+            "ccfa_candidates": {
+                "type": "array",
+                "maxItems": 250_000,
+                "items": {"type": "object"},
+            },
+            "ccfa_reviews": {
+                "type": "array",
+                "maxItems": 250_000,
+                "items": {"type": "object"},
+            },
             "operational_feedback": {"type": "object"},
             "assumptions": {"type": "array", "maxItems": 250_000, "items": _text()},
             "limitations": {"type": "array", "maxItems": 250_000, "items": _text()},
-            "notice": _text(), "content_sha256": _digest(),
-        }, "additionalProperties": False,
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+        "additionalProperties": False,
     }
 
 
 def safety_lifecycle_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return {
-        "$schema": draft, "$id": schema_id, "title": "PySFMEA safety lifecycle assessment", "type": "object",
-        "required": ["format", "generated_at", "binding", "authority", "stages", "hazards", "ccfa", "operational_feedback", "checks", "summary", "notice", "content_sha256"],
+        "$schema": draft,
+        "$id": schema_id,
+        "title": "PySFMEA safety lifecycle assessment",
+        "type": "object",
+        "required": [
+            "format",
+            "generated_at",
+            "binding",
+            "authority",
+            "stages",
+            "hazards",
+            "ccfa",
+            "operational_feedback",
+            "checks",
+            "summary",
+            "notice",
+            "content_sha256",
+        ],
         "properties": {
-            "format": {"const": SAFETY_LIFECYCLE_ASSESSMENT_FORMAT}, "generated_at": _text(), "binding": {"type": "object"}, "authority": _text(),
-            "stages": {"type": "array", "items": {"type": "object"}}, "hazards": {"type": "array", "items": {"type": "object"}},
-            "ccfa": {"type": "object"}, "checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
+            "format": {"const": SAFETY_LIFECYCLE_ASSESSMENT_FORMAT},
+            "generated_at": _text(),
+            "binding": {"type": "object"},
+            "authority": _text(),
+            "stages": {"type": "array", "items": {"type": "object"}},
+            "hazards": {"type": "array", "items": {"type": "object"}},
+            "ccfa": {"type": "object"},
+            "checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
             "operational_feedback": {"type": "object"},
-            "summary": {"type": "object"}, "notice": _text(), "content_sha256": _digest(),
-        }, "additionalProperties": False,
+            "summary": {"type": "object"},
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+        "additionalProperties": False,
     }
 
 
 def safety_lifecycle_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return {
-        "$schema": draft, "$id": schema_id, "title": "PySFMEA safety lifecycle verification", "type": "object",
-        "required": ["format", "valid", "complete", "checks", "errors", "content_sha256", "notice"],
-        "properties": {"path": _text(), "format": {"const": SAFETY_LIFECYCLE_VERIFICATION_FORMAT}, "valid": {"type": "boolean"}, "complete": {"type": "boolean"}, "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "source_regeneration"]), "errors": {"type": "array", "items": _text()}, "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"}, "notice": _text()},
+        "$schema": draft,
+        "$id": schema_id,
+        "title": "PySFMEA safety lifecycle verification",
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "complete",
+            "checks",
+            "errors",
+            "content_sha256",
+            "notice",
+        ],
+        "properties": {
+            "path": _text(),
+            "format": {"const": SAFETY_LIFECYCLE_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "complete": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
+            "errors": {"type": "array", "items": _text()},
+            "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
+            "notice": _text(),
+        },
         "additionalProperties": False,
     }
 
 
 def slsa_trust_policy_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    text_list = {"type": "array", "maxItems": 10_000, "uniqueItems": True, "items": _text()}
+    text_list = {
+        "type": "array",
+        "maxItems": 10_000,
+        "uniqueItems": True,
+        "items": _text(),
+    }
     return {
-        "$schema": draft, "$id": schema_id, "title": "PySFMEA SLSA 1.2 trust policy", "type": "object",
-        "required": ["format", "generated_at", "authority", "minimum_build_track_level", "minimum_source_track_level", "trusted_builders", "trusted_signer_identities", "allowed_build_types", "allowed_source_repositories", "require_authenticated_provenance", "require_two_party_source_review", "policy_evidence_refs", "notice", "content_sha256"],
+        "$schema": draft,
+        "$id": schema_id,
+        "title": "PySFMEA SLSA 1.2 trust policy",
+        "type": "object",
+        "required": [
+            "format",
+            "generated_at",
+            "authority",
+            "minimum_build_track_level",
+            "minimum_source_track_level",
+            "trusted_builders",
+            "trusted_signer_identities",
+            "allowed_build_types",
+            "allowed_source_repositories",
+            "require_authenticated_provenance",
+            "require_two_party_source_review",
+            "policy_evidence_refs",
+            "notice",
+            "content_sha256",
+        ],
         "properties": {
-            "format": {"const": SLSA_POLICY_FORMAT}, "generated_at": _text(), "authority": _text(),
-            "minimum_build_track_level": {"type": "integer", "minimum": 0, "maximum": 3}, "minimum_source_track_level": {"type": "integer", "minimum": 0, "maximum": 3},
-            "trusted_builders": text_list, "trusted_signer_identities": text_list, "allowed_build_types": text_list,
-            "allowed_source_repositories": text_list, "require_authenticated_provenance": {"type": "boolean"},
-            "require_two_party_source_review": {"type": "boolean"}, "policy_evidence_refs": text_list,
-            "notice": _text(), "content_sha256": _digest(),
-        }, "additionalProperties": False,
+            "format": {"const": SLSA_POLICY_FORMAT},
+            "generated_at": _text(),
+            "authority": _text(),
+            "minimum_build_track_level": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3,
+            },
+            "minimum_source_track_level": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3,
+            },
+            "trusted_builders": text_list,
+            "trusted_signer_identities": text_list,
+            "allowed_build_types": text_list,
+            "allowed_source_repositories": text_list,
+            "require_authenticated_provenance": {"type": "boolean"},
+            "require_two_party_source_review": {"type": "boolean"},
+            "policy_evidence_refs": text_list,
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+        "additionalProperties": False,
     }
 
 
 def slsa_verification_observation_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    boolean_names = ("signature_verified", "hosted_build", "isolated_builds", "ephemeral_environment", "parameterless_rebuild", "source_two_party_reviewed", "source_provenance_verified", "source_history_retained")
+    boolean_names = (
+        "signature_verified",
+        "hosted_build",
+        "isolated_builds",
+        "ephemeral_environment",
+        "parameterless_rebuild",
+        "source_two_party_reviewed",
+        "source_provenance_verified",
+        "source_history_retained",
+    )
     properties: dict[str, Any] = {
-        "format": {"const": SLSA_OBSERVATION_FORMAT}, "observed_at": _text(), "verifier": _text(),
-        "verification_tool": _text(required=False), "verification_tool_version": _text(required=False),
-        "signer_identity": _text(required=False), "verification_evidence_ref": _text(required=False),
-        "source_repository": _text(required=False), "evidence_refs": {"type": "array", "items": _text()}, "content_sha256": _digest(),
+        "format": {"const": SLSA_OBSERVATION_FORMAT},
+        "observed_at": _text(),
+        "verifier": _text(),
+        "verification_tool": _text(required=False),
+        "verification_tool_version": _text(required=False),
+        "signer_identity": _text(required=False),
+        "verification_evidence_ref": _text(required=False),
+        "source_repository": _text(required=False),
+        "evidence_refs": {"type": "array", "items": _text()},
+        "content_sha256": _digest(),
     }
     properties.update({name: {"type": "boolean"} for name in boolean_names})
-    return {"$schema": draft, "$id": schema_id, "title": "PySFMEA SLSA verification observation", "type": "object", "required": list(properties), "properties": properties, "additionalProperties": False}
+    return {
+        "$schema": draft,
+        "$id": schema_id,
+        "title": "PySFMEA SLSA verification observation",
+        "type": "object",
+        "required": list(properties),
+        "properties": properties,
+        "additionalProperties": False,
+    }
 
 
 def slsa_policy_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return {
-        "$schema": draft, "$id": schema_id, "title": "PySFMEA SLSA 1.2 policy assessment", "type": "object",
-        "required": ["format", "generated_at", "bindings", "authority", "identities", "levels", "checks", "summary", "notice", "content_sha256"],
+        "$schema": draft,
+        "$id": schema_id,
+        "title": "PySFMEA SLSA 1.2 policy assessment",
+        "type": "object",
+        "required": [
+            "format",
+            "generated_at",
+            "bindings",
+            "authority",
+            "identities",
+            "levels",
+            "checks",
+            "summary",
+            "notice",
+            "content_sha256",
+        ],
         "properties": {
-            "format": {"const": SLSA_ASSESSMENT_FORMAT}, "generated_at": _text(), "bindings": {"type": "object"}, "authority": _text(),
-            "identities": {"type": "object"}, "levels": {"type": "object"}, "checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
-            "summary": {"type": "object"}, "notice": _text(), "content_sha256": _digest(),
-        }, "additionalProperties": False,
+            "format": {"const": SLSA_ASSESSMENT_FORMAT},
+            "generated_at": _text(),
+            "bindings": {"type": "object"},
+            "authority": _text(),
+            "identities": {"type": "object"},
+            "levels": {"type": "object"},
+            "checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
+            "summary": {"type": "object"},
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+        "additionalProperties": False,
     }
 
 
 def slsa_policy_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return {
-        "$schema": draft, "$id": schema_id, "title": "PySFMEA SLSA policy verification", "type": "object",
-        "required": ["format", "valid", "passed", "checks", "errors", "content_sha256", "notice"],
-        "properties": {"path": _text(), "format": {"const": SLSA_POLICY_VERIFICATION_FORMAT}, "valid": {"type": "boolean"}, "passed": {"type": "boolean"}, "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "source_regeneration"]), "errors": {"type": "array", "items": _text()}, "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"}, "notice": _text()},
+        "$schema": draft,
+        "$id": schema_id,
+        "title": "PySFMEA SLSA policy verification",
+        "type": "object",
+        "required": [
+            "format",
+            "valid",
+            "passed",
+            "checks",
+            "errors",
+            "content_sha256",
+            "notice",
+        ],
+        "properties": {
+            "path": _text(),
+            "format": {"const": SLSA_POLICY_VERIFICATION_FORMAT},
+            "valid": {"type": "boolean"},
+            "passed": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
+            "errors": {"type": "array", "items": _text()},
+            "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
+            "notice": _text(),
+        },
         "additionalProperties": False,
     }
 
@@ -2156,7 +2841,11 @@ def _closed_format_schema(
     fields: dict[str, dict[str, Any]],
     optional_fields: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    properties = {"format": {"const": format_value}, **fields, **(optional_fields or {})}
+    properties = {
+        "format": {"const": format_value},
+        **fields,
+        **(optional_fields or {}),
+    }
     return {
         "$schema": draft,
         "$id": schema_id,
@@ -2170,50 +2859,155 @@ def _closed_format_schema(
 
 def release_qualification_source_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return _closed_format_schema(
-        schema_id, draft, title="PySFMEA release qualification source", format_value=RELEASE_QUALIFICATION_SOURCE_FORMAT,
-        fields={"id": _identifier(), "pre_registered_at": _text(), "pre_registration_evidence_ref": _text(), "authority": {"type": "object"}, "candidate": {"type": "object"}, "baseline": {"type": "object"}, "corpus": {"type": "object"}, "noninferiority": {"type": "object"}, "performance": {"type": "object"}, "evidence_refs": {"type": "array", "items": _text()}, "notice": _text(), "content_sha256": _digest()},
+        schema_id,
+        draft,
+        title="PySFMEA release qualification source",
+        format_value=RELEASE_QUALIFICATION_SOURCE_FORMAT,
+        fields={
+            "id": _identifier(),
+            "pre_registered_at": _text(),
+            "pre_registration_evidence_ref": _text(),
+            "authority": {"type": "object"},
+            "candidate": {"type": "object"},
+            "baseline": {"type": "object"},
+            "corpus": {"type": "object"},
+            "noninferiority": {"type": "object"},
+            "performance": {"type": "object"},
+            "evidence_refs": {"type": "array", "items": _text()},
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
     )
 
 
-def release_qualification_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def release_qualification_assessment_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return _closed_format_schema(
-        schema_id, draft, title="PySFMEA release qualification assessment", format_value=RELEASE_QUALIFICATION_ASSESSMENT_FORMAT,
-        fields={"generated_at": _text(), "id": _identifier(), "authority": {"type": "object"}, "subjects": {"type": "object"}, "bindings": {"type": "object"}, "leakage": {"type": "object"}, "metric_comparisons": {"type": "object"}, "performance": {"type": "object"}, "checks": {"type": "object", "additionalProperties": {"type": "boolean"}}, "summary": {"type": "object"}, "notice": _text(), "content_sha256": _digest()},
+        schema_id,
+        draft,
+        title="PySFMEA release qualification assessment",
+        format_value=RELEASE_QUALIFICATION_ASSESSMENT_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "id": _identifier(),
+            "authority": {"type": "object"},
+            "subjects": {"type": "object"},
+            "bindings": {"type": "object"},
+            "leakage": {"type": "object"},
+            "metric_comparisons": {"type": "object"},
+            "performance": {"type": "object"},
+            "checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
+            "summary": {"type": "object"},
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
     )
 
 
-def release_qualification_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def release_qualification_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return _closed_format_schema(
-        schema_id, draft, title="PySFMEA release qualification verification", format_value=RELEASE_QUALIFICATION_VERIFICATION_FORMAT,
-        fields={"valid": {"type": "boolean"}, "passed": {"type": "boolean"}, "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "source_regeneration"]), "errors": {"type": "array", "items": _text(required=False)}, "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"}, "notice": _text()}, optional_fields={"path": _text()},
+        schema_id,
+        draft,
+        title="PySFMEA release qualification verification",
+        format_value=RELEASE_QUALIFICATION_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "passed": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
+            "errors": {"type": "array", "items": _text(required=False)},
+            "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
+            "notice": _text(),
+        },
+        optional_fields={"path": _text()},
     )
 
 
 def ssvc_policy_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return _closed_format_schema(
-        schema_id, draft, title="PySFMEA controlled SSVC policy", format_value=SSVC_POLICY_FORMAT,
-        fields={"model": _text(), "model_version": _text(), "authority": _text(), "approved_at": _text(), "source_url": _text(), "rules": {"type": "array", "items": {"type": "object"}}, "reassessment_triggers": {"type": "array", "items": _text()}, "notice": _text(), "content_sha256": _digest()},
+        schema_id,
+        draft,
+        title="PySFMEA controlled SSVC policy",
+        format_value=SSVC_POLICY_FORMAT,
+        fields={
+            "model": _text(),
+            "model_version": _text(),
+            "authority": _text(),
+            "approved_at": _text(),
+            "source_url": _text(),
+            "rules": {"type": "array", "items": {"type": "object"}},
+            "reassessment_triggers": {"type": "array", "items": _text()},
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
     )
 
 
 def ssvc_observations_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return _closed_format_schema(
-        schema_id, draft, title="PySFMEA SSVC observations", format_value=SSVC_OBSERVATIONS_FORMAT,
-        fields={"policy_content_sha256": _digest(), "authority": _text(), "observed_at": _text(), "vulnerabilities": {"type": "array", "items": {"type": "object"}}, "content_sha256": _digest()},
+        schema_id,
+        draft,
+        title="PySFMEA SSVC observations",
+        format_value=SSVC_OBSERVATIONS_FORMAT,
+        fields={
+            "policy_content_sha256": _digest(),
+            "authority": _text(),
+            "observed_at": _text(),
+            "vulnerabilities": {"type": "array", "items": {"type": "object"}},
+            "content_sha256": _digest(),
+        },
     )
 
 
 def ssvc_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return _closed_format_schema(
-        schema_id, draft, title="PySFMEA SSVC assessment", format_value=SSVC_ASSESSMENT_FORMAT,
-        fields={"generated_at": _text(), "model": {"type": "object"}, "bindings": {"type": "object"}, "decisions": {"type": "array", "items": {"type": "object"}}, "summary": {"type": "object"}, "notice": _text(), "content_sha256": _digest()},
+        schema_id,
+        draft,
+        title="PySFMEA SSVC assessment",
+        format_value=SSVC_ASSESSMENT_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "model": {"type": "object"},
+            "bindings": {"type": "object"},
+            "decisions": {"type": "array", "items": {"type": "object"}},
+            "summary": {"type": "object"},
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
     )
 
 
 def ssvc_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return _closed_format_schema(
-        schema_id, draft, title="PySFMEA SSVC verification", format_value=SSVC_VERIFICATION_FORMAT,
-        fields={"valid": {"type": "boolean"}, "complete": {"type": "boolean"}, "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "source_regeneration"]), "errors": {"type": "array", "items": _text(required=False)}, "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"}, "notice": _text()}, optional_fields={"path": _text()},
+        schema_id,
+        draft,
+        title="PySFMEA SSVC verification",
+        format_value=SSVC_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "complete": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
+            "errors": {"type": "array", "items": _text(required=False)},
+            "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
+            "notice": _text(),
+        },
+        optional_fields={"path": _text()},
     )
 
 
@@ -2221,129 +3015,474 @@ def gsn_projection_schema(schema_id: str, draft: str) -> dict[str, Any]:
     node = {
         "type": "object",
         "required": ["id", "kind", "source_id", "statement", "status", "metadata"],
-        "properties": {"id": _identifier(), "kind": {"enum": ["goal", "strategy", "solution", "assumption", "defeater"]}, "source_id": _text(), "statement": _text(), "status": _text(), "metadata": {"type": "object"}},
+        "properties": {
+            "id": _identifier(),
+            "kind": {
+                "enum": ["goal", "strategy", "solution", "assumption", "defeater"]
+            },
+            "source_id": _text(),
+            "statement": _text(),
+            "status": _text(),
+            "metadata": {"type": "object"},
+        },
         "additionalProperties": False,
     }
     edge = {
         "type": "object",
         "required": ["source", "target", "kind"],
-        "properties": {"source": _identifier(), "target": _identifier(), "kind": {"enum": ["supported_by", "in_context_of", "challenges"]}},
+        "properties": {
+            "source": _identifier(),
+            "target": _identifier(),
+            "kind": {"enum": ["supported_by", "in_context_of", "challenges"]},
+        },
         "additionalProperties": False,
     }
     return _closed_format_schema(
-        schema_id, draft, title="PySFMEA GSN semantic projection", format_value=GSN_PROJECTION_FORMAT,
-        fields={"generated_at": _text(), "binding": {"type": "object"}, "profile": {"type": "object"}, "top_node_id": _identifier(), "nodes": {"type": "array", "minItems": 1, "items": node}, "edges": {"type": "array", "items": edge}, "summary": {"type": "object"}, "notice": _text(), "content_sha256": _digest()},
+        schema_id,
+        draft,
+        title="PySFMEA GSN semantic projection",
+        format_value=GSN_PROJECTION_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "binding": {"type": "object"},
+            "profile": {"type": "object"},
+            "top_node_id": _identifier(),
+            "nodes": {"type": "array", "minItems": 1, "items": node},
+            "edges": {"type": "array", "items": edge},
+            "summary": {"type": "object"},
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
     )
 
 
 def gsn_projection_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
     return _closed_format_schema(
-        schema_id, draft, title="PySFMEA GSN semantic projection verification", format_value=GSN_VERIFICATION_FORMAT,
-        fields={"valid": {"type": "boolean"}, "complete": {"type": "boolean"}, "checks": _checks(["closed_structure", "content_integrity", "graph_integrity", "semantic_reconciliation", "source_regeneration"]), "errors": {"type": "array", "items": _text(required=False)}, "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"}, "notice": _text()}, optional_fields={"path": _text()},
+        schema_id,
+        draft,
+        title="PySFMEA GSN semantic projection verification",
+        format_value=GSN_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "complete": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "graph_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
+            "errors": {"type": "array", "items": _text(required=False)},
+            "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
+            "notice": _text(),
+        },
+        optional_fields={"path": _text()},
     )
 
 
-def _governed_source_schema(schema_id: str, draft: str, *, title: str, format_value: str, field_names: tuple[str, ...]) -> dict[str, Any]:
-    fields: dict[str, dict[str, Any]] = {name: {"type": "object"} for name in field_names}
+def _governed_source_schema(
+    schema_id: str,
+    draft: str,
+    *,
+    title: str,
+    format_value: str,
+    field_names: tuple[str, ...],
+) -> dict[str, Any]:
+    fields: dict[str, dict[str, Any]] = {
+        name: {"type": "object"} for name in field_names
+    }
     array_fields = {
-        "requirements", "decisions", "deactivated_code", "analysis_exclusions",
-        "evidence_refs", "basic_events", "gates", "dependency_declarations",
-        "stages", "quality_requirements", "measures", "observations", "deviations",
-        "vulnerabilities", "controls", "nonconformities",
+        "requirements",
+        "decisions",
+        "deactivated_code",
+        "analysis_exclusions",
+        "evidence_refs",
+        "basic_events",
+        "gates",
+        "dependency_declarations",
+        "stages",
+        "quality_requirements",
+        "measures",
+        "observations",
+        "deviations",
+        "vulnerabilities",
+        "controls",
+        "nonconformities",
     }
     for name in field_names:
         if name in array_fields:
             fields[name] = {"type": "array", "maxItems": 100_000}
-    fields.update({"generated_at": _text(), "authority": _text(), "notice": _text(), "content_sha256": _digest()})
+    fields.update(
+        {
+            "generated_at": _text(),
+            "authority": _text(),
+            "notice": _text(),
+            "content_sha256": _digest(),
+        }
+    )
     if "top_gate_id" in fields or "independence_basis" in fields:
         fields["top_gate_id"] = _text(required=False)
         fields["independence_basis"] = _text(required=False)
-    return _closed_format_schema(schema_id, draft, title=title, format_value=format_value, fields=fields)
+    return _closed_format_schema(
+        schema_id, draft, title=title, format_value=format_value, fields=fields
+    )
 
 
-def _governed_assessment_schema(schema_id: str, draft: str, *, title: str, format_value: str, field_names: tuple[str, ...]) -> dict[str, Any]:
-    fields: dict[str, dict[str, Any]] = {name: {"type": "object"} for name in field_names}
+def _governed_assessment_schema(
+    schema_id: str,
+    draft: str,
+    *,
+    title: str,
+    format_value: str,
+    field_names: tuple[str, ...],
+) -> dict[str, Any]:
+    fields: dict[str, dict[str, Any]] = {
+        name: {"type": "object"} for name in field_names
+    }
     for name in field_names:
         if name in {"decisions", "measure_results", "results", "errors"}:
             fields[name] = {"type": "array", "maxItems": 100_000}
-    fields.update({"generated_at": _text(), "source_sha256": _digest(), "notice": _text(), "content_sha256": _digest()})
-    return _closed_format_schema(schema_id, draft, title=title, format_value=format_value, fields=fields)
+    fields.update(
+        {
+            "generated_at": _text(),
+            "source_sha256": _digest(),
+            "notice": _text(),
+            "content_sha256": _digest(),
+        }
+    )
+    return _closed_format_schema(
+        schema_id, draft, title=title, format_value=format_value, fields=fields
+    )
 
 
-def _governed_verification_schema(schema_id: str, draft: str, *, title: str, format_value: str, outcome: str) -> dict[str, Any]:
-    return _closed_format_schema(schema_id, draft, title=title, format_value=format_value, fields={"valid": {"type": "boolean"}, outcome: {"type": "boolean"}, "errors": {"type": "array", "maxItems": 100_000, "items": _text(required=False)}, "notice": _text(), "content_sha256": _digest()})
+def _governed_verification_schema(
+    schema_id: str, draft: str, *, title: str, format_value: str, outcome: str
+) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title=title,
+        format_value=format_value,
+        fields={
+            "valid": {"type": "boolean"},
+            outcome: {"type": "boolean"},
+            "errors": {
+                "type": "array",
+                "maxItems": 100_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
 
 
 def stpa_cast_source_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_source_schema(schema_id, draft, title="PySFMEA STPA and CAST source", format_value=STPA_CAST_SOURCE_FORMAT, field_names=("generated_at", "authority", "analysis_binding", "system_definition", "control_structure", "stpa", "cast", "evidence_refs", "notice", "content_sha256"))
+    return _governed_source_schema(
+        schema_id,
+        draft,
+        title="PySFMEA STPA and CAST source",
+        format_value=STPA_CAST_SOURCE_FORMAT,
+        field_names=(
+            "generated_at",
+            "authority",
+            "analysis_binding",
+            "system_definition",
+            "control_structure",
+            "stpa",
+            "cast",
+            "evidence_refs",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
 def stpa_cast_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_assessment_schema(schema_id, draft, title="PySFMEA STPA and CAST assessment", format_value=STPA_CAST_ASSESSMENT_FORMAT, field_names=("generated_at", "source_sha256", "analysis_binding", "checks", "gaps", "summary", "notice", "content_sha256"))
+    return _governed_assessment_schema(
+        schema_id,
+        draft,
+        title="PySFMEA STPA and CAST assessment",
+        format_value=STPA_CAST_ASSESSMENT_FORMAT,
+        field_names=(
+            "generated_at",
+            "source_sha256",
+            "analysis_binding",
+            "checks",
+            "gaps",
+            "summary",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
 def stpa_cast_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_verification_schema(schema_id, draft, title="PySFMEA STPA and CAST verification", format_value=STPA_CAST_VERIFICATION_FORMAT, outcome="complete")
+    return _governed_verification_schema(
+        schema_id,
+        draft,
+        title="PySFMEA STPA and CAST verification",
+        format_value=STPA_CAST_VERIFICATION_FORMAT,
+        outcome="complete",
+    )
 
 
 def structural_coverage_source_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_source_schema(schema_id, draft, title="PySFMEA structural coverage source", format_value=COVERAGE_SOURCE_FORMAT, field_names=("generated_at", "authority", "analysis_binding", "coverage_basis", "requirements", "decisions", "deactivated_code", "analysis_exclusions", "evidence_refs", "notice", "content_sha256"))
+    return _governed_source_schema(
+        schema_id,
+        draft,
+        title="PySFMEA structural coverage source",
+        format_value=COVERAGE_SOURCE_FORMAT,
+        field_names=(
+            "generated_at",
+            "authority",
+            "analysis_binding",
+            "coverage_basis",
+            "requirements",
+            "decisions",
+            "deactivated_code",
+            "analysis_exclusions",
+            "evidence_refs",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
 def structural_coverage_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_assessment_schema(schema_id, draft, title="PySFMEA structural coverage assessment", format_value=COVERAGE_ASSESSMENT_FORMAT, field_names=("generated_at", "source_sha256", "analysis_binding", "decisions", "summary", "notice", "content_sha256"))
+    return _governed_assessment_schema(
+        schema_id,
+        draft,
+        title="PySFMEA structural coverage assessment",
+        format_value=COVERAGE_ASSESSMENT_FORMAT,
+        field_names=(
+            "generated_at",
+            "source_sha256",
+            "analysis_binding",
+            "decisions",
+            "summary",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
-def structural_coverage_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_verification_schema(schema_id, draft, title="PySFMEA structural coverage verification", format_value=COVERAGE_VERIFICATION_FORMAT, outcome="complete")
+def structural_coverage_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _governed_verification_schema(
+        schema_id,
+        draft,
+        title="PySFMEA structural coverage verification",
+        format_value=COVERAGE_VERIFICATION_FORMAT,
+        outcome="complete",
+    )
 
 
 def quantitative_fta_source_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_source_schema(schema_id, draft, title="PySFMEA quantitative FTA source", format_value=QFTA_SOURCE_FORMAT, field_names=("generated_at", "authority", "analysis_binding", "model_scope", "independence_basis", "basic_events", "gates", "top_gate_id", "dependency_declarations", "evidence_refs", "notice", "content_sha256"))
+    return _governed_source_schema(
+        schema_id,
+        draft,
+        title="PySFMEA quantitative FTA source",
+        format_value=QFTA_SOURCE_FORMAT,
+        field_names=(
+            "generated_at",
+            "authority",
+            "analysis_binding",
+            "model_scope",
+            "independence_basis",
+            "basic_events",
+            "gates",
+            "top_gate_id",
+            "dependency_declarations",
+            "evidence_refs",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
 def quantitative_fta_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_assessment_schema(schema_id, draft, title="PySFMEA quantitative FTA assessment", format_value=QFTA_ASSESSMENT_FORMAT, field_names=("generated_at", "source_sha256", "analysis_binding", "evaluation", "summary", "notice", "content_sha256"))
+    return _governed_assessment_schema(
+        schema_id,
+        draft,
+        title="PySFMEA quantitative FTA assessment",
+        format_value=QFTA_ASSESSMENT_FORMAT,
+        field_names=(
+            "generated_at",
+            "source_sha256",
+            "analysis_binding",
+            "evaluation",
+            "summary",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
 def quantitative_fta_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_verification_schema(schema_id, draft, title="PySFMEA quantitative FTA verification", format_value=QFTA_VERIFICATION_FORMAT, outcome="complete")
+    return _governed_verification_schema(
+        schema_id,
+        draft,
+        title="PySFMEA quantitative FTA verification",
+        format_value=QFTA_VERIFICATION_FORMAT,
+        outcome="complete",
+    )
 
 
 def quality_evaluation_source_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_source_schema(schema_id, draft, title="PySFMEA quality evaluation source", format_value=QUALITY_EVALUATION_SOURCE_FORMAT, field_names=("generated_at", "authority", "analysis_binding", "evaluation_context", "stages", "quality_requirements", "measures", "observations", "deviations", "conclusion", "notice", "content_sha256"))
+    return _governed_source_schema(
+        schema_id,
+        draft,
+        title="PySFMEA quality evaluation source",
+        format_value=QUALITY_EVALUATION_SOURCE_FORMAT,
+        field_names=(
+            "generated_at",
+            "authority",
+            "analysis_binding",
+            "evaluation_context",
+            "stages",
+            "quality_requirements",
+            "measures",
+            "observations",
+            "deviations",
+            "conclusion",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
 def quality_evaluation_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_assessment_schema(schema_id, draft, title="PySFMEA quality evaluation assessment", format_value=QUALITY_EVALUATION_ASSESSMENT_FORMAT, field_names=("generated_at", "source_sha256", "analysis_binding", "measure_results", "summary", "notice", "content_sha256"))
+    return _governed_assessment_schema(
+        schema_id,
+        draft,
+        title="PySFMEA quality evaluation assessment",
+        format_value=QUALITY_EVALUATION_ASSESSMENT_FORMAT,
+        field_names=(
+            "generated_at",
+            "source_sha256",
+            "analysis_binding",
+            "measure_results",
+            "summary",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
-def quality_evaluation_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_verification_schema(schema_id, draft, title="PySFMEA quality evaluation verification", format_value=QUALITY_EVALUATION_VERIFICATION_FORMAT, outcome="eligible_for_authorized_conclusion")
+def quality_evaluation_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _governed_verification_schema(
+        schema_id,
+        draft,
+        title="PySFMEA quality evaluation verification",
+        format_value=QUALITY_EVALUATION_VERIFICATION_FORMAT,
+        outcome="eligible_for_authorized_conclusion",
+    )
 
 
 def security_prioritization_source_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_source_schema(schema_id, draft, title="PySFMEA security prioritization source", format_value=SECURITY_SOURCE_FORMAT, field_names=("generated_at", "authority", "policy", "vulnerabilities", "evidence_refs", "notice", "content_sha256"))
+    return _governed_source_schema(
+        schema_id,
+        draft,
+        title="PySFMEA security prioritization source",
+        format_value=SECURITY_SOURCE_FORMAT,
+        field_names=(
+            "generated_at",
+            "authority",
+            "policy",
+            "vulnerabilities",
+            "evidence_refs",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
-def security_prioritization_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_assessment_schema(schema_id, draft, title="PySFMEA security prioritization assessment", format_value=SECURITY_ASSESSMENT_FORMAT, field_names=("generated_at", "source_sha256", "results", "summary", "notice", "content_sha256"))
+def security_prioritization_assessment_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _governed_assessment_schema(
+        schema_id,
+        draft,
+        title="PySFMEA security prioritization assessment",
+        format_value=SECURITY_ASSESSMENT_FORMAT,
+        field_names=(
+            "generated_at",
+            "source_sha256",
+            "results",
+            "summary",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
-def security_prioritization_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_verification_schema(schema_id, draft, title="PySFMEA security prioritization verification", format_value=SECURITY_VERIFICATION_FORMAT, outcome="complete")
+def security_prioritization_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _governed_verification_schema(
+        schema_id,
+        draft,
+        title="PySFMEA security prioritization verification",
+        format_value=SECURITY_VERIFICATION_FORMAT,
+        outcome="complete",
+    )
 
 
 def laboratory_governance_source_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_source_schema(schema_id, draft, title="PySFMEA laboratory governance source", format_value=LAB_SOURCE_FORMAT, field_names=("generated_at", "authority", "subject", "roles", "controls", "nonconformities", "approval", "notice", "content_sha256"))
+    return _governed_source_schema(
+        schema_id,
+        draft,
+        title="PySFMEA laboratory governance source",
+        format_value=LAB_SOURCE_FORMAT,
+        field_names=(
+            "generated_at",
+            "authority",
+            "subject",
+            "roles",
+            "controls",
+            "nonconformities",
+            "approval",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
-def laboratory_governance_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_assessment_schema(schema_id, draft, title="PySFMEA laboratory governance assessment", format_value=LAB_ASSESSMENT_FORMAT, field_names=("generated_at", "source_sha256", "subject", "summary", "notice", "content_sha256"))
+def laboratory_governance_assessment_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _governed_assessment_schema(
+        schema_id,
+        draft,
+        title="PySFMEA laboratory governance assessment",
+        format_value=LAB_ASSESSMENT_FORMAT,
+        field_names=(
+            "generated_at",
+            "source_sha256",
+            "subject",
+            "summary",
+            "notice",
+            "content_sha256",
+        ),
+    )
 
 
-def laboratory_governance_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _governed_verification_schema(schema_id, draft, title="PySFMEA laboratory governance verification", format_value=LAB_VERIFICATION_FORMAT, outcome="eligible_for_governed_use")
+def laboratory_governance_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _governed_verification_schema(
+        schema_id,
+        draft,
+        title="PySFMEA laboratory governance verification",
+        format_value=LAB_VERIFICATION_FORMAT,
+        outcome="eligible_for_governed_use",
+    )
 
 
 def runtime_coverage_observation_schema(schema_id: str, draft: str) -> dict[str, Any]:
@@ -2359,18 +3498,34 @@ def runtime_coverage_observation_schema(schema_id: str, draft: str) -> dict[str,
             "artifact": {"type": "object"},
             "producer": {"type": "object"},
             "policy": {"type": "object"},
-            "files": {"type": "array", "maxItems": 100_000, "items": {"type": "object"}},
-            "components": {"type": "array", "maxItems": 500_000, "items": {"type": "object"}},
+            "files": {
+                "type": "array",
+                "maxItems": 100_000,
+                "items": {"type": "object"},
+            },
+            "components": {
+                "type": "array",
+                "maxItems": 500_000,
+                "items": {"type": "object"},
+            },
             "omissions": {"type": "object"},
             "summary": {"type": "object"},
-            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 100_000, "uniqueItems": True, "items": _text()},
+            "evidence_refs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100_000,
+                "uniqueItems": True,
+                "items": _text(),
+            },
             "claim_boundary": _text(),
             "content_sha256": _digest(),
         },
     )
 
 
-def runtime_coverage_observation_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def runtime_coverage_observation_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return _closed_format_schema(
         schema_id,
         draft,
@@ -2379,15 +3534,30 @@ def runtime_coverage_observation_verification_schema(schema_id: str, draft: str)
         fields={
             "valid": {"type": "boolean"},
             "ready_for_structural_coverage_use": {"type": "boolean"},
-            "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "analysis_binding", "coverage_artifact_binding", "exact_regeneration"]),
-            "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)},
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "analysis_binding",
+                    "coverage_artifact_binding",
+                    "exact_regeneration",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
             "notice": _text(),
             "content_sha256": _digest(),
         },
     )
 
 
-def industry_validation_portfolio_source_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def industry_validation_portfolio_source_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return _closed_format_schema(
         schema_id,
         draft,
@@ -2398,23 +3568,73 @@ def industry_validation_portfolio_source_schema(schema_id: str, draft: str) -> d
             "authority": {"type": "object"},
             "product": {"type": "object"},
             "policy": {"type": "object"},
-            "benchmark_assessment_paths": {"type": "array", "maxItems": 10_000, "uniqueItems": True, "items": _text()},
-            "benchmark_suites": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
-            "comparator_observations": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
-            "runtime_coverage_paths": {"type": "array", "maxItems": 10_000, "uniqueItems": True, "items": _text()},
-            "roundtrip_evidence": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
-            "usability_studies": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
-            "formal_verification_records": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
-            "continuity_exercises": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
-            "evidence_refs": {"type": "array", "maxItems": 10_000, "uniqueItems": True, "items": _text()},
-            "limitations": {"type": "array", "maxItems": 10_000, "uniqueItems": True, "items": _text()},
+            "benchmark_assessment_paths": {
+                "type": "array",
+                "maxItems": 10_000,
+                "uniqueItems": True,
+                "items": _text(),
+            },
+            **{
+                name: {"type": "array", "maxItems": 10_000, "items": {"type": "object"}}
+                for name in ("benchmark_item_quality_evidence", "differential_evidence")
+            },
+            "benchmark_suites": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
+            "comparator_observations": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
+            "runtime_coverage_paths": {
+                "type": "array",
+                "maxItems": 10_000,
+                "uniqueItems": True,
+                "items": _text(),
+            },
+            "roundtrip_evidence": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
+            "usability_studies": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
+            "formal_verification_records": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
+            "continuity_exercises": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
+            "evidence_refs": {
+                "type": "array",
+                "maxItems": 10_000,
+                "uniqueItems": True,
+                "items": _text(),
+            },
+            "limitations": {
+                "type": "array",
+                "maxItems": 10_000,
+                "uniqueItems": True,
+                "items": _text(),
+            },
             "notice": _text(),
             "content_sha256": _digest(),
         },
     )
 
 
-def industry_validation_portfolio_assessment_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def industry_validation_portfolio_assessment_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return _closed_format_schema(
         schema_id,
         draft,
@@ -2426,12 +3646,28 @@ def industry_validation_portfolio_assessment_schema(schema_id: str, draft: str) 
             "authority": {"type": "object"},
             "product": {"type": "object"},
             "policy": {"type": "object"},
-            "artifacts": {"type": "array", "maxItems": 30_000, "items": {"type": "object"}},
+            "artifacts": {
+                "type": "array",
+                "maxItems": 30_000,
+                "items": {"type": "object"},
+            },
             "benchmark": {"type": "object"},
             "interoperability": {"type": "object"},
-            "usability_studies": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
-            "formal_verification": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
-            "continuity_exercises": {"type": "array", "maxItems": 10_000, "items": {"type": "object"}},
+            "usability_studies": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
+            "formal_verification": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
+            "continuity_exercises": {
+                "type": "array",
+                "maxItems": 10_000,
+                "items": {"type": "object"},
+            },
             "checks": {"type": "object", "additionalProperties": {"type": "boolean"}},
             "summary": {"type": "object"},
             "limitations": {"type": "array", "maxItems": 10_000, "items": _text()},
@@ -2442,7 +3678,9 @@ def industry_validation_portfolio_assessment_schema(schema_id: str, draft: str) 
     )
 
 
-def industry_validation_portfolio_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def industry_validation_portfolio_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return _closed_format_schema(
         schema_id,
         draft,
@@ -2451,15 +3689,28 @@ def industry_validation_portfolio_verification_schema(schema_id: str, draft: str
         fields={
             "valid": {"type": "boolean"},
             "passed": {"type": "boolean"},
-            "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "source_regeneration"]),
-            "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)},
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "source_regeneration",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
             "notice": _text(),
             "content_sha256": _digest(),
         },
     )
 
 
-def industry_validation_portfolio_report_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+def industry_validation_portfolio_report_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
     return _closed_format_schema(
         schema_id,
         draft,
@@ -2468,8 +3719,21 @@ def industry_validation_portfolio_report_verification_schema(schema_id: str, dra
         fields={
             "valid": {"type": "boolean"},
             "passed": {"type": "boolean"},
-            "checks": _checks(["report_format", "payload_present", "payload_integrity", "payload_semantics", "document_integrity", "assessment_binding"]),
-            "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)},
+            "checks": _checks(
+                [
+                    "report_format",
+                    "payload_present",
+                    "payload_integrity",
+                    "payload_semantics",
+                    "document_integrity",
+                    "assessment_binding",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
             "document_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
             "notice": _text(),
         },
@@ -2477,39 +3741,668 @@ def industry_validation_portfolio_report_verification_schema(schema_id: str, dra
 
 
 def sarif_fusion_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _closed_format_schema(schema_id, draft, title="PySFMEA SARIF fusion", format_value=SARIF_FUSION_FORMAT, fields={"generated_at": _text(), "authority": _text(), "analysis_binding": {"type": "object"}, "inputs": {"type": "array", "minItems": 1, "maxItems": 1_000, "items": {"type": "object"}}, "tools": {"type": "array", "maxItems": 1_000, "items": {"type": "object"}}, "results": {"type": "array", "maxItems": 1_000_000, "items": {"type": "object"}}, "clusters": {"type": "array", "maxItems": 1_000_000, "items": {"type": "object"}}, "summary": {"type": "object"}, "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 100_000, "uniqueItems": True, "items": _text()}, "claim_boundary": _text(), "content_sha256": _digest()})
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA SARIF fusion",
+        format_value=SARIF_FUSION_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "authority": _text(),
+            "analysis_binding": {"type": "object"},
+            "inputs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1_000,
+                "items": {"type": "object"},
+            },
+            "tools": {"type": "array", "maxItems": 1_000, "items": {"type": "object"}},
+            "results": {
+                "type": "array",
+                "maxItems": 1_000_000,
+                "items": {"type": "object"},
+            },
+            "clusters": {
+                "type": "array",
+                "maxItems": 1_000_000,
+                "items": {"type": "object"},
+            },
+            "summary": {"type": "object"},
+            "evidence_refs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100_000,
+                "uniqueItems": True,
+                "items": _text(),
+            },
+            "claim_boundary": _text(),
+            "content_sha256": _digest(),
+        },
+    )
 
 
 def sarif_fusion_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _closed_format_schema(schema_id, draft, title="PySFMEA SARIF fusion verification", format_value=SARIF_FUSION_VERIFICATION_FORMAT, fields={"valid": {"type": "boolean"}, "ready_for_triage": {"type": "boolean"}, "checks": _checks(["closed_structure", "content_integrity", "semantic_reconciliation", "analysis_binding", "exact_regeneration"]), "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)}, "notice": _text(), "content_sha256": _digest()})
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA SARIF fusion verification",
+        format_value=SARIF_FUSION_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "ready_for_triage": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "closed_structure",
+                    "content_integrity",
+                    "semantic_reconciliation",
+                    "analysis_binding",
+                    "exact_regeneration",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
 
 
 def oscal_assessment_results_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return {"$schema": draft, "$id": schema_id, "title": "PySFMEA-supported OSCAL Assessment Results projection", "type": "object", "required": ["$schema", "assessment-results"], "properties": {"$schema": {"const": OSCAL_SCHEMA}, "assessment-results": {"type": "object", "required": ["uuid", "metadata", "import-ap", "results"], "properties": {"uuid": {"type": "string", "format": "uuid"}, "metadata": {"type": "object", "required": ["title", "last-modified", "version", "oscal-version", "props", "roles", "parties", "responsible-parties"]}, "import-ap": {"type": "object", "required": ["href"]}, "results": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "object"}}, "back-matter": {"type": "object"}}}}, "additionalProperties": False}
+    return {
+        "$schema": draft,
+        "$id": schema_id,
+        "title": "PySFMEA-supported OSCAL Assessment Results projection",
+        "type": "object",
+        "required": ["$schema", "assessment-results"],
+        "properties": {
+            "$schema": {"const": OSCAL_SCHEMA},
+            "assessment-results": {
+                "type": "object",
+                "required": ["uuid", "metadata", "import-ap", "results"],
+                "properties": {
+                    "uuid": {"type": "string", "format": "uuid"},
+                    "metadata": {
+                        "type": "object",
+                        "required": [
+                            "title",
+                            "last-modified",
+                            "version",
+                            "oscal-version",
+                            "props",
+                            "roles",
+                            "parties",
+                            "responsible-parties",
+                        ],
+                    },
+                    "import-ap": {"type": "object", "required": ["href"]},
+                    "results": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 1,
+                        "items": {"type": "object"},
+                    },
+                    "back-matter": {"type": "object"},
+                },
+            },
+        },
+        "additionalProperties": False,
+    }
 
 
-def oscal_assessment_results_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _closed_format_schema(schema_id, draft, title="PySFMEA OSCAL Assessment Results verification", format_value=OSCAL_VERIFICATION_FORMAT, fields={"valid": {"type": "boolean"}, "ready_for_normative_validation": {"type": "boolean"}, "checks": _checks(["supported_subset", "analysis_binding", "exact_regeneration"]), "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)}, "notice": _text(), "content_sha256": _digest()})
+def oscal_assessment_results_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA OSCAL Assessment Results verification",
+        format_value=OSCAL_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "ready_for_normative_validation": {"type": "boolean"},
+            "checks": _checks(
+                ["supported_subset", "analysis_binding", "exact_regeneration"]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def _oscal_lifecycle_document_schema(
+    schema_id: str, draft: str, *, title: str, root: str, normative_schema: str
+) -> dict[str, Any]:
+    return {
+        "$schema": draft,
+        "$id": schema_id,
+        "title": title,
+        "type": "object",
+        "required": ["$schema", root],
+        "properties": {
+            "$schema": {"const": normative_schema},
+            root: {
+                "type": "object",
+                "required": ["uuid", "metadata", "import-ssp"],
+                "properties": {
+                    "uuid": {"type": "string", "format": "uuid"},
+                    "metadata": {
+                        "type": "object",
+                        "required": [
+                            "title",
+                            "last-modified",
+                            "version",
+                            "oscal-version",
+                            "props",
+                            "roles",
+                            "parties",
+                            "responsible-parties",
+                        ],
+                    },
+                    "import-ssp": {"type": "object", "required": ["href"]},
+                },
+            },
+        },
+        "additionalProperties": False,
+    }
+
+
+def oscal_assessment_plan_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    schema = _oscal_lifecycle_document_schema(
+        schema_id,
+        draft,
+        title="PySFMEA-supported OSCAL Assessment Plan projection",
+        root="assessment-plan",
+        normative_schema=OSCAL_ASSESSMENT_PLAN_SCHEMA,
+    )
+    schema["properties"]["assessment-plan"]["required"].extend(
+        ["local-definitions", "reviewed-controls", "assessment-subjects", "tasks"]
+    )
+    return schema
+
+
+def oscal_poam_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    schema = _oscal_lifecycle_document_schema(
+        schema_id,
+        draft,
+        title="PySFMEA-supported OSCAL POA&M projection",
+        root="plan-of-action-and-milestones",
+        normative_schema=OSCAL_POAM_SCHEMA,
+    )
+    schema["properties"]["plan-of-action-and-milestones"]["required"].extend(
+        ["system-id", "observations", "risks", "poam-items"]
+    )
+    return schema
+
+
+def _oscal_lifecycle_verification_schema(
+    schema_id: str, draft: str, *, title: str, format_value: str
+) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title=title,
+        format_value=format_value,
+        fields={
+            "valid": {"type": "boolean"},
+            "ready_for_normative_validation": {"type": "boolean"},
+            "checks": _checks(
+                ["supported_subset", "analysis_binding", "exact_regeneration"]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def oscal_assessment_plan_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _oscal_lifecycle_verification_schema(
+        schema_id,
+        draft,
+        title="PySFMEA OSCAL Assessment Plan verification",
+        format_value=OSCAL_AP_VERIFICATION_FORMAT,
+    )
+
+
+def oscal_poam_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _oscal_lifecycle_verification_schema(
+        schema_id,
+        draft,
+        title="PySFMEA OSCAL POA&M verification",
+        format_value=OSCAL_POAM_VERIFICATION_FORMAT,
+    )
 
 
 def industry_benchmark_catalog_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _closed_format_schema(schema_id, draft, title="PySFMEA external benchmark catalog", format_value=BENCHMARK_CATALOG_FORMAT, fields={"version": _text(), "suites": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object"}}, "notice": _text(), "content_sha256": _digest()})
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA external benchmark catalog",
+        format_value=BENCHMARK_CATALOG_FORMAT,
+        fields={
+            "version": _text(),
+            "suites": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": {"type": "object"},
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
 
 
 def benchmark_execution_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _closed_format_schema(schema_id, draft, title="PySFMEA benchmark execution evidence", format_value=BENCHMARK_EXECUTION_FORMAT, fields={"generated_at": _text(), "suite": {"type": "object"}, "authority": {"type": "object"}, "execution": {"type": "object"}, "outcome": {"type": "object"}, "evidence_refs": {"type": "array", "maxItems": 100_000, "items": _text()}, "limitations": {"type": "array", "maxItems": 10_000, "items": _text()}, "claim_boundary": _text(), "content_sha256": _digest()})
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA benchmark execution evidence",
+        format_value=BENCHMARK_EXECUTION_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "suite": {"type": "object"},
+            "authority": {"type": "object"},
+            "adapter": {"type": "object"},
+            "execution": {"type": "object"},
+            "outcome": {"type": "object"},
+            "evidence_refs": {"type": "array", "maxItems": 100_000, "items": _text()},
+            "limitations": {"type": "array", "maxItems": 10_000, "items": _text()},
+            "claim_boundary": _text(),
+            "content_sha256": _digest(),
+        },
+    )
 
 
-def benchmark_execution_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _closed_format_schema(schema_id, draft, title="PySFMEA benchmark execution verification", format_value=BENCHMARK_EXECUTION_VERIFICATION_FORMAT, fields={"valid": {"type": "boolean"}, "eligible_for_benchmark_assessment": {"type": "boolean"}, "checks": _checks(["content_integrity", "closed_structure_and_isolation", "execution_and_governance_complete"]), "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)}, "notice": _text(), "content_sha256": _digest()})
+def benchmark_execution_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA benchmark execution verification",
+        format_value=BENCHMARK_EXECUTION_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "eligible_for_benchmark_assessment": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "content_integrity",
+                    "closed_structure_and_isolation",
+                    "execution_and_governance_complete",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def benchmark_adapter_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA governed benchmark adapter",
+        format_value=BENCHMARK_ADAPTER_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "suite": {"type": "object"},
+            "adapter": {"type": "object"},
+            "normalization": {"type": "object"},
+            "authority": {"type": "object"},
+            "limitations": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1_000,
+                "items": _text(),
+            },
+            "claim_boundary": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def benchmark_adapter_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA benchmark adapter verification",
+        format_value=BENCHMARK_ADAPTER_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "eligible_for_execution": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "content_integrity",
+                    "closed_adapter_contract",
+                    "provenance_normalization_and_review_complete",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def benchmark_observations_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA case-level benchmark observations",
+        format_value=BENCHMARK_OBSERVATIONS_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "suite": {"type": "object"},
+            "runner": {"type": "object"},
+            "model": {"type": ["object", "null"]},
+            "authority": _text(),
+            "repetitions": {"type": "integer", "minimum": 1, "maximum": 100},
+            "cases": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100_000,
+                "items": {"type": "object"},
+            },
+            "summary": {"type": "object"},
+            "claim_boundary": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def benchmark_observations_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA benchmark observations verification",
+        format_value=BENCHMARK_OBSERVATIONS_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "eligible_for_execution_receipt": {"type": "boolean"},
+            "checks": _checks(
+                ["content_integrity", "closed_case_structure", "metric_reconciliation"]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def security_taxonomy_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA versioned security taxonomy",
+        format_value=SECURITY_TAXONOMY_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "authority": _text(),
+            "taxonomy": {"type": "object"},
+            "source": {"type": "object"},
+            "entries": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20_000,
+                "items": {"type": "object"},
+            },
+            "summary": {"type": "object"},
+            "claim_boundary": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def security_taxonomy_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA security taxonomy verification",
+        format_value=SECURITY_TAXONOMY_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "eligible_for_mapping": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "content_integrity",
+                    "closed_structure_and_summary",
+                    "exact_source_binding",
+                    "exact_regeneration",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def standards_lifecycle_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA standards lifecycle ledger",
+        format_value=STANDARDS_LIFECYCLE_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "authority": _text(),
+            "catalog": {"type": "object"},
+            "reviews": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1_000,
+                "items": {"type": "object"},
+            },
+            "summary": {"type": "object"},
+            "claim_boundary": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def standards_lifecycle_verification_schema(
+    schema_id: str, draft: str
+) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA standards lifecycle verification",
+        format_value=STANDARDS_LIFECYCLE_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "eligible_as_current_catalog_evidence": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "content_integrity",
+                    "exact_catalog_binding_and_structure",
+                    "complete_current_review",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def sigstore_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    verifier = {
+        "type": "object",
+        "required": ["name", "version", "mode"],
+        "properties": {
+            "name": {"const": "cosign"},
+            "version": _text(),
+            "mode": {"const": "verify-blob-offline-bundle"},
+        },
+        "additionalProperties": False,
+    }
+    certificate = {
+        "type": "object",
+        "required": ["identity", "oidc_issuer"],
+        "properties": {"identity": _text(), "oidc_issuer": _text()},
+        "additionalProperties": False,
+    }
+    outcome = {
+        "type": "object",
+        "required": [
+            "exit_code",
+            "signature_verified",
+            "certificate_identity_verified",
+            "transparency_log_verified",
+            "offline_bundle_verified",
+            "stdout_sha256",
+            "stderr_sha256",
+        ],
+        "properties": {
+            "exit_code": {"type": "integer"},
+            "signature_verified": {"type": "boolean"},
+            "certificate_identity_verified": {"type": "boolean"},
+            "transparency_log_verified": {"type": "boolean"},
+            "offline_bundle_verified": {"type": "boolean"},
+            "stdout_sha256": _digest(),
+            "stderr_sha256": _digest(),
+        },
+        "additionalProperties": False,
+    }
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA Sigstore verification receipt",
+        format_value=SIGSTORE_VERIFICATION_FORMAT,
+        fields={
+            "observed_at": _text(),
+            "authority": _text(),
+            "verifier": verifier,
+            "subject": _file_binding_schema(),
+            "bundle": _file_binding_schema(),
+            "trusted_root": _file_binding_schema(),
+            "certificate": certificate,
+            "outcome": outcome,
+            "claim_boundary": _text(),
+            "content_sha256": _digest(),
+        },
+    )
+
+
+def sigstore_verification_verdict_schema(schema_id: str, draft: str) -> dict[str, Any]:
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA Sigstore verification verdict",
+        format_value=SIGSTORE_VERIFICATION_VERDICT_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "authenticated": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "content_integrity",
+                    "closed_structure",
+                    "artifact_binding",
+                    "bundle_binding",
+                    "trusted_root_binding",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
 
 
 def fuzz_campaign_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _closed_format_schema(schema_id, draft, title="PySFMEA fuzz campaign evidence", format_value=FUZZ_CAMPAIGN_FORMAT, fields={"generated_at": _text(), "authority": {"type": "object"}, "target": {"type": "object"}, "engine": {"type": "object"}, "isolation": {"type": "object"}, "corpus": {"type": "object"}, "execution": {"type": "object"}, "crashes": {"type": "array", "maxItems": 100_000, "items": {"type": "object"}}, "evidence_refs": {"type": "array", "maxItems": 100_000, "items": _text()}, "limitations": {"type": "array", "maxItems": 10_000, "items": _text()}, "claim_boundary": _text(), "content_sha256": _digest()})
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA fuzz campaign evidence",
+        format_value=FUZZ_CAMPAIGN_FORMAT,
+        fields={
+            "generated_at": _text(),
+            "authority": {"type": "object"},
+            "target": {"type": "object"},
+            "engine": {"type": "object"},
+            "isolation": {"type": "object"},
+            "corpus": {"type": "object"},
+            "execution": {"type": "object"},
+            "crashes": {
+                "type": "array",
+                "maxItems": 100_000,
+                "items": {"type": "object"},
+            },
+            "evidence_refs": {"type": "array", "maxItems": 100_000, "items": _text()},
+            "limitations": {"type": "array", "maxItems": 10_000, "items": _text()},
+            "claim_boundary": _text(),
+            "content_sha256": _digest(),
+        },
+    )
 
 
 def fuzz_campaign_verification_schema(schema_id: str, draft: str) -> dict[str, Any]:
-    return _closed_format_schema(schema_id, draft, title="PySFMEA fuzz campaign verification", format_value=FUZZ_CAMPAIGN_VERIFICATION_FORMAT, fields={"valid": {"type": "boolean"}, "eligible_for_assurance_use": {"type": "boolean"}, "checks": _checks(["content_integrity", "closed_structure_and_isolation", "campaign_complete"]), "errors": {"type": "array", "maxItems": 1_000, "items": _text(required=False)}, "notice": _text(), "content_sha256": _digest()})
+    return _closed_format_schema(
+        schema_id,
+        draft,
+        title="PySFMEA fuzz campaign verification",
+        format_value=FUZZ_CAMPAIGN_VERIFICATION_FORMAT,
+        fields={
+            "valid": {"type": "boolean"},
+            "eligible_for_assurance_use": {"type": "boolean"},
+            "checks": _checks(
+                [
+                    "content_integrity",
+                    "closed_structure_and_isolation",
+                    "campaign_complete",
+                ]
+            ),
+            "errors": {
+                "type": "array",
+                "maxItems": 1_000,
+                "items": _text(required=False),
+            },
+            "notice": _text(),
+            "content_sha256": _digest(),
+        },
+    )
 
 
 def industry_schema_builders(
@@ -2552,6 +4445,8 @@ def industry_schema_builders(
         "slsa-verification-observation": slsa_verification_observation_schema,
         "slsa-policy-assessment": slsa_policy_assessment_schema,
         "slsa-policy-verification": slsa_policy_verification_schema,
+        "sigstore-verification": sigstore_verification_schema,
+        "sigstore-verification-verdict": sigstore_verification_verdict_schema,
         "ssvc-policy": ssvc_policy_schema,
         "ssvc-observations": ssvc_observations_schema,
         "ssvc-assessment": ssvc_assessment_schema,
@@ -2559,6 +4454,8 @@ def industry_schema_builders(
         "standards-catalog": standards_catalog_schema,
         "standards-crosswalk": standards_crosswalk_schema,
         "standards-crosswalk-verification": standards_crosswalk_verification_schema,
+        "standards-lifecycle": standards_lifecycle_schema,
+        "standards-lifecycle-verification": standards_lifecycle_verification_schema,
         "tool-qualification-dossier": tool_qualification_dossier_schema,
         "tool-qualification-bases": tool_qualification_bases_schema,
         "tool-qualification-verification": tool_qualification_verification_schema,
@@ -2591,9 +4488,19 @@ def industry_schema_builders(
         "sarif-fusion-verification": sarif_fusion_verification_schema,
         "oscal-assessment-results": oscal_assessment_results_schema,
         "oscal-assessment-results-verification": oscal_assessment_results_verification_schema,
+        "oscal-assessment-plan": oscal_assessment_plan_schema,
+        "oscal-assessment-plan-verification": oscal_assessment_plan_verification_schema,
+        "oscal-poam": oscal_poam_schema,
+        "oscal-poam-verification": oscal_poam_verification_schema,
         "industry-benchmark-catalog": industry_benchmark_catalog_schema,
         "benchmark-execution": benchmark_execution_schema,
         "benchmark-execution-verification": benchmark_execution_verification_schema,
+        "benchmark-adapter": benchmark_adapter_schema,
+        "benchmark-adapter-verification": benchmark_adapter_verification_schema,
+        "benchmark-observations": benchmark_observations_schema,
+        "benchmark-observations-verification": benchmark_observations_verification_schema,
+        "security-taxonomy": security_taxonomy_schema,
+        "security-taxonomy-verification": security_taxonomy_verification_schema,
         "fuzz-campaign": fuzz_campaign_schema,
         "fuzz-campaign-verification": fuzz_campaign_verification_schema,
     }
@@ -2606,4 +4513,7 @@ def industry_schema_builders(
 
         return build
 
-    return {name: bind(name, factory) for name, factory in factories.items()}
+    return {
+        **{name: bind(name, factory) for name, factory in factories.items()},
+        **gap_schema_builders(schema_id, draft),
+    }

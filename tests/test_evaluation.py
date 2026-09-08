@@ -256,9 +256,7 @@ class EvaluationBoundaryTests(unittest.TestCase):
         self.assertEqual(semantics["claim_precision"], 1.0)
         self.assertFalse(semantics["mismatches"])
         self.assertEqual(result["corpus"]["semantic_case_count"], 1)
-        self.assertEqual(
-            result["corpus"]["semantic_claim_count"], len(semantic_expect)
-        )
+        self.assertEqual(result["corpus"]["semantic_claim_count"], len(semantic_expect))
 
         mismatched = copy.deepcopy(spec)
         mismatched["semantic_cases"][0]["expect"]["failure_mode"] += " changed"
@@ -432,6 +430,7 @@ class EvaluationBoundaryTests(unittest.TestCase):
             },
         )
         self.assertEqual(comparison["decision"], "blocked")
+
     def test_file_loader_rejects_unsafe_or_malformed_inputs(self) -> None:
         directory = self.root / "directory"
         directory.mkdir()

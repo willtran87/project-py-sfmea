@@ -13,8 +13,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .emerging_assurance_profiles import EMERGING_ASSURANCE_PROFILES
 from .file_publication import atomic_publish_text
 from .governance_standard_profiles import GOVERNANCE_STANDARD_PROFILES
+from .industry_assurance_profiles import INDUSTRY_ASSURANCE_PROFILES
+from .industry_readiness_profiles import INDUSTRY_READINESS_PROFILES
 from .integrity import canonical_json_sha256
 from .json_ingestion import load_bounded_json_document
 from .model import utc_now
@@ -25,7 +28,7 @@ from .system_standard_profiles import SYSTEM_STANDARD_PROFILES
 CONFORMANCE_CATALOG_FORMAT = "pysfmea-standards-catalog-1"
 CONFORMANCE_WORKSPACE_FORMAT = "pysfmea-conformance-workspace-1"
 CONFORMANCE_VERIFICATION_FORMAT = "pysfmea-conformance-verification-1"
-CONFORMANCE_CATALOG_VERSION = "2026.08.27-r3"
+CONFORMANCE_CATALOG_VERSION = "2026.08.31-r14"
 MAX_CONFORMANCE_BYTES = 10_000_000
 MAX_CONFORMANCE_OBJECTIVES = 500
 MAX_CONFORMANCE_TEXT = 20_000
@@ -52,374 +55,386 @@ def _objective(
 
 
 _PROFILES: tuple[dict[str, Any], ...] = (
-    {
-        "id": "iec-60812-2018",
-        "title": "IEC 60812:2018 FMEA/FMECA",
-        "publisher": "IEC",
-        "edition": "2018",
-        "status": "current",
-        "reference_url": "https://webstore.iec.ch/en/publication/26359",
-        "access": "licensed_normative_text_required",
-        "scope": "Planning, performing, documenting, maintaining, and reviewing FMEA/FMECA.",
-        "objectives": [
-            _objective(
-                "IEC60812-SCOPE",
-                "Define analysis purpose, boundary, assumptions, ground rules, and acceptance authority.",
-                "planning and tailoring",
-                ["approved scope", "system context", "tailoring record"],
-            ),
-            _objective(
-                "IEC60812-STRUCTURE",
-                "Establish functions, components, interfaces, operating states, and hierarchy before evaluating failures.",
-                "system structure and functions",
-                ["architecture", "interface inventory", "operating-state model"],
-            ),
-            _objective(
-                "IEC60812-MODES",
-                "Identify credible failure modes for functions, data, timing, interfaces, resources, and controls.",
-                "failure-mode identification",
-                ["reviewed failure-mode register", "coverage record"],
-            ),
-            _objective(
-                "IEC60812-EFFECTS",
-                "Trace local, next-higher, end, and dependent or cascading effects.",
-                "failure effects",
-                ["effect chains", "system boundary review"],
-            ),
-            _objective(
-                "IEC60812-CAUSES",
-                "Record credible causes, existing prevention controls, and detection controls without inventing occurrence evidence.",
-                "causes and controls",
-                ["cause rationale", "control evidence"],
-            ),
-            _objective(
-                "IEC60812-EVALUATION",
-                "Apply an approved risk-evaluation method and keep automated screening distinct from engineering ratings.",
-                "risk evaluation",
-                ["approved scale", "reviewed ratings", "risk rationale"],
-            ),
-            _objective(
-                "IEC60812-ACTIONS",
-                "Assign actions, owners, acceptance criteria, verification methods, and residual-risk review.",
-                "treatment and follow-up",
-                ["action register", "test evidence", "approval record"],
-            ),
-            _objective(
-                "IEC60812-MAINTENANCE",
-                "Maintain configuration, change impact, review history, anomalies, and analysis currency.",
-                "documentation and maintenance",
-                ["baseline identity", "change history", "review record"],
-            ),
-        ],
-    },
-    {
-        "id": "sae-j1739-202605",
-        "title": "SAE J1739_202605 FMEA",
-        "publisher": "SAE International",
-        "edition": "J1739_202605",
-        "status": "stabilized_2026-05-08",
-        "reference_url": "https://saemobilus.sae.org/standards/j1739_202605-potential-failure-mode-effects-analysis-fmea-including-design-fmea-supplemental-fmea-msr-process-fmea",
-        "access": "licensed_normative_text_required",
-        "scope": "DFMEA, supplemental FMEA-MSR, and PFMEA process and records.",
-        "objectives": [
-            _objective(
-                "J1739-PLAN",
-                "Define FMEA scope, team, inputs, assumptions, and customer-specific requirements.",
-                "FMEA planning",
-                ["scope approval", "team record", "input baseline"],
-            ),
-            _objective(
-                "J1739-ANALYZE",
-                "Relate functions, requirements, failure modes, effects, causes, and controls in the selected FMEA type.",
-                "analysis records",
-                ["reviewed FMEA records", "requirements trace"],
-            ),
-            _objective(
-                "J1739-RATE",
-                "Use organization-approved rating criteria and preserve the basis for each rating.",
-                "rating criteria and worksheets",
-                ["licensed criteria reference", "rating rationale"],
-            ),
-            _objective(
-                "J1739-ACTION",
-                "Prioritize and track risk-reduction actions using the adopted licensed method.",
-                "action prioritization",
-                ["action-priority source", "action closure evidence"],
-            ),
-            _objective(
-                "J1739-DEVIATION",
-                "Document rationale and authorized agreement for deviations from the adopted process.",
-                "deviation control",
-                ["deviation record", "customer or authority approval"],
-            ),
-        ],
-    },
-    {
-        "id": "faa-airborne-do178c-do330",
-        "title": "FAA AC 20-115D / DO-178C / DO-330 assurance profile",
-        "publisher": "FAA with RTCA/EUROCAE normative material",
-        "edition": "AC 20-115D",
-        "status": "active",
-        "reference_url": "https://www.faa.gov/documentLibrary/media/Advisory_Circular/AC_20-115D.pdf",
-        "access": "public_ac_with_licensed_normative_text_required",
-        "scope": "Airborne software lifecycle objectives and applicable tool qualification.",
-        "objectives": [
-            _objective(
-                "FAA-PLANS",
-                "Identify the approved certification basis, software level, lifecycle plans, standards, and authorized tailoring.",
-                "AC 20-115D lifecycle planning",
-                ["certification plan", "software level basis", "approved standards"],
-            ),
-            _objective(
-                "FAA-TRACE",
-                "Maintain bidirectional traceability among system safety inputs, software requirements, design, code, verification, and anomalies.",
-                "DO-178C lifecycle data",
-                ["trace matrix", "verification records", "problem reports"],
-            ),
-            _objective(
-                "FAA-INDEPENDENCE",
-                "Apply the verification independence required by the approved software level and plans.",
-                "DO-178C objective independence",
-                ["role assignments", "independent review record"],
-            ),
-            _objective(
-                "FAA-CHANGE",
-                "Perform configuration control, change impact analysis, regression verification, and lifecycle-data maintenance.",
-                "AC 20-115D change management",
-                ["configuration index", "change impact", "regression evidence"],
-            ),
-            _objective(
-                "FAA-TOOL",
-                "Determine whether tool qualification is required and, when applicable, satisfy the approved DO-330 qualification criteria.",
-                "AC 20-115D tool qualification",
-                [
-                    "tool criteria determination",
-                    "TOR",
-                    "qualification plan and results",
-                    "anomaly record",
-                ],
-            ),
-        ],
-    },
-    {
-        "id": "iec-61508-3-2010",
-        "title": "IEC 61508-3:2010 safety-related software",
-        "publisher": "IEC",
-        "edition": "2010",
-        "status": "current",
-        "reference_url": "https://webstore.iec.ch/en/publication/5517",
-        "access": "licensed_normative_text_required",
-        "scope": "Software safety lifecycle for E/E/PE safety-related systems.",
-        "objectives": [
-            _objective(
-                "IEC61508-LIFECYCLE",
-                "Define and control the software safety lifecycle, responsibilities, competence, and required independence.",
-                "software safety lifecycle",
-                ["safety plan", "competence record", "independence record"],
-            ),
-            _objective(
-                "IEC61508-REQUIREMENTS",
-                "Derive, validate, trace, and maintain software safety requirements from allocated safety functions and integrity constraints.",
-                "software safety requirements",
-                ["requirements baseline", "validation and trace evidence"],
-            ),
-            _objective(
-                "IEC61508-ARCH",
-                "Use architecture and design measures appropriate to systematic capability and fault control.",
-                "architecture and design",
-                ["architecture rationale", "fault-control evidence"],
-            ),
-            _objective(
-                "IEC61508-VERIFY",
-                "Plan and execute verification, integration, validation, modification, and regression activities.",
-                "verification and validation",
-                ["verification plan", "test results", "validation record"],
-            ),
-            _objective(
-                "IEC61508-TOOLS",
-                "Control support tools and qualify or justify them according to their potential impact.",
-                "support tools",
-                [
-                    "tool inventory",
-                    "impact classification",
-                    "validation or qualification evidence",
-                ],
-            ),
-        ],
-    },
-    {
-        "id": "iso-26262-6-2018",
-        "title": "ISO 26262-6:2018 automotive software",
-        "publisher": "ISO",
-        "edition": "2018",
-        "status": "published_revision_planned",
-        "reference_url": "https://www.iso.org/standard/68388.html",
-        "access": "licensed_normative_text_required",
-        "scope": "Product development at the software level for road vehicles.",
-        "objectives": [
-            _objective(
-                "ISO26262-REQ",
-                "Specify and verify software safety requirements with ASIL, allocation, interfaces, and traceability.",
-                "software safety requirements",
-                ["ASIL basis", "requirements and trace matrix"],
-            ),
-            _objective(
-                "ISO26262-ARCH",
-                "Develop and verify software architecture including freedom-from-interference and dependent-failure considerations where applicable.",
-                "software architectural design",
-                ["architecture", "interference and dependency analysis"],
-            ),
-            _objective(
-                "ISO26262-UNIT",
-                "Apply unit design, implementation, verification, and coverage methods appropriate to the assigned integrity.",
-                "software unit development",
-                ["coding-standard evidence", "unit verification", "coverage"],
-            ),
-            _objective(
-                "ISO26262-INTEGRATION",
-                "Verify software integration, interfaces, timing, resources, and safety mechanisms.",
-                "software integration and testing",
-                [
-                    "integration tests",
-                    "timing and resource evidence",
-                    "fault injection",
-                ],
-            ),
-            _objective(
-                "ISO26262-QUAL",
-                "Control tool confidence, software-component qualification, and configuration evidence when applicable.",
-                "supporting processes",
-                [
-                    "tool confidence analysis",
-                    "component qualification",
-                    "configuration baseline",
-                ],
-            ),
-        ],
-    },
-    {
-        "id": "nist-ssdf-1.1",
-        "title": "NIST SP 800-218 Secure Software Development Framework",
-        "publisher": "NIST",
-        "edition": "1.1",
-        "status": "final",
-        "reference_url": "https://csrc.nist.gov/pubs/sp/800/218/final",
-        "access": "public",
-        "scope": "Secure software development practices integrated into the SDLC.",
-        "objectives": [
-            _objective(
-                "SSDF-PO",
-                "Prepare the organization with defined security requirements, roles, environments, and supporting toolchains.",
-                "PO practices",
-                ["security requirements", "roles", "toolchain controls"],
-            ),
-            _objective(
-                "SSDF-PS",
-                "Protect software, source, credentials, build inputs, releases, and provenance from unauthorized change.",
-                "PS practices",
-                ["access control", "signed provenance", "release integrity"],
-            ),
-            _objective(
-                "SSDF-PW",
-                "Produce well-secured software using threat modeling, review, analysis, testing, dependency control, and secure defaults.",
-                "PW practices",
-                ["threat model", "SAST and tests", "dependency evidence"],
-            ),
-            _objective(
-                "SSDF-RV",
-                "Identify, remediate, disclose, and prevent recurrence of vulnerabilities with measured root-cause feedback.",
-                "RV practices",
-                [
-                    "vulnerability records",
-                    "root-cause analysis",
-                    "remediation evidence",
-                ],
-            ),
-        ],
-    },
-    {
-        "id": "iso-25010-29119",
-        "title": "ISO/IEC 25010:2023 and ISO/IEC/IEEE 29119-2:2021 quality and testing",
-        "publisher": "ISO/IEC/IEEE",
-        "edition": "25010:2023 / 29119-2:2021",
-        "status": "current",
-        "reference_url": "https://www.iso.org/standard/78176.html",
-        "access": "licensed_normative_text_required",
-        "scope": "Product-quality requirements and governed test processes.",
-        "objectives": [
-            _objective(
-                "QUALITY-MODEL",
-                "Select applicable product-quality characteristics and measurable acceptance criteria.",
-                "ISO/IEC 25010 product quality model",
-                ["quality model tailoring", "measures and thresholds"],
-            ),
-            _objective(
-                "TEST-GOV",
-                "Establish test governance, organizational policy, plans, monitoring, completion, and reusable testware.",
-                "ISO/IEC/IEEE 29119-2 test processes",
-                ["test policy", "test plan", "completion report"],
-            ),
-            _objective(
-                "TEST-DESIGN",
-                "Derive tests and oracles using documented techniques with requirements and risk traceability.",
-                "test design and implementation",
-                ["test design specification", "oracle rationale", "trace matrix"],
-            ),
-            _objective(
-                "TEST-EVAL",
-                "Evaluate test effectiveness, independence, anomalies, coverage, mutation resistance, and residual limitations.",
-                "test evaluation",
-                ["test results", "coverage", "mutation results", "limitations"],
-            ),
-        ],
-    },
-    {
-        "id": "nist-ai-600-1-llm",
-        "title": "NIST AI 600-1 generative-AI governance for LLM-assisted assurance",
-        "publisher": "NIST",
-        "edition": "2024",
-        "status": "current_profile",
-        "reference_url": "https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf",
-        "access": "public",
-        "scope": "Governance, measurement, and risk treatment for LLM-generated analysis or tests.",
-        "objectives": [
-            _objective(
-                "LLM-GOVERN",
-                "Define authorized use, accountability, human approval, data handling, incident response, and prohibited autonomous actions.",
-                "Govern",
-                ["AI use policy", "role and approval records", "incident process"],
-            ),
-            _objective(
-                "LLM-PROVENANCE",
-                "Record model/provider identity, parameters, prompt/template, inputs, retrieved evidence, outputs, and transformations.",
-                "content provenance",
-                ["generation manifest", "content digests", "retention policy"],
-            ),
-            _objective(
-                "LLM-EVALUATE",
-                "Pre-deployment-test correctness, confabulation, citation fidelity, security, privacy, nondeterminism, and benchmark contamination.",
-                "Measure",
-                [
-                    "independent evaluation",
-                    "red-team results",
-                    "repeatability evidence",
-                ],
-            ),
-            _objective(
-                "LLM-ORACLES",
-                "Independently verify generated test oracles, fault sensitivity, non-triviality, and absence of implementation mirroring.",
-                "human-AI configuration and information integrity",
-                ["oracle review", "mutation evidence", "negative controls"],
-            ),
-            _objective(
-                "LLM-EXECUTE",
-                "Use least-privilege sandbox execution and require human promotion before generated code can affect trusted branches or assurance claims.",
-                "Manage",
-                ["sandbox policy", "execution receipt", "promotion approval"],
-            ),
-        ],
-    },
-) + ADDITIONAL_PROFILES + SYSTEM_STANDARD_PROFILES + GOVERNANCE_STANDARD_PROFILES
+    (
+        {
+            "id": "iec-60812-2018",
+            "title": "IEC 60812:2018 FMEA/FMECA",
+            "publisher": "IEC",
+            "edition": "2018",
+            "status": "current",
+            "reference_url": "https://webstore.iec.ch/en/publication/26359",
+            "access": "licensed_normative_text_required",
+            "scope": "Planning, performing, documenting, maintaining, and reviewing FMEA/FMECA.",
+            "objectives": [
+                _objective(
+                    "IEC60812-SCOPE",
+                    "Define analysis purpose, boundary, assumptions, ground rules, and acceptance authority.",
+                    "planning and tailoring",
+                    ["approved scope", "system context", "tailoring record"],
+                ),
+                _objective(
+                    "IEC60812-STRUCTURE",
+                    "Establish functions, components, interfaces, operating states, and hierarchy before evaluating failures.",
+                    "system structure and functions",
+                    ["architecture", "interface inventory", "operating-state model"],
+                ),
+                _objective(
+                    "IEC60812-MODES",
+                    "Identify credible failure modes for functions, data, timing, interfaces, resources, and controls.",
+                    "failure-mode identification",
+                    ["reviewed failure-mode register", "coverage record"],
+                ),
+                _objective(
+                    "IEC60812-EFFECTS",
+                    "Trace local, next-higher, end, and dependent or cascading effects.",
+                    "failure effects",
+                    ["effect chains", "system boundary review"],
+                ),
+                _objective(
+                    "IEC60812-CAUSES",
+                    "Record credible causes, existing prevention controls, and detection controls without inventing occurrence evidence.",
+                    "causes and controls",
+                    ["cause rationale", "control evidence"],
+                ),
+                _objective(
+                    "IEC60812-EVALUATION",
+                    "Apply an approved risk-evaluation method and keep automated screening distinct from engineering ratings.",
+                    "risk evaluation",
+                    ["approved scale", "reviewed ratings", "risk rationale"],
+                ),
+                _objective(
+                    "IEC60812-ACTIONS",
+                    "Assign actions, owners, acceptance criteria, verification methods, and residual-risk review.",
+                    "treatment and follow-up",
+                    ["action register", "test evidence", "approval record"],
+                ),
+                _objective(
+                    "IEC60812-MAINTENANCE",
+                    "Maintain configuration, change impact, review history, anomalies, and analysis currency.",
+                    "documentation and maintenance",
+                    ["baseline identity", "change history", "review record"],
+                ),
+            ],
+        },
+        {
+            "id": "sae-j1739-202605",
+            "title": "SAE J1739_202605 FMEA",
+            "publisher": "SAE International",
+            "edition": "J1739_202605",
+            "status": "stabilized_2026-05-08",
+            "reference_url": "https://saemobilus.sae.org/standards/j1739_202605-potential-failure-mode-effects-analysis-fmea-including-design-fmea-supplemental-fmea-msr-process-fmea",
+            "access": "licensed_normative_text_required",
+            "scope": "DFMEA, supplemental FMEA-MSR, and PFMEA process and records.",
+            "objectives": [
+                _objective(
+                    "J1739-PLAN",
+                    "Define FMEA scope, team, inputs, assumptions, and customer-specific requirements.",
+                    "FMEA planning",
+                    ["scope approval", "team record", "input baseline"],
+                ),
+                _objective(
+                    "J1739-ANALYZE",
+                    "Relate functions, requirements, failure modes, effects, causes, and controls in the selected FMEA type.",
+                    "analysis records",
+                    ["reviewed FMEA records", "requirements trace"],
+                ),
+                _objective(
+                    "J1739-RATE",
+                    "Use organization-approved rating criteria and preserve the basis for each rating.",
+                    "rating criteria and worksheets",
+                    ["licensed criteria reference", "rating rationale"],
+                ),
+                _objective(
+                    "J1739-ACTION",
+                    "Prioritize and track risk-reduction actions using the adopted licensed method.",
+                    "action prioritization",
+                    ["action-priority source", "action closure evidence"],
+                ),
+                _objective(
+                    "J1739-DEVIATION",
+                    "Document rationale and authorized agreement for deviations from the adopted process.",
+                    "deviation control",
+                    ["deviation record", "customer or authority approval"],
+                ),
+            ],
+        },
+        {
+            "id": "faa-airborne-do178c-do330",
+            "title": "FAA AC 20-115D / DO-178C / DO-330 assurance profile",
+            "publisher": "FAA with RTCA/EUROCAE normative material",
+            "edition": "AC 20-115D",
+            "status": "active",
+            "reference_url": "https://www.faa.gov/documentLibrary/media/Advisory_Circular/AC_20-115D.pdf",
+            "access": "public_ac_with_licensed_normative_text_required",
+            "scope": "Airborne software lifecycle objectives and applicable tool qualification.",
+            "objectives": [
+                _objective(
+                    "FAA-PLANS",
+                    "Identify the approved certification basis, software level, lifecycle plans, standards, and authorized tailoring.",
+                    "AC 20-115D lifecycle planning",
+                    [
+                        "certification plan",
+                        "software level basis",
+                        "approved standards",
+                    ],
+                ),
+                _objective(
+                    "FAA-TRACE",
+                    "Maintain bidirectional traceability among system safety inputs, software requirements, design, code, verification, and anomalies.",
+                    "DO-178C lifecycle data",
+                    ["trace matrix", "verification records", "problem reports"],
+                ),
+                _objective(
+                    "FAA-INDEPENDENCE",
+                    "Apply the verification independence required by the approved software level and plans.",
+                    "DO-178C objective independence",
+                    ["role assignments", "independent review record"],
+                ),
+                _objective(
+                    "FAA-CHANGE",
+                    "Perform configuration control, change impact analysis, regression verification, and lifecycle-data maintenance.",
+                    "AC 20-115D change management",
+                    ["configuration index", "change impact", "regression evidence"],
+                ),
+                _objective(
+                    "FAA-TOOL",
+                    "Determine whether tool qualification is required and, when applicable, satisfy the approved DO-330 qualification criteria.",
+                    "AC 20-115D tool qualification",
+                    [
+                        "tool criteria determination",
+                        "TOR",
+                        "qualification plan and results",
+                        "anomaly record",
+                    ],
+                ),
+            ],
+        },
+        {
+            "id": "iec-61508-3-2010",
+            "title": "IEC 61508-3:2010 safety-related software",
+            "publisher": "IEC",
+            "edition": "2010",
+            "status": "current",
+            "reference_url": "https://webstore.iec.ch/en/publication/5517",
+            "access": "licensed_normative_text_required",
+            "scope": "Software safety lifecycle for E/E/PE safety-related systems.",
+            "objectives": [
+                _objective(
+                    "IEC61508-LIFECYCLE",
+                    "Define and control the software safety lifecycle, responsibilities, competence, and required independence.",
+                    "software safety lifecycle",
+                    ["safety plan", "competence record", "independence record"],
+                ),
+                _objective(
+                    "IEC61508-REQUIREMENTS",
+                    "Derive, validate, trace, and maintain software safety requirements from allocated safety functions and integrity constraints.",
+                    "software safety requirements",
+                    ["requirements baseline", "validation and trace evidence"],
+                ),
+                _objective(
+                    "IEC61508-ARCH",
+                    "Use architecture and design measures appropriate to systematic capability and fault control.",
+                    "architecture and design",
+                    ["architecture rationale", "fault-control evidence"],
+                ),
+                _objective(
+                    "IEC61508-VERIFY",
+                    "Plan and execute verification, integration, validation, modification, and regression activities.",
+                    "verification and validation",
+                    ["verification plan", "test results", "validation record"],
+                ),
+                _objective(
+                    "IEC61508-TOOLS",
+                    "Control support tools and qualify or justify them according to their potential impact.",
+                    "support tools",
+                    [
+                        "tool inventory",
+                        "impact classification",
+                        "validation or qualification evidence",
+                    ],
+                ),
+            ],
+        },
+        {
+            "id": "iso-26262-6-2018",
+            "title": "ISO 26262-6:2018 automotive software",
+            "publisher": "ISO",
+            "edition": "2018",
+            "status": "published_revision_planned",
+            "reference_url": "https://www.iso.org/standard/68388.html",
+            "access": "licensed_normative_text_required",
+            "scope": "Product development at the software level for road vehicles.",
+            "objectives": [
+                _objective(
+                    "ISO26262-REQ",
+                    "Specify and verify software safety requirements with ASIL, allocation, interfaces, and traceability.",
+                    "software safety requirements",
+                    ["ASIL basis", "requirements and trace matrix"],
+                ),
+                _objective(
+                    "ISO26262-ARCH",
+                    "Develop and verify software architecture including freedom-from-interference and dependent-failure considerations where applicable.",
+                    "software architectural design",
+                    ["architecture", "interference and dependency analysis"],
+                ),
+                _objective(
+                    "ISO26262-UNIT",
+                    "Apply unit design, implementation, verification, and coverage methods appropriate to the assigned integrity.",
+                    "software unit development",
+                    ["coding-standard evidence", "unit verification", "coverage"],
+                ),
+                _objective(
+                    "ISO26262-INTEGRATION",
+                    "Verify software integration, interfaces, timing, resources, and safety mechanisms.",
+                    "software integration and testing",
+                    [
+                        "integration tests",
+                        "timing and resource evidence",
+                        "fault injection",
+                    ],
+                ),
+                _objective(
+                    "ISO26262-QUAL",
+                    "Control tool confidence, software-component qualification, and configuration evidence when applicable.",
+                    "supporting processes",
+                    [
+                        "tool confidence analysis",
+                        "component qualification",
+                        "configuration baseline",
+                    ],
+                ),
+            ],
+        },
+        {
+            "id": "nist-ssdf-1.1",
+            "title": "NIST SP 800-218 Secure Software Development Framework",
+            "publisher": "NIST",
+            "edition": "1.1",
+            "status": "final",
+            "reference_url": "https://csrc.nist.gov/pubs/sp/800/218/final",
+            "access": "public",
+            "scope": "Secure software development practices integrated into the SDLC.",
+            "objectives": [
+                _objective(
+                    "SSDF-PO",
+                    "Prepare the organization with defined security requirements, roles, environments, and supporting toolchains.",
+                    "PO practices",
+                    ["security requirements", "roles", "toolchain controls"],
+                ),
+                _objective(
+                    "SSDF-PS",
+                    "Protect software, source, credentials, build inputs, releases, and provenance from unauthorized change.",
+                    "PS practices",
+                    ["access control", "signed provenance", "release integrity"],
+                ),
+                _objective(
+                    "SSDF-PW",
+                    "Produce well-secured software using threat modeling, review, analysis, testing, dependency control, and secure defaults.",
+                    "PW practices",
+                    ["threat model", "SAST and tests", "dependency evidence"],
+                ),
+                _objective(
+                    "SSDF-RV",
+                    "Identify, remediate, disclose, and prevent recurrence of vulnerabilities with measured root-cause feedback.",
+                    "RV practices",
+                    [
+                        "vulnerability records",
+                        "root-cause analysis",
+                        "remediation evidence",
+                    ],
+                ),
+            ],
+        },
+        {
+            "id": "iso-25010-29119",
+            "title": "ISO/IEC 25010:2023 and ISO/IEC/IEEE 29119-2:2021 quality and testing",
+            "publisher": "ISO/IEC/IEEE",
+            "edition": "25010:2023 / 29119-2:2021",
+            "status": "current",
+            "reference_url": "https://www.iso.org/standard/78176.html",
+            "access": "licensed_normative_text_required",
+            "scope": "Product-quality requirements and governed test processes.",
+            "objectives": [
+                _objective(
+                    "QUALITY-MODEL",
+                    "Select applicable product-quality characteristics and measurable acceptance criteria.",
+                    "ISO/IEC 25010 product quality model",
+                    ["quality model tailoring", "measures and thresholds"],
+                ),
+                _objective(
+                    "TEST-GOV",
+                    "Establish test governance, organizational policy, plans, monitoring, completion, and reusable testware.",
+                    "ISO/IEC/IEEE 29119-2 test processes",
+                    ["test policy", "test plan", "completion report"],
+                ),
+                _objective(
+                    "TEST-DESIGN",
+                    "Derive tests and oracles using documented techniques with requirements and risk traceability.",
+                    "test design and implementation",
+                    ["test design specification", "oracle rationale", "trace matrix"],
+                ),
+                _objective(
+                    "TEST-EVAL",
+                    "Evaluate test effectiveness, independence, anomalies, coverage, mutation resistance, and residual limitations.",
+                    "test evaluation",
+                    ["test results", "coverage", "mutation results", "limitations"],
+                ),
+            ],
+        },
+        {
+            "id": "nist-ai-600-1-llm",
+            "title": "NIST AI 600-1 generative-AI governance for LLM-assisted assurance",
+            "publisher": "NIST",
+            "edition": "2024",
+            "status": "current_profile",
+            "reference_url": "https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf",
+            "access": "public",
+            "scope": "Governance, measurement, and risk treatment for LLM-generated analysis or tests.",
+            "objectives": [
+                _objective(
+                    "LLM-GOVERN",
+                    "Define authorized use, accountability, human approval, data handling, incident response, and prohibited autonomous actions.",
+                    "Govern",
+                    ["AI use policy", "role and approval records", "incident process"],
+                ),
+                _objective(
+                    "LLM-PROVENANCE",
+                    "Record model/provider identity, parameters, prompt/template, inputs, retrieved evidence, outputs, and transformations.",
+                    "content provenance",
+                    ["generation manifest", "content digests", "retention policy"],
+                ),
+                _objective(
+                    "LLM-EVALUATE",
+                    "Pre-deployment-test correctness, confabulation, citation fidelity, security, privacy, nondeterminism, and benchmark contamination.",
+                    "Measure",
+                    [
+                        "independent evaluation",
+                        "red-team results",
+                        "repeatability evidence",
+                    ],
+                ),
+                _objective(
+                    "LLM-ORACLES",
+                    "Independently verify generated test oracles, fault sensitivity, non-triviality, and absence of implementation mirroring.",
+                    "human-AI configuration and information integrity",
+                    ["oracle review", "mutation evidence", "negative controls"],
+                ),
+                _objective(
+                    "LLM-EXECUTE",
+                    "Use least-privilege sandbox execution and require human promotion before generated code can affect trusted branches or assurance claims.",
+                    "Manage",
+                    ["sandbox policy", "execution receipt", "promotion approval"],
+                ),
+            ],
+        },
+    )
+    + ADDITIONAL_PROFILES
+    + SYSTEM_STANDARD_PROFILES
+    + GOVERNANCE_STANDARD_PROFILES
+    + INDUSTRY_READINESS_PROFILES
+    + INDUSTRY_ASSURANCE_PROFILES
+    + EMERGING_ASSURANCE_PROFILES
+)
 
 
 def standards_catalog() -> dict[str, Any]:

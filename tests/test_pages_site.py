@@ -39,7 +39,9 @@ class _PageParser(HTMLParser):
             if values.get("target") == "_blank":
                 rel = set(values.get("rel", "").split())
                 if not {"noopener", "noreferrer"} <= rel:
-                    raise AssertionError("target=_blank link is missing noopener noreferrer")
+                    raise AssertionError(
+                        "target=_blank link is missing noopener noreferrer"
+                    )
         if tag == "meta":
             key = values.get("name") or values.get("property")
             if key:
@@ -134,14 +136,12 @@ class PagesSiteTests(unittest.TestCase):
     def test_sitemap_and_404_page_are_valid(self) -> None:
         sitemap = ET.parse(SITE / "sitemap.xml")
         namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-        locations = {
-            value.text for value in sitemap.findall("s:url/s:loc", namespace)
-        }
+        locations = {value.text for value in sitemap.findall("s:url/s:loc", namespace)}
         self.assertIn(PAGE_URL, locations)
         self.assertIn(f"{PAGE_URL}demo/report.html", locations)
         not_found = (SITE / "404.html").read_text(encoding="utf-8")
         self.assertIn('name="robots" content="noindex"', not_found)
-        self.assertIn('/project-py-sfmea/', not_found)
+        self.assertIn("/project-py-sfmea/", not_found)
 
 
 if __name__ == "__main__":

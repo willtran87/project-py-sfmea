@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import re
+from datetime import datetime
 from pathlib import Path
 from statistics import NormalDist
 from typing import Any
@@ -59,6 +60,17 @@ def _bounded_text(value: Any, label: str) -> str:
     return value.strip()
 
 
+def _instant(value: Any, label: str) -> datetime:
+    text = _bounded_text(value, label)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an ISO 8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{label} must include a timezone")
+    return parsed
+
+
 def _protocol(document: dict[str, Any]) -> dict[str, Any]:
     required = {
         "format",
@@ -81,6 +93,7 @@ def _protocol(document: dict[str, Any]) -> dict[str, Any]:
         "pre_registration_evidence_ref",
     ):
         _bounded_text(document[field], f"protocol {field}")
+    _instant(document["pre_registered_at"], "protocol pre_registered_at")
     governance = document.get("governance")
     if not isinstance(governance, dict) or set(governance) != {
         "protocol_owner",
@@ -304,7 +317,12 @@ def _metric_counts(result: dict[str, Any]) -> dict[str, tuple[int, int]]:
 
 
 def _derive(
-    protocol: dict[str, Any], result: dict[str, Any], qualification_valid: bool
+    protocol: dict[str, Any],
+    result: dict[str, Any],
+    qualification_valid: bool,
+    *,
+    execution_started_at: str,
+    execution_evidence_ref: str,
 ) -> tuple[dict[str, Any], dict[str, bool], dict[str, Any]]:
     confidence = float(protocol["statistics"]["confidence_level"])
     intervals = {
@@ -326,6 +344,14 @@ def _derive(
         "frozen_blinded_holdout": bool(
             protocol["design"]["frozen_before_execution"]
             and protocol["design"]["blinded_holdout"]
+        ),
+        "temporal_preregistration": bool(
+            _instant(protocol["pre_registered_at"], "protocol pre_registered_at")
+            <= _instant(execution_started_at, "qualification execution_started_at")
+            and _bounded_text(
+                execution_evidence_ref, "qualification execution evidence reference"
+            )
+            != "unassigned"
         ),
         "holdout_population": bool(
             len(holdout_ids) >= protocol["design"]["minimum_holdout_repositories"]
@@ -359,7 +385,12 @@ def _derive(
         "failed_checks": sorted(name for name, value in checks.items() if not value),
     }
     return (
-        {"confidence_intervals": intervals, "reviewer_agreement": agreement},
+        {
+            "confidence_intervals": intervals,
+            "reviewer_agreement": agreement,
+            "execution_started_at": execution_started_at,
+            "execution_evidence_ref": execution_evidence_ref,
+        },
         checks,
         summary,
     )
@@ -370,6 +401,8 @@ def benchmark_assessment(
     qualification_result_source: str | Path,
     qualification_manifest_source: str | Path,
     *,
+    execution_started_at: str,
+    execution_evidence_ref: str,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build a statistically governed assessment over an exact campaign result."""
@@ -398,6 +431,8 @@ def benchmark_assessment(
         _protocol(protocol_document.value),
         result,
         bool(qualification_verification.get("valid")),
+        execution_started_at=execution_started_at,
+        execution_evidence_ref=execution_evidence_ref,
     )
     assessment: dict[str, Any] = {
         "format": BENCHMARK_ASSESSMENT_FORMAT,
@@ -472,6 +507,18 @@ def verify_benchmark_assessment(assessment: dict[str, Any]) -> dict[str, Any]:
         expected_checks = dict(assessment["checks"])
         expected_checks["independent_governance"] = True
         expected_checks["frozen_blinded_holdout"] = True
+        expected_checks["temporal_preregistration"] = bool(
+            _instant(protocol["pre_registered_at"], "protocol pre_registered_at")
+            <= _instant(
+                statistics["execution_started_at"],
+                "qualification execution_started_at",
+            )
+            and _bounded_text(
+                statistics["execution_evidence_ref"],
+                "qualification execution evidence reference",
+            )
+            != "unassigned"
+        )
         expected_checks["confidence_bounds"] = expected_confidence
         expected_checks["reviewer_agreement"] = float(
             agreement["cohen_kappa"]
@@ -585,6 +632,16 @@ def verify_benchmark_assessment_file(
                     protocol_source or "",
                     qualification_result_source or "",
                     qualification_manifest_source or "",
+                    execution_started_at=str(
+                        document.value.get("statistics", {}).get(
+                            "execution_started_at", ""
+                        )
+                    ),
+                    execution_evidence_ref=str(
+                        document.value.get("statistics", {}).get(
+                            "execution_evidence_ref", ""
+                        )
+                    ),
                     generated_at=str(document.value.get("generated_at", "")),
                 )
                 source_match = regenerated == document.value

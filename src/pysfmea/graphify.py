@@ -73,7 +73,9 @@ def _native_call_pairs(analysis: dict[str, Any]) -> set[tuple[str, str]]:
     return pairs
 
 
-def _component_mapping(analysis: dict[str, Any]) -> dict[tuple[str, int | None, str], str]:
+def _component_mapping(
+    analysis: dict[str, Any],
+) -> dict[tuple[str, int | None, str], str]:
     mapping: dict[tuple[str, int | None, str], str] = {}
     for component in analysis.get("components", []):
         if not isinstance(component, dict):
@@ -86,7 +88,9 @@ def _component_mapping(analysis: dict[str, Any]) -> dict[tuple[str, int | None, 
         component_id = str(component.get("id", ""))
         qualname = str(component.get("qualname", ""))
         if path and component_id:
-            mapping[(path, int(line) if isinstance(line, int) else None, qualname)] = component_id
+            mapping[(path, int(line) if isinstance(line, int) else None, qualname)] = (
+                component_id
+            )
     return mapping
 
 
@@ -102,14 +106,22 @@ def _map_node(
         return exact
     line_matches = {
         component_id
-        for (candidate_path, candidate_line, _qualname), component_id in component_mapping.items()
+        for (
+            candidate_path,
+            candidate_line,
+            _qualname,
+        ), component_id in component_mapping.items()
         if candidate_path == path and candidate_line == line
     }
     if len(line_matches) == 1:
         return next(iter(line_matches))
     label_matches = {
         component_id
-        for (candidate_path, _candidate_line, qualname), component_id in component_mapping.items()
+        for (
+            candidate_path,
+            _candidate_line,
+            qualname,
+        ), component_id in component_mapping.items()
         if candidate_path == path and qualname.rsplit(".", 1)[-1] == label
     }
     return next(iter(label_matches)) if len(label_matches) == 1 else ""
@@ -159,15 +171,19 @@ def load_graphify_reconciliation(
         total_mapped_edges += 1
         relation = _text(edge.get("relation", "unknown"), limit=128)
         confidence_score = edge.get("confidence_score")
-        if not isinstance(confidence_score, (int, float)) or isinstance(
-            confidence_score, bool
-        ) or not math.isfinite(confidence_score):
+        if (
+            not isinstance(confidence_score, (int, float))
+            or isinstance(confidence_score, bool)
+            or not math.isfinite(confidence_score)
+        ):
             confidence_score = None
         is_call = relation == "calls"
         if is_call:
             call_edges += 1
             reconciliation = (
-                "corroborated" if (source_component_id, target_component_id) in native_pairs else "graphify_only_review_lead"
+                "corroborated"
+                if (source_component_id, target_component_id) in native_pairs
+                else "graphify_only_review_lead"
             )
             corroborated_calls += reconciliation == "corroborated"
             graphify_only_calls += reconciliation == "graphify_only_review_lead"
@@ -247,8 +263,14 @@ def run_graphify_code_only(
 ) -> Path:
     """Run Graphify's local AST-only extraction and return its graph artifact path."""
 
-    if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or not 1 <= timeout_seconds <= 3_600:
-        raise ValueError("Graphify timeout_seconds must be an integer from 1 through 3600")
+    if (
+        not isinstance(timeout_seconds, int)
+        or isinstance(timeout_seconds, bool)
+        or not 1 <= timeout_seconds <= 3_600
+    ):
+        raise ValueError(
+            "Graphify timeout_seconds must be an integer from 1 through 3600"
+        )
     executable = shutil.which("graphify")
     if not executable:
         raise ValueError(
@@ -257,7 +279,9 @@ def run_graphify_code_only(
     repository_path = Path(repository).expanduser().resolve()
     destination = Path(output_directory).expanduser().absolute()
     if not repository_path.is_dir():
-        raise ValueError(f"Graphify repository path is not a directory: {repository_path}")
+        raise ValueError(
+            f"Graphify repository path is not a directory: {repository_path}"
+        )
     if destination.is_symlink():
         raise ValueError("Graphify output directory must not be a symbolic link")
     destination.mkdir(parents=True, exist_ok=True)
@@ -281,10 +305,16 @@ def run_graphify_code_only(
             timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
-        raise ValueError(f"Graphify code-only extraction timed out after {timeout_seconds} seconds") from exc
+        raise ValueError(
+            f"Graphify code-only extraction timed out after {timeout_seconds} seconds"
+        ) from exc
     if result.returncode:
-        raise ValueError(f"Graphify code-only extraction failed with exit code {result.returncode}")
+        raise ValueError(
+            f"Graphify code-only extraction failed with exit code {result.returncode}"
+        )
     graph_path = destination / "graphify-out" / "graph.json"
     if not graph_path.is_file() or graph_path.is_symlink():
-        raise ValueError("Graphify extraction did not produce a regular graphify-out/graph.json")
+        raise ValueError(
+            "Graphify extraction did not produce a regular graphify-out/graph.json"
+        )
     return graph_path

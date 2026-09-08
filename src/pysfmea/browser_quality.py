@@ -15,9 +15,7 @@ from .json_ingestion import (
 )
 
 BROWSER_QUALITY_FORMAT = "pysfmea-report-browser-quality-4"
-BROWSER_QUALITY_VERIFICATION_FORMAT = (
-    "pysfmea-report-browser-quality-verification-1"
-)
+BROWSER_QUALITY_VERIFICATION_FORMAT = "pysfmea-report-browser-quality-verification-1"
 MAX_BROWSER_QUALITY_RECEIPT_BYTES = 5_000_000
 MAX_BROWSER_QUALITY_REPORT_BYTES = 512 * 1024 * 1024
 MAX_BROWSER_QUALITY_JSON_DEPTH = 60
@@ -70,9 +68,7 @@ def _is_sha256(value: Any) -> bool:
 
 def _is_nonnegative_number(value: Any) -> bool:
     return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and value >= 0
+        isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
     )
 
 
@@ -166,9 +162,11 @@ def verify_browser_quality_receipt(
         errors.append("browser_execution_error must be a bounded string")
 
     checks = receipt.get("checks")
-    checks_valid = isinstance(checks, dict) and set(checks) == set(
-        BROWSER_QUALITY_CHECKS
-    ) and all(value in {True, False, None} for value in checks.values())
+    checks_valid = (
+        isinstance(checks, dict)
+        and set(checks) == set(BROWSER_QUALITY_CHECKS)
+        and all(value in {True, False, None} for value in checks.values())
+    )
     if not checks_valid:
         structure = False
         errors.append("checks do not match the closed browser-quality check set")
@@ -258,9 +256,7 @@ def verify_browser_quality_receipt(
         }
         or not isinstance(browser_memory.get("samples"), list)
         or len(browser_memory.get("samples", [])) > 100
-        or not all(
-            isinstance(item, dict) for item in browser_memory.get("samples", [])
-        )
+        or not all(isinstance(item, dict) for item in browser_memory.get("samples", []))
         or not isinstance(browser_memory.get("measurement"), str)
         or not browser_memory.get("measurement")
         or not isinstance(browser_memory.get("limitations"), str)
@@ -313,7 +309,9 @@ def verify_browser_quality_receipt(
         or not rendering.get("limitations")
     ):
         structure = False
-        errors.append("rendering does not match the closed progressive-rendering format")
+        errors.append(
+            "rendering does not match the closed progressive-rendering format"
+        )
         rendering = {}
     else:
         for field in (
@@ -395,9 +393,7 @@ def verify_browser_quality_receipt(
         rendering_map = rendering if isinstance(rendering, dict) else {}
         render_samples = rendering_map.get("samples", [])
         render_sample_views = [
-            sample.get("view")
-            for sample in render_samples
-            if isinstance(sample, dict)
+            sample.get("view") for sample in render_samples if isinstance(sample, dict)
         ]
         render_sample_seconds: list[float] = []
         for sample in render_samples:
@@ -430,7 +426,9 @@ def verify_browser_quality_receipt(
             errors.append("all_views_ready does not reconcile with rendering samples")
         if rendering_map.get("rendered_view_count") != len(render_samples):
             semantic_consistency = False
-            errors.append("rendered view count does not reconcile with rendering samples")
+            errors.append(
+                "rendered view count does not reconcile with rendering samples"
+            )
         expected_maximum_render_seconds = (
             max(render_sample_seconds) if render_sample_seconds else None
         )
@@ -441,12 +439,16 @@ def verify_browser_quality_receipt(
             errors.append("maximum view render time does not reconcile")
 
         views = receipt.get("views")
-        expected_navigation = isinstance(views, list) and bool(views) and all(
-            isinstance(item, dict)
-            and item.get("visible") is True
-            and item.get("navigation_active") is True
-            and item.get("render_state") == "ready"
-            for item in views
+        expected_navigation = (
+            isinstance(views, list)
+            and bool(views)
+            and all(
+                isinstance(item, dict)
+                and item.get("visible") is True
+                and item.get("navigation_active") is True
+                and item.get("render_state") == "ready"
+                for item in views
+            )
         )
         if execution_passed:
             navigation_views = (
@@ -456,10 +458,14 @@ def verify_browser_quality_receipt(
             )
             if rendering_map.get("total_view_count") != len(navigation_views):
                 semantic_consistency = False
-                errors.append("total view count does not reconcile with navigation views")
+                errors.append(
+                    "total view count does not reconcile with navigation views"
+                )
             if set(render_sample_views) != set(navigation_views):
                 semantic_consistency = False
-                errors.append("rendering samples do not reconcile with navigation views")
+                errors.append(
+                    "rendering samples do not reconcile with navigation views"
+                )
         if checks_map.get("navigation") != expected_navigation:
             semantic_consistency = False
             errors.append("navigation verdict does not reconcile")
@@ -476,7 +482,9 @@ def verify_browser_quality_receipt(
             semantic_consistency = False
             errors.append("responsive-layout verdict does not reconcile")
         saved_views = receipt.get("saved_views")
-        expected_saved = isinstance(saved_views, dict) and saved_views.get("passed") is True
+        expected_saved = (
+            isinstance(saved_views, dict) and saved_views.get("passed") is True
+        )
         if checks_map.get("saved_and_shareable_views") != expected_saved:
             semantic_consistency = False
             errors.append("saved-view verdict does not reconcile")
@@ -486,11 +494,13 @@ def verify_browser_quality_receipt(
             if isinstance(accessibility, dict)
             else []
         )
-        expected_automated = isinstance(automated_rules, list) and bool(
-            automated_rules
-        ) and all(
-            isinstance(item, dict) and item.get("passed") is True
-            for item in automated_rules
+        expected_automated = (
+            isinstance(automated_rules, list)
+            and bool(automated_rules)
+            and all(
+                isinstance(item, dict) and item.get("passed") is True
+                for item in automated_rules
+            )
         )
         if checks_map.get("automated_accessibility") != expected_automated:
             semantic_consistency = False
@@ -563,7 +573,9 @@ def verify_browser_quality_receipt(
         "actual_content_sha256": actual_content_sha256,
         "declared_report_sha256": str(declared_report_sha256 or ""),
         "actual_report_sha256": actual_report_sha256,
-        "declared_report_bytes": declared_bytes if isinstance(declared_bytes, int) else None,
+        "declared_report_bytes": declared_bytes
+        if isinstance(declared_bytes, int)
+        else None,
         "actual_report_bytes": actual_report_bytes,
         "errors": errors,
         "notice": (

@@ -1665,9 +1665,7 @@ def apply_guidance_applicability(
     """Attach project-owned profile-selection evidence to a catalog projection."""
 
     active_profiles = [
-        value
-        for value in bundle.get("active_profiles", [])
-        if isinstance(value, str)
+        value for value in bundle.get("active_profiles", []) if isinstance(value, str)
     ]
     preserved = copy.deepcopy(decisions or [])
     decided_profiles = {
@@ -1725,18 +1723,23 @@ def apply_project_guidance_mappings(
         relationship = str(configured.get("relationship", ""))
         strength = str(configured.get("strength", ""))
         identity = (selector, citation_id, relationship, strength)
-        mapping_id = "PROJECT-MAP-" + hashlib.sha256(
-            "\x1f".join(
-                (
-                    selector,
-                    citation_id,
-                    relationship,
-                    strength,
-                    str(configured.get("reviewed_by", "")),
-                    str(configured.get("effective_date", "")),
-                )
-            ).encode("utf-8")
-        ).hexdigest()[:12].upper()
+        mapping_id = (
+            "PROJECT-MAP-"
+            + hashlib.sha256(
+                "\x1f".join(
+                    (
+                        selector,
+                        citation_id,
+                        relationship,
+                        strength,
+                        str(configured.get("reviewed_by", "")),
+                        str(configured.get("effective_date", "")),
+                    )
+                ).encode("utf-8")
+            )
+            .hexdigest()[:12]
+            .upper()
+        )
         if identity in existing:
             shadowed.append(mapping_id)
             continue
@@ -1800,9 +1803,7 @@ def ensure_guidance_traceability(
             analysis["guidance"] = guidance_bundle(active_profiles)
     resolved_bundle = analysis.get("guidance", {})
     if isinstance(resolved_bundle, dict):
-        configured_decisions = analysis.get("context", {}).get(
-            "guidance_applicability"
-        )
+        configured_decisions = analysis.get("context", {}).get("guidance_applicability")
         if not isinstance(configured_decisions, list):
             configured_decisions = existing_bundle.get("applicability_decisions", [])
         apply_guidance_applicability(resolved_bundle, configured_decisions)
@@ -2129,17 +2130,13 @@ def guidance_traceability(analysis: dict[str, Any]) -> dict[str, Any]:
                 "used_citations": len(used_citations),
                 "used_sources": len(used_sources),
                 "total_citation_uses": total_citation_uses,
-                "average_citations_per_finding": round(
-                    total_citation_uses / total, 2
-                )
+                "average_citations_per_finding": round(total_citation_uses / total, 2)
                 if total
                 else 0.0,
                 "broadly_reused_citations": dict(
                     sorted(broadly_reused_citations.items())
                 ),
-                "broadly_reused_citation_count": len(
-                    broadly_reused_citations
-                ),
+                "broadly_reused_citation_count": len(broadly_reused_citations),
                 "specificity_notice": (
                     "Coverage counts methodology, supporting, and contextual mappings. Broadly "
                     "reused citations apply to at least 80% of active findings and must not be "

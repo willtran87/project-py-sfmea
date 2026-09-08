@@ -1,0 +1,19 @@
+{
+  "format": "pysfmea-scale-resource-corpus-1",
+  "revision": "2026.08.31",
+  "generator": {
+    "seed": "scale-canary-001",
+    "algorithm": "deterministic-layered-import-graph"
+  },
+  "strata": [
+    {
+      "id": "canary-small",
+      "files": 8,
+      "symbols_per_file": 4,
+      "import_fanout": 2,
+      "repetitions": 3
+    }
+  ],
+  "required_budgets": ["wall_time_seconds", "cpu_seconds", "memory_mb", "output_bytes"],
+  "claim_boundary": "A protocol canary only; no performance, scalability, or denial-of-service resistance claim is bundled."
+}

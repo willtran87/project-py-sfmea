@@ -63,7 +63,9 @@ def sign_review_package(
         )
     verification = verify_review_package(package)
     if not verification["valid"]:
-        raise ValueError("review package must pass integrity verification before signing")
+        raise ValueError(
+            "review package must pass integrity verification before signing"
+        )
 
     artifact = Path(package).expanduser().absolute()
     key_path = Path(private_key).expanduser().absolute()
@@ -73,9 +75,13 @@ def sign_review_package(
         else artifact.with_name(artifact.name + ".sig.json")
     )
     if artifact.is_dir() and _is_within(output, artifact):
-        raise ValueError("detached signature must be stored outside the package directory")
+        raise ValueError(
+            "detached signature must be stored outside the package directory"
+        )
     if output == artifact or output == key_path:
-        raise ValueError("signature destination must be separate from the package and key")
+        raise ValueError(
+            "signature destination must be separate from the package and key"
+        )
     output_snapshot = _publication_destination_snapshot(output)
     if output_snapshot is not None:
         if not overwrite:
@@ -282,9 +288,13 @@ def passphrase_from_environment(variable: str | None) -> bytes | None:
         return None
     value = os.environ.get(variable)
     if value is None:
-        raise ValueError(f"private-key passphrase environment variable is not set: {variable}")
+        raise ValueError(
+            f"private-key passphrase environment variable is not set: {variable}"
+        )
     if not value:
-        raise ValueError(f"private-key passphrase environment variable is empty: {variable}")
+        raise ValueError(
+            f"private-key passphrase environment variable is empty: {variable}"
+        )
     encoded = value.encode("utf-8")
     if len(encoded) > MAX_PASSPHRASE_BYTES:
         raise ValueError(

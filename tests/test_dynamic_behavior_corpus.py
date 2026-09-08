@@ -33,13 +33,14 @@ class DynamicBehaviorCorpusTests(unittest.TestCase):
             )
         ]
         dynamic_sites = [
-            site
-            for component in dynamic_components
-            for site in component["call_sites"]
+            site for component in dynamic_components for site in component["call_sites"]
         ]
         self.assertGreaterEqual(len(dynamic_sites), 4)
         self.assertTrue(
-            all(site.get("resolution") != "unique_static_target" for site in dynamic_sites)
+            all(
+                site.get("resolution") != "unique_static_target"
+                for site in dynamic_sites
+            )
         )
         self.assertNotIn(
             "dynamic_dispatch.py:monkey_patch_dispatch",

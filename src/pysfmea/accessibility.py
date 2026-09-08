@@ -23,12 +23,30 @@ MAX_ACCESSIBILITY_BYTES = 2_000_000
 REQUIRED_ACCESSIBILITY_SCENARIOS = (
     ("keyboard-only", "Complete every report workflow using a keyboard only."),
     ("zoom-200", "Verify readable content and operable controls at 200% browser zoom."),
-    ("reflow-400-css-px", "Verify reflow without two-dimensional page scrolling at 400 CSS px."),
-    ("forced-colors", "Verify focus, controls, diagrams, and status in forced-colors mode."),
-    ("reduced-motion", "Verify the reduced-motion preference removes nonessential transitions."),
-    ("nvda-firefox", "Navigate landmarks, filters, table, dialog, and diagrams with NVDA and Firefox."),
-    ("jaws-chrome", "Navigate landmarks, filters, table, dialog, and diagrams with JAWS and Chrome."),
-    ("voiceover-safari", "Navigate landmarks, filters, table, dialog, and diagrams with VoiceOver and Safari."),
+    (
+        "reflow-400-css-px",
+        "Verify reflow without two-dimensional page scrolling at 400 CSS px.",
+    ),
+    (
+        "forced-colors",
+        "Verify focus, controls, diagrams, and status in forced-colors mode.",
+    ),
+    (
+        "reduced-motion",
+        "Verify the reduced-motion preference removes nonessential transitions.",
+    ),
+    (
+        "nvda-firefox",
+        "Navigate landmarks, filters, table, dialog, and diagrams with NVDA and Firefox.",
+    ),
+    (
+        "jaws-chrome",
+        "Navigate landmarks, filters, table, dialog, and diagrams with JAWS and Chrome.",
+    ),
+    (
+        "voiceover-safari",
+        "Navigate landmarks, filters, table, dialog, and diagrams with VoiceOver and Safari.",
+    ),
 )
 
 
@@ -46,7 +64,9 @@ def build_accessibility_evidence(report: str | Path) -> dict[str, Any]:
         raise ValueError(f"HTML report must not be a symbolic link: {path}")
     report_verification = verify_html_report_file(path)
     if not report_verification["valid"]:
-        raise ValueError("accessibility evidence requires an internally valid HTML report")
+        raise ValueError(
+            "accessibility evidence requires an internally valid HTML report"
+        )
     payload: dict[str, Any] = {
         "format": ACCESSIBILITY_DRAFT_FORMAT,
         "generated_at": utc_now(),
@@ -55,7 +75,9 @@ def build_accessibility_evidence(report: str | Path) -> dict[str, Any]:
             "bytes": path.stat().st_size,
             "sha256": _file_sha256(path),
             "analysis_baseline": report_verification["declared"]["baseline_id"],
-            "analysis_state_sha256": report_verification["declared"]["analysis_state_sha256"],
+            "analysis_state_sha256": report_verification["declared"][
+                "analysis_state_sha256"
+            ],
         },
         "standard": {
             "target": "WCAG 2.2 Level AA",
@@ -150,16 +172,19 @@ def verify_accessibility_evidence(
         errors.append("evidence fields do not match the closed format")
     unsigned = copy.deepcopy(evidence)
     declared = str(unsigned.pop("content_sha256", ""))
-    integrity = bool(re.fullmatch(r"[0-9a-f]{64}", declared)) and declared == canonical_json_sha256(unsigned)
+    integrity = bool(
+        re.fullmatch(r"[0-9a-f]{64}", declared)
+    ) and declared == canonical_json_sha256(unsigned)
     if evidence.get("format") != ACCESSIBILITY_FORMAT:
         errors.append("evidence must be sealed with accessibility evidence format 1")
     if not isinstance(evidence.get("generated_at"), str) or not evidence.get(
         "generated_at"
     ):
         errors.append("generated_at must be a non-empty string")
-    if not isinstance(evidence.get("reviewed_at"), str) or len(
-        evidence.get("reviewed_at", "")
-    ) > 100:
+    if (
+        not isinstance(evidence.get("reviewed_at"), str)
+        or len(evidence.get("reviewed_at", "")) > 100
+    ):
         errors.append("reviewed_at must be a bounded string")
     if not isinstance(evidence.get("notice"), str) or not evidence.get("notice"):
         errors.append("notice must be a non-empty string")
@@ -226,7 +251,9 @@ def verify_accessibility_evidence(
             "evidence_refs",
             "notes",
         }:
-            errors.append(f"scenario {identifier} fields do not match the closed format")
+            errors.append(
+                f"scenario {identifier} fields do not match the closed format"
+            )
         statuses[identifier] = str(status)
         if status not in {"pass", "fail", "not_applicable", "not_run"}:
             errors.append(f"scenario {identifier} has an invalid status")
@@ -235,7 +262,9 @@ def verify_accessibility_evidence(
             or not isinstance(value.get("evidence_refs"), list)
             or not value["evidence_refs"]
         ):
-            errors.append(f"scenario {identifier} requires environment and evidence references")
+            errors.append(
+                f"scenario {identifier} requires environment and evidence references"
+            )
         if status == "not_applicable" and not str(value.get("notes", "")).strip():
             errors.append(f"scenario {identifier} requires a not-applicable rationale")
         evidence_refs = value.get("evidence_refs")
@@ -297,7 +326,9 @@ def verify_accessibility_evidence(
         )
         if not binding:
             errors.append("evidence does not match the exact report bytes")
-    qualified = structure_valid and complete and all_required_passed and binding is not False
+    qualified = (
+        structure_valid and complete and all_required_passed and binding is not False
+    )
     return {
         "format": ACCESSIBILITY_VERIFICATION_FORMAT,
         "valid": integrity and structure_valid and binding is not False,
@@ -308,7 +339,9 @@ def verify_accessibility_evidence(
             "report_binding": binding,
             "manual_scenarios_complete": complete,
             "all_required_scenarios_passed": all_required_passed,
-            "no_failed_scenarios": all(status != "fail" for status in statuses.values()),
+            "no_failed_scenarios": all(
+                status != "fail" for status in statuses.values()
+            ),
         },
         "scenario_statuses": statuses,
         "errors": errors,

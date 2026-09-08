@@ -2639,9 +2639,10 @@ def archive_pytest_scaffold(
         path,
         operation="archive",
     )
-    if str(current_manifest.get("manifest_sha256", "")).lower() != str(
-        manifest.get("manifest_sha256", "")
-    ).lower():
+    if (
+        str(current_manifest.get("manifest_sha256", "")).lower()
+        != str(manifest.get("manifest_sha256", "")).lower()
+    ):
         raise ValueError(
             "assurance scaffold changed after guarded archive verification; inspect the "
             "queue and retry without overwriting concurrent work"

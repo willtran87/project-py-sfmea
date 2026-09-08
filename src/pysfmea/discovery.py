@@ -1410,9 +1410,7 @@ def _validate_evaluation_spec(
         for value in control_cases
         if control_scope
         and not any(
-            fnmatch.fnmatchcase(
-                f"{value['source']}:{value['component']}", pattern
-            )
+            fnmatch.fnmatchcase(f"{value['source']}:{value['component']}", pattern)
             for pattern in control_scope
         )
     ]
@@ -1901,9 +1899,7 @@ def evaluate_candidates(
         }
     ranked_precision: list[float] = []
     for confidence in ("high", "medium", "low"):
-        precision_value = confidence_bins.get(confidence, {}).get(
-            "empirical_precision"
-        )
+        precision_value = confidence_bins.get(confidence, {}).get("empirical_precision")
         if isinstance(precision_value, (int, float)) and not isinstance(
             precision_value, bool
         ):
@@ -2055,11 +2051,7 @@ def evaluate_candidates(
                 }
             ),
             "adapter_ids": sorted(
-                {
-                    str(value)
-                    for value in scanner.get("adapter_ids", [])
-                    if str(value)
-                }
+                {str(value) for value in scanner.get("adapter_ids", []) if str(value)}
             ),
             "confidence": str(scanner.get("confidence", "")),
             "screening_priority": str(scanner.get("screening_priority", "")),
@@ -2277,14 +2269,10 @@ def evaluate_candidates(
             "claim_expected": semantic_claim_expected,
             "claim_actual": semantic_claim_actual,
             "claim_matched": semantic_claim_matched,
-            "claim_recall": round(
-                semantic_claim_matched / semantic_claim_expected, 4
-            )
+            "claim_recall": round(semantic_claim_matched / semantic_claim_expected, 4)
             if semantic_claim_expected
             else None,
-            "claim_precision": round(
-                semantic_claim_matched / semantic_claim_actual, 4
-            )
+            "claim_precision": round(semantic_claim_matched / semantic_claim_actual, 4)
             if semantic_claim_actual
             else None,
             "missing": semantic_missing,
@@ -2393,9 +2381,7 @@ def compare_evaluation_results(
     ) -> float | None:
         before_value = left.get(field)
         after_value = right.get(field)
-        if not isinstance(before_value, (int, float)) or isinstance(
-            before_value, bool
-        ):
+        if not isinstance(before_value, (int, float)) or isinstance(before_value, bool):
             return None
         if not isinstance(after_value, (int, float)) or isinstance(after_value, bool):
             return None

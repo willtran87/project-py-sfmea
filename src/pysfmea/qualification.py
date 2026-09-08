@@ -29,9 +29,7 @@ from .store import (
 )
 from .version import __version__
 
-QUALIFICATION_CAMPAIGN_MANIFEST_FORMAT = (
-    "pysfmea-qualification-campaign-manifest-1"
-)
+QUALIFICATION_CAMPAIGN_MANIFEST_FORMAT = "pysfmea-qualification-campaign-manifest-1"
 QUALIFICATION_CAMPAIGN_RESULT_FORMAT = "pysfmea-qualification-campaign-result-1"
 QUALIFICATION_CAMPAIGN_VERIFICATION_FORMAT = (
     "pysfmea-qualification-campaign-verification-1"
@@ -222,7 +220,9 @@ def _validate_manifest(manifest: Any) -> dict[str, Any]:
         _count(
             thresholds[field],
             label=f"campaign threshold {field}",
-            minimum=1 if field in {"minimum_repositories", "minimum_expected_findings"} else 0,
+            minimum=1
+            if field in {"minimum_repositories", "minimum_expected_findings"}
+            else 0,
         )
     for field in (
         "minimum_finding_recall",
@@ -250,7 +250,9 @@ def _validate_manifest(manifest: Any) -> dict[str, Any]:
         or len(repositories) > MAX_QUALIFICATION_REPOSITORIES
         or not all(isinstance(entry, dict) for entry in repositories)
     ):
-        raise ValueError("campaign repositories must be a non-empty bounded object array")
+        raise ValueError(
+            "campaign repositories must be a non-empty bounded object array"
+        )
     repository_fields = {
         "id",
         "analysis",
@@ -263,7 +265,9 @@ def _validate_manifest(manifest: Any) -> dict[str, Any]:
     identifiers: list[str] = []
     for index, entry in enumerate(repositories, start=1):
         if set(entry) != repository_fields:
-            raise ValueError(f"campaign repository {index} fields do not match format 1")
+            raise ValueError(
+                f"campaign repository {index} fields do not match format 1"
+            )
         identifiers.append(_identifier(entry["id"], label=f"repository {index} ID"))
         references = [
             _text(entry[field], label=f"repository {index} {field}")
@@ -297,7 +301,9 @@ def load_qualification_campaign_manifest(source: str | Path) -> BoundedJsonDocum
 def _artifact_path(root: Path, reference: str) -> Path:
     candidate = Path(reference)
     if candidate.is_absolute():
-        raise ValueError("campaign artifact references must be relative to the manifest")
+        raise ValueError(
+            "campaign artifact references must be relative to the manifest"
+        )
     resolved = (root / candidate).resolve()
     if not resolved.is_relative_to(root.resolve()):
         raise ValueError("campaign artifact reference escapes the manifest directory")
@@ -318,17 +324,15 @@ def _feature(expected: Any, actual: Any, matched: Any) -> dict[str, Any]:
     actual_count = _count(actual, label="feature actual")
     matched_count = _count(matched, label="feature matched")
     if matched_count > expected_count or matched_count > actual_count:
-        raise ValueError("feature matched count exceeds its expected or actual population")
+        raise ValueError(
+            "feature matched count exceeds its expected or actual population"
+        )
     return {
         "expected": expected_count,
         "actual": actual_count,
         "matched": matched_count,
-        "recall": round(matched_count / expected_count, 4)
-        if expected_count
-        else None,
-        "precision": round(matched_count / actual_count, 4)
-        if actual_count
-        else None,
+        "recall": round(matched_count / expected_count, 4) if expected_count else None,
+        "precision": round(matched_count / actual_count, 4) if actual_count else None,
     }
 
 
@@ -387,7 +391,9 @@ def _repository_metrics(evaluation: dict[str, Any]) -> dict[str, Any]:
         ):
             raise ValueError(f"evaluation {label} metrics are malformed")
         return {
-            key: _feature(value.get("expected"), value.get("actual"), value.get("matched"))
+            key: _feature(
+                value.get("expected"), value.get("actual"), value.get("matched")
+            )
             for key, value in sorted(source.items())
         }
 
@@ -400,8 +406,7 @@ def _repository_metrics(evaluation: dict[str, Any]) -> dict[str, Any]:
             and all(isinstance(item, str) for item in value)
         ):
             return [
-                _text(item, label=f"{label} item", required=False)
-                for item in value
+                _text(item, label=f"{label} item", required=False) for item in value
             ]
         raise ValueError(f"evaluation {label} must be text or a bounded text array")
 
@@ -411,13 +416,21 @@ def _repository_metrics(evaluation: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("evaluation semantic diagnostics are malformed")
     diagnostic_examples: list[dict[str, Any]] = []
     for item in missing:
-        if not isinstance(item, dict) or set(item) != {"source", "component", "rule_id"}:
+        if not isinstance(item, dict) or set(item) != {
+            "source",
+            "component",
+            "rule_id",
+        }:
             raise ValueError("evaluation semantic missing record is malformed")
         diagnostic_examples.append(
             {
                 "kind": "missing",
-                "source": _text(item["source"], label="semantic missing source", required=False),
-                "component": _text(item["component"], label="semantic missing component"),
+                "source": _text(
+                    item["source"], label="semantic missing source", required=False
+                ),
+                "component": _text(
+                    item["component"], label="semantic missing component"
+                ),
                 "rule_id": _text(item["rule_id"], label="semantic missing rule ID"),
                 "field": None,
                 "expected": None,
@@ -426,18 +439,31 @@ def _repository_metrics(evaluation: dict[str, Any]) -> dict[str, Any]:
         )
     for item in mismatches:
         if not isinstance(item, dict) or set(item) != {
-            "source", "component", "rule_id", "field", "expected", "actual"
+            "source",
+            "component",
+            "rule_id",
+            "field",
+            "expected",
+            "actual",
         }:
             raise ValueError("evaluation semantic mismatch record is malformed")
         diagnostic_examples.append(
             {
                 "kind": "mismatch",
-                "source": _text(item["source"], label="semantic mismatch source", required=False),
-                "component": _text(item["component"], label="semantic mismatch component"),
+                "source": _text(
+                    item["source"], label="semantic mismatch source", required=False
+                ),
+                "component": _text(
+                    item["component"], label="semantic mismatch component"
+                ),
                 "rule_id": _text(item["rule_id"], label="semantic mismatch rule ID"),
                 "field": _text(item["field"], label="semantic mismatch field"),
-                "expected": semantic_value(item["expected"], label="semantic mismatch expected"),
-                "actual": semantic_value(item["actual"], label="semantic mismatch actual"),
+                "expected": semantic_value(
+                    item["expected"], label="semantic mismatch expected"
+                ),
+                "actual": semantic_value(
+                    item["actual"], label="semantic mismatch actual"
+                ),
             }
         )
     retained_examples = diagnostic_examples[:MAX_SEMANTIC_DIAGNOSTIC_EXAMPLES]
@@ -483,9 +509,7 @@ def _repository_metrics(evaluation: dict[str, Any]) -> dict[str, Any]:
         "by_rule": collection(by_rule, label="by-rule"),
         "by_call_resolution": collection(by_resolution, label="call-resolution"),
         "by_control_kind": collection(by_kind, label="control-kind"),
-        "by_semantic_field": collection(
-            by_semantic_field, label="semantic-field"
-        ),
+        "by_semantic_field": collection(by_semantic_field, label="semantic-field"),
         "by_semantic_rule": collection(by_semantic_rule, label="semantic-rule"),
         "semantic_diagnostics": {
             "missing_count": len(missing),
@@ -497,9 +521,7 @@ def _repository_metrics(evaluation: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _load_repository(
-    entry: dict[str, Any], manifest_root: Path
-) -> dict[str, Any]:
+def _load_repository(entry: dict[str, Any], manifest_root: Path) -> dict[str, Any]:
     references = {
         field: str(entry[field]) for field in ("analysis", "corpus", "evaluation")
     }
@@ -517,7 +539,9 @@ def _load_repository(
     if not isinstance(analysis_document.value, dict):
         raise ValueError(f"qualification analysis {entry['id']} must be an object")
     analysis = load_analysis(paths["analysis"])
-    if canonical_json_sha256(analysis_document.value) != canonical_json_sha256(analysis):
+    if canonical_json_sha256(analysis_document.value) != canonical_json_sha256(
+        analysis
+    ):
         raise ValueError(
             f"qualification analysis {entry['id']} is not a canonical current analysis"
         )
@@ -571,7 +595,9 @@ def _load_repository(
 def _aggregate_features(repositories: list[dict[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for feature_key in FEATURE_KEYS:
-        expected = sum(repo["features"][feature_key]["expected"] for repo in repositories)
+        expected = sum(
+            repo["features"][feature_key]["expected"] for repo in repositories
+        )
         actual = sum(repo["features"][feature_key]["actual"] for repo in repositories)
         matched = sum(repo["features"][feature_key]["matched"] for repo in repositories)
         result[feature_key] = {
@@ -588,8 +614,7 @@ def _aggregate_features(repositories: list[dict[str, Any]]) -> dict[str, Any]:
             result[feature_key].update(
                 {
                     field: sum(
-                        repo["features"][feature_key][field]
-                        for repo in repositories
+                        repo["features"][feature_key][field] for repo in repositories
                     )
                     for field in CONTROL_POPULATION_KEYS
                 }
@@ -597,15 +622,9 @@ def _aggregate_features(repositories: list[dict[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _aggregate_named(
-    repositories: list[dict[str, Any]], field: str
-) -> dict[str, Any]:
+def _aggregate_named(repositories: list[dict[str, Any]], field: str) -> dict[str, Any]:
     labels = sorted(
-        {
-            label
-            for repository in repositories
-            for label in repository.get(field, {})
-        }
+        {label for repository in repositories for label in repository.get(field, {})}
     )
     result: dict[str, Any] = {}
     for label in labels:
@@ -641,8 +660,7 @@ def _segments(repositories: list[dict[str, Any]], field: str) -> dict[str, Any]:
 def _governance_projection(governance: dict[str, Any]) -> dict[str, Any]:
     ready = bool(
         governance["independent"]
-        and governance["labeled_by"].casefold()
-        != governance["approved_by"].casefold()
+        and governance["labeled_by"].casefold() != governance["approved_by"].casefold()
         and governance["selection_method"]
         and governance["representativeness_rationale"]
     )
@@ -663,26 +681,22 @@ def _projection(
     repositories: list[dict[str, Any]],
 ) -> dict[str, Any]:
     features = _aggregate_features(repositories)
-    frameworks = sorted({value for repo in repositories for value in repo["frameworks"]})
+    frameworks = sorted(
+        {value for repo in repositories for value in repo["frameworks"]}
+    )
     domains = sorted({value for repo in repositories for value in repo["domains"]})
     governance_result = _governance_projection(governance)
     finding = features["finding_detection"]
     calls = features["call_resolution"]
     controls = features["control_detection"]
     semantics = features["semantic_output"]
-    semantic_diagnostics = [
-        repo["semantic_diagnostics"] for repo in repositories
-    ]
+    semantic_diagnostics = [repo["semantic_diagnostics"] for repo in repositories]
 
     def complete_quality(field: str, *, optional: bool = False) -> bool:
         values = [repo["quality"][field] for repo in repositories]
-        return all(
-            (value is None and optional) or value == 1.0 for value in values
-        )
+        return all((value is None and optional) or value == 1.0 for value in values)
 
-    def metric_check(
-        metric: dict[str, Any], key: str, threshold: float
-    ) -> bool | None:
+    def metric_check(metric: dict[str, Any], key: str, threshold: float) -> bool | None:
         value = metric[key]
         return None if value is None else bool(float(value) >= threshold)
 
@@ -711,12 +725,9 @@ def _projection(
         for segment in framework_segments.values()
     ]
     domain_findings = [
-        segment["features"]["finding_detection"]
-        for segment in domain_segments.values()
+        segment["features"]["finding_detection"] for segment in domain_segments.values()
     ]
-    call_populations = [
-        repo["features"]["call_resolution"] for repo in repositories
-    ]
+    call_populations = [repo["features"]["call_resolution"] for repo in repositories]
     control_populations = [
         repo["features"]["control_detection"] for repo in repositories
     ]
@@ -750,8 +761,7 @@ def _projection(
         "independent_corpora": all(
             repo["corpus_governance_qualification_ready"] for repo in repositories
         ),
-        "minimum_repositories": len(repositories)
-        >= thresholds["minimum_repositories"],
+        "minimum_repositories": len(repositories) >= thresholds["minimum_repositories"],
         "minimum_frameworks": len(frameworks) >= thresholds["minimum_frameworks"],
         "minimum_domains": len(domains) >= thresholds["minimum_domains"],
         "minimum_expected_findings": finding["expected"]
@@ -786,9 +796,7 @@ def _projection(
         "call_cases_present": call_present
         if thresholds["require_call_cases"]
         else None,
-        "call_recall": metric_check(
-            calls, "recall", thresholds["minimum_call_recall"]
-        )
+        "call_recall": metric_check(calls, "recall", thresholds["minimum_call_recall"])
         if call_present
         else None,
         "call_precision": metric_check(
@@ -874,8 +882,7 @@ def _projection(
             "frameworks": frameworks,
             "domains": domains,
             "independently_governed_corpora": sum(
-                repo["corpus_governance_qualification_ready"]
-                for repo in repositories
+                repo["corpus_governance_qualification_ready"] for repo in repositories
             ),
             "semantic_missing_cases": sum(
                 diagnostic["missing_count"] for diagnostic in semantic_diagnostics
@@ -887,19 +894,14 @@ def _projection(
                 len(diagnostic["examples"]) for diagnostic in semantic_diagnostics
             ),
             "semantic_diagnostic_examples_omitted": sum(
-                diagnostic["examples_omitted"]
-                for diagnostic in semantic_diagnostics
+                diagnostic["examples_omitted"] for diagnostic in semantic_diagnostics
             ),
         },
         "features": features,
         "by_rule": _aggregate_named(repositories, "by_rule"),
-        "by_call_resolution": _aggregate_named(
-            repositories, "by_call_resolution"
-        ),
+        "by_call_resolution": _aggregate_named(repositories, "by_call_resolution"),
         "by_control_kind": _aggregate_named(repositories, "by_control_kind"),
-        "by_semantic_field": _aggregate_named(
-            repositories, "by_semantic_field"
-        ),
+        "by_semantic_field": _aggregate_named(repositories, "by_semantic_field"),
         "by_semantic_rule": _aggregate_named(repositories, "by_semantic_rule"),
         "segments": {
             "frameworks": framework_segments,
@@ -1021,8 +1023,7 @@ def _validate_metric(
             for field in CONTROL_POPULATION_KEYS
         }
         if (
-            population["positive_components"]
-            + population["negative_components"]
+            population["positive_components"] + population["negative_components"]
             != population["evaluated_components"]
         ):
             raise ValueError(f"{label} control population counts do not reconcile")
@@ -1032,7 +1033,10 @@ def _validate_metric_map(value: Any, *, label: str, aggregate: bool) -> None:
     if (
         not isinstance(value, dict)
         or len(value) > 20_000
-        or not all(isinstance(key, str) and isinstance(metric, dict) for key, metric in value.items())
+        or not all(
+            isinstance(key, str) and isinstance(metric, dict)
+            for key, metric in value.items()
+        )
     ):
         raise ValueError(f"{label} must be a bounded metric map")
     for key, metric in value.items():
@@ -1068,7 +1072,10 @@ def _validate_semantic_diagnostics(value: Any, *, label: str) -> None:
         value["examples_omitted"], label=f"{label} omitted examples"
     )
     examples = value["examples"]
-    if not isinstance(examples, list) or len(examples) > MAX_SEMANTIC_DIAGNOSTIC_EXAMPLES:
+    if (
+        not isinstance(examples, list)
+        or len(examples) > MAX_SEMANTIC_DIAGNOSTIC_EXAMPLES
+    ):
         raise ValueError(f"{label} examples must be a bounded array")
     if len(examples) + examples_omitted != missing_count + mismatch_count:
         raise ValueError(f"{label} example counts do not reconcile")
@@ -1083,7 +1090,13 @@ def _validate_semantic_diagnostics(value: Any, *, label: str) -> None:
         raise ValueError(f"{label} bounded example counts do not reconcile")
     _text(value["authority"], label=f"{label} authority")
     example_fields = {
-        "kind", "source", "component", "rule_id", "field", "expected", "actual"
+        "kind",
+        "source",
+        "component",
+        "rule_id",
+        "field",
+        "expected",
+        "actual",
     }
     seen_missing = 0
     seen_mismatches = 0
@@ -1098,7 +1111,9 @@ def _validate_semantic_diagnostics(value: Any, *, label: str) -> None:
         _text(example["component"], label=f"{example_label} component")
         _text(example["rule_id"], label=f"{example_label} rule ID")
         if kind == "missing":
-            if any(example[field] is not None for field in ("field", "expected", "actual")):
+            if any(
+                example[field] is not None for field in ("field", "expected", "actual")
+            ):
                 raise ValueError(f"{example_label} missing record has mismatch data")
             seen_missing += 1
             continue
@@ -1115,7 +1130,9 @@ def _validate_semantic_diagnostics(value: Any, *, label: str) -> None:
                 for item in candidate:
                     _text(item, label=f"{example_label} {field} item", required=False)
             else:
-                raise ValueError(f"{example_label} {field} must be text or a bounded text array")
+                raise ValueError(
+                    f"{example_label} {field} must be text or a bounded text array"
+                )
         seen_mismatches += 1
     if seen_missing > missing_count or seen_mismatches > mismatch_count:
         raise ValueError(f"{label} retained example categories do not reconcile")
@@ -1184,8 +1201,15 @@ def _validate_result_repository(value: dict[str, Any], *, index: int) -> None:
     if len(normalized_repositories) != len(set(normalized_repositories)):
         raise ValueError(f"{label} corpus repositories must not contain duplicates")
     for field in ("labeled_by", "approved_by", "approval_date", "authority"):
-        _text(governance[field], label=f"{label} corpus governance {field}", required=False)
-    if value["corpus_governance_qualification_ready"] != governance["qualification_ready"]:
+        _text(
+            governance[field],
+            label=f"{label} corpus governance {field}",
+            required=False,
+        )
+    if (
+        value["corpus_governance_qualification_ready"]
+        != governance["qualification_ready"]
+    ):
         raise ValueError(f"{label} corpus governance readiness does not reconcile")
     verifier = value["evaluation_verifier"]
     if not isinstance(verifier, dict) or set(verifier) != {"name", "version"}:
@@ -1236,7 +1260,9 @@ def _validate_result_repository(value: dict[str, Any], *, index: int) -> None:
 
 
 def _validate_result_contract(
-    result: dict[str, Any], repositories: list[dict[str, Any]], thresholds: dict[str, Any]
+    result: dict[str, Any],
+    repositories: list[dict[str, Any]],
+    thresholds: dict[str, Any],
 ) -> None:
     tool = result.get("tool")
     if (
@@ -1439,9 +1465,9 @@ def verify_qualification_campaign(
             if not manifest_binding:
                 errors.append("qualification manifest binding does not match")
             regenerated = build_qualification_campaign(manifest_document.path)
-            exact_regeneration = canonical_json_sha256(regenerated) == canonical_json_sha256(
-                result
-            )
+            exact_regeneration = canonical_json_sha256(
+                regenerated
+            ) == canonical_json_sha256(result)
             if not exact_regeneration:
                 errors.append("qualification campaign does not exactly regenerate")
         except (OSError, ValueError) as exc:
@@ -1546,11 +1572,10 @@ def qualification_validation_cohorts(
         )
     manifest_document = load_qualification_campaign_manifest(manifest_source)
     manifest_binding = result["manifest"]
-    if (
-        manifest_binding["sha256"]
-        != hashlib.sha256(manifest_document.raw).hexdigest()
-        or manifest_binding["canonical_sha256"]
-        != canonical_json_sha256(manifest_document.value)
+    if manifest_binding["sha256"] != hashlib.sha256(
+        manifest_document.raw
+    ).hexdigest() or manifest_binding["canonical_sha256"] != canonical_json_sha256(
+        manifest_document.value
     ):
         raise ValueError("qualification manifest changed after campaign verification")
     manifest_repositories = {
@@ -1578,9 +1603,10 @@ def qualification_validation_cohorts(
                 f"qualification repository {repository_id} lacks an independently governed corpus"
             )
         quality = repository["quality"]
-        if quality["duplicate_count"] or quality[
-            "unsupported_verification_claim_count"
-        ]:
+        if (
+            quality["duplicate_count"]
+            or quality["unsupported_verification_claim_count"]
+        ):
             raise ValueError(
                 f"qualification repository {repository_id} has disqualifying evaluation findings"
             )
@@ -1619,13 +1645,12 @@ def qualification_validation_cohorts(
             "id": cohort_id,
             "repository": repository_id,
             "framework": (
-                frameworks[0] + (f" (+{len(frameworks) - 1})" if len(frameworks) > 1 else "")
+                frameworks[0]
+                + (f" (+{len(frameworks) - 1})" if len(frameworks) > 1 else "")
                 if frameworks
                 else "unclassified"
             ),
-            "corpus_sha256": repository["artifacts"]["corpus"][
-                "canonical_sha256"
-            ],
+            "corpus_sha256": repository["artifacts"]["corpus"]["canonical_sha256"],
             "case_count": finding["expected"],
             "recall": finding["recall"],
             "precision": finding["precision"],
@@ -1634,9 +1659,7 @@ def qualification_validation_cohorts(
             "actual_count": finding["actual"],
             "evaluation_result_format": "pysfmea-evaluation-result-1",
             "evaluation_result_sha256": evaluation_binding["canonical_sha256"],
-            "evaluation_verifier_version": repository["evaluation_verifier"][
-                "version"
-            ],
+            "evaluation_verifier_version": repository["evaluation_verifier"]["version"],
             "evaluation_result_artifact": {
                 "path": program_reference(evaluation_path),
                 "sha256": evaluation_binding["sha256"],

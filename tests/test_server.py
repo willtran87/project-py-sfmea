@@ -176,7 +176,9 @@ class ServerTests(unittest.TestCase):
         self.assertIn("async function refreshDerived(expectedRevision)", REVIEW_HTML)
         self.assertIn("async function applyItemMutation(item,revision)", REVIEW_HTML)
         self.assertIn("revisions.some(value=>value!==expectedRevision)", REVIEW_HTML)
-        self.assertIn("await applyItemMutation(result,response.headers.get('ETag'))", REVIEW_HTML)
+        self.assertIn(
+            "await applyItemMutation(result,response.headers.get('ETag'))", REVIEW_HTML
+        )
         self.assertIn("if(state.saving)return", REVIEW_HTML)
         self.assertIn("if(state.assuranceSaving)return", REVIEW_HTML)
         self.assertIn("if(state.adding)return", REVIEW_HTML)
@@ -208,7 +210,10 @@ class ServerTests(unittest.TestCase):
             base = f"http://127.0.0.1:{server.server_address[1]}"
             try:
                 with urllib.request.urlopen(base + "/api/analysis") as response:
-                    self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+                    self.assertIn(
+                        "frame-ancestors 'none'",
+                        response.headers["Content-Security-Policy"],
+                    )
                     self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
                     self.assertEqual(response.headers["X-Frame-Options"], "DENY")
                     self.assertEqual(
@@ -329,7 +334,9 @@ class ServerTests(unittest.TestCase):
                     urllib.request.urlopen(stale_request)
                 self.assertEqual(conflict.exception.code, 409)
                 persisted = load_analysis(path)
-                persisted_item = next(item for item in persisted["items"] if item["id"] == item_id)
+                persisted_item = next(
+                    item for item in persisted["items"] if item["id"] == item_id
+                )
                 self.assertEqual(persisted_item["review"]["disposition"], "accepted")
             finally:
                 server.shutdown()
@@ -639,9 +646,7 @@ class ServerTests(unittest.TestCase):
                     for value in persisted["assurance"]["obligations"]
                     if value["id"] == obligation_id
                 )
-                self.assertEqual(
-                    obligation["assurance_status"], "verification_planned"
-                )
+                self.assertEqual(obligation["assurance_status"], "verification_planned")
             finally:
                 server.shutdown()
                 server.server_close()

@@ -57,9 +57,10 @@ def program_topology_svg(result: dict[str, Any]) -> str:
             '<text x="35" y="70" class="empty-svg">'
             "No bound repositories to visualize.</text>"
         )
-    truncated = len(summary.get("repository_ids", [])) > len(repositories) or len(
-        seen_edges
-    ) >= 100
+    truncated = (
+        len(summary.get("repository_ids", [])) > len(repositories)
+        or len(seen_edges) >= 100
+    )
     note = (
         '<p class="diagram-note">The visual is bounded to 40 repositories and 100 '
         "unique repository-level edges; use the relationship table for the complete "

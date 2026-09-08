@@ -25,19 +25,21 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = ["defusedxml>=0.7.1"]
+dependencies = ["defusedxml>=0.7.1", "packaging>=24.2"]
 
 [project.optional-dependencies]
 signing = ["cryptography>=42"]
 interop = [
   "jsonschema>=4.23",
   "lxml>=5.4",
+  "PyYAML>=6.0.2",
   "regex>=2024.11.6",
 ]
 dev = [
   "build>=1.2",
   "hypothesis>=6.138",
   "jsonschema>=4.23",
+  "PyYAML>=6.0.2",
   "pytest>=8",
   "pytest-timeout>=2.4",
   "regex>=2024.11.6",
@@ -52,6 +54,7 @@ quality = [
   "types-defusedxml>=0.7.0.20260504",
 ]
 browser = ["playwright>=1"]
+fuzz = ["atheris>=2.3,<3.1"]
 
 [project.urls]
 Documentation = "https://willtran87.github.io/project-py-sfmea/"
@@ -74,6 +77,7 @@ version = { attr = "pysfmea.version.__version__" }
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers"
+pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py311"
@@ -115,6 +119,9 @@ exclude_dirs = ["tests", "build", "dist"]
 [tool.mutmut]
 source_paths = ["src/pysfmea"]
 only_mutate = [
+  "src/pysfmea/measurement_validity.py",
+  "src/pysfmea/scope_authentication.py",
+  "src/pysfmea/upstream_contract.py",
   "src/pysfmea/assurance_planning.py",
   "src/pysfmea/fault_injection.py",
   "src/pysfmea/runtime.py",
@@ -125,6 +132,7 @@ only_mutate = [
   "src/pysfmea/llm_quality.py",
 ]
 pytest_add_cli_args_test_selection = [
+  "tests/test_measurement_enforcement.py",
   "tests/test_fault_injection.py",
   "tests/test_runtime.py",
   "tests/test_sandbox_policy.py",

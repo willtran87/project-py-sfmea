@@ -1,0 +1,10 @@
+{
+  "format": "pysfmea-benchmark-proficiency-source-1",
+  "generated_at": "unassigned",
+  "scheme": {"id": "unassigned", "round": "unassigned", "scope": "Python SFMEA benchmark proficiency"},
+  "authorities": {"provider": "unassigned", "technical_reviewer": "unassigned", "approval_authority": "unassigned"},
+  "policy": {"minimum_participants": 2, "minimum_organizations": 2, "z_warning_limit": 2.0, "z_action_limit": 3.0, "minimum_qualitative_agreement": 1.0},
+  "items": [],
+  "participants": [],
+  "claim_boundary": "Completion supports a proficiency decision by an authorized body; it does not grant accreditation or qualification."
+}

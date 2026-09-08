@@ -99,6 +99,8 @@ Available names:
 | `assurance-case` | ISO 15026 and OMG SACM-aligned claims, arguments, evidence, relationships, assumptions, and defeaters |
 | `assurance-case-verification` | Assurance-case integrity, graph, coverage, status, and optional exact-analysis binding verdict |
 | `calibration-comparison` | Governed same-corpus scanner calibration comparison with semantic regression gates |
+| `clusterfuzzlite-intake` | Exact ClusterFuzzLite run identity and content-addressed downloaded-artifact inventory |
+| `clusterfuzzlite-intake-verification` | Intake integrity, reconciliation, and optional artifact-directory rebinding verdict |
 | `detached-signature` | Ed25519 signature envelope, signed statement, and package subject |
 | `diagram` | Renderer-neutral `pysfmea-diagram-1` object |
 | `diagram-bundle` | Generated, integrity-declaring `pysfmea-diagram-bundle-1` object |
@@ -125,7 +127,7 @@ Available names:
 | `industry-exchange-verification` | SACM, SFPM, ReqIF, or SPDX structure, exact-source binding, and population-reconciliation verdict |
 | `lifecycle-model` | Conservative ReqIF, SysML v2 JSON, or OSLC JSON-LD normalized entities, explicit relations, and exact code links |
 | `lifecycle-model-verification` | Lifecycle-model integrity and optional exact-source/analysis regeneration verdict |
-| `normative-schema-validation` | Exact artifact/schema validation receipt for a supplied normative JSON or XML Schema |
+| `normative-schema-validation` | Exact artifact/schema validation receipt for supplied JSON Schema, bounded YAML against JSON Schema, or XML Schema |
 | `normative-schema-validation-verification` | Receipt integrity and optional exact artifact/schema binding verdict |
 | `dependability-authoring` | Exact-analysis-bound HAZOP, RBD, and Markov engineering input artifact |
 | `dependability-assessment` | Reconciled HAZOP completeness, explicit RBD probability, and bounded Markov results |
@@ -154,23 +156,93 @@ Available names:
 | `industry-validation-portfolio-assessment` | Reconciled industry-validation readiness gates over exact referenced artifacts |
 | `industry-validation-portfolio-verification` | Portfolio integrity, rehashed-summary rejection, and optional exact-source regeneration verdict |
 | `industry-validation-portfolio-report-verification` | Self-contained portfolio HTML payload/document integrity and exact-assessment binding verdict |
+| `industry-qualification-readiness` | Exact join of standards lifecycle, benchmark source/adapter health, independent validation, and separated decision authority |
+| `industry-qualification-readiness-verification` | Integrity, catalog reconciliation, six-artifact exact replay including proficiency and portfolio regeneration, and authorized-review eligibility verdict |
 | `sarif-fusion` | Exact-byte SARIF 2.1.0 inputs, producer runs, lossless results, conservative component mapping, and deterministic clusters |
 | `sarif-fusion-verification` | SARIF integrity, accounting, exact analysis binding, and optional source regeneration verdict |
 | `oscal-assessment-results` | Supported NIST OSCAL 1.2.3 Assessment Results projection of SFMEA observations |
 | `oscal-assessment-results-verification` | Supported-subset, analysis-binding, and exact-regeneration verdict; official NIST schema validation remains separate |
-| `industry-benchmark-catalog` | Governed OWASP Benchmark Python, BugsInPy, TestGenEval, TDD-Bench Verified, and SWE-bench Verified targets |
+| `oscal-assessment-plan` | Exact-analysis-bound NIST OSCAL 1.2.3 Assessment Plan review scaffold |
+| `oscal-assessment-plan-verification` | Assessment Plan structure, analysis binding, and exact-regeneration verdict |
+| `oscal-poam` | Exact-analysis-bound NIST OSCAL 1.2.3 POA&M projection of unresolved findings and actions |
+| `oscal-poam-verification` | POA&M structure, population reconciliation, analysis binding, and exact-regeneration verdict |
+| `industry-benchmark-catalog` | Forty-one governed targets spanning direct SFMEA semantics and causal propagation, Python dynamics and resilience, interoperability and drift, static/dynamic graph evidence, fresh repository tasks, test generation, security, defects, agents, nondeterminism, and statistical controls |
+| `benchmark-adapter` | Independently reviewed suite adapter binding exact revision, source, license, image, command, output, and normalization policy |
+| `benchmark-adapter-verification` | Adapter integrity and governed execution-eligibility verdict |
+| `benchmark-case-inventory` | Suite-neutral exact-source case population for item review without guessing result semantics |
+| `benchmark-case-inventory-verification` | Inventory integrity, closed population, and optional raw-manifest replay verdict |
+| `benchmark-case-results` | Exact scored case ledger, source revision, execution status, and expected/predicted labels |
+| `tevv-request-events` | Raw version-bound request timestamps, errors, and latency measurements |
+| `tevv-evaluation-events` | Raw version-bound evaluation case identities and boolean outcomes |
+| `tevv-control-events` | Timed sequential circuit-breaker requests/policy and rollback recovery measurements |
+| `qualification-scope` | Approved applicability, explicit exclusions, acceptance policy, and change triggers |
+| `scope-trust-policy` | External trust root for approval keys, roles, validity, and revocation |
+| `upstream-schema-policy` | Approved upstream tool versions, schema digests, URIs, and configuration projections |
+| `tevv-collection` | Independent counter attribution and telemetry loss, sampling, and population accounting |
+| `benchmark-corpus-inventory` | Content-addressed closed inventory of all bundled corpus and protocol files |
+| `benchmark-corpus-verification` | Inventory integrity and optional exact-root replay verdict |
+| `benchmark-differential-source` | Case-paired labels, tool predictions, provenance, policy, and disagreement adjudications |
+| `benchmark-differential-assessment` | Per-tool confusion metrics, paired exact McNemar results, and discordant-case queue |
+| `benchmark-differential-verification` | Integrity, reconciliation, exact-source replay, and validation-portfolio eligibility verdict |
 | `benchmark-execution` | Pinned dataset/image, isolated execution, independent authorities, metrics, exclusions, and evidence receipt |
 | `benchmark-execution-verification` | Benchmark receipt integrity and downstream assessment eligibility verdict |
+| `benchmark-observations` | Case-attempt evidence and reconciled effectiveness, safety, efficiency, cost, and classification metrics |
+| `benchmark-observations-verification` | Observation integrity, case accounting, metric reconciliation, and execution-receipt eligibility verdict |
+| `benchmark-proficiency-assessment` | Deterministic quantitative z-score and qualitative agreement assessment |
+| `benchmark-proficiency-source` | Controlled assigned values, stability, homogeneity, participants, results, and separated authorities |
+| `benchmark-proficiency-verification` | Assessment integrity, exact-source replay, and qualification-input eligibility verdict |
+| `benchmark-source-health` | Closed source URL/revision/license/digest/maturity/adapter ledger |
+| `benchmark-source-health-verification` | Source-ledger integrity and fail-closed external-execution eligibility |
+| `benchmark-item-quality` | Exact-population independent review of task requirements, oracles, hidden tests, coverage, mutation strength, harnesses, ambiguity, gold patches, regressions, exclusions, and reviewers |
+| `benchmark-item-quality-verification` | Item-quality integrity, policy reconciliation, exact-source replay, and benchmark-claim eligibility |
+| `native-benchmark-normalization` | Exact-byte supported native suite output normalization |
+| `native-benchmark-normalization-verification` | Native mapping integrity and observation-join eligibility |
+| `inspect-ai-evidence` | Exact-byte Inspect AI log intake with configuration, sample, score, transcript, tool-event, error, and usage identities |
+| `inspect-ai-evidence-verification` | Inspect evidence integrity, accounting, exact-source replay, and evaluation-join eligibility |
+| `inspect-ai-conformance` | Supplied official-schema validation binding exact Inspect log, evidence, exported run configuration, evaluator version, and execution identity |
+| `inspect-ai-conformance-verification` | Inspect conformance integrity, reconciliation, four-source replay, and portfolio-eligibility verdict |
+| `deployed-tevv-source` | Governed deployed-system identity, baseline, thresholds, monitoring windows, category evidence, incidents, circuit breaker, rollback, and changes |
+| `deployed-tevv-assessment` | Deterministic NIST AI 800-4-aligned repeated-TEVV and operational-threshold assessment |
+| `deployed-tevv-verification` | Assessment integrity, exact campaign replay, and authorized-operational-review eligibility verdict |
+| `genai-telemetry` | Version-pinned OpenTelemetry GenAI OTLP normalization with exact raw-span identity |
+| `genai-telemetry-verification` | Telemetry integrity, operation/provider completeness, exact-source replay, and deployed-TEVV eligibility verdict |
+| `confidence-calibration` | Brier score, ECE, Wilson intervals, stratified calibration, and risk-coverage |
+| `confidence-calibration-verification` | Calibration integrity and deterministic metric/stratum reconciliation |
+| `causal-validation` | Predicted-versus-observed cascade edges/effects, deadlines, breaker transitions, and recovery |
+| `callgraph-benchmark` | Exact-source expected-versus-predicted graph edges, precision, recall, and replay |
+| `causal-validation-verification` | Causal metric integrity and independent-review eligibility |
+| `sarif-conformance` | Supplied official-schema validation, consumer semantics, and exact source/schema digests |
+| `sarif-conformance-verification` | Scoped SARIF consumption-conformance verdict |
+| `openssf-scorecard-evidence` | Exact Scorecard intake and controlled OSPS/SSDF/SLSA candidate-evidence mapping |
+| `openssf-scorecard-evidence-verification` | Scorecard mapping integrity and review-input eligibility without compliance inference |
+| `standards-watchlist` | Governed non-normative development-stage inventory |
+| `standards-watchlist-verification` | Watchlist integrity; valid output cannot satisfy adopted profiles |
+| `security-taxonomy` | Exact official MITRE CWE or CAPEC XML import with release metadata, relationships, status, and source-byte binding |
+| `security-taxonomy-verification` | Taxonomy integrity, exact source-byte binding, and deterministic regeneration verdict |
+| `sfmea-semantic-benchmark` | Direct exact-corpus finding, call, control, and semantic-claim evaluation |
+| `sfmea-semantic-benchmark-verification` | Benchmark integrity, metric reconciliation, source binding, and independence eligibility verdict |
+| `standards-lifecycle` | Exact standards-catalog review ledger with edition/status observations, source evidence, review dates, and reapproval references |
+| `standards-lifecycle-verification` | Catalog-binding, freshness, change-detection, and lifecycle-eligibility verdict |
 | `fuzz-campaign` | Pinned target/configuration/corpus, isolated execution, coverage, and complete crash-triage receipt |
 | `fuzz-campaign-verification` | Fuzz receipt integrity and governed assurance-use eligibility verdict |
+| `vulnerability-intelligence` | Exact OSV, CISA KEV, and FIRST EPSS sources, normalized aliases/packages/ranges, exploitation context, freshness policy, and claim boundary |
+| `vulnerability-intelligence-verification` | Intelligence integrity, supplied source-byte binding, freshness, and priority-input eligibility verdict |
+| `vulnerability-intelligence-match` | CVE/PURL/package identity leads with KEV/EPSS context and unresolved applicability |
+| `performance-history` | Comparable multi-release scanner environment, population, variability, runtime, memory, and release-ratchet evidence |
+| `performance-history-verification` | History integrity, comparability, policy, and release-gate eligibility verdict |
 | `independent-benchmark-report-verification-v2` | Self-contained benchmark HTML, embedded assessment, document integrity, and exact binding verdict |
 | `safety-lifecycle-authoring` | Exact-analysis-bound PHA/FHA/PSSA/SSA/operations and CCFA engineering workspace |
 | `safety-lifecycle-assessment` | Lifecycle traceability, residual-risk decision, and CCFA coverage assessment |
 | `safety-lifecycle-verification` | Lifecycle integrity, accounting, and optional exact-source regeneration verdict |
+| `samate-assessment-source` | NIST SP 500-268 capability claim and SP 500-270-style test plan and case ledger |
+| `samate-assessment` | Overall and weakness-stratified confusion, localization, and uncertainty results |
+| `samate-assessment-verification` | Assessment integrity, eligibility, and case-to-metric reconciliation verdict |
 | `slsa-trust-policy` | Deny-by-default SLSA 1.2 Build/Source track identity and level policy |
 | `slsa-verification-observation` | Attributable external signature, builder, and source-control evidence intake |
 | `slsa-policy-assessment` | Achieved SLSA levels and local trust-policy decision with exact bindings |
 | `slsa-policy-verification` | SLSA policy accounting and optional exact-source regeneration verdict |
+| `sigstore-verification` | Exact artifact/bundle/trusted-root, expected identity/issuer, cosign version, and offline verification outcome receipt |
+| `sigstore-verification-verdict` | Receipt integrity plus optional exact artifact, bundle, and trusted-root binding verdict |
 | `ssvc-policy` | Controlled complete and non-overlapping SSVC-style decision table |
 | `ssvc-observations` | Policy-bound vulnerability decision-point evidence and reassessment dates |
 | `ssvc-assessment` | Deterministic local SSVC-style action outcomes |
@@ -205,6 +277,8 @@ Available names:
 | `synthesis-workspace` | Sealed, exact-analysis-bound suggestion and contradiction-review workspace |
 | `synthesis-workspace-draft` | Editable, human-controlled suggestion synthesis workspace |
 | `synthesis-workspace-verification` | Integrity, decision, contradiction, and optional exact-analysis binding verdict |
+| `test-dossier` | Exact-analysis-bound ISO 29119-aligned test plan, cases, techniques, keywords, and traceability |
+| `test-dossier-verification` | Dossier integrity, population, technique, completion, and analysis-binding verdict |
 | `standards-catalog` | Content-addressed standards metadata and original PySFMEA objective summaries without licensed normative text |
 | `standards-crosswalk` | Exact-bound, authority-attributed standards-objective links to findings, obligations, and evidence |
 | `standards-crosswalk-verification` | Crosswalk integrity, semantic reconciliation, trace-completeness, and optional exact-source regeneration verdict |
@@ -212,9 +286,13 @@ Available names:
 | `tool-qualification-dossier` | Exact-bound intended use, classification, operational/verification objectives, configuration, and known-anomaly evidence |
 | `tool-qualification-verification` | Dossier semantics and optional exact analysis/benchmark/conformance/anomaly binding verdict |
 | `vex-verification` | CycloneDX 1.7 VEX structure, governed-decision, and exact-source-regeneration verdict |
+| `vulnerability-applicability` | Exact CycloneDX component-version applicability against preserved OSV affected ranges |
+| `vulnerability-applicability-verification` | Applicability integrity and result-summary reconciliation verdict |
+| `vulnerability-workflow` | Governed reachability, exposure, safety, SSVC, remediation, verification, VEX, CSAF, and POA&M lifecycle |
+| `vulnerability-workflow-verification` | Vulnerability-lifecycle integrity, state, and population reconciliation verdict |
 | `workflow-status` | Lifecycle stage, handoff gates, evidence, summaries, and remediation actions |
 
-The schemas use stable `urn:pysfmea:schema:…:1` identifiers and have no external `$ref`
+The schemas use stable, versioned `urn:pysfmea:schema:…:<major>` identifiers and have no external `$ref`
 dependencies. A consumer can pin the catalog digest and retain the exported schema beside its
 CI policy or evidence record.
 
@@ -725,6 +803,21 @@ The public catalog also includes these closed contracts:
 - `csaf-verification` for authority-attributed OASIS CSAF 2.0 advisories
 - `slsa-provenance` and `slsa-provenance-verification`
 - `ssvc-policy`, `ssvc-observations`, `ssvc-assessment`, and `ssvc-verification`
+- `sfmea-semantic-benchmark` and `sfmea-semantic-benchmark-verification`
+- `test-dossier` and `test-dossier-verification`
+- `samate-assessment-source`, `samate-assessment`, and its verification receipt
+- `vulnerability-applicability` and `vulnerability-applicability-verification`
+- `vulnerability-workflow` and `vulnerability-workflow-verification`
+- `clusterfuzzlite-intake` and `clusterfuzzlite-intake-verification`
+- `benchmark-corpus-inventory` and `benchmark-corpus-verification`
+- `benchmark-differential-source`, `benchmark-differential-assessment`, and its verification receipt
+- `benchmark-proficiency-source`, `benchmark-proficiency-assessment`, and its verification receipt
+- `benchmark-case-inventory` and `benchmark-case-inventory-verification`
+- `benchmark-item-quality-audit` and `benchmark-item-quality-verification`
+- `inspect-ai-evidence`, `inspect-ai-verification`, `inspect-ai-conformance`, and
+  `inspect-ai-conformance-verification`
+- `deployed-tevv-source`, `deployed-tevv-assessment`, and `deployed-tevv-verification`
+- `genai-telemetry` and `genai-telemetry-verification`
 
 XML and JSON-LD standards artifacts retain their native external formats; PySFMEA schemas cover
 the verifier receipts and PySFMEA control artifacts. Use the semantic verifier as well as schema
@@ -746,9 +839,19 @@ file-size observation.
 Schema catalog names and URN major versions identify compatibility boundaries. Additive
 diagnostic properties may appear in verifier verdicts because their schemas intentionally allow
 format-specific extensions. The required verdict envelope and named checks remain stable within
-major version 1. A breaking required-field, meaning, type, or closed-vocabulary change requires
+each schema major version. A breaking required-field, meaning, type, or closed-vocabulary change requires
 a new schema name/URN major version. Catalog SHA-256 values expose every byte-level contract
 change, including compatible clarifications.
+
+In 0.83.0, Inspect conformance, deployed TEVV and qualification readiness use major 3;
+raw TEVV evaluation/control events use major 2. Trust-policy, collection and callgraph contracts
+are major 1. See [migration guidance](ASSURANCE_ENFORCEMENT.md).
+
+Previously, in 0.82.0, Inspect conformance, GenAI telemetry, deployed TEVV, validation portfolios, and
+qualification readiness (including their source/assessment/verification variants) move to format
+and schema major **2**. Retain historical artifacts separately; regenerate these outputs from
+raw evidence using current commands. Do not relabel a v1 artifact as v2. The five raw-input
+contracts above begin at major 1. Export the current schema catalog for authoritative IDs.
 
 Versioned programmatic outputs that are not present in the public schema catalog, including the
 repository inventory described above, do not inherit this schema-compatibility guarantee. Their

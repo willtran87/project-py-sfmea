@@ -1,0 +1,8 @@
+{
+  "format": "pysfmea-python-platform-matrix-1",
+  "interpreters": ["cpython-3.11", "cpython-3.12", "cpython-3.13", "cpython-3.14", "pypy-3.11"],
+  "operating_systems": ["linux", "windows"],
+  "required_checks": ["clean_install", "scan", "schema_validation", "semantic_digest", "runtime", "peak_memory"],
+  "cases": ["cases/portable.py"],
+  "claim_boundary": "Matrix declarations are not execution receipts."
+}

@@ -1,0 +1,331 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from pysfmea.evidence_signing import sign_json_evidence, verify_json_evidence_signature
+from pysfmea.genai_telemetry import _attributes, _otel_spans, _value
+from pysfmea.measurement_validity import (
+    complete_collection,
+    paired_cohort,
+    timed_breaker,
+)
+from pysfmea.scope_authentication import authenticate_scope
+from pysfmea.upstream_contract import approved_inspect_schema
+
+
+def breaker() -> dict:
+    def event(i: int, second: int, outcome: str, before: str, after: str) -> dict:
+        time = f"2026-09-01T00:00:{second:02d}Z"
+        return {
+            "id": str(i),
+            "started_at": time,
+            "completed_at": time,
+            "outcome": outcome,
+            "state_before": before,
+            "state_after": after,
+        }
+
+    return {
+        "breaker_policy": {
+            "failure_threshold": 2,
+            "cooldown_seconds": 10,
+            "half_open_successes": 2,
+        },
+        "requests": [
+            event(0, 0, "failure", "closed", "closed"),
+            event(1, 1, "failure", "closed", "open"),
+            event(2, 2, "rejected", "open", "open"),
+            event(3, 11, "success", "half_open", "half_open"),
+            event(4, 12, "success", "half_open", "closed"),
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "none",
+        "early_probe",
+        "no_rejection",
+        "threshold",
+        "probe_count",
+        "duplicate",
+        "overlap",
+        "invalid_outcome",
+        "bad_state",
+        "negative_cooldown",
+    ],
+)
+def test_timed_breaker_replays_policy_and_boundary_conditions(mutation: str) -> None:
+    value = breaker()
+    assert timed_breaker(value)
+    if mutation == "none":
+        return
+    if mutation == "early_probe":
+        value["requests"][3]["started_at"] = "2026-09-01T00:00:10Z"
+    elif mutation == "no_rejection":
+        value["requests"].pop(2)
+    elif mutation == "threshold":
+        value["breaker_policy"]["failure_threshold"] = 3
+    elif mutation == "probe_count":
+        value["breaker_policy"]["half_open_successes"] = 1
+    elif mutation == "duplicate":
+        value["requests"][1]["id"] = "0"
+    elif mutation == "overlap":
+        value["requests"][0]["completed_at"] = "2026-09-01T00:00:02Z"
+    elif mutation == "invalid_outcome":
+        value["requests"][2]["outcome"] = "success"
+    elif mutation == "bad_state":
+        value["requests"][1]["state_after"] = "closed"
+    else:
+        value["breaker_policy"]["cooldown_seconds"] = -1
+    assert not timed_breaker(value)
+
+
+def test_breaker_failed_probe_reopens_and_resets_cooldown() -> None:
+    value = breaker()
+    value["requests"][3].update(outcome="failure", state_after="open")
+    value["requests"][4].update(
+        started_at="2026-09-01T00:00:21Z",
+        completed_at="2026-09-01T00:00:21Z",
+        state_after="half_open",
+    )
+    last = copy.deepcopy(value["requests"][4])
+    last.update(
+        id="final",
+        started_at="2026-09-01T00:00:22Z",
+        completed_at="2026-09-01T00:00:22Z",
+        state_after="closed",
+    )
+    value["requests"].append(last)
+    assert timed_breaker(value)
+
+
+@pytest.mark.parametrize("field", ["dataset_sha256", "oracle_sha256", "cases"])
+def test_drift_cannot_compare_substituted_populations(field: str) -> None:
+    baseline = {
+        "dataset_sha256": "a" * 64,
+        "oracle_sha256": "b" * 64,
+        "cases": [{"id": "case", "passed": True}],
+    }
+    current = copy.deepcopy(baseline)
+    assert paired_cohort(baseline, current)
+    current[field] = (
+        [{"id": "different", "passed": True}] if field == "cases" else "c" * 64
+    )
+    assert not paired_cohort(baseline, current)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("sampling_probability", 0.5),
+        ("dropped_records", 1),
+        ("expected_requests", 11),
+        ("expected_requests", True),
+        ("telemetry_sha256", "b" * 64),
+        ("population", "all-spans"),
+        ("counter_source", "telemetry.json"),
+    ],
+)
+def test_collection_cannot_hide_loss_sampling_or_wrong_denominators(
+    field: str, value: object
+) -> None:
+    window = {
+        "id": "w",
+        "started_at": "2026-09-01T00:00:00Z",
+        "ended_at": "2026-09-01T01:00:00Z",
+        "telemetry_sha256": "a" * 64,
+        "telemetry_ref": "telemetry.json",
+    }
+    collection = {
+        "format": "pysfmea-tevv-collection-1",
+        "window_id": "w",
+        "started_at": window["started_at"],
+        "ended_at": window["ended_at"],
+        "telemetry_sha256": "a" * 64,
+        "expected_requests": 10,
+        "sampling_probability": 1,
+        "dropped_records": 0,
+        "counter_source": "gateway counter",
+        "population": "one-span-per-request",
+    }
+    assert complete_collection(collection, window, 10)
+    collection[field] = value
+    assert not complete_collection(collection, window, 10)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [None],
+        {"spans": [None]},
+        {"spans": "malformed"},
+        {"resourceSpans": [None]},
+        {"resourceSpans": [{"scopeSpans": [None]}]},
+    ],
+)
+def test_otlp_never_silently_discards_malformed_records(value: object) -> None:
+    with pytest.raises(ValueError):
+        _otel_spans(value)
+
+
+def test_otlp_rejects_ambiguous_attributes_and_anyvalues() -> None:
+    with pytest.raises(ValueError):
+        _attributes(
+            [
+                {"key": "provider", "value": "first"},
+                {"key": "provider", "value": "second"},
+            ]
+        )
+    with pytest.raises(ValueError):
+        _value({"stringValue": "1", "intValue": 1})
+    with pytest.raises(ValueError):
+        _attributes([{}])
+    assert _attributes([{"key": "k", "value": {"stringValue": "v"}}]) == {"k": "v"}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "none",
+        "revoked",
+        "expired",
+        "role",
+        "identity",
+        "tamper",
+        "missing_policy",
+        "missing_signature",
+    ],
+)
+def test_scope_approval_requires_exact_signed_subject_and_authorized_key(
+    tmp_path: Path, mutation: str
+) -> None:
+    serialization = pytest.importorskip("cryptography.hazmat.primitives.serialization")
+    ed25519 = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ed25519")
+    key = ed25519.Ed25519PrivateKey.generate()
+    private, public = tmp_path / "private.pem", tmp_path / "public.pem"
+    private.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    public.write_bytes(
+        key.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    )
+    source, policy_path = tmp_path / "portfolio.json", tmp_path / "trust.json"
+    value = {
+        "product": {
+            "qualification_scope": {
+                "approval_authority": "board",
+                "approval_ref": "portfolio.sig.json",
+                "approved_at": "2026-09-01T00:00:00Z",
+                "next_review_at": "2026-10-01T00:00:00Z",
+            }
+        }
+    }
+    source.write_text(json.dumps(value))
+    policy = {
+        "format": "pysfmea-scope-trust-policy-1",
+        "authorities": [
+            {
+                "identity": "board",
+                "public_key": public.name,
+                "roles": ["scope-approver"],
+                "not_before": "2026-09-01T00:00:00Z",
+                "not_after": "2026-10-01T00:00:00Z",
+                "revoked": False,
+            }
+        ],
+    }
+    signature = tmp_path / "portfolio.sig.json"
+    with patch("pysfmea.evidence_signing.utc_now", return_value="2026-09-02T00:00:00Z"):
+        sign_json_evidence(source, private, "board", destination=signature)
+    if mutation == "none":
+        assert verify_json_evidence_signature(
+            source,
+            signature,
+            public,
+            expected_artifact_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+            expected_signature_sha256=hashlib.sha256(
+                signature.read_bytes()
+            ).hexdigest(),
+        )["valid"]
+        assert not verify_json_evidence_signature(
+            source, signature, public, expected_artifact_sha256="0" * 64
+        )["valid"]
+        assert not verify_json_evidence_signature(
+            source, signature, public, expected_signature_sha256="0" * 64
+        )["valid"]
+    if mutation == "revoked":
+        policy["authorities"][0]["revoked"] = True
+    elif mutation == "expired":
+        policy["authorities"][0]["not_after"] = "2026-09-03T00:00:00Z"
+    elif mutation == "role":
+        policy["authorities"][0]["roles"] = ["observer"]
+    elif mutation == "identity":
+        policy["authorities"][0]["identity"] = "other"
+    elif mutation == "tamper":
+        value["substituted"] = True
+        source.write_text(json.dumps(value))
+    elif mutation == "missing_signature":
+        signature.unlink()
+    policy_path.write_text(json.dumps(policy))
+    result = authenticate_scope(
+        source,
+        None if mutation == "missing_policy" else policy_path,
+        as_of="2026-09-07T00:00:00Z",
+    )
+    assert result["authenticated"] is (mutation == "none")
+
+
+def test_upstream_policy_pins_schema_version_uri_bytes_and_projection(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "approved.json"
+    expected = {
+        "tool": "Inspect AI",
+        "version": "v",
+        "uri": "https://publisher/schema",
+        "sha256": "a" * 64,
+        "configuration_projection": "inspect-export-config-1",
+    }
+    path.write_text(
+        json.dumps(
+            {"format": "pysfmea-upstream-schema-policy-1", "schemas": [expected]}
+        )
+    )
+    result, digest = approved_inspect_schema(
+        path, version="v", uri=expected["uri"], digest="a" * 64
+    )
+    assert result and digest == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert not approved_inspect_schema(
+        path, version="other", uri=expected["uri"], digest="a" * 64
+    )[0]
+    assert not approved_inspect_schema(
+        path, version="v", uri=expected["uri"], digest="b" * 64
+    )[0]
+    assert approved_inspect_schema(None, version="v", uri="u", digest="a" * 64) == (
+        False,
+        "",
+    )
+    path.write_text('{"format": "wrong", "schemas": []}')
+    with pytest.raises(ValueError, match="policy is invalid"):
+        approved_inspect_schema(path, version="v", uri="u", digest="a" * 64)
+
+
+@pytest.mark.parametrize("value", [None, 4, True, [], {}, "2026-09-01T00:00:00"])
+def test_invalid_timestamps_fail_closed(value: object) -> None:
+    source = breaker()
+    source["requests"][0]["started_at"] = value
+    assert not timed_breaker(source)

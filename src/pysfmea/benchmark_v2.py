@@ -101,7 +101,9 @@ def seal_benchmark_v2_source(
             raise ValueError("benchmark v2 protocol must contain an object")
         _observations(value, _protocol(protocol_document.value))
     else:
-        raise ValueError("only benchmark protocol or observations format 2 can be sealed")
+        raise ValueError(
+            "only benchmark protocol or observations format 2 can be sealed"
+        )
     return atomic_publish_text(
         destination,
         json.dumps(value, indent=2, ensure_ascii=False) + "\n",
@@ -308,7 +310,10 @@ def _observations(value: dict[str, Any], protocol: dict[str, Any]) -> dict[str, 
         "rating_items",
         "content_sha256",
     }
-    if set(value) != required or value.get("format") != BENCHMARK_OBSERVATIONS_V2_FORMAT:
+    if (
+        set(value) != required
+        or value.get("format") != BENCHMARK_OBSERVATIONS_V2_FORMAT
+    ):
         raise ValueError("benchmark observation fields or format do not match format 2")
     result = _sealed(value, "benchmark observations")
     if result["protocol_id"] != protocol["id"]:
@@ -343,27 +348,45 @@ def _observations(value: dict[str, Any], protocol: dict[str, Any]) -> dict[str, 
         source_references.add(source_ref)
         strata = repository["strata"]
         if not isinstance(strata, dict) or set(strata) != strata_fields:
-            raise ValueError(f"repository {identifier} strata do not match the protocol")
+            raise ValueError(
+                f"repository {identifier} strata do not match the protocol"
+            )
         for field, labels in strata.items():
             if (
                 not isinstance(labels, list)
                 or not labels
                 or len(labels) > 100
                 or len(labels) != len(set(labels))
-                or any(not isinstance(label, str) or not label.strip() for label in labels)
+                or any(
+                    not isinstance(label, str) or not label.strip() for label in labels
+                )
             ):
                 raise ValueError(f"repository {identifier} stratum {field} is invalid")
         metrics = repository["metrics"]
         if not isinstance(metrics, dict) or set(metrics) != metric_names:
-            raise ValueError(f"repository {identifier} metrics do not match the protocol")
+            raise ValueError(
+                f"repository {identifier} metrics do not match the protocol"
+            )
         for name, metric in metrics.items():
-            if not isinstance(metric, dict) or set(metric) != {"true_positive", "false_positive", "false_negative", "true_negative"}:
+            if not isinstance(metric, dict) or set(metric) != {
+                "true_positive",
+                "false_positive",
+                "false_negative",
+                "true_negative",
+            }:
                 raise ValueError(f"repository {identifier} metric {name} is invalid")
-            counts = {key: _count(item, f"metric {name} {key}") for key, item in metric.items()}
+            counts = {
+                key: _count(item, f"metric {name} {key}")
+                for key, item in metric.items()
+            }
             if counts["true_positive"] + counts["false_negative"] <= 0:
-                raise ValueError(f"repository {identifier} metric {name} has no labeled positives")
+                raise ValueError(
+                    f"repository {identifier} metric {name} has no labeled positives"
+                )
             if counts["true_positive"] + counts["false_positive"] <= 0:
-                raise ValueError(f"repository {identifier} metric {name} has no produced positives")
+                raise ValueError(
+                    f"repository {identifier} metric {name} has no produced positives"
+                )
         predictions = repository["predictions"]
         if not isinstance(predictions, list):
             raise ValueError(f"repository {identifier} predictions must be an array")
@@ -389,7 +412,11 @@ def _observations(value: dict[str, Any], protocol: dict[str, Any]) -> dict[str, 
         raise ValueError("benchmark rating items are invalid")
     rating_ids: set[str] = set()
     for item in rating_items:
-        if not isinstance(item, dict) or set(item) != {"id", "ratings", "adjudication_ref"}:
+        if not isinstance(item, dict) or set(item) != {
+            "id",
+            "ratings",
+            "adjudication_ref",
+        }:
             raise ValueError("benchmark rating item fields are invalid")
         identifier = _text(item["id"], "rating item id")
         _text(item["adjudication_ref"], "rating adjudication_ref")
@@ -404,7 +431,9 @@ def _observations(value: dict[str, Any], protocol: dict[str, Any]) -> dict[str, 
             or any(not isinstance(label, bool) for label in ratings.values())
             or any(not isinstance(rater, str) or not rater for rater in ratings)
         ):
-            raise ValueError(f"rating item {identifier} requires at least two boolean ratings")
+            raise ValueError(
+                f"rating item {identifier} requires at least two boolean ratings"
+            )
     return result
 
 
@@ -448,10 +477,14 @@ def _wilson(matched: int, population: int, confidence: float) -> dict[str, Any]:
     z = NormalDist().inv_cdf(0.5 + confidence / 2.0)
     denominator = 1.0 + z * z / population
     center = (estimate + z * z / (2.0 * population)) / denominator
-    margin = z * math.sqrt(
-        estimate * (1.0 - estimate) / population
-        + z * z / (4.0 * population * population)
-    ) / denominator
+    margin = (
+        z
+        * math.sqrt(
+            estimate * (1.0 - estimate) / population
+            + z * z / (4.0 * population * population)
+        )
+        / denominator
+    )
     return {
         "matched": matched,
         "population": population,
@@ -484,14 +517,18 @@ def _cluster_interval(
     seed: str,
 ) -> dict[str, Any]:
     randomizer = random.Random(
-        int(hashlib.sha256(f"{seed}:{metric_name}:{dimension}".encode()).hexdigest(), 16)
+        int(
+            hashlib.sha256(f"{seed}:{metric_name}:{dimension}".encode()).hexdigest(), 16
+        )
     )
     estimates: list[float] = []
     for _ in range(replicates):
         selected = [randomizer.choice(repositories) for _ in repositories]
         tp = sum(item["metrics"][metric_name]["true_positive"] for item in selected)
         other_key = "false_negative" if dimension == "recall" else "false_positive"
-        population = tp + sum(item["metrics"][metric_name][other_key] for item in selected)
+        population = tp + sum(
+            item["metrics"][metric_name][other_key] for item in selected
+        )
         estimates.append(tp / population)
     alpha = (1.0 - confidence) / 2.0
     return {
@@ -533,7 +570,12 @@ def _metric_result(
         seed=seed,
     )
     return {
-        "counts": {"true_positive": tp, "false_positive": fp, "false_negative": fn, "true_negative": tn},
+        "counts": {
+            "true_positive": tp,
+            "false_positive": fp,
+            "false_negative": fn,
+            "true_negative": tn,
+        },
         "recall": {
             "wilson": recall,
             "cluster_bootstrap": recall_cluster,
@@ -551,7 +593,11 @@ def _strata(repositories: list[dict[str, Any]], fields: list[str]) -> dict[str, 
     result: dict[str, Any] = {}
     for field in fields:
         labels = sorted(
-            {label for repository in repositories for label in repository["strata"][field]}
+            {
+                label
+                for repository in repositories
+                for label in repository["strata"][field]
+            }
         )
         result[field] = {
             label: sorted(
@@ -608,7 +654,12 @@ def _calibration(repositories: list[dict[str, Any]]) -> dict[str, Any]:
         for prediction in repository["predictions"]
     ]
     if not values:
-        return {"samples": 0, "brier_score": None, "expected_calibration_error": None, "bins": []}
+        return {
+            "samples": 0,
+            "brier_score": None,
+            "expected_calibration_error": None,
+            "bins": [],
+        }
     brier = sum(
         (float(value["confidence"]) - (1.0 if value["outcome"] else 0.0)) ** 2
         for value in values
@@ -626,7 +677,9 @@ def _calibration(repositories: list[dict[str, Any]]) -> dict[str, Any]:
         ]
         if not selected:
             continue
-        mean_confidence = sum(float(value["confidence"]) for value in selected) / len(selected)
+        mean_confidence = sum(float(value["confidence"]) for value in selected) / len(
+            selected
+        )
         observed = sum(1 for value in selected if value["outcome"]) / len(selected)
         weighted_error += len(selected) / len(values) * abs(mean_confidence - observed)
         bins.append(
@@ -663,7 +716,9 @@ def _krippendorff_alpha(items: list[dict[str, Any]]) -> dict[str, Any]:
     total_ratings = sum(category_counts.values())
     observed = observed_disagreements / total_pairs
     expected = (
-        2 * category_counts[False] * category_counts[True]
+        2
+        * category_counts[False]
+        * category_counts[True]
         / (total_ratings * (total_ratings - 1))
         if total_ratings > 1
         else 0.0
@@ -781,9 +836,15 @@ def benchmark_v2_assessment(
             "strata_required": len(stratum_checks),
             "stratum_metrics_passing": sum(stratum_metric_checks.values()),
             "stratum_metrics_required": len(stratum_metric_checks),
-            "failed_checks": sorted(name for name, state in checks.items() if not state),
-            "failed_metrics": sorted(name for name, state in metric_checks.items() if not state),
-            "failed_strata": sorted(name for name, state in stratum_checks.items() if not state),
+            "failed_checks": sorted(
+                name for name, state in checks.items() if not state
+            ),
+            "failed_metrics": sorted(
+                name for name, state in metric_checks.items() if not state
+            ),
+            "failed_strata": sorted(
+                name for name, state in stratum_checks.items() if not state
+            ),
             "failed_stratum_metrics": sorted(
                 name for name, state in stratum_metric_checks.items() if not state
             ),
@@ -858,9 +919,13 @@ def verify_benchmark_v2_assessment(
             and value["summary"]["failed_checks"]
             == sorted(name for name, state in value["checks"].items() if not state)
             and value["summary"]["failed_metrics"]
-            == sorted(name for name, state in value["metric_checks"].items() if not state)
+            == sorted(
+                name for name, state in value["metric_checks"].items() if not state
+            )
             and value["summary"]["failed_strata"]
-            == sorted(name for name, state in value["stratum_checks"].items() if not state)
+            == sorted(
+                name for name, state in value["stratum_checks"].items() if not state
+            )
             and value["summary"]["failed_stratum_metrics"]
             == sorted(
                 name
@@ -890,10 +955,10 @@ def verify_benchmark_v2_assessment(
             except (OSError, ValueError, json.JSONDecodeError):
                 regeneration = False
             if not regeneration:
-                errors.append("benchmark assessment does not regenerate from supplied sources")
-    valid = bool(
-        structure and integrity and semantic and regeneration is not False
-    )
+                errors.append(
+                    "benchmark assessment does not regenerate from supplied sources"
+                )
+    valid = bool(structure and integrity and semantic and regeneration is not False)
     return {
         "format": BENCHMARK_VERIFICATION_V2_FORMAT,
         "valid": valid,

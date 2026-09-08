@@ -25,9 +25,7 @@ SYNTHESIS_DRAFT_FORMAT = "pysfmea-synthesis-workspace-draft-1"
 SYNTHESIS_FORMAT = "pysfmea-synthesis-workspace-1"
 SYNTHESIS_VERIFICATION_FORMAT = "pysfmea-synthesis-workspace-verification-1"
 SYNTHESIS_APPLY_RECEIPT_FORMAT = "pysfmea-synthesis-apply-receipt-1"
-SYNTHESIS_APPLY_VERIFICATION_FORMAT = (
-    "pysfmea-synthesis-apply-receipt-verification-1"
-)
+SYNTHESIS_APPLY_VERIFICATION_FORMAT = "pysfmea-synthesis-apply-receipt-verification-1"
 MAX_SYNTHESIS_BYTES = 20_000_000
 MAX_SYNTHESIS_ENTRIES = 5_000
 MAX_SYNTHESIS_DEPTH = 80
@@ -92,7 +90,8 @@ def _existing_claims(analysis: dict[str, Any]) -> list[dict[str, Any]]:
         scanner = item.get("scanner", {})
         review = item.get("review", {})
         content = {
-            "failure_mode": review.get("failure_mode") or scanner.get("failure_mode", ""),
+            "failure_mode": review.get("failure_mode")
+            or scanner.get("failure_mode", ""),
             "trigger": review.get("trigger", ""),
             "local_effect": review.get("local_effect", ""),
             "next_higher_effect": review.get("next_higher_effect", ""),
@@ -229,9 +228,11 @@ def build_synthesis_workspace(analysis: dict[str, Any]) -> dict[str, Any]:
                 for value in existing
                 if value["component_id"] == suggestion.get("component_id")
             ),
-            key=lambda value: -_similarity(
-                value["content"].get("failure_mode"),
-                suggestion.get("content", {}).get("failure_mode"),
+            key=lambda value: (
+                -_similarity(
+                    value["content"].get("failure_mode"),
+                    suggestion.get("content", {}).get("failure_mode"),
+                )
             ),
         )[:5]
         entries.append(
@@ -309,7 +310,10 @@ def _validate_content(content: Any) -> list[str]:
                 errors.append(f"{field} entries must be non-empty strings")
         elif not isinstance(value, str) or len(value) > MAX_GENERATED_TEXT_CHARS:
             errors.append(f"{field} must be a bounded string")
-    if isinstance(content.get("failure_mode"), str) and not content["failure_mode"].strip():
+    if (
+        isinstance(content.get("failure_mode"), str)
+        and not content["failure_mode"].strip()
+    ):
         errors.append("failure_mode is required")
     return errors
 
@@ -332,7 +336,9 @@ def verify_synthesis_workspace(
     declared = str(workspace.get("content_sha256", ""))
     unsigned = copy.deepcopy(workspace)
     unsigned.pop("content_sha256", None)
-    integrity = bool(re.fullmatch(r"[0-9a-f]{64}", declared)) and declared == canonical_json_sha256(unsigned)
+    integrity = bool(
+        re.fullmatch(r"[0-9a-f]{64}", declared)
+    ) and declared == canonical_json_sha256(unsigned)
     if workspace.get("format") != SYNTHESIS_FORMAT:
         errors.append("workspace must be sealed with synthesis workspace format 1")
     if not isinstance(workspace.get("generated_at"), str) or not workspace.get(
@@ -381,7 +387,9 @@ def verify_synthesis_workspace(
             "reviewer",
             "rationale",
         }:
-            errors.append(f"entry {identifier or index} fields do not match the closed format")
+            errors.append(
+                f"entry {identifier or index} fields do not match the closed format"
+            )
         if not identifier or identifier in ids:
             errors.append(f"entry {index} has a missing or duplicate suggestion_id")
         ids.add(identifier)
@@ -422,11 +430,11 @@ def verify_synthesis_workspace(
     structure_valid = not errors
     binding_matches: bool | None = None
     if analysis is not None:
-        binding_matches = (
-            binding.get("baseline_id")
-            == analysis.get("project", {}).get("baseline", {}).get("id", "")
-            and binding.get("analysis_state_sha256") == canonical_json_sha256(analysis)
-        )
+        binding_matches = binding.get("baseline_id") == analysis.get("project", {}).get(
+            "baseline", {}
+        ).get("id", "") and binding.get(
+            "analysis_state_sha256"
+        ) == canonical_json_sha256(analysis)
         suggestions = {
             str(value.get("id", "")): value
             for value in analysis.get("suggestions", [])
@@ -459,11 +467,15 @@ def verify_synthesis_workspace(
             suggestion = suggestions.get(str(entry.get("suggestion_id", "")))
             expected_entry = expected_entries.get(str(entry.get("suggestion_id", "")))
             if suggestion is None:
-                errors.append(f"suggestion is missing or no longer proposed: {entry.get('suggestion_id', '')}")
+                errors.append(
+                    f"suggestion is missing or no longer proposed: {entry.get('suggestion_id', '')}"
+                )
             elif entry.get("original_content_sha256") != canonical_json_sha256(
                 suggestion.get("content", {})
             ):
-                errors.append(f"suggestion content changed: {entry.get('suggestion_id', '')}")
+                errors.append(
+                    f"suggestion content changed: {entry.get('suggestion_id', '')}"
+                )
             if expected_entry is None or any(
                 entry.get(field) != expected_entry.get(field)
                 for field in immutable_fields
@@ -495,9 +507,7 @@ def verify_synthesis_workspace(
     }
 
 
-def export_synthesis_workspace(
-    analysis: dict[str, Any], output: str | Path
-) -> Path:
+def export_synthesis_workspace(analysis: dict[str, Any], output: str | Path) -> Path:
     payload = build_synthesis_workspace(analysis)
     return atomic_publish_text(
         output,
@@ -531,8 +541,7 @@ def seal_synthesis_workspace(source: str | Path) -> Path:
     verification = verify_synthesis_workspace(workspace)
     if not verification["valid"]:
         raise ValueError(
-            "synthesis workspace cannot be sealed: "
-            + "; ".join(verification["errors"])
+            "synthesis workspace cannot be sealed: " + "; ".join(verification["errors"])
         )
     return atomic_publish_text(
         path,
@@ -547,14 +556,15 @@ def apply_synthesis_workspace(
 ) -> dict[str, Any]:
     verification = verify_synthesis_workspace(workspace, analysis)
     if not verification["valid"]:
-        raise ValueError("invalid or stale synthesis workspace: " + "; ".join(verification["errors"]))
+        raise ValueError(
+            "invalid or stale synthesis workspace: " + "; ".join(verification["errors"])
+        )
     snapshot = copy.deepcopy(analysis)
     source_analysis_state_sha256 = canonical_json_sha256(analysis)
     applied: list[str] = []
     try:
         suggestions = {
-            str(value.get("id", "")): value
-            for value in analysis.get("suggestions", [])
+            str(value.get("id", "")): value for value in analysis.get("suggestions", [])
         }
         for entry in workspace["entries"]:
             decision = entry["decision"]
@@ -634,16 +644,13 @@ def verify_synthesis_workspace_file(
         }
 
 
-def export_synthesis_apply_receipt(
-    receipt: dict[str, Any], output: str | Path
-) -> Path:
+def export_synthesis_apply_receipt(receipt: dict[str, Any], output: str | Path) -> Path:
     declared = str(receipt.get("content_sha256", ""))
     unsigned = dict(receipt)
     unsigned.pop("content_sha256", None)
-    if (
-        receipt.get("format") != SYNTHESIS_APPLY_RECEIPT_FORMAT
-        or declared != canonical_json_sha256(unsigned)
-    ):
+    if receipt.get(
+        "format"
+    ) != SYNTHESIS_APPLY_RECEIPT_FORMAT or declared != canonical_json_sha256(unsigned):
         raise ValueError("synthesis apply receipt format or integrity is invalid")
     return atomic_publish_text(
         output,
@@ -693,9 +700,10 @@ def verify_synthesis_apply_receipt(
     unsigned = copy.deepcopy(receipt)
     declared_content_sha256 = str(unsigned.pop("content_sha256", ""))
     actual_content_sha256 = canonical_json_sha256(unsigned)
-    content_integrity = bool(
-        re.fullmatch(r"[0-9a-f]{64}", declared_content_sha256)
-    ) and declared_content_sha256 == actual_content_sha256
+    content_integrity = (
+        bool(re.fullmatch(r"[0-9a-f]{64}", declared_content_sha256))
+        and declared_content_sha256 == actual_content_sha256
+    )
     if not content_integrity:
         errors.append("receipt content digest does not match")
     if receipt.get("format") != SYNTHESIS_APPLY_RECEIPT_FORMAT:
@@ -747,14 +755,11 @@ def verify_synthesis_apply_receipt(
     workspace_binding: bool | None = None
     workspace_verification: dict[str, Any] | None = None
     if workspace is not None:
-        workspace_verification = verify_synthesis_workspace(
-            workspace, source_analysis
-        )
+        workspace_verification = verify_synthesis_workspace(workspace, source_analysis)
         workspace_integrity = workspace_verification["valid"]
-        workspace_binding = (
-            workspace_integrity
-            and receipt.get("workspace_sha256") == workspace.get("content_sha256")
-        )
+        workspace_binding = workspace_integrity and receipt.get(
+            "workspace_sha256"
+        ) == workspace.get("content_sha256")
         if not workspace_integrity:
             errors.append("sealed workspace is invalid or stale")
         elif not workspace_binding:
@@ -805,8 +810,7 @@ def verify_synthesis_apply_receipt(
             errors.append("receipt decision accounting does not reconcile")
 
     bindings_complete = all(
-        value is not None
-        for value in (source_analysis, result_analysis, workspace)
+        value is not None for value in (source_analysis, result_analysis, workspace)
     )
     checks = {
         "content_integrity": content_integrity,
@@ -817,17 +821,23 @@ def verify_synthesis_apply_receipt(
         "result_analysis_binding": result_binding,
         "decision_reconciliation": decision_reconciliation,
     }
-    valid = content_integrity and structure and all(
-        value is not False for value in checks.values()
+    valid = (
+        content_integrity
+        and structure
+        and all(value is not False for value in checks.values())
     )
-    reconciled = valid and bindings_complete and all(
-        checks[name] is True
-        for name in (
-            "source_analysis_binding",
-            "workspace_integrity",
-            "workspace_binding",
-            "result_analysis_binding",
-            "decision_reconciliation",
+    reconciled = (
+        valid
+        and bindings_complete
+        and all(
+            checks[name] is True
+            for name in (
+                "source_analysis_binding",
+                "workspace_integrity",
+                "workspace_binding",
+                "result_analysis_binding",
+                "decision_reconciliation",
+            )
         )
     )
     return {

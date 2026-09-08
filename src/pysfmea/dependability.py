@@ -61,15 +61,11 @@ def dependability_authoring_template(
     """Create a conservative engineering template from discovered components."""
 
     components = [
-        item
-        for item in analysis.get("components", [])
-        if isinstance(item, dict)
+        item for item in analysis.get("components", []) if isinstance(item, dict)
     ][:MAX_COMPONENTS]
     timing_component_ids = {
         str(item.get("source_component_id", item.get("component_id", "")))
-        for item in analysis.get("resilience_semantics", {}).get(
-            "timing_relations", []
-        )
+        for item in analysis.get("resilience_semantics", {}).get("timing_relations", [])
         if isinstance(item, dict)
     }
     nodes: list[dict[str, Any]] = []
@@ -94,7 +90,9 @@ def dependability_authoring_template(
         nodes.append(
             {
                 "id": identifier,
-                "name": str(component.get("qualname", component.get("name", identifier))),
+                "name": str(
+                    component.get("qualname", component.get("name", identifier))
+                ),
                 "design_intent": "",
                 "parameters": parameters,
                 "deviations": [],
@@ -104,7 +102,9 @@ def dependability_authoring_template(
         blocks.append(
             {
                 "id": identifier,
-                "name": str(component.get("qualname", component.get("name", identifier))),
+                "name": str(
+                    component.get("qualname", component.get("name", identifier))
+                ),
                 "reliability": None,
                 "reliability_interval": None,
                 "failure_rate_per_hour": None,
@@ -114,9 +114,9 @@ def dependability_authoring_template(
             }
         )
     markov_models: list[dict[str, Any]] = []
-    for breaker in analysis.get("resilience_semantics", {}).get(
-        "circuit_breakers", []
-    )[:1_000]:
+    for breaker in analysis.get("resilience_semantics", {}).get("circuit_breakers", [])[
+        :1_000
+    ]:
         if not isinstance(breaker, dict):
             continue
         reference = str(
@@ -202,7 +202,9 @@ def _authoring(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any
         "content_sha256",
     }
     if set(value) != required or value.get("format") != DEPENDABILITY_AUTHORING_FORMAT:
-        raise ValueError("dependability authoring fields or format do not match format 1")
+        raise ValueError(
+            "dependability authoring fields or format do not match format 1"
+        )
     unsigned = copy.deepcopy(value)
     claimed = unsigned.pop("content_sha256", "")
     if (
@@ -218,7 +220,9 @@ def _authoring(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any
         or set(binding) != {"baseline_id", "analysis_state_sha256"}
         or binding["analysis_state_sha256"] != analysis_state_sha256(analysis)
     ):
-        raise ValueError("dependability authoring does not bind the exact analysis state")
+        raise ValueError(
+            "dependability authoring does not bind the exact analysis state"
+        )
     assumptions = value["assumptions"]
     if (
         not isinstance(assumptions, list)
@@ -290,7 +294,9 @@ def _hazop(value: Any) -> dict[str, Any]:
             or not isinstance(deviations, list)
             or total_deviations + len(deviations) > MAX_DEVIATIONS
         ):
-            raise ValueError(f"HAZOP node {node_id} parameters or deviations are invalid")
+            raise ValueError(
+                f"HAZOP node {node_id} parameters or deviations are invalid"
+            )
         total_deviations += len(deviations)
         for parameter in parameters:
             for guideword in guidewords:
@@ -312,11 +318,19 @@ def _hazop(value: Any) -> dict[str, Any]:
                 raise ValueError(f"HAZOP node {node_id} deviation fields are invalid")
             pair = (node_id, str(deviation["parameter"]), str(deviation["guideword"]))
             if pair not in required_pairs or pair in covered_pairs:
-                raise ValueError(f"HAZOP node {node_id} deviation pair is invalid or duplicated")
+                raise ValueError(
+                    f"HAZOP node {node_id} deviation pair is invalid or duplicated"
+                )
             covered_pairs.add(pair)
             arrays = [
                 deviation[name]
-                for name in ("causes", "effects", "safeguards", "recommendations", "evidence_refs")
+                for name in (
+                    "causes",
+                    "effects",
+                    "safeguards",
+                    "recommendations",
+                    "evidence_refs",
+                )
             ]
             complete = bool(
                 deviation["status"] in {"reviewed", "closed"}
@@ -341,7 +355,10 @@ def _hazop(value: Any) -> dict[str, Any]:
             }
         )
     missing = sorted(
-        {f"{node}:{parameter}:{guideword}" for node, parameter, guideword in required_pairs - covered_pairs}
+        {
+            f"{node}:{parameter}:{guideword}"
+            for node, parameter, guideword in required_pairs - covered_pairs
+        }
     )
     return {
         "guidewords": len(guidewords),
@@ -391,7 +408,11 @@ def _rbd(value: Any) -> dict[str, Any]:
     ):
         raise ValueError("RBD block or gate population is invalid")
     mission = value["mission_time_hours"]
-    if not isinstance(mission, (int, float)) or isinstance(mission, bool) or not 0.0 < float(mission) <= 1_000_000.0:
+    if (
+        not isinstance(mission, (int, float))
+        or isinstance(mission, bool)
+        or not 0.0 < float(mission) <= 1_000_000.0
+    ):
         raise ValueError("RBD mission time is invalid")
     probabilities: dict[str, float | None] = {}
     bounds: dict[str, tuple[float, float] | None] = {}
@@ -399,9 +420,15 @@ def _rbd(value: Any) -> dict[str, Any]:
     for block in blocks:
         legacy_fields = {"id", "name", "reliability", "source_ref"}
         quantitative_fields = legacy_fields | {
-            "reliability_interval", "failure_rate_per_hour", "repair_rate_per_hour", "evidence_ref"
+            "reliability_interval",
+            "failure_rate_per_hour",
+            "repair_rate_per_hour",
+            "evidence_ref",
         }
-        if not isinstance(block, dict) or frozenset(block) not in {frozenset(legacy_fields), frozenset(quantitative_fields)}:
+        if not isinstance(block, dict) or frozenset(block) not in {
+            frozenset(legacy_fields),
+            frozenset(quantitative_fields),
+        }:
             raise ValueError("RBD block fields are invalid")
         identifier = _text(block["id"], "RBD block id")
         reliability = block["reliability"]
@@ -417,26 +444,38 @@ def _rbd(value: Any) -> dict[str, Any]:
         evidence_ref = str(block.get("evidence_ref", "")).strip()
         for label, parameter in (("failure", rate), ("repair", repair_rate)):
             if parameter is not None and (
-                not isinstance(parameter, (int, float)) or isinstance(parameter, bool) or not 0.0 <= float(parameter) <= 1_000_000.0
+                not isinstance(parameter, (int, float))
+                or isinstance(parameter, bool)
+                or not 0.0 <= float(parameter) <= 1_000_000.0
             ):
                 raise ValueError(f"RBD block {identifier} {label} rate is invalid")
         if reliability is not None and rate is not None:
-            raise ValueError(f"RBD block {identifier} cannot declare both direct reliability and a failure rate")
+            raise ValueError(
+                f"RBD block {identifier} cannot declare both direct reliability and a failure rate"
+            )
         if reliability is None and rate is not None:
             if not evidence_ref:
-                raise ValueError(f"RBD block {identifier} failure rate requires evidence")
+                raise ValueError(
+                    f"RBD block {identifier} failure rate requires evidence"
+                )
             reliability = math.exp(-float(rate) * float(mission))
         interval_value: tuple[float, float] | None = None
         if interval is not None:
             if (
-                not isinstance(interval, list) or len(interval) != 2
-                or any(not isinstance(item, (int, float)) or isinstance(item, bool) for item in interval)
+                not isinstance(interval, list)
+                or len(interval) != 2
+                or any(
+                    not isinstance(item, (int, float)) or isinstance(item, bool)
+                    for item in interval
+                )
                 or not 0.0 <= float(interval[0]) <= float(interval[1]) <= 1.0
                 or reliability is None
                 or not float(interval[0]) <= float(reliability) <= float(interval[1])
                 or not evidence_ref
             ):
-                raise ValueError(f"RBD block {identifier} reliability interval is invalid")
+                raise ValueError(
+                    f"RBD block {identifier} reliability interval is invalid"
+                )
             interval_value = (float(interval[0]), float(interval[1]))
         elif reliability is not None:
             interval_value = (float(reliability), float(reliability))
@@ -447,21 +486,37 @@ def _rbd(value: Any) -> dict[str, Any]:
         availability = None
         if rate is not None and repair_rate is not None:
             denominator = float(rate) + float(repair_rate)
-            availability = 1.0 if denominator == 0.0 else float(repair_rate) / denominator
+            availability = (
+                1.0 if denominator == 0.0 else float(repair_rate) / denominator
+            )
         block_measures.append(
             {
                 "id": identifier,
-                "reliability": None if reliability is None else round(float(reliability), 12),
-                "reliability_interval": None if interval_value is None else [round(interval_value[0], 12), round(interval_value[1], 12)],
-                "steady_state_availability": None if availability is None else round(availability, 12),
-                "rate_evidence_present": bool(evidence_ref) if rate is not None or repair_rate is not None else None,
+                "reliability": None
+                if reliability is None
+                else round(float(reliability), 12),
+                "reliability_interval": None
+                if interval_value is None
+                else [round(interval_value[0], 12), round(interval_value[1], 12)],
+                "steady_state_availability": None
+                if availability is None
+                else round(availability, 12),
+                "rate_evidence_present": bool(evidence_ref)
+                if rate is not None or repair_rate is not None
+                else None,
             }
         )
     gate_map: dict[str, dict[str, Any]] = {}
     for gate in gates:
         legacy_gate_fields = {"id", "type", "inputs", "minimum_success"}
-        quantitative_gate_fields = legacy_gate_fields | {"independence_evidence_ref", "common_cause_beta"}
-        if not isinstance(gate, dict) or frozenset(gate) not in {frozenset(legacy_gate_fields), frozenset(quantitative_gate_fields)}:
+        quantitative_gate_fields = legacy_gate_fields | {
+            "independence_evidence_ref",
+            "common_cause_beta",
+        }
+        if not isinstance(gate, dict) or frozenset(gate) not in {
+            frozenset(legacy_gate_fields),
+            frozenset(quantitative_gate_fields),
+        }:
             raise ValueError("RBD gate fields are invalid")
         identifier = _text(gate["id"], "RBD gate id")
         if identifier in probabilities or identifier in gate_map:
@@ -469,7 +524,11 @@ def _rbd(value: Any) -> dict[str, Any]:
         if gate["type"] not in {"series", "parallel", "vote"}:
             raise ValueError(f"RBD gate {identifier} type is invalid")
         inputs = gate["inputs"]
-        if not isinstance(inputs, list) or not inputs or len(inputs) > MAX_BLOCKS + MAX_GATES:
+        if (
+            not isinstance(inputs, list)
+            or not inputs
+            or len(inputs) > MAX_BLOCKS + MAX_GATES
+        ):
             raise ValueError(f"RBD gate {identifier} inputs are invalid")
         minimum = gate["minimum_success"]
         if gate["type"] == "vote" and (
@@ -479,12 +538,23 @@ def _rbd(value: Any) -> dict[str, Any]:
         ):
             raise ValueError(f"RBD gate {identifier} vote threshold is invalid")
         if gate["type"] != "vote" and minimum is not None:
-            raise ValueError(f"RBD gate {identifier} threshold only applies to vote gates")
+            raise ValueError(
+                f"RBD gate {identifier} threshold only applies to vote gates"
+            )
         beta = gate.get("common_cause_beta", 0.0)
-        if not isinstance(beta, (int, float)) or isinstance(beta, bool) or not 0.0 <= float(beta) <= 1.0:
+        if (
+            not isinstance(beta, (int, float))
+            or isinstance(beta, bool)
+            or not 0.0 <= float(beta) <= 1.0
+        ):
             raise ValueError(f"RBD gate {identifier} common-cause beta is invalid")
-        if len(inputs) > 1 and not str(gate.get("independence_evidence_ref", "")).strip():
-            raise ValueError(f"RBD gate {identifier} requires an explicit independence evidence reference")
+        if (
+            len(inputs) > 1
+            and not str(gate.get("independence_evidence_ref", "")).strip()
+        ):
+            raise ValueError(
+                f"RBD gate {identifier} requires an explicit independence evidence reference"
+            )
         gate_map[identifier] = gate
 
     visiting: set[str] = set()
@@ -531,16 +601,21 @@ def _rbd(value: Any) -> dict[str, Any]:
         if identifier not in gate_map or key in bound_visiting:
             raise ValueError("RBD bound graph is cyclic or unresolved")
         bound_visiting.add(key)
-        numeric = [evaluate_bound(str(item), upper) for item in gate_map[identifier]["inputs"]]
+        numeric = [
+            evaluate_bound(str(item), upper) for item in gate_map[identifier]["inputs"]
+        ]
         bound_visiting.remove(key)
         if any(item is None for item in numeric):
             return None
-        return combine(gate_map[identifier], [float(item) for item in numeric if item is not None])
+        return combine(
+            gate_map[identifier], [float(item) for item in numeric if item is not None]
+        )
 
     top = str(value["top_gate_id"])
     top_probability = evaluate(top) if top else None
     lower = evaluate_bound(top, False) if top else None
     upper = evaluate_bound(top, True) if top else None
+
     # Birnbaum structural importance is the change in top-event success when one
     # block is forced from failed to perfect.  It is a deterministic sensitivity
     # measure over the declared RBD, not a causal or physical-dependence claim.
@@ -564,7 +639,9 @@ def _rbd(value: Any) -> dict[str, Any]:
         active.remove(identifier)
         if any(item is None for item in values):
             return None
-        return combine(gate_map[identifier], [float(item) for item in values if item is not None])
+        return combine(
+            gate_map[identifier], [float(item) for item in values if item is not None]
+        )
 
     for measure in block_measures:
         block_id = str(measure["id"])
@@ -575,20 +652,36 @@ def _rbd(value: Any) -> dict[str, Any]:
             if perfect is None or failed is None
             else round(max(0.0, perfect - failed), 12)
         )
-    all_rates_present = all(probability is not None for probability in probabilities.values())
+    all_rates_present = all(
+        probability is not None for probability in probabilities.values()
+    )
     return {
         "mission_time_hours": float(mission),
         "success_criterion_present": bool(str(value["success_criterion"]).strip()),
         "blocks": len(blocks),
         "gates": len(gates),
         "top_gate_id": top,
-        "top_success_probability": None if top_probability is None else round(top_probability, 12),
-        "top_success_interval": None if lower is None or upper is None else [round(lower, 12), round(upper, 12)],
+        "top_success_probability": None
+        if top_probability is None
+        else round(top_probability, 12),
+        "top_success_interval": None
+        if lower is None or upper is None
+        else [round(lower, 12), round(upper, 12)],
         "block_measures": block_measures,
-        "common_cause_gates": sum(float(gate.get("common_cause_beta", 0.0)) > 0.0 for gate in gates),
-        "independence_evidence_complete": all(len(gate["inputs"]) <= 1 or bool(str(gate.get("independence_evidence_ref", "")).strip()) for gate in gates),
+        "common_cause_gates": sum(
+            float(gate.get("common_cause_beta", 0.0)) > 0.0 for gate in gates
+        ),
+        "independence_evidence_complete": all(
+            len(gate["inputs"]) <= 1
+            or bool(str(gate.get("independence_evidence_ref", "")).strip())
+            for gate in gates
+        ),
         "all_reliabilities_present": all_rates_present,
-        "complete": bool(top and top_probability is not None and str(value["success_criterion"]).strip()),
+        "complete": bool(
+            top
+            and top_probability is not None
+            and str(value["success_criterion"]).strip()
+        ),
         "notice": "The calculation uses only explicit inputs. Intervals are monotone sensitivity bounds; beta-factor common-cause adjustment is an engineering approximation; Birnbaum importance is structural sensitivity. Input validity, causality, and physical independence are not inferred.",
     }
 
@@ -633,7 +726,9 @@ def _markov_model(value: dict[str, Any]) -> dict[str, Any]:
         for transition in transitions
     ):
         raise ValueError(f"Markov model {identifier} transitions are invalid")
-    missing_rate = any(transition["rate_per_hour"] is None for transition in transitions)
+    missing_rate = any(
+        transition["rate_per_hour"] is None for transition in transitions
+    )
     if missing_rate:
         return {
             "id": identifier,
@@ -663,10 +758,14 @@ def _markov_model(value: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"Markov model {identifier} transition is invalid")
         generator[indexes[source]][indexes[target]] += float(rate)
     for row in range(len(states)):
-        generator[row][row] = -sum(generator[row][column] for column in range(len(states)) if column != row)
+        generator[row][row] = -sum(
+            generator[row][column] for column in range(len(states)) if column != row
+        )
     uniform_rate = max(-generator[row][row] for row in range(len(states)))
     if uniform_rate == 0.0:
-        probabilities = [1.0 if state == value["initial_state"] else 0.0 for state in states]
+        probabilities = [
+            1.0 if state == value["initial_state"] else 0.0 for state in states
+        ]
     else:
         scaled_time = uniform_rate * float(mission)
         if scaled_time > 500.0:
@@ -675,8 +774,7 @@ def _markov_model(value: dict[str, Any]) -> dict[str, Any]:
             )
         transition_matrix = [
             [
-                (1.0 if row == column else 0.0)
-                + generator[row][column] / uniform_rate
+                (1.0 if row == column else 0.0) + generator[row][column] / uniform_rate
                 for column in range(len(states))
             ]
             for row in range(len(states))
@@ -696,7 +794,9 @@ def _markov_model(value: dict[str, Any]) -> dict[str, Any]:
             if 1.0 - cumulative_weight < 1e-13:
                 break
         else:
-            raise ValueError(f"Markov model {identifier} did not converge within the solver limit")
+            raise ValueError(
+                f"Markov model {identifier} did not converge within the solver limit"
+            )
     total = sum(probabilities)
     if not math.isclose(total, 1.0, rel_tol=1e-9, abs_tol=1e-9):
         raise ValueError(f"Markov model {identifier} violates probability conservation")
@@ -758,8 +858,12 @@ def dependability_assessment(
         "checks": checks,
         "summary": {
             "complete": complete,
-            "status": "eligible_for_authorized_dependability_review" if complete else "engineering_inputs_incomplete",
-            "failed_checks": sorted(name for name, state in checks.items() if not state),
+            "status": "eligible_for_authorized_dependability_review"
+            if complete
+            else "engineering_inputs_incomplete",
+            "failed_checks": sorted(
+                name for name, state in checks.items() if not state
+            ),
         },
         "notice": (
             "Results apply only to the explicit design intent, logic, rates, assumptions, "
@@ -800,8 +904,12 @@ def verify_dependability_assessment(value: dict[str, Any]) -> dict[str, Any]:
             value["summary"]
             == {
                 "complete": complete,
-                "status": "eligible_for_authorized_dependability_review" if complete else "engineering_inputs_incomplete",
-                "failed_checks": sorted(name for name, state in value["checks"].items() if not state),
+                "status": "eligible_for_authorized_dependability_review"
+                if complete
+                else "engineering_inputs_incomplete",
+                "failed_checks": sorted(
+                    name for name, state in value["checks"].items() if not state
+                ),
             }
         )
     except (KeyError, TypeError):
@@ -819,7 +927,12 @@ def verify_dependability_assessment(value: dict[str, Any]) -> dict[str, Any]:
     return {
         "format": DEPENDABILITY_VERIFICATION_FORMAT,
         "valid": bool(structure and semantic and integrity),
-        "complete": bool(structure and semantic and integrity and value.get("summary", {}).get("complete")),
+        "complete": bool(
+            structure
+            and semantic
+            and integrity
+            and value.get("summary", {}).get("complete")
+        ),
         "checks": {
             "closed_structure": structure,
             "content_integrity": integrity,
@@ -848,13 +961,18 @@ def verify_dependability_assessment_file(
         )
         if not isinstance(document.value, dict):
             raise ValueError("dependability assessment must contain an object")
-        verdict = {"path": str(document.path), **verify_dependability_assessment(document.value)}
+        verdict = {
+            "path": str(document.path),
+            **verify_dependability_assessment(document.value),
+        }
         if analysis is not None or authoring_source is not None:
             if analysis is None or authoring_source is None:
                 verdict["valid"] = False
                 verdict["complete"] = False
                 verdict["checks"]["source_regeneration"] = False
-                verdict["errors"].append("analysis and authoring must be supplied together")
+                verdict["errors"].append(
+                    "analysis and authoring must be supplied together"
+                )
             else:
                 regenerated = dependability_assessment(
                     analysis,
@@ -866,7 +984,9 @@ def verify_dependability_assessment_file(
                 if not matches:
                     verdict["valid"] = False
                     verdict["complete"] = False
-                    verdict["errors"].append("assessment does not regenerate from supplied sources")
+                    verdict["errors"].append(
+                        "assessment does not regenerate from supplied sources"
+                    )
         return verdict
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return {
@@ -878,7 +998,9 @@ def verify_dependability_assessment_file(
                 "closed_structure": False,
                 "content_integrity": False,
                 "semantic_reconciliation": False,
-                "source_regeneration": False if analysis is not None or authoring_source is not None else None,
+                "source_regeneration": False
+                if analysis is not None or authoring_source is not None
+                else None,
             },
             "errors": [str(exc)],
             "content_sha256": "",
@@ -886,7 +1008,9 @@ def verify_dependability_assessment_file(
         }
 
 
-def export_dependability_authoring(value: dict[str, Any], destination: str | Path) -> Path:
+def export_dependability_authoring(
+    value: dict[str, Any], destination: str | Path
+) -> Path:
     return atomic_publish_text(
         destination,
         json.dumps(value, indent=2, ensure_ascii=False) + "\n",
@@ -894,7 +1018,9 @@ def export_dependability_authoring(value: dict[str, Any], destination: str | Pat
     )
 
 
-def export_dependability_assessment(value: dict[str, Any], destination: str | Path) -> Path:
+def export_dependability_assessment(
+    value: dict[str, Any], destination: str | Path
+) -> Path:
     verdict = verify_dependability_assessment(value)
     if not verdict["valid"]:
         raise ValueError("dependability assessment is internally invalid")

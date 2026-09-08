@@ -190,9 +190,7 @@ class AnalysisDiagnosticsTests(unittest.TestCase):
                 {value["id"] for value in partial["recommended_actions"]},
             )
 
-            analysis["runtime_evidence"]["spans"].append(
-                {"component_id": callee["id"]}
-            )
+            analysis["runtime_evidence"]["spans"].append({"component_id": callee["id"]})
             analysis["runtime_evidence"]["edges"].append(
                 {
                     "source_component_id": caller["id"],

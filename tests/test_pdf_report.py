@@ -113,7 +113,9 @@ class PdfReportTests(unittest.TestCase):
 
         with patch(
             "pysfmea.pdf_report.subprocess.run",
-            side_effect=lambda command, **_: self._render_pdf(command, b"not a pdf" * 200),
+            side_effect=lambda command, **_: self._render_pdf(
+                command, b"not a pdf" * 200
+            ),
         ):
             with self.assertRaisesRegex(ValueError, "no PDF header"):
                 export_pdf_report(analysis, output, browser=browser)
@@ -150,7 +152,9 @@ class PdfReportTests(unittest.TestCase):
             ),
             patch("pysfmea.pdf_report._copy_stable_pdf", side_effect=copy_then_race),
         ):
-            with self.assertRaisesRegex(ValueError, "changed before atomic replacement"):
+            with self.assertRaisesRegex(
+                ValueError, "changed before atomic replacement"
+            ):
                 export_pdf_report(analysis, output, browser=browser)
         self.assertEqual(output.read_bytes(), b"concurrent writer")
         self.assertFalse(list(self.root.glob(f".{output.name}.*.tmp")))

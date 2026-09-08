@@ -1,0 +1,36 @@
+{
+  "format": "pysfmea-nondeterminism-concurrency-corpus-1",
+  "cases": [
+    {
+      "id": "random-branch",
+      "entrypoint": "repository.cases.random_branch",
+      "mechanism": "pseudo_random_input",
+      "required_controls": ["seed_capture", "repetition", "attempt_evidence"]
+    },
+    {
+      "id": "clock-boundary",
+      "entrypoint": "repository.cases.clock_boundary",
+      "mechanism": "wall_clock_boundary",
+      "required_controls": ["clock_injection", "boundary_cases", "timezone_policy"]
+    },
+    {
+      "id": "thread-race",
+      "entrypoint": "repository.cases.thread_race",
+      "mechanism": "unsynchronized_shared_state",
+      "required_controls": ["schedule_perturbation", "race_oracle", "timeout"]
+    },
+    {
+      "id": "async-order",
+      "entrypoint": "repository.cases.async_order",
+      "mechanism": "task_completion_order",
+      "required_controls": ["schedule_capture", "order_oracle", "repetition"]
+    },
+    {
+      "id": "eventual-read",
+      "entrypoint": "repository.cases.eventual_read",
+      "mechanism": "eventual_consistency",
+      "required_controls": ["bounded_poll", "deadline", "attempt_trace"]
+    }
+  ],
+  "claim_boundary": "Mechanism labels guide controlled campaigns; they do not establish empirical flakiness or representativeness without retained repeated execution evidence."
+}

@@ -55,7 +55,9 @@ class FilePublicationTests(unittest.TestCase):
         destination = self.root / "invalid.txt"
         with self.assertRaisesRegex(TypeError, "content must be bytes"):
             atomic_publish_bytes(destination, "not bytes")  # type: ignore[arg-type]
-        with self.assertRaisesRegex(ValueError, "byte limit must be a positive integer"):
+        with self.assertRaisesRegex(
+            ValueError, "byte limit must be a positive integer"
+        ):
             atomic_publish_bytes(destination, b"content", max_bytes=True)
         with self.assertRaisesRegex(TypeError, "destination state is invalid"):
             atomic_publish_bytes(
@@ -100,7 +102,9 @@ class FilePublicationTests(unittest.TestCase):
         secondary.write_bytes(b"prior receipt")
         state = inspect_artifact_destination(secondary, label="receipt")
         with patch("pysfmea.file_publication.os.open", side_effect=OSError("blocked")):
-            with self.assertRaisesRegex(ValueError, "could not be retained for rollback"):
+            with self.assertRaisesRegex(
+                ValueError, "could not be retained for rollback"
+            ):
                 _read_destination_snapshot_bytes(state, max_bytes=100, label="receipt")
 
         primary = self.root / "analysis.json"
@@ -117,7 +121,9 @@ class FilePublicationTests(unittest.TestCase):
         self.assertFalse(primary.exists())
         self.assertEqual(secondary.read_bytes(), b"prior receipt")
 
-    def test_coordinated_pair_refuses_mismatched_or_conflicted_destinations(self) -> None:
+    def test_coordinated_pair_refuses_mismatched_or_conflicted_destinations(
+        self,
+    ) -> None:
         primary = self.root / "analysis.json"
         secondary = self.root / "receipt.json"
         expected = inspect_artifact_destination(primary, label="analysis")
@@ -137,7 +143,9 @@ class FilePublicationTests(unittest.TestCase):
         real_replace = __import__("os").replace
         replacements = 0
 
-        def fail_primary_after_secondary(source: str | Path, destination: str | Path) -> None:
+        def fail_primary_after_secondary(
+            source: str | Path, destination: str | Path
+        ) -> None:
             nonlocal replacements
             replacements += 1
             if replacements == 2:
@@ -150,13 +158,16 @@ class FilePublicationTests(unittest.TestCase):
             side_effect=fail_primary_after_secondary,
         ):
             with self.assertRaisesRegex(
-                ValueError, "primary artifact publication failed and secondary artifact rollback failed"
+                ValueError,
+                "primary artifact publication failed and secondary artifact rollback failed",
             ):
                 atomic_publish_pair(primary, b"analysis", secondary, b"receipt")
         self.assertFalse(primary.exists())
         self.assertEqual(secondary.read_bytes(), b"external owner")
 
-    def test_failed_atomic_replace_preserves_prior_file_and_cleans_staging(self) -> None:
+    def test_failed_atomic_replace_preserves_prior_file_and_cleans_staging(
+        self,
+    ) -> None:
         destination = self.root / "preserved.json"
         destination.write_text("prior\n", encoding="utf-8")
 
@@ -184,7 +195,9 @@ class FilePublicationTests(unittest.TestCase):
             "pysfmea.file_publication._destination_is_unchanged",
             side_effect=replace_before_identity_check,
         ):
-            with self.assertRaisesRegex(ValueError, "changed before atomic replacement"):
+            with self.assertRaisesRegex(
+                ValueError, "changed before atomic replacement"
+            ):
                 atomic_publish_text(destination, "new content")
 
         self.assertTrue(destination.exists())
@@ -206,9 +219,7 @@ class FilePublicationTests(unittest.TestCase):
                 expected_destination=expected,
             )
 
-        self.assertEqual(
-            destination.read_text(encoding="utf-8"), "concurrent owner\n"
-        )
+        self.assertEqual(destination.read_text(encoding="utf-8"), "concurrent owner\n")
         self.assertFalse(list(self.root.glob(".reserved.json.*.tmp")))
 
     def test_staged_verification_controls_atomic_replacement(self) -> None:
@@ -277,9 +288,7 @@ class FilePublicationTests(unittest.TestCase):
                 self.assertEqual(
                     destination.read_text(encoding="utf-8"), "trusted prior"
                 )
-                self.assertFalse(
-                    list(self.root.glob(".preserved-report.html.*.tmp"))
-                )
+                self.assertFalse(list(self.root.glob(".preserved-report.html.*.tmp")))
 
     def test_staged_verifier_cannot_hide_concurrent_destination_change(self) -> None:
         destination = self.root / "concurrent-report.html"
@@ -298,9 +307,7 @@ class FilePublicationTests(unittest.TestCase):
                 staged_verifier=replace_destination,
             )
 
-        self.assertEqual(
-            destination.read_text(encoding="utf-8"), "concurrent owner"
-        )
+        self.assertEqual(destination.read_text(encoding="utf-8"), "concurrent owner")
         self.assertFalse(list(self.root.glob(".concurrent-report.html.*.tmp")))
 
     def test_coordinated_pair_publishes_both_artifacts(self) -> None:

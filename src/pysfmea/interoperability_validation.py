@@ -13,6 +13,7 @@ import copy
 import hashlib
 import importlib.metadata
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ NORMATIVE_VALIDATION_VERIFICATION_FORMAT = (
 )
 ROUNDTRIP_EVIDENCE_FORMAT = "pysfmea-independent-roundtrip-evidence-1"
 ROUNDTRIP_VERIFICATION_FORMAT = "pysfmea-independent-roundtrip-verification-1"
-SCHEMA_KINDS = frozenset({"json-schema", "xml-schema"})
+SCHEMA_KINDS = frozenset({"json-schema", "yaml-json-schema", "xml-schema"})
 MAX_ARTIFACT_BYTES = 100_000_000
 MAX_SCHEMA_BYTES = 20_000_000
 MAX_ERRORS = 1_000
@@ -61,6 +62,26 @@ def _file_binding(snapshot: BoundedFileSnapshot) -> dict[str, Any]:
 def _json_schema_validate(
     artifact: BoundedFileSnapshot, schema: BoundedFileSnapshot
 ) -> tuple[str, str, list[str]]:
+    artifact_value = parse_bounded_json_bytes(
+        artifact.raw,
+        label="exchange artifact",
+        max_bytes=MAX_ARTIFACT_BYTES,
+        max_depth=150,
+        max_nodes=2_000_000,
+    )
+    schema_value = parse_bounded_json_bytes(
+        schema.raw,
+        label="normative JSON Schema",
+        max_bytes=MAX_SCHEMA_BYTES,
+        max_depth=150,
+        max_nodes=1_000_000,
+    )
+    return _json_schema_validate_value(artifact_value, schema_value)
+
+
+def _json_schema_validate_value(
+    artifact_value: Any, schema_value: Any
+) -> tuple[str, str, list[str]]:
     try:
         import regex as unicode_regex  # type: ignore[import-untyped]
         from jsonschema import (  # type: ignore[import-untyped]
@@ -76,20 +97,6 @@ def _json_schema_validate(
             "JSON Schema validation requires the 'interop' or 'dev' optional dependency"
         ) from exc
 
-    artifact_value = parse_bounded_json_bytes(
-        artifact.raw,
-        label="exchange artifact",
-        max_bytes=MAX_ARTIFACT_BYTES,
-        max_depth=150,
-        max_nodes=2_000_000,
-    )
-    schema_value = parse_bounded_json_bytes(
-        schema.raw,
-        label="normative JSON Schema",
-        max_bytes=MAX_SCHEMA_BYTES,
-        max_depth=150,
-        max_nodes=1_000_000,
-    )
     if not isinstance(schema_value, dict):
         raise ValueError("normative JSON Schema root must be an object")
     base_validator_type = validator_for(schema_value)
@@ -106,7 +113,9 @@ def _json_schema_validate(
         schema_value, format_checker=unicode_format_checker
     )
 
-    def unicode_pattern(validator: Any, pattern: Any, instance: Any, schema: Any) -> Any:
+    def unicode_pattern(
+        validator: Any, pattern: Any, instance: Any, schema: Any
+    ) -> Any:
         """Evaluate JSON Schema patterns with Unicode-property support and a time bound."""
 
         del validator, schema
@@ -125,9 +134,7 @@ def _json_schema_validate(
         {"pattern": unicode_pattern},
         version=f"{base_validator_type.__name__}UnicodePattern",
     )
-    validator = validator_type(
-        schema_value, format_checker=unicode_format_checker
-    )
+    validator = validator_type(schema_value, format_checker=unicode_format_checker)
     errors = sorted(
         validator.iter_errors(artifact_value),
         key=lambda error: (list(error.absolute_path), error.message),
@@ -137,11 +144,92 @@ def _json_schema_validate(
         for error in errors[:MAX_ERRORS]
     ]
     if len(errors) > MAX_ERRORS:
-        rendered.append(f"validation produced {len(errors) - MAX_ERRORS} additional errors")
+        rendered.append(
+            f"validation produced {len(errors) - MAX_ERRORS} additional errors"
+        )
     return (
         f"jsonschema-{base_validator_type.__name__}+regex",
         f"jsonschema {importlib.metadata.version('jsonschema')}; regex {importlib.metadata.version('regex')}",
         rendered,
+    )
+
+
+def _bounded_yaml_value(raw: bytes) -> Any:
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError as exc:  # pragma: no cover - optional installation
+        raise RuntimeError(
+            "YAML JSON-Schema validation requires the 'interop' or 'dev' optional dependency"
+        ) from exc
+
+    class JsonSafeLoader(yaml.SafeLoader):  # type: ignore[misc]
+        """Safe loader that preserves YAML timestamps as JSON strings."""
+
+    JsonSafeLoader.yaml_implicit_resolvers = {
+        key: [
+            resolver
+            for resolver in resolvers
+            if resolver[0] != "tag:yaml.org,2002:timestamp"
+        ]
+        for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+    loader: JsonSafeLoader | None = None
+    try:
+        loader = JsonSafeLoader(raw.decode("utf-8-sig", errors="strict"))
+        value = loader.get_single_data()
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ValueError(f"exchange YAML is invalid: {exc}") from exc
+    finally:
+        if loader is not None:
+            loader.dispose()
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    containers: set[int] = set()
+    nodes = 0
+    while stack:
+        item, depth = stack.pop()
+        nodes += 1
+        if nodes > 2_000_000:
+            raise ValueError("exchange YAML exceeds the semantic node limit")
+        if depth > 150:
+            raise ValueError("exchange YAML exceeds the semantic depth limit")
+        if isinstance(item, dict):
+            identity = id(item)
+            if identity in containers:
+                raise ValueError("exchange YAML aliases or cycles are not supported")
+            containers.add(identity)
+            if not all(isinstance(key, str) for key in item):
+                raise ValueError("exchange YAML mapping keys must be strings")
+            stack.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            identity = id(item)
+            if identity in containers:
+                raise ValueError("exchange YAML aliases or cycles are not supported")
+            containers.add(identity)
+            stack.extend((child, depth + 1) for child in item)
+        elif not isinstance(item, (str, int, float, bool, type(None))):
+            raise ValueError("exchange YAML contains a non-JSON scalar")
+        elif isinstance(item, float) and not math.isfinite(item):
+            raise ValueError("exchange YAML contains a non-finite number")
+    return value
+
+
+def _yaml_json_schema_validate(
+    artifact: BoundedFileSnapshot, schema: BoundedFileSnapshot
+) -> tuple[str, str, list[str]]:
+    schema_value = parse_bounded_json_bytes(
+        schema.raw,
+        label="normative JSON Schema",
+        max_bytes=MAX_SCHEMA_BYTES,
+        max_depth=150,
+        max_nodes=1_000_000,
+    )
+    engine, version, errors = _json_schema_validate_value(
+        _bounded_yaml_value(artifact.raw), schema_value
+    )
+    return (
+        f"pyyaml-safe+{engine}",
+        f"PyYAML {importlib.metadata.version('PyYAML')}; {version}",
+        errors,
     )
 
 
@@ -184,13 +272,13 @@ def normative_schema_validation(
     """Validate exact bytes against a supplied schema and seal the result."""
 
     if schema_kind not in SCHEMA_KINDS:
-        raise ValueError("schema kind must be json-schema or xml-schema")
+        raise ValueError(
+            "schema kind must be json-schema, yaml-json-schema, or xml-schema"
+        )
     standard = {
         "name": _text(standard_name, "standard name"),
         "edition": _text(standard_edition, "standard edition"),
-        "normative_schema_uri": _text(
-            normative_schema_uri, "normative schema URI"
-        ),
+        "normative_schema_uri": _text(normative_schema_uri, "normative schema URI"),
         "publisher_schema_sha256": schema_publisher_sha256,
     }
     if schema_publisher_sha256 is not None and not re.fullmatch(
@@ -207,10 +295,19 @@ def normative_schema_validation(
         label="normative schema",
         max_bytes=MAX_SCHEMA_BYTES,
     )
-    if schema_publisher_sha256 is not None and _sha256(schema) != schema_publisher_sha256:
-        raise ValueError("supplied schema does not match the publisher-controlled digest")
-    if schema_kind == "json-schema":
-        engine, version, errors = _json_schema_validate(artifact, schema)
+    if (
+        schema_publisher_sha256 is not None
+        and _sha256(schema) != schema_publisher_sha256
+    ):
+        raise ValueError(
+            "supplied schema does not match the publisher-controlled digest"
+        )
+    if schema_kind in {"json-schema", "yaml-json-schema"}:
+        engine, version, errors = (
+            _json_schema_validate(artifact, schema)
+            if schema_kind == "json-schema"
+            else _yaml_json_schema_validate(artifact, schema)
+        )
         schema_value = parse_bounded_json_bytes(
             schema.raw,
             label="normative JSON Schema",
@@ -218,7 +315,9 @@ def normative_schema_validation(
             max_depth=150,
             max_nodes=1_000_000,
         )
-        identifier = str(schema_value.get("$id", "")) if isinstance(schema_value, dict) else ""
+        identifier = (
+            str(schema_value.get("$id", "")) if isinstance(schema_value, dict) else ""
+        )
     else:
         engine, version, errors = _xml_schema_validate(artifact, schema)
         identifier = normative_schema_uri
@@ -302,9 +401,7 @@ def _validation_structure(receipt: dict[str, Any]) -> bool:
             )
             and (
                 standard["publisher_schema_sha256"] is None
-                or re.fullmatch(
-                    r"[0-9a-f]{64}", standard["publisher_schema_sha256"]
-                )
+                or re.fullmatch(r"[0-9a-f]{64}", standard["publisher_schema_sha256"])
             )
             and (
                 standard["publisher_schema_sha256"] is None
@@ -347,7 +444,9 @@ def verify_normative_schema_validation(
         expected = _file_binding(schema)
         schema_binding = bool(
             structure
-            and all(receipt["schema"].get(key) == value for key, value in expected.items())
+            and all(
+                receipt["schema"].get(key) == value for key, value in expected.items()
+            )
         )
         if not schema_binding:
             errors.append("validation receipt does not bind the supplied schema")

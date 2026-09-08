@@ -377,9 +377,9 @@ class AssuranceRegisterTests(unittest.TestCase):
         generated_runtime = runtime_path.read_text(encoding="utf-8")
         sys.path.insert(0, str(scaffold))
         self.addCleanup(
-            lambda: sys.path.remove(str(scaffold))
-            if str(scaffold) in sys.path
-            else None
+            lambda: (
+                sys.path.remove(str(scaffold)) if str(scaffold) in sys.path else None
+            )
         )
         self.assertIn("failed its SHA-256 integrity check", generated_runtime)
         self.assertIn('path.open("rb")', generated_runtime)

@@ -1,0 +1,13 @@
+{
+  "format": "pysfmea-longitudinal-drift-corpus-1",
+  "series": [
+    {
+      "id": "timeout-control-added",
+      "base": "revisions/v1.py",
+      "target": "revisions/v2.py",
+      "expected_changes": ["timeout_control_added", "degraded_effect_added"],
+      "prohibited_changes": ["entrypoint_removed", "unrelated_finding_churn"]
+    }
+  ],
+  "claim_boundary": "The public revision pair is a regression canary, not a hidden temporal holdout."
+}

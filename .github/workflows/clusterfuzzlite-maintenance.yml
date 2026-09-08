@@ -1,0 +1,70 @@
+name: ClusterFuzzLite corpus and coverage maintenance
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: clusterfuzzlite-maintenance
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact repository revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+
+      - name: Build address-sanitized Python fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        with:
+          language: python
+          sanitizer: address
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          storage-repo: ${{ secrets.CFL_STORAGE_REPO }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages
+      - name: Prune the persistent corpus
+        uses: google/clusterfuzzlite/actions/run_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: prune
+          sanitizer: address
+          output-sarif: true
+          storage-repo: ${{ secrets.CFL_STORAGE_REPO }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact repository revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+
+      - name: Build coverage-instrumented Python fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        with:
+          language: python
+          sanitizer: coverage
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          storage-repo: ${{ secrets.CFL_STORAGE_REPO }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages
+      - name: Generate fuzz coverage report
+        uses: google/clusterfuzzlite/actions/run_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: coverage
+          sanitizer: coverage
+          storage-repo: ${{ secrets.CFL_STORAGE_REPO }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages

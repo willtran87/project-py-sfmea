@@ -26,7 +26,13 @@ SAFETY_LIFECYCLE_AUTHORING_FORMAT = "pysfmea-safety-lifecycle-authoring-1"
 SAFETY_LIFECYCLE_ASSESSMENT_FORMAT = "pysfmea-safety-lifecycle-assessment-1"
 SAFETY_LIFECYCLE_VERIFICATION_FORMAT = "pysfmea-safety-lifecycle-verification-1"
 STAGES = ("PHA", "FHA", "PSSA", "SSA", "OPERATIONS")
-STAGE_STATUSES = {"not_started", "in_progress", "reviewed", "approved", "not_applicable"}
+STAGE_STATUSES = {
+    "not_started",
+    "in_progress",
+    "reviewed",
+    "approved",
+    "not_applicable",
+}
 DISPOSITIONS = {"open", "mitigated", "accepted", "rejected", "not_applicable"}
 CCFA_CATEGORIES = {
     "environment",
@@ -57,7 +63,10 @@ def _strings(value: Any, label: str, *, required: bool = False) -> list[str]:
     if (
         not isinstance(value, list)
         or len(value) > MAX_RECORDS
-        or any(not isinstance(item, str) or not item.strip() or len(item) > MAX_TEXT for item in value)
+        or any(
+            not isinstance(item, str) or not item.strip() or len(item) > MAX_TEXT
+            for item in value
+        )
         or len(value) != len(set(value))
         or (required and not value)
     ):
@@ -113,8 +122,14 @@ def _ccfa_candidates(analysis: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "candidate_id": stable_id("CCFA-CANDIDATE", component_id),
                 "source": "project_defined_common_cause",
-                "description": str(component.get("docstring_summary", component.get("qualname", ""))),
-                "involved_component_ids": sorted(str(value) for value in component.get("affected_component_ids", []) if value),
+                "description": str(
+                    component.get("docstring_summary", component.get("qualname", ""))
+                ),
+                "involved_component_ids": sorted(
+                    str(value)
+                    for value in component.get("affected_component_ids", [])
+                    if value
+                ),
                 "linked_finding_ids": linked,
             }
         )
@@ -130,7 +145,11 @@ def _ccfa_candidates(analysis: dict[str, Any]) -> list[dict[str, Any]]:
                     "source": "approved_sfta_qualitative_cut_set",
                     "description": f"Approved qualitative cut set for hazard {tree.get('hazard_id', '')}",
                     "involved_component_ids": [],
-                    "linked_finding_ids": sorted(str(value) for value in cut_set.get("linked_finding_ids", []) if value),
+                    "linked_finding_ids": sorted(
+                        str(value)
+                        for value in cut_set.get("linked_finding_ids", [])
+                        if value
+                    ),
                 }
             )
     return sorted(candidates, key=lambda item: item["candidate_id"])
@@ -151,7 +170,9 @@ def safety_lifecycle_authoring_template(
         "generated_at": generated_at or utc_now(),
         "authority": _text(authority, "safety authority"),
         "analysis_binding": {
-            "baseline_id": str(analysis.get("project", {}).get("baseline", {}).get("id", "")),
+            "baseline_id": str(
+                analysis.get("project", {}).get("baseline", {}).get("id", "")
+            ),
             "analysis_state_sha256": analysis_state_sha256(analysis),
         },
         "stages": [_empty_stage(stage) for stage in STAGES],
@@ -175,27 +196,58 @@ def safety_lifecycle_authoring_template(
     return result
 
 
-def _load_authoring(source: str | Path, analysis: dict[str, Any]) -> tuple[dict[str, Any], bytes, Path]:
+def _load_authoring(
+    source: str | Path, analysis: dict[str, Any]
+) -> tuple[dict[str, Any], bytes, Path]:
     document = load_bounded_json_document(
-        source, label="safety lifecycle authoring", max_bytes=100_000_000,
-        max_depth=150, max_nodes=3_000_000,
+        source,
+        label="safety lifecycle authoring",
+        max_bytes=100_000_000,
+        max_depth=150,
+        max_nodes=3_000_000,
     )
     if not isinstance(document.value, dict):
         raise ValueError("safety lifecycle authoring must contain an object")
     value = copy.deepcopy(document.value)
     expected = {
-        "format", "generated_at", "authority", "analysis_binding", "stages", "hazards",
-        "ccfa_candidates", "ccfa_reviews", "operational_feedback", "assumptions", "limitations", "notice", "content_sha256",
+        "format",
+        "generated_at",
+        "authority",
+        "analysis_binding",
+        "stages",
+        "hazards",
+        "ccfa_candidates",
+        "ccfa_reviews",
+        "operational_feedback",
+        "assumptions",
+        "limitations",
+        "notice",
+        "content_sha256",
     }
-    if set(value) != expected or value.get("format") != SAFETY_LIFECYCLE_AUTHORING_FORMAT:
-        raise ValueError("safety lifecycle authoring fields or format do not match format 1")
+    if (
+        set(value) != expected
+        or value.get("format") != SAFETY_LIFECYCLE_AUTHORING_FORMAT
+    ):
+        raise ValueError(
+            "safety lifecycle authoring fields or format do not match format 1"
+        )
     unsigned = copy.deepcopy(value)
     claimed = unsigned.pop("content_sha256", "")
-    if not isinstance(claimed, str) or not re.fullmatch(r"[0-9a-f]{64}", claimed) or canonical_json_sha256(unsigned) != claimed:
+    if (
+        not isinstance(claimed, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", claimed)
+        or canonical_json_sha256(unsigned) != claimed
+    ):
         raise ValueError("safety lifecycle authoring content digest does not match")
     binding = value.get("analysis_binding")
-    if not isinstance(binding, dict) or set(binding) != {"baseline_id", "analysis_state_sha256"} or binding["analysis_state_sha256"] != analysis_state_sha256(analysis):
-        raise ValueError("safety lifecycle authoring does not bind the exact analysis state")
+    if (
+        not isinstance(binding, dict)
+        or set(binding) != {"baseline_id", "analysis_state_sha256"}
+        or binding["analysis_state_sha256"] != analysis_state_sha256(analysis)
+    ):
+        raise ValueError(
+            "safety lifecycle authoring does not bind the exact analysis state"
+        )
     _text(value["authority"], "safety authority")
     return value, document.raw, document.path
 
@@ -204,8 +256,11 @@ def seal_safety_lifecycle_authoring(
     analysis: dict[str, Any], source: str | Path, destination: str | Path
 ) -> Path:
     document = load_bounded_json_document(
-        source, label="safety lifecycle authoring", max_bytes=100_000_000,
-        max_depth=150, max_nodes=3_000_000,
+        source,
+        label="safety lifecycle authoring",
+        max_bytes=100_000_000,
+        max_depth=150,
+        max_nodes=3_000_000,
     )
     if not isinstance(document.value, dict):
         raise ValueError("safety lifecycle authoring must contain an object")
@@ -213,21 +268,50 @@ def seal_safety_lifecycle_authoring(
     value.pop("content_sha256", None)
     value["content_sha256"] = canonical_json_sha256(value)
     expected = {
-        "format", "generated_at", "authority", "analysis_binding", "stages", "hazards",
-        "ccfa_candidates", "ccfa_reviews", "operational_feedback", "assumptions", "limitations", "notice", "content_sha256",
+        "format",
+        "generated_at",
+        "authority",
+        "analysis_binding",
+        "stages",
+        "hazards",
+        "ccfa_candidates",
+        "ccfa_reviews",
+        "operational_feedback",
+        "assumptions",
+        "limitations",
+        "notice",
+        "content_sha256",
     }
-    if set(value) != expected or value.get("format") != SAFETY_LIFECYCLE_AUTHORING_FORMAT:
-        raise ValueError("safety lifecycle authoring fields or format do not match format 1")
+    if (
+        set(value) != expected
+        or value.get("format") != SAFETY_LIFECYCLE_AUTHORING_FORMAT
+    ):
+        raise ValueError(
+            "safety lifecycle authoring fields or format do not match format 1"
+        )
     expected_binding = value.get("analysis_binding")
-    if not isinstance(expected_binding, dict) or set(expected_binding) != {"baseline_id", "analysis_state_sha256"} or expected_binding.get("analysis_state_sha256") != analysis_state_sha256(analysis):
-        raise ValueError("safety lifecycle authoring does not bind the exact analysis state")
+    if (
+        not isinstance(expected_binding, dict)
+        or set(expected_binding) != {"baseline_id", "analysis_state_sha256"}
+        or expected_binding.get("analysis_state_sha256")
+        != analysis_state_sha256(analysis)
+    ):
+        raise ValueError(
+            "safety lifecycle authoring does not bind the exact analysis state"
+        )
     template = safety_lifecycle_authoring_template(
-        analysis, authority=str(value["authority"]), generated_at=str(value["generated_at"])
+        analysis,
+        authority=str(value["authority"]),
+        generated_at=str(value["generated_at"]),
     )
     if value["ccfa_candidates"] != template["ccfa_candidates"]:
-        raise ValueError("CCFA candidate scope does not match regenerated exact-analysis scope")
+        raise ValueError(
+            "CCFA candidate scope does not match regenerated exact-analysis scope"
+        )
     _stage_results(value["stages"])
-    _hazard_results(value["hazards"], {item["hazard_id"] for item in template["hazards"]})
+    _hazard_results(
+        value["hazards"], {item["hazard_id"] for item in template["hazards"]}
+    )
     _ccfa_results(value["ccfa_reviews"], template["ccfa_candidates"])
     _operational_feedback_result(value["operational_feedback"])
     _strings(value["assumptions"], "safety assumptions")
@@ -241,7 +325,14 @@ def _stage_results(stages: Any) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     seen: set[str] = set()
     for record in stages:
-        fields = {"stage", "status", "rationale", "reviewer", "reviewed_at", "evidence_refs"}
+        fields = {
+            "stage",
+            "status",
+            "rationale",
+            "reviewer",
+            "reviewed_at",
+            "evidence_refs",
+        }
         if not isinstance(record, dict) or set(record) != fields:
             raise ValueError("safety lifecycle stage fields are invalid")
         stage = str(record["stage"])
@@ -250,8 +341,21 @@ def _stage_results(stages: Any) -> list[dict[str, Any]]:
             raise ValueError("safety lifecycle stage identity or status is invalid")
         seen.add(stage)
         evidence = _strings(record["evidence_refs"], f"{stage} evidence")
-        complete = status in {"approved", "not_applicable"} and bool(str(record["rationale"]).strip()) and bool(str(record["reviewer"]).strip()) and bool(str(record["reviewed_at"]).strip()) and (status == "not_applicable" or bool(evidence))
-        results.append({"stage": stage, "status": status, "complete": complete, "evidence_count": len(evidence)})
+        complete = (
+            status in {"approved", "not_applicable"}
+            and bool(str(record["rationale"]).strip())
+            and bool(str(record["reviewer"]).strip())
+            and bool(str(record["reviewed_at"]).strip())
+            and (status == "not_applicable" or bool(evidence))
+        )
+        results.append(
+            {
+                "stage": stage,
+                "status": status,
+                "complete": complete,
+                "evidence_count": len(evidence),
+            }
+        )
     if seen != set(STAGES):
         raise ValueError("safety lifecycle stages are incomplete")
     return results
@@ -259,9 +363,17 @@ def _stage_results(stages: Any) -> list[dict[str, Any]]:
 
 def _hazard_results(records: Any, expected_ids: set[str]) -> list[dict[str, Any]]:
     fields = {
-        "hazard_id", "description", "end_effect", "classification", "classification_rationale",
-        "safety_objectives", "allocated_requirement_ids", "verification_refs",
-        "residual_risk_disposition", "decision_authority", "decision_rationale",
+        "hazard_id",
+        "description",
+        "end_effect",
+        "classification",
+        "classification_rationale",
+        "safety_objectives",
+        "allocated_requirement_ids",
+        "verification_refs",
+        "residual_risk_disposition",
+        "decision_authority",
+        "decision_rationale",
     }
     if not isinstance(records, list) or len(records) > MAX_RECORDS:
         raise ValueError("hazard lifecycle records are invalid")
@@ -271,30 +383,70 @@ def _hazard_results(records: Any, expected_ids: set[str]) -> list[dict[str, Any]
         if not isinstance(record, dict) or set(record) != fields:
             raise ValueError("hazard lifecycle record fields are invalid")
         identifier = _text(record["hazard_id"], "hazard id")
-        if identifier in seen or identifier not in expected_ids or record["residual_risk_disposition"] not in DISPOSITIONS:
+        if (
+            identifier in seen
+            or identifier not in expected_ids
+            or record["residual_risk_disposition"] not in DISPOSITIONS
+        ):
             raise ValueError(f"hazard lifecycle record {identifier} is invalid")
         seen.add(identifier)
         objectives = _strings(record["safety_objectives"], f"{identifier} objectives")
-        allocations = _strings(record["allocated_requirement_ids"], f"{identifier} allocations")
-        verification = _strings(record["verification_refs"], f"{identifier} verification")
+        allocations = _strings(
+            record["allocated_requirement_ids"], f"{identifier} allocations"
+        )
+        verification = _strings(
+            record["verification_refs"], f"{identifier} verification"
+        )
         disposition = str(record["residual_risk_disposition"])
-        decision_complete = disposition in {"accepted", "rejected", "not_applicable"} and bool(str(record["decision_authority"]).strip()) and bool(str(record["decision_rationale"]).strip())
-        complete = bool(str(record["classification"]).strip() and str(record["classification_rationale"]).strip() and objectives and allocations and verification and decision_complete)
-        results.append({
-            "hazard_id": identifier, "complete": complete, "objective_count": len(objectives),
-            "allocation_count": len(allocations), "verification_count": len(verification),
-            "residual_risk_disposition": disposition,
-        })
+        decision_complete = (
+            disposition in {"accepted", "rejected", "not_applicable"}
+            and bool(str(record["decision_authority"]).strip())
+            and bool(str(record["decision_rationale"]).strip())
+        )
+        complete = bool(
+            str(record["classification"]).strip()
+            and str(record["classification_rationale"]).strip()
+            and objectives
+            and allocations
+            and verification
+            and decision_complete
+        )
+        results.append(
+            {
+                "hazard_id": identifier,
+                "complete": complete,
+                "objective_count": len(objectives),
+                "allocation_count": len(allocations),
+                "verification_count": len(verification),
+                "residual_risk_disposition": disposition,
+            }
+        )
     if seen != expected_ids:
-        raise ValueError("hazard lifecycle population does not match the exact analysis")
+        raise ValueError(
+            "hazard lifecycle population does not match the exact analysis"
+        )
     return results
 
 
-def _ccfa_results(reviews: Any, candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+def _ccfa_results(
+    reviews: Any, candidates: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str]]:
     fields = {
-        "review_id", "candidate_ids", "category", "description", "involved_component_ids",
-        "linked_finding_ids", "coupling_mechanism", "independence_claim", "separation_evidence_refs",
-        "mitigations", "verification_refs", "disposition", "reviewer", "reviewed_at", "rationale",
+        "review_id",
+        "candidate_ids",
+        "category",
+        "description",
+        "involved_component_ids",
+        "linked_finding_ids",
+        "coupling_mechanism",
+        "independence_claim",
+        "separation_evidence_refs",
+        "mitigations",
+        "verification_refs",
+        "disposition",
+        "reviewer",
+        "reviewed_at",
+        "rationale",
     }
     if not isinstance(reviews, list) or len(reviews) > MAX_RECORDS:
         raise ValueError("CCFA reviews are invalid")
@@ -306,16 +458,28 @@ def _ccfa_results(reviews: Any, candidates: list[dict[str, Any]]) -> tuple[list[
         if not isinstance(review, dict) or set(review) != fields:
             raise ValueError("CCFA review fields are invalid")
         identifier = _text(review["review_id"], "CCFA review id")
-        if identifier in review_ids or review["category"] not in CCFA_CATEGORIES or review["disposition"] not in DISPOSITIONS:
+        if (
+            identifier in review_ids
+            or review["category"] not in CCFA_CATEGORIES
+            or review["disposition"] not in DISPOSITIONS
+        ):
             raise ValueError(f"CCFA review {identifier} is invalid")
         review_ids.add(identifier)
-        links = _strings(review["candidate_ids"], f"{identifier} candidate ids", required=True)
+        links = _strings(
+            review["candidate_ids"], f"{identifier} candidate ids", required=True
+        )
         if not set(links) <= candidate_ids or covered.intersection(links):
-            raise ValueError(f"CCFA review {identifier} has unknown or multiply covered candidates")
+            raise ValueError(
+                f"CCFA review {identifier} has unknown or multiply covered candidates"
+            )
         covered.update(links)
-        separation = _strings(review["separation_evidence_refs"], f"{identifier} separation evidence")
+        separation = _strings(
+            review["separation_evidence_refs"], f"{identifier} separation evidence"
+        )
         mitigations = _strings(review["mitigations"], f"{identifier} mitigations")
-        verification = _strings(review["verification_refs"], f"{identifier} verification")
+        verification = _strings(
+            review["verification_refs"], f"{identifier} verification"
+        )
         disposition = str(review["disposition"])
         complete = bool(
             str(review["coupling_mechanism"]).strip()
@@ -327,22 +491,44 @@ def _ccfa_results(reviews: Any, candidates: list[dict[str, Any]]) -> tuple[list[
             and str(review["reviewed_at"]).strip()
             and str(review["rationale"]).strip()
         )
-        results.append({"review_id": identifier, "candidate_ids": links, "complete": complete, "disposition": disposition})
+        results.append(
+            {
+                "review_id": identifier,
+                "candidate_ids": links,
+                "complete": complete,
+                "disposition": disposition,
+            }
+        )
     return results, sorted(candidate_ids - covered)
 
 
 def _operational_feedback_result(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {
-        "review_period", "authority", "evidence_refs", "records"
+        "review_period",
+        "authority",
+        "evidence_refs",
+        "records",
     }:
         raise ValueError("operational feedback review fields are invalid")
     evidence = _strings(value["evidence_refs"], "operational feedback evidence")
     records = value["records"]
     fields = {
-        "record_id", "detected_at", "source", "affected_hazard_ids",
-        "affected_finding_ids", "affected_component_ids", "failure_description",
-        "containment", "root_cause_ref", "corrective_actions", "owner", "due_date",
-        "verification_refs", "effectiveness_status", "closed_by", "closed_at",
+        "record_id",
+        "detected_at",
+        "source",
+        "affected_hazard_ids",
+        "affected_finding_ids",
+        "affected_component_ids",
+        "failure_description",
+        "containment",
+        "root_cause_ref",
+        "corrective_actions",
+        "owner",
+        "due_date",
+        "verification_refs",
+        "effectiveness_status",
+        "closed_by",
+        "closed_at",
     }
     if not isinstance(records, list) or len(records) > MAX_RECORDS:
         raise ValueError("operational feedback records are invalid")
@@ -353,15 +539,30 @@ def _operational_feedback_result(value: Any) -> dict[str, Any]:
             raise ValueError("operational feedback record fields are invalid")
         identifier = _text(record["record_id"], "operational feedback record id")
         if identifier in seen or record["effectiveness_status"] not in {
-            "open", "contained", "action_in_progress", "verified_effective", "verified_ineffective"
+            "open",
+            "contained",
+            "action_in_progress",
+            "verified_effective",
+            "verified_ineffective",
         }:
             raise ValueError(f"operational feedback record {identifier} is invalid")
         seen.add(identifier)
-        for name in ("affected_hazard_ids", "affected_finding_ids", "affected_component_ids"):
+        for name in (
+            "affected_hazard_ids",
+            "affected_finding_ids",
+            "affected_component_ids",
+        ):
             _strings(record[name], f"{identifier} {name}")
-        actions = _strings(record["corrective_actions"], f"{identifier} corrective actions")
-        verification = _strings(record["verification_refs"], f"{identifier} verification")
-        closed = record["effectiveness_status"] in {"verified_effective", "verified_ineffective"}
+        actions = _strings(
+            record["corrective_actions"], f"{identifier} corrective actions"
+        )
+        verification = _strings(
+            record["verification_refs"], f"{identifier} verification"
+        )
+        closed = record["effectiveness_status"] in {
+            "verified_effective",
+            "verified_ineffective",
+        }
         complete = bool(
             str(record["detected_at"]).strip()
             and str(record["source"]).strip()
@@ -376,7 +577,13 @@ def _operational_feedback_result(value: Any) -> dict[str, Any]:
             and str(record["closed_by"]).strip()
             and str(record["closed_at"]).strip()
         )
-        results.append({"record_id": identifier, "effectiveness_status": record["effectiveness_status"], "complete": complete})
+        results.append(
+            {
+                "record_id": identifier,
+                "effectiveness_status": record["effectiveness_status"],
+                "complete": complete,
+            }
+        )
     review_complete = bool(
         str(value["review_period"]).strip()
         and str(value["authority"]).strip()
@@ -392,28 +599,41 @@ def _operational_feedback_result(value: Any) -> dict[str, Any]:
 
 
 def safety_lifecycle_assessment(
-    analysis: dict[str, Any], authoring_source: str | Path, *, generated_at: str | None = None
+    analysis: dict[str, Any],
+    authoring_source: str | Path,
+    *,
+    generated_at: str | None = None,
 ) -> dict[str, Any]:
     authoring, raw, path = _load_authoring(authoring_source, analysis)
     expected_template = safety_lifecycle_authoring_template(
-        analysis, authority=authoring["authority"], generated_at=authoring["generated_at"]
+        analysis,
+        authority=authoring["authority"],
+        generated_at=authoring["generated_at"],
     )
     expected_candidates = expected_template["ccfa_candidates"]
     if authoring["ccfa_candidates"] != expected_candidates:
-        raise ValueError("CCFA candidate scope does not match regenerated exact-analysis scope")
+        raise ValueError(
+            "CCFA candidate scope does not match regenerated exact-analysis scope"
+        )
     expected_hazards = {item["hazard_id"] for item in expected_template["hazards"]}
     stages = _stage_results(authoring["stages"])
     hazards = _hazard_results(authoring["hazards"], expected_hazards)
     ccfa, uncovered = _ccfa_results(authoring["ccfa_reviews"], expected_candidates)
-    operational_feedback = _operational_feedback_result(authoring["operational_feedback"])
-    assumptions = _strings(authoring["assumptions"], "safety assumptions", required=True)
+    operational_feedback = _operational_feedback_result(
+        authoring["operational_feedback"]
+    )
+    assumptions = _strings(
+        authoring["assumptions"], "safety assumptions", required=True
+    )
     _strings(authoring["limitations"], "safety limitations")
     checks = {
         "analysis_binding": True,
         "lifecycle_stages_complete": all(item["complete"] for item in stages),
-        "hazard_lifecycle_complete": bool(hazards) and all(item["complete"] for item in hazards),
+        "hazard_lifecycle_complete": bool(hazards)
+        and all(item["complete"] for item in hazards),
         "ccfa_scope_covered": not uncovered,
-        "ccfa_reviews_complete": bool(ccfa or not expected_candidates) and all(item["complete"] for item in ccfa),
+        "ccfa_reviews_complete": bool(ccfa or not expected_candidates)
+        and all(item["complete"] for item in ccfa),
         "operational_feedback_complete": operational_feedback["complete"],
         "assumptions_present": bool(assumptions),
     }
@@ -431,13 +651,21 @@ def safety_lifecycle_assessment(
         "authority": authoring["authority"],
         "stages": stages,
         "hazards": hazards,
-        "ccfa": {"candidate_count": len(expected_candidates), "reviews": ccfa, "uncovered_candidate_ids": uncovered},
+        "ccfa": {
+            "candidate_count": len(expected_candidates),
+            "reviews": ccfa,
+            "uncovered_candidate_ids": uncovered,
+        },
         "operational_feedback": operational_feedback,
         "checks": checks,
         "summary": {
             "complete": complete,
-            "status": "eligible_for_authorized_safety_review" if complete else "engineering_evidence_incomplete",
-            "failed_checks": sorted(name for name, state in checks.items() if not state),
+            "status": "eligible_for_authorized_safety_review"
+            if complete
+            else "engineering_evidence_incomplete",
+            "failed_checks": sorted(
+                name for name, state in checks.items() if not state
+            ),
         },
         "notice": (
             "Completeness means the governed records reconcile. It does not establish safety, "
@@ -449,9 +677,26 @@ def safety_lifecycle_assessment(
 
 
 def verify_safety_lifecycle_assessment(value: dict[str, Any]) -> dict[str, Any]:
-    expected = {"format", "generated_at", "binding", "authority", "stages", "hazards", "ccfa", "operational_feedback", "checks", "summary", "notice", "content_sha256"}
+    expected = {
+        "format",
+        "generated_at",
+        "binding",
+        "authority",
+        "stages",
+        "hazards",
+        "ccfa",
+        "operational_feedback",
+        "checks",
+        "summary",
+        "notice",
+        "content_sha256",
+    }
     errors: list[str] = []
-    structure = bool(set(value) == expected and value.get("format") == SAFETY_LIFECYCLE_ASSESSMENT_FORMAT and isinstance(value.get("checks"), dict))
+    structure = bool(
+        set(value) == expected
+        and value.get("format") == SAFETY_LIFECYCLE_ASSESSMENT_FORMAT
+        and isinstance(value.get("checks"), dict)
+    )
     if not structure:
         errors.append("safety lifecycle assessment fields do not match format 1")
     semantic = False
@@ -459,8 +704,12 @@ def verify_safety_lifecycle_assessment(value: dict[str, Any]) -> dict[str, Any]:
         complete = all(state is True for state in value["checks"].values())
         semantic = value["summary"] == {
             "complete": complete,
-            "status": "eligible_for_authorized_safety_review" if complete else "engineering_evidence_incomplete",
-            "failed_checks": sorted(name for name, state in value["checks"].items() if not state),
+            "status": "eligible_for_authorized_safety_review"
+            if complete
+            else "engineering_evidence_incomplete",
+            "failed_checks": sorted(
+                name for name, state in value["checks"].items() if not state
+            ),
         }
     except (KeyError, TypeError):
         semantic = False
@@ -468,14 +717,27 @@ def verify_safety_lifecycle_assessment(value: dict[str, Any]) -> dict[str, Any]:
         errors.append("safety lifecycle summary does not reconcile")
     unsigned = copy.deepcopy(value)
     claimed = str(unsigned.pop("content_sha256", ""))
-    integrity = bool(re.fullmatch(r"[0-9a-f]{64}", claimed) and canonical_json_sha256(unsigned) == claimed)
+    integrity = bool(
+        re.fullmatch(r"[0-9a-f]{64}", claimed)
+        and canonical_json_sha256(unsigned) == claimed
+    )
     if not integrity:
         errors.append("safety lifecycle content digest does not match")
     return {
         "format": SAFETY_LIFECYCLE_VERIFICATION_FORMAT,
         "valid": bool(structure and semantic and integrity),
-        "complete": bool(structure and semantic and integrity and value.get("summary", {}).get("complete")),
-        "checks": {"closed_structure": structure, "content_integrity": integrity, "semantic_reconciliation": semantic, "source_regeneration": None},
+        "complete": bool(
+            structure
+            and semantic
+            and integrity
+            and value.get("summary", {}).get("complete")
+        ),
+        "checks": {
+            "closed_structure": structure,
+            "content_integrity": integrity,
+            "semantic_reconciliation": semantic,
+            "source_regeneration": None,
+        },
         "errors": errors,
         "content_sha256": claimed,
         "notice": "Verification proves governed accounting, not safety or certification authority.",
@@ -483,38 +745,71 @@ def verify_safety_lifecycle_assessment(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_safety_lifecycle_assessment_file(
-    source: str | Path, *, analysis: dict[str, Any] | None = None,
+    source: str | Path,
+    *,
+    analysis: dict[str, Any] | None = None,
     authoring_source: str | Path | None = None,
 ) -> dict[str, Any]:
     try:
-        document = load_bounded_json_document(source, label="safety lifecycle assessment", max_bytes=100_000_000, max_depth=150, max_nodes=3_000_000)
+        document = load_bounded_json_document(
+            source,
+            label="safety lifecycle assessment",
+            max_bytes=100_000_000,
+            max_depth=150,
+            max_nodes=3_000_000,
+        )
         if not isinstance(document.value, dict):
             raise ValueError("safety lifecycle assessment must contain an object")
         result = verify_safety_lifecycle_assessment(document.value)
         result["path"] = str(document.path)
         if analysis is not None and authoring_source is not None and result["valid"]:
-            regenerated = safety_lifecycle_assessment(analysis, authoring_source, generated_at=str(document.value.get("generated_at", "")))
+            regenerated = safety_lifecycle_assessment(
+                analysis,
+                authoring_source,
+                generated_at=str(document.value.get("generated_at", "")),
+            )
             source_regeneration = regenerated == document.value
             result["checks"]["source_regeneration"] = source_regeneration
             result["valid"] = bool(result["valid"] and source_regeneration)
             result["complete"] = bool(result["complete"] and source_regeneration)
             if not source_regeneration:
-                result["errors"].append("assessment does not exactly regenerate from supplied sources")
+                result["errors"].append(
+                    "assessment does not exactly regenerate from supplied sources"
+                )
         return result
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return {
             "path": str(Path(source).expanduser().absolute()),
             "format": SAFETY_LIFECYCLE_VERIFICATION_FORMAT,
-            "valid": False, "complete": False,
-            "checks": {"closed_structure": False, "content_integrity": False, "semantic_reconciliation": False, "source_regeneration": None},
-            "errors": [str(exc)], "content_sha256": "",
+            "valid": False,
+            "complete": False,
+            "checks": {
+                "closed_structure": False,
+                "content_integrity": False,
+                "semantic_reconciliation": False,
+                "source_regeneration": None,
+            },
+            "errors": [str(exc)],
+            "content_sha256": "",
             "notice": "The safety lifecycle assessment could not be safely verified.",
         }
 
 
-def export_safety_lifecycle_authoring(value: dict[str, Any], destination: str | Path) -> Path:
-    return atomic_publish_text(destination, json.dumps(value, indent=2, ensure_ascii=False) + "\n", label="safety lifecycle authoring")
+def export_safety_lifecycle_authoring(
+    value: dict[str, Any], destination: str | Path
+) -> Path:
+    return atomic_publish_text(
+        destination,
+        json.dumps(value, indent=2, ensure_ascii=False) + "\n",
+        label="safety lifecycle authoring",
+    )
 
 
-def export_safety_lifecycle_assessment(value: dict[str, Any], destination: str | Path) -> Path:
-    return atomic_publish_text(destination, json.dumps(value, indent=2, ensure_ascii=False) + "\n", label="safety lifecycle assessment")
+def export_safety_lifecycle_assessment(
+    value: dict[str, Any], destination: str | Path
+) -> Path:
+    return atomic_publish_text(
+        destination,
+        json.dumps(value, indent=2, ensure_ascii=False) + "\n",
+        label="safety lifecycle assessment",
+    )

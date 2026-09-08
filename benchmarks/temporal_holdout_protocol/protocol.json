@@ -1,0 +1,10 @@
+{
+  "format": "pysfmea-temporal-holdout-protocol-1",
+  "required_roles": ["development_custodian", "holdout_custodian", "execution_operator", "label_authority", "approval_authority"],
+  "required_separation": "all roles except execution operator and holdout custodian must be distinct; development has no labels before prediction freeze",
+  "required_strata": ["application", "library", "async", "distributed", "security", "data", "framework_dynamic"],
+  "minimum_repositories": 10,
+  "minimum_failures": 100,
+  "required_controls": ["post_cutoff_revision", "content_digest", "history_disjointness", "prediction_freeze", "exclusion_freeze", "label_release_receipt", "similarity_audit"],
+  "claim_boundary": "A public protocol cannot prove hidden-corpus custody or independence."
+}

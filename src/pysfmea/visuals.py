@@ -95,9 +95,7 @@ def sequence_model(
         if parts and parts[-1] == "__init__":
             parts.pop()
         modules = [
-            ".".join(parts[index:])
-            for index in range(len(parts))
-            if parts[index:]
+            ".".join(parts[index:]) for index in range(len(parts)) if parts[index:]
         ]
         return {
             value
@@ -394,8 +392,7 @@ def sequence_model(
         ),
         "runtime_timing_statuses": dict(sorted(timing_statuses.items())),
         "static_dynamic_calls": sum(
-            value.get("evidence") == "static_dynamic_call"
-            for value in interactions
+            value.get("evidence") == "static_dynamic_call" for value in interactions
         ),
         "static_external_calls": sum(
             value.get("evidence") == "static_external_candidate"

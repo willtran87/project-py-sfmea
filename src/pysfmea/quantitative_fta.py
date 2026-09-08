@@ -32,13 +32,22 @@ SUPPORTED_DEPENDENCY_TREATMENTS = {
 }
 
 
-def quantitative_fta_template(analysis: dict[str, Any], *, authority: str) -> dict[str, Any]:
+def quantitative_fta_template(
+    analysis: dict[str, Any], *, authority: str
+) -> dict[str, Any]:
     result = {
         "format": QFTA_SOURCE_FORMAT,
         "generated_at": utc_now(),
         "authority": bounded_text(authority, "FTA authority"),
         "analysis_binding": analysis_binding(analysis),
-        "model_scope": {"top_event": "", "system_boundary": "", "mission_time_hours": 1.0, "operating_modes": [], "assumptions": [], "exclusions": []},
+        "model_scope": {
+            "top_event": "",
+            "system_boundary": "",
+            "mission_time_hours": 1.0,
+            "operating_modes": [],
+            "assumptions": [],
+            "exclusions": [],
+        },
         "independence_basis": "",
         "basic_events": [],
         "gates": [],
@@ -60,29 +69,68 @@ def _probability(value: Any, label: str) -> float:
 
 
 def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
-    result = verify_seal(value, label="quantitative FTA source", format_value=QFTA_SOURCE_FORMAT)
-    required = {"format", "generated_at", "authority", "analysis_binding", "model_scope", "independence_basis", "basic_events", "gates", "top_gate_id", "dependency_declarations", "evidence_refs", "notice", "content_sha256"}
+    result = verify_seal(
+        value, label="quantitative FTA source", format_value=QFTA_SOURCE_FORMAT
+    )
+    required = {
+        "format",
+        "generated_at",
+        "authority",
+        "analysis_binding",
+        "model_scope",
+        "independence_basis",
+        "basic_events",
+        "gates",
+        "top_gate_id",
+        "dependency_declarations",
+        "evidence_refs",
+        "notice",
+        "content_sha256",
+    }
     if set(result) != required:
         raise ValueError("quantitative FTA source fields are invalid")
     bounded_text(result["authority"], "FTA authority")
     verify_analysis_binding(result["analysis_binding"], analysis)
     scope = result["model_scope"]
-    if not isinstance(scope, dict) or set(scope) != {"top_event", "system_boundary", "mission_time_hours", "operating_modes", "assumptions", "exclusions"}:
+    if not isinstance(scope, dict) or set(scope) != {
+        "top_event",
+        "system_boundary",
+        "mission_time_hours",
+        "operating_modes",
+        "assumptions",
+        "exclusions",
+    }:
         raise ValueError("FTA model scope fields are invalid")
     bounded_text(scope["top_event"], "FTA top event", allow_empty=True)
     bounded_text(scope["system_boundary"], "FTA system boundary", allow_empty=True)
     mission = scope["mission_time_hours"]
-    if isinstance(mission, bool) or not isinstance(mission, (int, float)) or float(mission) <= 0:
+    if (
+        isinstance(mission, bool)
+        or not isinstance(mission, (int, float))
+        or float(mission) <= 0
+    ):
         raise ValueError("FTA mission time must be positive")
     for name in ("operating_modes", "assumptions", "exclusions"):
         unique_text_list(scope[name], f"FTA {name}")
-    bounded_text(result["independence_basis"], "FTA independence basis", allow_empty=True)
+    bounded_text(
+        result["independence_basis"], "FTA independence basis", allow_empty=True
+    )
     unique_text_list(result["evidence_refs"], "FTA evidence refs")
 
     events = result["basic_events"]
     if not isinstance(events, list) or len(events) > MAX_BASIC_EVENTS:
-        raise ValueError(f"FTA must contain no more than {MAX_BASIC_EVENTS} basic events")
-    event_fields = {"id", "description", "probability", "probability_interval", "component_ids", "source_kind", "evidence_ref"}
+        raise ValueError(
+            f"FTA must contain no more than {MAX_BASIC_EVENTS} basic events"
+        )
+    event_fields = {
+        "id",
+        "description",
+        "probability",
+        "probability_interval",
+        "component_ids",
+        "source_kind",
+        "evidence_ref",
+    }
     event_ids: list[str] = []
     for event in events:
         if not isinstance(event, dict) or set(event) != event_fields:
@@ -147,7 +195,14 @@ def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
     dependencies = result["dependency_declarations"]
     if not isinstance(dependencies, list) or len(dependencies) > MAX_GATES:
         raise ValueError("FTA dependency declarations are invalid")
-    dependency_fields = {"id", "kind", "event_ids", "modeling_treatment", "basis", "evidence_ref"}
+    dependency_fields = {
+        "id",
+        "kind",
+        "event_ids",
+        "modeling_treatment",
+        "basis",
+        "evidence_ref",
+    }
     dependency_ids: list[str] = []
     for dependency in dependencies:
         if not isinstance(dependency, dict) or set(dependency) != dependency_fields:
@@ -169,7 +224,9 @@ def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(result)
 
 
-def _evaluate(identifier: str, assignment: dict[str, bool], gates: dict[str, dict[str, Any]]) -> bool:
+def _evaluate(
+    identifier: str, assignment: dict[str, bool], gates: dict[str, dict[str, Any]]
+) -> bool:
     if identifier in assignment:
         return assignment[identifier]
     gate = gates[identifier]
@@ -177,7 +234,13 @@ def _evaluate(identifier: str, assignment: dict[str, bool], gates: dict[str, dic
     return all(values) if gate["kind"] == "and" else any(values)
 
 
-def _exact_probability(event_ids: list[str], probabilities: dict[str, float], gates: dict[str, dict[str, Any]], top: str, forced: dict[str, bool] | None = None) -> float:
+def _exact_probability(
+    event_ids: list[str],
+    probabilities: dict[str, float],
+    gates: dict[str, dict[str, Any]],
+    top: str,
+    forced: dict[str, bool] | None = None,
+) -> float:
     forced = forced or {}
     variables = [identifier for identifier in event_ids if identifier not in forced]
     total = 0.0
@@ -193,41 +256,92 @@ def _exact_probability(event_ids: list[str], probabilities: dict[str, float], ga
     return total
 
 
-def _minimal_cut_sets(identifier: str, events: set[str], gates: dict[str, dict[str, Any]], memo: dict[str, set[frozenset[str]]]) -> set[frozenset[str]]:
+def _minimal_cut_sets(
+    identifier: str,
+    events: set[str],
+    gates: dict[str, dict[str, Any]],
+    memo: dict[str, set[frozenset[str]]],
+) -> set[frozenset[str]]:
     if identifier in memo:
         return memo[identifier]
     if identifier in events:
         return {frozenset({identifier})}
     gate = gates[identifier]
-    child_sets = [_minimal_cut_sets(child, events, gates, memo) for child in gate["input_ids"]]
+    child_sets = [
+        _minimal_cut_sets(child, events, gates, memo) for child in gate["input_ids"]
+    ]
     if gate["kind"] == "or":
         candidates = set().union(*child_sets)
     else:
-        candidates = {frozenset().union(*parts) for parts in itertools.product(*child_sets)}
-    minimal = {candidate for candidate in candidates if not any(other < candidate for other in candidates)}
+        candidates = {
+            frozenset().union(*parts) for parts in itertools.product(*child_sets)
+        }
+    minimal = {
+        candidate
+        for candidate in candidates
+        if not any(other < candidate for other in candidates)
+    }
     if len(minimal) > MAX_CUT_SETS:
         raise ValueError("FTA minimal cut-set limit exceeded")
     memo[identifier] = minimal
     return minimal
 
 
-def quantitative_fta_assessment(analysis: dict[str, Any], source: str | Path | dict[str, Any]) -> dict[str, Any]:
-    raw = load_json(source, label="quantitative FTA source") if not isinstance(source, dict) else source
+def quantitative_fta_assessment(
+    analysis: dict[str, Any], source: str | Path | dict[str, Any]
+) -> dict[str, Any]:
+    raw = (
+        load_json(source, label="quantitative FTA source")
+        if not isinstance(source, dict)
+        else source
+    )
     value = _source(raw, analysis)
     event_ids = [item["id"] for item in value["basic_events"]]
     event_set = set(event_ids)
     gates = {item["id"]: item for item in value["gates"]}
     top = value["top_gate_id"]
-    ready = bool(value["model_scope"]["top_event"] and value["model_scope"]["system_boundary"] and value["model_scope"]["operating_modes"] and value["model_scope"]["assumptions"] and value["independence_basis"] and value["evidence_refs"] and event_ids and gates and top)
+    ready = bool(
+        value["model_scope"]["top_event"]
+        and value["model_scope"]["system_boundary"]
+        and value["model_scope"]["operating_modes"]
+        and value["model_scope"]["assumptions"]
+        and value["independence_basis"]
+        and value["evidence_refs"]
+        and event_ids
+        and gates
+        and top
+    )
     if ready:
-        nominal = {item["id"]: float(item["probability"]) for item in value["basic_events"]}
-        lower = {item["id"]: float(item["probability_interval"][0]) for item in value["basic_events"]}
-        upper = {item["id"]: float(item["probability_interval"][1]) for item in value["basic_events"]}
+        nominal = {
+            item["id"]: float(item["probability"]) for item in value["basic_events"]
+        }
+        lower = {
+            item["id"]: float(item["probability_interval"][0])
+            for item in value["basic_events"]
+        }
+        upper = {
+            item["id"]: float(item["probability_interval"][1])
+            for item in value["basic_events"]
+        }
         top_probability = _exact_probability(event_ids, nominal, gates, top)
-        interval = [_exact_probability(event_ids, lower, gates, top), _exact_probability(event_ids, upper, gates, top)]
-        cut_sets = sorted((sorted(item) for item in _minimal_cut_sets(top, event_set, gates, {})), key=lambda item: (len(item), item))
+        interval = [
+            _exact_probability(event_ids, lower, gates, top),
+            _exact_probability(event_ids, upper, gates, top),
+        ]
+        cut_sets = sorted(
+            (sorted(item) for item in _minimal_cut_sets(top, event_set, gates, {})),
+            key=lambda item: (len(item), item),
+        )
         importance = [
-            {"event_id": identifier, "birnbaum_importance": _exact_probability(event_ids, nominal, gates, top, {identifier: True}) - _exact_probability(event_ids, nominal, gates, top, {identifier: False})}
+            {
+                "event_id": identifier,
+                "birnbaum_importance": _exact_probability(
+                    event_ids, nominal, gates, top, {identifier: True}
+                )
+                - _exact_probability(
+                    event_ids, nominal, gates, top, {identifier: False}
+                ),
+            }
             for identifier in event_ids
         ]
     else:
@@ -240,47 +354,108 @@ def quantitative_fta_assessment(analysis: dict[str, Any], source: str | Path | d
         "generated_at": value["generated_at"],
         "source_sha256": value["content_sha256"],
         "analysis_binding": copy.deepcopy(value["analysis_binding"]),
-        "evaluation": {"method": "exact Boolean state enumeration with shared basic events", "top_event_probability": top_probability, "probability_interval": interval, "minimal_cut_sets": cut_sets, "importance": importance},
-        "summary": {"complete": ready, "basic_events": len(event_ids), "gates": len(gates), "minimal_cut_sets": len(cut_sets), "dependency_declarations": len(value["dependency_declarations"])},
+        "evaluation": {
+            "method": "exact Boolean state enumeration with shared basic events",
+            "top_event_probability": top_probability,
+            "probability_interval": interval,
+            "minimal_cut_sets": cut_sets,
+            "importance": importance,
+        },
+        "summary": {
+            "complete": ready,
+            "basic_events": len(event_ids),
+            "gates": len(gates),
+            "minimal_cut_sets": len(cut_sets),
+            "dependency_declarations": len(value["dependency_declarations"]),
+        },
         "notice": "Results assume the supplied probability model and declared dependence treatment; they do not establish risk acceptability.",
     }
     return seal(assessment)
 
 
-def seal_quantitative_fta_source(analysis: dict[str, Any], source: str | Path, destination: str | Path) -> Path:
-    return publish_json(_source(seal(load_json(source, label="quantitative FTA source")), analysis), destination)
+def seal_quantitative_fta_source(
+    analysis: dict[str, Any], source: str | Path, destination: str | Path
+) -> Path:
+    return publish_json(
+        _source(seal(load_json(source, label="quantitative FTA source")), analysis),
+        destination,
+    )
 
 
-def verify_quantitative_fta_assessment(assessment: dict[str, Any], *, analysis: dict[str, Any] | None = None, source: dict[str, Any] | None = None) -> dict[str, Any]:
+def verify_quantitative_fta_assessment(
+    assessment: dict[str, Any],
+    *,
+    analysis: dict[str, Any] | None = None,
+    source: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     errors: list[str] = []
     complete = False
     try:
-        value = verify_seal(assessment, label="quantitative FTA assessment", format_value=QFTA_ASSESSMENT_FORMAT)
+        value = verify_seal(
+            assessment,
+            label="quantitative FTA assessment",
+            format_value=QFTA_ASSESSMENT_FORMAT,
+        )
         if analysis is not None:
             verify_analysis_binding(value.get("analysis_binding"), analysis)
         if source is not None:
             if analysis is None:
                 raise ValueError("analysis is required for exact source regeneration")
-            if canonical_json_sha256(value) != canonical_json_sha256(quantitative_fta_assessment(analysis, source)):
-                raise ValueError("quantitative FTA assessment does not exactly regenerate")
+            if canonical_json_sha256(value) != canonical_json_sha256(
+                quantitative_fta_assessment(analysis, source)
+            ):
+                raise ValueError(
+                    "quantitative FTA assessment does not exactly regenerate"
+                )
         complete = bool(value.get("summary", {}).get("complete"))
     except (OSError, ValueError, TypeError) as exc:
         errors.append(str(exc))
-    return seal({"format": QFTA_VERIFICATION_FORMAT, "valid": not errors, "complete": not errors and complete, "errors": errors, "notice": "Verification establishes integrity and optional exact regeneration only."})
+    return seal(
+        {
+            "format": QFTA_VERIFICATION_FORMAT,
+            "valid": not errors,
+            "complete": not errors and complete,
+            "errors": errors,
+            "notice": "Verification establishes integrity and optional exact regeneration only.",
+        }
+    )
 
 
-def verify_quantitative_fta_assessment_file(assessment_source: str | Path, *, analysis: dict[str, Any] | None = None, source_path: str | Path | None = None) -> dict[str, Any]:
+def verify_quantitative_fta_assessment_file(
+    assessment_source: str | Path,
+    *,
+    analysis: dict[str, Any] | None = None,
+    source_path: str | Path | None = None,
+) -> dict[str, Any]:
     try:
         assessment = load_json(assessment_source, label="quantitative FTA assessment")
-        source = load_json(source_path, label="quantitative FTA source") if source_path else None
-        return verify_quantitative_fta_assessment(assessment, analysis=analysis, source=source)
+        source = (
+            load_json(source_path, label="quantitative FTA source")
+            if source_path
+            else None
+        )
+        return verify_quantitative_fta_assessment(
+            assessment, analysis=analysis, source=source
+        )
     except (OSError, ValueError, TypeError) as exc:
-        return seal({"format": QFTA_VERIFICATION_FORMAT, "valid": False, "complete": False, "errors": [str(exc)], "notice": "Verification failed closed."})
+        return seal(
+            {
+                "format": QFTA_VERIFICATION_FORMAT,
+                "valid": False,
+                "complete": False,
+                "errors": [str(exc)],
+                "notice": "Verification failed closed.",
+            }
+        )
 
 
-def export_quantitative_fta_source(value: dict[str, Any], destination: str | Path) -> Path:
+def export_quantitative_fta_source(
+    value: dict[str, Any], destination: str | Path
+) -> Path:
     return publish_json(value, destination)
 
 
-def export_quantitative_fta_assessment(value: dict[str, Any], destination: str | Path) -> Path:
+def export_quantitative_fta_assessment(
+    value: dict[str, Any], destination: str | Path
+) -> Path:
     return publish_json(value, destination)

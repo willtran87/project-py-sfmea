@@ -105,6 +105,7 @@ class ValidationCohortToolTests(unittest.TestCase):
         self.assertEqual(record["semantic_case_count"], 3)
         self.assertEqual(record["semantic_output_recall"], 1.0)
         self.assertEqual(record["semantic_output_precision"], 0.75)
+
     def test_nonindependent_or_disqualified_result_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "distinct producer"):
             cohort_from_result(

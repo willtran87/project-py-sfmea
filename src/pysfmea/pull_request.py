@@ -72,7 +72,9 @@ def _git(repository: Path, *arguments: str, output: Path | None = None) -> str:
 def _validate_ref(value: str, *, label: str) -> str:
     ref = value.strip()
     if not ref or len(ref) > 256 or ref.startswith("-"):
-        raise ValueError(f"{label} must be a non-option Git revision up to 256 characters")
+        raise ValueError(
+            f"{label} must be a non-option Git revision up to 256 characters"
+        )
     if any(ord(character) < 32 or ord(character) == 127 for character in ref):
         raise ValueError(f"{label} contains control characters")
     return ref
@@ -172,7 +174,9 @@ def analyze_pull_request(
     head_commit = _resolve_commit(repo, head, label="head ref")
     destination = Path(output).expanduser().absolute()
     if destination.exists() or destination.is_symlink():
-        raise FileExistsError(f"pull-request analysis destination already exists: {destination}")
+        raise FileExistsError(
+            f"pull-request analysis destination already exists: {destination}"
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
         prefix=f".{destination.name}.staging-", dir=destination.parent
@@ -181,12 +185,8 @@ def analyze_pull_request(
         base_root, head_root = temporary_root / "base", temporary_root / "head"
         _snapshot(repo, base_commit, base_root)
         _snapshot(repo, head_commit, head_root)
-        base_analysis = _scan_snapshot(
-            base_root, repository=repo, commit=base_commit
-        )
-        head_analysis = _scan_snapshot(
-            head_root, repository=repo, commit=head_commit
-        )
+        base_analysis = _scan_snapshot(base_root, repository=repo, commit=base_commit)
+        head_analysis = _scan_snapshot(head_root, repository=repo, commit=head_commit)
         result_root = temporary_root / "result"
         result_root.mkdir()
         base_path = result_root / "base-analysis.json"
@@ -317,7 +317,9 @@ def _verify_pull_request_analysis(source: str | Path) -> dict[str, Any]:
         errors.append("receipt format or content digest is invalid")
     artifacts = receipt.get("artifacts", {})
     artifact_names = expected - {"receipt.json"}
-    checks["artifact_integrity"] = isinstance(artifacts, dict) and set(artifacts) == artifact_names
+    checks["artifact_integrity"] = (
+        isinstance(artifacts, dict) and set(artifacts) == artifact_names
+    )
     if checks["artifact_integrity"]:
         for name in sorted(artifact_names):
             record = artifacts.get(name)
@@ -375,8 +377,10 @@ def _verify_pull_request_analysis(source: str | Path) -> dict[str, Any]:
     checks["commit_bindings"] = (
         isinstance(base_record, dict)
         and isinstance(head_record, dict)
-        and base_record.get("commit") == base_analysis.get("project", {}).get("revision")
-        and head_record.get("commit") == head_analysis.get("project", {}).get("revision")
+        and base_record.get("commit")
+        == base_analysis.get("project", {}).get("revision")
+        and head_record.get("commit")
+        == head_analysis.get("project", {}).get("revision")
         and all(
             isinstance(value.get("commit"), str)
             and len(value["commit"]) == 40
@@ -417,8 +421,12 @@ def _verify_pull_request_analysis(source: str | Path) -> dict[str, Any]:
         "path": str(root),
         "valid": valid,
         "checks": checks,
-        "base_commit": str(base_record.get("commit", "")) if isinstance(base_record, dict) else "",
-        "head_commit": str(head_record.get("commit", "")) if isinstance(head_record, dict) else "",
+        "base_commit": str(base_record.get("commit", ""))
+        if isinstance(base_record, dict)
+        else "",
+        "head_commit": str(head_record.get("commit", ""))
+        if isinstance(head_record, dict)
+        else "",
         "errors": errors,
         "notice": (
             "Verification proves bundle integrity, internal regeneration, and exact commit/report "

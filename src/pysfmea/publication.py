@@ -128,9 +128,7 @@ PUBLICATION_FAILURES: Mapping[str, PublicationFailure] = MappingProxyType(
 )
 
 
-def classify_publication_failure(
-    error: Exception, *, phase: str
-) -> PublicationFailure:
+def classify_publication_failure(error: Exception, *, phase: str) -> PublicationFailure:
     """Classify an exception without exposing exception text or host paths."""
 
     if phase not in {"analysis_load", "generation"}:
@@ -166,7 +164,9 @@ def _publication_failure_catalog_content() -> dict[str, Any]:
                 "retry_policy": failure.retry_policy,
                 "message": failure.message,
             }
-            for failure in sorted(PUBLICATION_FAILURES.values(), key=lambda item: item.code)
+            for failure in sorted(
+                PUBLICATION_FAILURES.values(), key=lambda item: item.code
+            )
         ],
         "notice": PUBLICATION_FAILURE_CATALOG_NOTICE,
     }

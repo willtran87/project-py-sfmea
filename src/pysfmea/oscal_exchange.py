@@ -86,18 +86,25 @@ def oscal_assessment_results(
             "unmapped",
         )
         effect = _text(
-            finding.get("effect") or finding.get("local_effect") or finding.get("description"),
+            finding.get("effect")
+            or finding.get("local_effect")
+            or finding.get("description"),
             "Potential software failure effect requires engineering review.",
         )
         observations.append(
             {
                 "uuid": _uuid("observation", digest, identifier),
-                "title": _text(finding.get("title") or finding.get("failure_mode"), identifier),
+                "title": _text(
+                    finding.get("title") or finding.get("failure_mode"), identifier
+                ),
                 "description": effect,
                 "props": [
                     {"name": "pysfmea-finding-id", "value": identifier},
                     {"name": "pysfmea-component-id", "value": component_id},
-                    {"name": "pysfmea-disposition", "value": str(finding.get("status", "open"))},
+                    {
+                        "name": "pysfmea-disposition",
+                        "value": str(finding.get("status", "open")),
+                    },
                 ],
                 "methods": ["EXAMINE"],
                 "types": ["finding"],
@@ -117,12 +124,25 @@ def oscal_assessment_results(
                 "oscal-version": OSCAL_VERSION,
                 "props": [
                     {"name": "pysfmea-analysis-state-sha256", "value": digest},
-                    {"name": "pysfmea-baseline-id", "value": str(analysis.get("project", {}).get("baseline", {}).get("id", ""))},
+                    {
+                        "name": "pysfmea-baseline-id",
+                        "value": str(
+                            analysis.get("project", {})
+                            .get("baseline", {})
+                            .get("id", "")
+                        ),
+                    },
                     {"name": "pysfmea-projection", "value": "assessment-observations"},
                 ],
-                "roles": [{"id": "assessment-authority", "title": "Assessment authority"}],
-                "parties": [{"uuid": party_uuid, "type": "organization", "name": actor}],
-                "responsible-parties": [{"role-id": "assessment-authority", "party-uuids": [party_uuid]}],
+                "roles": [
+                    {"id": "assessment-authority", "title": "Assessment authority"}
+                ],
+                "parties": [
+                    {"uuid": party_uuid, "type": "organization", "name": actor}
+                ],
+                "responsible-parties": [
+                    {"role-id": "assessment-authority", "party-uuids": [party_uuid]}
+                ],
             },
             "import-ap": {"href": ap_href},
             "results": [
@@ -140,7 +160,15 @@ def oscal_assessment_results(
     }
     if evidence_base_href:
         result["assessment-results"]["back-matter"] = {
-            "resources": [{"uuid": _uuid("evidence", digest), "title": "PySFMEA evidence base", "rlinks": [{"href": bounded_text(evidence_base_href, "OSCAL evidence URI")}]}]
+            "resources": [
+                {
+                    "uuid": _uuid("evidence", digest),
+                    "title": "PySFMEA evidence base",
+                    "rlinks": [
+                        {"href": bounded_text(evidence_base_href, "OSCAL evidence URI")}
+                    ],
+                }
+            ]
         }
     return result
 
@@ -148,7 +176,11 @@ def oscal_assessment_results(
 def _digest_from(value: dict[str, Any]) -> str | None:
     try:
         props = value["assessment-results"]["metadata"]["props"]
-        matches = [p.get("value") for p in props if isinstance(p, dict) and p.get("name") == "pysfmea-analysis-state-sha256"]
+        matches = [
+            p.get("value")
+            for p in props
+            if isinstance(p, dict) and p.get("name") == "pysfmea-analysis-state-sha256"
+        ]
         return matches[0] if len(matches) == 1 and isinstance(matches[0], str) else None
     except (KeyError, TypeError):
         return None
@@ -168,9 +200,11 @@ def verify_oscal_assessment_results(
             and value.get("$schema") == OSCAL_SCHEMA
             and re.fullmatch(r"[0-9a-f]{64}", digest or "")
             and metadata.get("oscal-version") == OSCAL_VERSION
-            and isinstance(results, list) and len(results) == 1
+            and isinstance(results, list)
+            and len(results) == 1
             and isinstance(results[0].get("observations", []), list)
-            and len({item.get("uuid") for item in results[0].get("observations", [])}) == len(results[0].get("observations", []))
+            and len({item.get("uuid") for item in results[0].get("observations", [])})
+            == len(results[0].get("observations", []))
         )
     except (KeyError, TypeError):
         structure, digest = False, None
@@ -204,23 +238,59 @@ def verify_oscal_assessment_results(
                 regeneration = False
                 errors.append("OSCAL regeneration inputs are invalid")
     valid = structure and binding is not False and regeneration is not False
-    return seal({"format": OSCAL_VERIFICATION_FORMAT, "valid": valid, "ready_for_normative_validation": valid, "checks": {"supported_subset": structure, "analysis_binding": binding, "exact_regeneration": regeneration}, "errors": errors, "notice": "This verifies the PySFMEA OSCAL subset and exact analysis binding. Validate against the official NIST OSCAL schema and the receiving system before use."})
+    return seal(
+        {
+            "format": OSCAL_VERIFICATION_FORMAT,
+            "valid": valid,
+            "ready_for_normative_validation": valid,
+            "checks": {
+                "supported_subset": structure,
+                "analysis_binding": binding,
+                "exact_regeneration": regeneration,
+            },
+            "errors": errors,
+            "notice": "This verifies the PySFMEA OSCAL subset and exact analysis binding. Validate against the official NIST OSCAL schema and the receiving system before use.",
+        }
+    )
 
 
-def verify_oscal_assessment_results_file(source: str | Path, *, analysis: dict[str, Any] | None = None) -> dict[str, Any]:
+def verify_oscal_assessment_results_file(
+    source: str | Path, *, analysis: dict[str, Any] | None = None
+) -> dict[str, Any]:
     try:
         from .governed_artifact import load_json
 
-        return verify_oscal_assessment_results(load_json(source, label="OSCAL Assessment Results"), analysis=analysis)
+        return verify_oscal_assessment_results(
+            load_json(source, label="OSCAL Assessment Results"), analysis=analysis
+        )
     except (OSError, TypeError, ValueError) as exc:
-        return seal({"format": OSCAL_VERIFICATION_FORMAT, "valid": False, "ready_for_normative_validation": False, "checks": {"supported_subset": False, "analysis_binding": False if analysis is not None else None, "exact_regeneration": False if analysis is not None else None}, "errors": [str(exc)], "notice": "OSCAL verification failed closed."})
+        return seal(
+            {
+                "format": OSCAL_VERIFICATION_FORMAT,
+                "valid": False,
+                "ready_for_normative_validation": False,
+                "checks": {
+                    "supported_subset": False,
+                    "analysis_binding": False if analysis is not None else None,
+                    "exact_regeneration": False if analysis is not None else None,
+                },
+                "errors": [str(exc)],
+                "notice": "OSCAL verification failed closed.",
+            }
+        )
 
 
-def export_oscal_assessment_results(value: dict[str, Any], destination: str | Path) -> Path:
+def export_oscal_assessment_results(
+    value: dict[str, Any], destination: str | Path
+) -> Path:
     if not verify_oscal_assessment_results(value)["valid"]:
         raise ValueError("OSCAL Assessment Results document is internally invalid")
     return publish_json(copy.deepcopy(value), destination)
 
 
-def export_oscal_from_analysis_file(source: str | Path, destination: str | Path, **kwargs: Any) -> Path:
-    return export_oscal_assessment_results(oscal_assessment_results(load_analysis(source), **kwargs), destination)
+def export_oscal_from_analysis_file(
+    source: str | Path, destination: str | Path, **kwargs: Any
+) -> Path:
+    return export_oscal_assessment_results(
+        oscal_assessment_results(load_analysis(source), **kwargs), destination
+    )

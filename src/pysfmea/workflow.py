@@ -162,7 +162,9 @@ def _artifact_state(
     trusted report or package through ``Path.resolve()`` before a verifier sees it.
     """
 
-    candidates = list(dict.fromkeys(value.expanduser().absolute() for value in preferred))
+    candidates = list(
+        dict.fromkeys(value.expanduser().absolute() for value in preferred)
+    )
     for pattern in patterns:
         candidates.extend(
             value.absolute()
@@ -257,16 +259,13 @@ def _verify_package_artifact(
                 if verification.get("schema_catalog")
                 else None
             ),
-            "checks": dict(
-                verification.get("schema_catalog", {}).get("checks", {})
-            ),
+            "checks": dict(verification.get("schema_catalog", {}).get("checks", {})),
             "schema_count": int(
-                verification.get("schema_catalog", {}).get("schema_count", 0)
-                or 0
+                verification.get("schema_catalog", {}).get("schema_count", 0) or 0
             ),
-            "errors": list(
-                verification.get("schema_catalog", {}).get("errors", [])
-            )[:20],
+            "errors": list(verification.get("schema_catalog", {}).get("errors", []))[
+                :20
+            ],
         },
         "analysis_diagnostics": {
             "present": bool(verification.get("analysis_diagnostics")),
@@ -282,9 +281,7 @@ def _verify_package_artifact(
                 verification.get("analysis_diagnostics", {}).get("errors", [])
             )[:20],
             "artifact_count": int(
-                verification.get("analysis_diagnostics", {}).get(
-                    "artifact_count", 0
-                )
+                verification.get("analysis_diagnostics", {}).get("artifact_count", 0)
                 or 0
             ),
         },
@@ -302,12 +299,10 @@ def _verify_package_artifact(
                 verification.get("analysis_structure", {}).get("errors", [])
             )[:20],
             "node_count": int(
-                verification.get("analysis_structure", {}).get("node_count", 0)
-                or 0
+                verification.get("analysis_structure", {}).get("node_count", 0) or 0
             ),
             "max_depth": int(
-                verification.get("analysis_structure", {}).get("max_depth", 0)
-                or 0
+                verification.get("analysis_structure", {}).get("max_depth", 0) or 0
             ),
             "limits": dict(
                 verification.get("analysis_structure", {}).get("limits", {})
@@ -327,15 +322,11 @@ def _verify_package_artifact(
                 verification.get("guidance_traceability", {}).get("errors", [])
             )[:20],
             "artifact_count": int(
-                verification.get("guidance_traceability", {}).get(
-                    "artifact_count", 0
-                )
+                verification.get("guidance_traceability", {}).get("artifact_count", 0)
                 or 0
             ),
             "citation_count": int(
-                verification.get("guidance_traceability", {}).get(
-                    "citation_count", 0
-                )
+                verification.get("guidance_traceability", {}).get("citation_count", 0)
                 or 0
             ),
             "finding_link_count": int(
@@ -352,25 +343,18 @@ def _verify_package_artifact(
                 if verification.get("sfta_projection")
                 else None
             ),
-            "checks": dict(
-                verification.get("sfta_projection", {}).get("checks", {})
-            ),
-            "errors": list(
-                verification.get("sfta_projection", {}).get("errors", [])
-            )[:20],
+            "checks": dict(verification.get("sfta_projection", {}).get("checks", {})),
+            "errors": list(verification.get("sfta_projection", {}).get("errors", []))[
+                :20
+            ],
             "artifact_count": int(
-                verification.get("sfta_projection", {}).get(
-                    "artifact_count", 0
-                )
-                or 0
+                verification.get("sfta_projection", {}).get("artifact_count", 0) or 0
             ),
             "tree_count": int(
-                verification.get("sfta_projection", {}).get("tree_count", 0)
-                or 0
+                verification.get("sfta_projection", {}).get("tree_count", 0) or 0
             ),
             "gap_count": int(
-                verification.get("sfta_projection", {}).get("gap_count", 0)
-                or 0
+                verification.get("sfta_projection", {}).get("gap_count", 0) or 0
             ),
         },
         "evidence_catalog": {
@@ -380,23 +364,15 @@ def _verify_package_artifact(
                 if verification.get("evidence_catalog")
                 else None
             ),
-            "checks": dict(
-                verification.get("evidence_catalog", {}).get("checks", {})
-            ),
-            "errors": list(
-                verification.get("evidence_catalog", {}).get("errors", [])
-            )[:20],
+            "checks": dict(verification.get("evidence_catalog", {}).get("checks", {})),
+            "errors": list(verification.get("evidence_catalog", {}).get("errors", []))[
+                :20
+            ],
             "artifact_count": int(
-                verification.get("evidence_catalog", {}).get(
-                    "artifact_count", 0
-                )
-                or 0
+                verification.get("evidence_catalog", {}).get("artifact_count", 0) or 0
             ),
             "execution_count": int(
-                verification.get("evidence_catalog", {}).get(
-                    "execution_count", 0
-                )
-                or 0
+                verification.get("evidence_catalog", {}).get("execution_count", 0) or 0
             ),
             "evidence_artifact_count": int(
                 verification.get("evidence_catalog", {}).get(
@@ -419,9 +395,7 @@ def _verify_package_artifact(
                 verification.get("interchange_artifacts", {}).get("errors", [])
             )[:20],
             "artifact_count": int(
-                verification.get("interchange_artifacts", {}).get(
-                    "artifact_count", 0
-                )
+                verification.get("interchange_artifacts", {}).get("artifact_count", 0)
                 or 0
             ),
             "sarif_result_count": int(
@@ -444,23 +418,16 @@ def _verify_package_artifact(
                 if verification.get("review_views")
                 else None
             ),
-            "checks": dict(
-                verification.get("review_views", {}).get("checks", {})
-            ),
-            "errors": list(
-                verification.get("review_views", {}).get("errors", [])
-            )[:20],
+            "checks": dict(verification.get("review_views", {}).get("checks", {})),
+            "errors": list(verification.get("review_views", {}).get("errors", []))[:20],
             "artifact_count": int(
-                verification.get("review_views", {}).get("artifact_count", 0)
-                or 0
+                verification.get("review_views", {}).get("artifact_count", 0) or 0
             ),
             "finding_count": int(
-                verification.get("review_views", {}).get("finding_count", 0)
-                or 0
+                verification.get("review_views", {}).get("finding_count", 0) or 0
             ),
             "component_count": int(
-                verification.get("review_views", {}).get("component_count", 0)
-                or 0
+                verification.get("review_views", {}).get("component_count", 0) or 0
             ),
         },
         "package_provenance": {
@@ -477,10 +444,7 @@ def _verify_package_artifact(
                 verification.get("package_provenance", {}).get("errors", [])
             )[:20],
             "artifact_count": int(
-                verification.get("package_provenance", {}).get(
-                    "artifact_count", 0
-                )
-                or 0
+                verification.get("package_provenance", {}).get("artifact_count", 0) or 0
             ),
             "review_decision_count": int(
                 verification.get("package_provenance", {}).get(
@@ -489,9 +453,7 @@ def _verify_package_artifact(
                 or 0
             ),
             "execution_count": int(
-                verification.get("package_provenance", {}).get(
-                    "execution_count", 0
-                )
+                verification.get("package_provenance", {}).get("execution_count", 0)
                 or 0
             ),
         },
@@ -526,9 +488,7 @@ def _verify_package_artifact(
                 verification.get("assurance_register", {}).get("errors", [])
             )[:20],
             "obligation_count": int(
-                verification.get("assurance_register", {}).get(
-                    "obligation_count", 0
-                )
+                verification.get("assurance_register", {}).get("obligation_count", 0)
                 or 0
             ),
         },
@@ -592,9 +552,7 @@ def _verify_html_report_artifact(
     if not artifact.get("exists"):
         return artifact
     try:
-        verification = verify_html_report_file(
-            artifact["path"], analysis=analysis
-        )
+        verification = verify_html_report_file(artifact["path"], analysis=analysis)
     except (OSError, UnicodeError, ValueError) as exc:
         artifact["binding"] = {
             "valid": False,
@@ -648,8 +606,8 @@ def _verify_configuration_authoring_artifact(
         "analysis_checked": bool(verification.get("analysis_checked")),
         "configuration_checked": bool(verification.get("configuration_checked")),
     }
-    artifact["status"] = "current" if matched else str(
-        verification.get("status", "invalid")
+    artifact["status"] = (
+        "current" if matched else str(verification.get("status", "invalid"))
     )
     artifact["current"] = bool(verification.get("valid") and matched)
     artifact["notice"] = str(verification.get("notice", ""))
@@ -673,8 +631,8 @@ def _verify_sfta_authoring_artifact(
         "status": str(verification.get("status", "invalid")),
         "analysis_checked": bool(verification.get("analysis_checked")),
     }
-    artifact["status"] = "current" if matched else str(
-        verification.get("status", "invalid")
+    artifact["status"] = (
+        "current" if matched else str(verification.get("status", "invalid"))
     )
     artifact["current"] = bool(verification.get("valid") and matched)
     artifact["notice"] = str(verification.get("notice", ""))
@@ -724,9 +682,7 @@ def _verify_assurance_scaffold_artifact(
         not value["unchanged_from_generated"]
         for value in verification["generated_files"]
     )
-    artifact["contract_change_summary"] = dict(
-        verification["contract_change_summary"]
-    )
+    artifact["contract_change_summary"] = dict(verification["contract_change_summary"])
     artifact["contract_changes"] = list(verification["contract_changes"])
     artifact["obligation_ids"] = list(verification["obligation_ids"])
     artifact["current_selection"] = dict(verification["current_selection"])
@@ -800,8 +756,12 @@ def _assurance_scaffold_portfolio(
     return {
         "format": "pysfmea-assurance-scaffold-portfolio-1",
         "queue_count": len(scaffold_artifacts),
-        "existing_queues": sum(value.get("exists", False) for value in scaffold_artifacts),
-        "current_queues": sum(value.get("current", False) for value in scaffold_artifacts),
+        "existing_queues": sum(
+            value.get("exists", False) for value in scaffold_artifacts
+        ),
+        "current_queues": sum(
+            value.get("current", False) for value in scaffold_artifacts
+        ),
         "attention_queues": sum(
             not value.get("current", False) for value in scaffold_artifacts
         ),
@@ -838,8 +798,7 @@ def _analysis_counts(analysis: dict[str, Any]) -> dict[str, Any]:
         if item.get("source_status", "active") == "active"
     ]
     dispositions = Counter(
-        str(item.get("review", {}).get("disposition", "unreviewed"))
-        for item in active
+        str(item.get("review", {}).get("disposition", "unreviewed")) for item in active
     )
     statuses = Counter(
         str(item.get("review", {}).get("status", "draft")) for item in active
@@ -853,8 +812,7 @@ def _analysis_counts(analysis: dict[str, Any]) -> dict[str, Any]:
         "accepted": dispositions["accepted"],
         "rejected": dispositions["rejected"],
         "revalidation_required": sum(
-            bool(item.get("review", {}).get("revalidation_required"))
-            for item in active
+            bool(item.get("review", {}).get("revalidation_required")) for item in active
         ),
         "by_disposition": dict(sorted(dispositions.items())),
         "by_status": dict(sorted(statuses.items())),
@@ -966,9 +924,7 @@ def workflow_status(
                     analysis_file,
                     [
                         analysis_file.with_name("configuration-authoring.json"),
-                        analysis_file.with_name(
-                            f"{stem}-configuration-authoring.json"
-                        ),
+                        analysis_file.with_name(f"{stem}-configuration-authoring.json"),
                     ],
                     ("*configuration-authoring.json",),
                 ),
@@ -1024,9 +980,7 @@ def workflow_status(
     report_binding_valid = bool(report_artifact.get("binding", {}).get("valid"))
     report_current = bool(report_artifact.get("current") and report_binding_valid)
     package_artifact = artifacts.get("review_package", {})
-    package_integrity_valid = bool(
-        package_artifact.get("integrity", {}).get("valid")
-    )
+    package_integrity_valid = bool(package_artifact.get("integrity", {}).get("valid"))
     package_binding_valid = bool(package_artifact.get("binding", {}).get("valid"))
     package_current = bool(
         package_artifact.get("current")
@@ -1242,7 +1196,11 @@ def workflow_status(
         actions.append({"id": action_id, "command": command, "reason": reason})
 
     if not config.is_file():
-        add("create_configuration", f"sfmea init {_quote(root)}", "Create governed project context.")
+        add(
+            "create_configuration",
+            f"sfmea init {_quote(root)}",
+            "Create governed project context.",
+        )
     if not readiness["ready"]:
         add(
             "resolve_readiness",
@@ -1354,8 +1312,7 @@ def workflow_status(
                 )
                 if (
                     refresh_safe
-                    and scaffold_artifact.get("lifecycle")
-                    == "retirement_candidate"
+                    and scaffold_artifact.get("lifecycle") == "retirement_candidate"
                 ):
                     add(
                         "archive_empty_assurance_scaffold" + suffix,
@@ -1453,7 +1410,9 @@ def workflow_status(
             )
         if not package_current:
             if package_artifact.get("status") == "invalid":
-                package_reason = "Replace the package because integrity verification failed."
+                package_reason = (
+                    "Replace the package because integrity verification failed."
+                )
             elif package_artifact.get("status") in {"unbound", "mismatched"}:
                 package_reason = (
                     "Refresh the package because it is not bound to the current governed "

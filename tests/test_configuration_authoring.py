@@ -161,7 +161,9 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         )
 
         self.assertEqual(published, output_path)
-        self.assertEqual(receipt["format"], CONFIGURATION_AUTHORING_APPLY_RECEIPT_FORMAT)
+        self.assertEqual(
+            receipt["format"], CONFIGURATION_AUTHORING_APPLY_RECEIPT_FORMAT
+        )
         self.assertEqual(receipt["guidance_mappings"], 1)
         self.assertEqual(receipt["component_mappings"], 1)
         self.assertEqual(receipt["interface_dispositions"], 1)
@@ -210,7 +212,9 @@ class ConfigurationAuthoringTests(unittest.TestCase):
 
     def test_rejects_unreviewed_apply_tamper_and_configuration_drift(self) -> None:
         draft = self._approved_draft()
-        selected = next(value for value in draft["entries"] if value["action"] == "apply")
+        selected = next(
+            value for value in draft["entries"] if value["action"] == "apply"
+        )
         selected["review"]["reviewer"] = ""
         draft_path = self.root / "invalid-draft.json"
         sealed_path = self.root / "sealed.json"

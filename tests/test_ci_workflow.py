@@ -11,10 +11,30 @@ UPLOAD_ARTIFACT_V7_SHA = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 SCORECARD_ACTION_SHA = "2d1146689b8cda280b9bc96326124645441f03bc"
 
 
-def test_artifact_uploads_use_the_node24_release_with_an_immutable_pin() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+def test_candidate_provenance_requires_exact_hosted_source_and_no_registry_publish() -> (
+    None
+):
+    workflow = (ROOT / ".github/workflows/release-candidate.yml").read_text(
         encoding="utf-8"
     )
+    assert "workflow_dispatch:" in workflow
+    assert "if: github.ref == 'refs/heads/main'" in workflow
+    assert "environment: release-candidate" in workflow
+    assert "persist-credentials: false" in workflow
+    assert "id-token: write" in workflow and "attestations: write" in workflow
+    assert 'gh attestation verify "$artifact"' in workflow
+    assert '--source-digest "$GITHUB_SHA"' in workflow
+    assert "--deny-self-hosted-runners" in workflow
+    assert "--signer-workflow" in workflow
+    assert "uv publish" not in workflow and "twine upload" not in workflow
+    assert all(
+        re.fullmatch(r"[0-9a-f]{40}", pin)
+        for pin in re.findall(r"uses: [^@\s]+@([^\s]+)", workflow)
+    )
+
+
+def test_artifact_uploads_use_the_node24_release_with_an_immutable_pin() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     uploads = re.findall(r"actions/upload-artifact@([^\s]+)", workflow)
 
     assert uploads
@@ -23,9 +43,7 @@ def test_artifact_uploads_use_the_node24_release_with_an_immutable_pin() -> None
 
 
 def test_hidden_browser_evidence_is_explicitly_uploaded() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     upload = re.search(
         r"name: Publish browser quality evidence(?P<body>.*?)(?:\n  \S|\Z)",
@@ -69,13 +87,14 @@ def test_mutation_sandbox_copies_the_complete_package() -> None:
         "src/pysfmea/scan_cache.py",
         "src/pysfmea/diagnostics.py",
         "src/pysfmea/llm_quality.py",
+        "src/pysfmea/measurement_validity.py",
+        "src/pysfmea/scope_authentication.py",
+        "src/pysfmea/upstream_contract.py",
     }
 
 
 def test_mutation_gate_targets_mutmut_3_mangled_names() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     expected_functions = {
         "x_assert_fault_injection_result__mutmut_",
         "x__expected_outcomes__mutmut_",
@@ -89,9 +108,7 @@ def test_mutation_gate_targets_mutmut_3_mangled_names() -> None:
 
     for function in expected_functions:
         assert f"{function}*" in workflow
-    assert '"mutmut>=3.7,<4"' in (ROOT / "pyproject.toml").read_text(
-        encoding="utf-8"
-    )
+    assert '"mutmut>=3.7,<4"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert "timeout --signal=TERM 30m mutmut run" in workflow
 
 

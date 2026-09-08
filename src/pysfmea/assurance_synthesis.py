@@ -131,14 +131,23 @@ def _strategy_for(name: str, annotation: Any) -> dict[str, Any]:
 
     normalized = _normalized_type(annotation)
     tokens = _name_tokens(name)
-    nullable = "optional[" in normalized or "none" in normalized or "|null" in normalized
+    nullable = (
+        "optional[" in normalized or "none" in normalized or "|null" in normalized
+    )
     basis = "parameter_annotation" if normalized else "parameter_name_heuristic"
 
     if normalized in {"bool", "builtins.bool"} or tokens & _BOOLEAN_NAMES:
         strategy: dict[str, Any] = {"kind": "booleans", "basis": basis}
     elif "bytes" in normalized or "bytearray" in normalized:
-        strategy = {"kind": "binary", "minimum_size": 0, "maximum_size": 256, "basis": basis}
-    elif any(marker in normalized for marker in ("list[", "sequence[", "tuple[", "set[")):
+        strategy = {
+            "kind": "binary",
+            "minimum_size": 0,
+            "maximum_size": 256,
+            "basis": basis,
+        }
+    elif any(
+        marker in normalized for marker in ("list[", "sequence[", "tuple[", "set[")
+    ):
         strategy = {
             "kind": "lists",
             "minimum_size": 0,
@@ -155,10 +164,13 @@ def _strategy_for(name: str, annotation: Any) -> dict[str, Any]:
             "value_strategy": {"kind": "bounded_scalar"},
             "basis": basis,
         }
-    elif any(
-        marker in normalized
-        for marker in ("int", "integer", "nonnegativeint", "positiveint")
-    ) or tokens & _INTEGER_TOKENS:
+    elif (
+        any(
+            marker in normalized
+            for marker in ("int", "integer", "nonnegativeint", "positiveint")
+        )
+        or tokens & _INTEGER_TOKENS
+    ):
         strategy = {
             "kind": "integers",
             "minimum": -(2**31),
@@ -206,7 +218,11 @@ def _criteria(obligation: dict[str, Any]) -> list[dict[str, str]]:
             "text": text,
         }
         for index, text in enumerate(
-            (str(value) for value in obligation.get("acceptance_criteria", []) if value),
+            (
+                str(value)
+                for value in obligation.get("acceptance_criteria", [])
+                if value
+            ),
             start=1,
         )
     ]
@@ -228,13 +244,24 @@ def _oracles(obligation: dict[str, Any]) -> list[dict[str, str]]:
 def _scenarios(obligation: dict[str, Any]) -> list[str]:
     failure_class = str(obligation.get("failure_class", "functional"))
     scenarios = {
-        "calculation": ["nominal", "lower_boundary", "upper_boundary", "near_zero", "invalid"],
+        "calculation": [
+            "nominal",
+            "lower_boundary",
+            "upper_boundary",
+            "near_zero",
+            "invalid",
+        ],
         "data": ["nominal", "empty", "missing", "malformed", "boundary"],
         "interface": ["nominal", "unavailable", "malformed_response", "late_response"],
         "timing": ["nominal", "early", "deadline_boundary", "late", "reordered"],
         "resource": ["nominal", "empty", "capacity_boundary", "over_capacity"],
         "security": ["authorized", "unauthorized", "wrong_scope", "malformed_identity"],
-        "state": ["valid_transition", "invalid_transition", "duplicate_transition", "reordered"],
+        "state": [
+            "valid_transition",
+            "invalid_transition",
+            "duplicate_transition",
+            "reordered",
+        ],
     }.get(failure_class, ["nominal", "boundary", "invalid", "adversarial"])
     return scenarios
 
@@ -311,7 +338,9 @@ def _property_design(
                     else []
                 ),
                 *(
-                    [f"{unresolved} parameter strategy or strategies use a bounded scalar fallback."]
+                    [
+                        f"{unresolved} parameter strategy or strategies use a bounded scalar fallback."
+                    ]
                     if unresolved
                     else []
                 ),
@@ -467,7 +496,9 @@ def _contract_design(
                 "A project adapter must exercise both producer and consumer boundaries and report every oracle.",
                 "Passing generated executions are not assurance evidence until registered and reviewed.",
                 *(
-                    ["No exact contract association was inferred; the generated binding case fails visibly."]
+                    [
+                        "No exact contract association was inferred; the generated binding case fails visibly."
+                    ]
                     if binding_status == "unresolved"
                     else []
                 ),
@@ -510,7 +541,9 @@ def synthesize_assurance_test_designs(
         "contract_tests": contract_designs,
         "summary": {
             "property_designs": len(properties),
-            "property_parameters": sum(len(value["parameters"]) for value in properties),
+            "property_parameters": sum(
+                len(value["parameters"]) for value in properties
+            ),
             "contract_designs": len(contract_designs),
             "contract_cases": sum(len(value["cases"]) for value in contract_designs),
             "unresolved_contract_bindings": sum(
@@ -576,9 +609,10 @@ def _strategy_spec_valid(value: Any, *, depth: int = 0) -> bool:
         expected = {"kind", "minimum", "maximum", "basis"}
         if kind == "floats":
             expected |= {"allow_nan", "allow_infinity"}
-            if type(value.get("allow_nan")) is not bool or type(
-                value.get("allow_infinity")
-            ) is not bool:
+            if (
+                type(value.get("allow_nan")) is not bool
+                or type(value.get("allow_infinity")) is not bool
+            ):
                 return False
         return set(value) == expected
     if kind in {"text", "binary"}:
@@ -626,9 +660,7 @@ def _strategy_spec_valid(value: Any, *, depth: int = 0) -> bool:
             set(value) == {"kind", "strategies", "basis"}
             and isinstance(strategies, list)
             and 1 <= len(strategies) <= 10
-            and all(
-                _strategy_spec_valid(item, depth=depth + 1) for item in strategies
-            )
+            and all(_strategy_spec_valid(item, depth=depth + 1) for item in strategies)
         )
     return False
 
@@ -682,14 +714,21 @@ def _common_design_valid(value: dict[str, Any], method: str) -> bool:
 def test_designs_are_valid(value: Any, obligations: Iterable[dict[str, Any]]) -> bool:
     """Perform the closed semantic checks needed by scaffold verification."""
 
-    if not isinstance(value, dict) or value.get("format") != ASSURANCE_TEST_DESIGNS_FORMAT:
+    if (
+        not isinstance(value, dict)
+        or value.get("format") != ASSURANCE_TEST_DESIGNS_FORMAT
+    ):
         return False
     if value.get("content_sha256") != stable_designs_sha256(value):
         return False
     properties = value.get("property_tests")
     contracts = value.get("contract_tests")
     summary = value.get("summary")
-    if not isinstance(properties, list) or not isinstance(contracts, list) or not isinstance(summary, dict):
+    if (
+        not isinstance(properties, list)
+        or not isinstance(contracts, list)
+        or not isinstance(summary, dict)
+    ):
         return False
     obligation_values = list(obligations)
     expected = {
@@ -705,18 +744,29 @@ def test_designs_are_valid(value: Any, obligations: Iterable[dict[str, Any]]) ->
         },
     }
     actual_property = {
-        str(item.get("obligation_id", "")) for item in properties if isinstance(item, dict)
+        str(item.get("obligation_id", ""))
+        for item in properties
+        if isinstance(item, dict)
     }
     actual_contract = {
-        str(item.get("obligation_id", "")) for item in contracts if isinstance(item, dict)
+        str(item.get("obligation_id", ""))
+        for item in contracts
+        if isinstance(item, dict)
     }
-    if actual_property != expected["property_test"] or actual_contract != expected["contract_test"]:
+    if (
+        actual_property != expected["property_test"]
+        or actual_contract != expected["contract_test"]
+    ):
         return False
-    if len(actual_property) != len(properties) or len(actual_contract) != len(contracts):
+    if len(actual_property) != len(properties) or len(actual_contract) != len(
+        contracts
+    ):
         return False
     design_ids: list[str] = []
     for item in properties:
-        if not isinstance(item, dict) or not _common_design_valid(item, "property_test"):
+        if not isinstance(item, dict) or not _common_design_valid(
+            item, "property_test"
+        ):
             return False
         parameters = item.get("parameters")
         scenarios = item.get("scenarios")
@@ -768,7 +818,9 @@ def test_designs_are_valid(value: Any, obligations: Iterable[dict[str, Any]]) ->
         "establish_contract_binding",
     }
     for item in contracts:
-        if not isinstance(item, dict) or not _common_design_valid(item, "contract_test"):
+        if not isinstance(item, dict) or not _common_design_valid(
+            item, "contract_test"
+        ):
             return False
         binding_status = item.get("binding_status")
         references = item.get("contracts")
@@ -806,7 +858,11 @@ def test_designs_are_valid(value: Any, obligations: Iterable[dict[str, Any]]) ->
             ):
                 return False
             if case["kind"] == "establish_contract_binding":
-                if case.get("contract_id") or case.get("contract_sha256") or case.get("operation"):
+                if (
+                    case.get("contract_id")
+                    or case.get("contract_sha256")
+                    or case.get("operation")
+                ):
                     return False
             elif case.get("contract_sha256") not in reference_digests:
                 return False
@@ -814,7 +870,9 @@ def test_designs_are_valid(value: Any, obligations: Iterable[dict[str, Any]]) ->
         if len(case_ids) != len(set(case_ids)):
             return False
         if binding_status == "unresolved":
-            if references or {case["kind"] for case in cases} != {"establish_contract_binding"}:
+            if references or {case["kind"] for case in cases} != {
+                "establish_contract_binding"
+            }:
                 return False
         elif not references or any(
             case["kind"] == "establish_contract_binding" for case in cases

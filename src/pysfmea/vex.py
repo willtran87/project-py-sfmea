@@ -50,7 +50,11 @@ def _decisions(value: Any) -> dict[str, Any]:
     if value.get("format") != VEX_DECISIONS_FORMAT:
         raise ValueError("VEX decision format is unsupported")
     for field in ("authority", "issued_at"):
-        if not isinstance(value[field], str) or not value[field].strip() or len(value[field]) > 20_000:
+        if (
+            not isinstance(value[field], str)
+            or not value[field].strip()
+            or len(value[field]) > 20_000
+        ):
             raise ValueError(f"VEX {field} must be non-empty bounded text")
     entries = value["vulnerabilities"]
     fields = {
@@ -71,7 +75,11 @@ def _decisions(value: Any) -> dict[str, Any]:
         if not isinstance(entry, dict) or set(entry) != fields:
             raise ValueError("VEX vulnerability fields do not match format 1")
         identifier = entry["id"]
-        if not isinstance(identifier, str) or not identifier.strip() or identifier in identifiers:
+        if (
+            not isinstance(identifier, str)
+            or not identifier.strip()
+            or identifier in identifiers
+        ):
             raise ValueError("VEX vulnerability IDs must be non-empty and unique")
         identifiers.add(identifier)
         if entry["state"] not in STATES:
@@ -80,17 +88,36 @@ def _decisions(value: Any) -> dict[str, Any]:
         if justification is not None and justification not in JUSTIFICATIONS:
             raise ValueError("VEX justification is unsupported")
         if entry["state"] == "not_affected" and justification not in JUSTIFICATIONS:
-            raise ValueError("not_affected decisions require a recognized justification")
+            raise ValueError(
+                "not_affected decisions require a recognized justification"
+            )
         response = entry["response"]
-        if not isinstance(response, list) or len(response) != len(set(response)) or not set(response) <= RESPONSES:
+        if (
+            not isinstance(response, list)
+            or len(response) != len(set(response))
+            or not set(response) <= RESPONSES
+        ):
             raise ValueError("VEX responses are invalid")
         for field in ("source_name", "source_url", "detail"):
-            if not isinstance(entry[field], str) or not entry[field].strip() or len(entry[field]) > 20_000:
-                raise ValueError(f"VEX vulnerability {field} must be non-empty bounded text")
+            if (
+                not isinstance(entry[field], str)
+                or not entry[field].strip()
+                or len(entry[field]) > 20_000
+            ):
+                raise ValueError(
+                    f"VEX vulnerability {field} must be non-empty bounded text"
+                )
         for field in ("affected_refs", "evidence_refs"):
             values = entry[field]
-            if not isinstance(values, list) or not values or len(values) != len(set(values)) or any(not isinstance(item, str) or not item.strip() for item in values):
-                raise ValueError(f"VEX {field} must contain unique non-empty references")
+            if (
+                not isinstance(values, list)
+                or not values
+                or len(values) != len(set(values))
+                or any(not isinstance(item, str) or not item.strip() for item in values)
+            ):
+                raise ValueError(
+                    f"VEX {field} must contain unique non-empty references"
+                )
     return value
 
 
@@ -100,15 +127,15 @@ def cyclonedx_vex_document(
     """Create a CycloneDX VEX BOM without inferring exploitability decisions."""
 
     governed = _decisions(decisions)
-    document = cyclonedx_document(
-        analysis, generated_at=str(governed["issued_at"])
-    )
+    document = cyclonedx_document(analysis, generated_at=str(governed["issued_at"]))
     known_refs = {"project", *(item["bom-ref"] for item in document["components"])}
     vulnerabilities = []
     for entry in governed["vulnerabilities"]:
         unknown = set(entry["affected_refs"]) - known_refs
         if unknown:
-            raise ValueError(f"VEX decision refers to unknown BOM references: {sorted(unknown)}")
+            raise ValueError(
+                f"VEX decision refers to unknown BOM references: {sorted(unknown)}"
+            )
         analysis_entry: dict[str, Any] = {
             "state": entry["state"],
             "detail": entry["detail"],
@@ -126,7 +153,10 @@ def cyclonedx_vex_document(
                 "analysis": analysis_entry,
                 "affects": [{"ref": value} for value in entry["affected_refs"]],
                 "properties": [
-                    {"name": "pysfmea:decision-authority", "value": governed["authority"]},
+                    {
+                        "name": "pysfmea:decision-authority",
+                        "value": governed["authority"],
+                    },
                     *(
                         {"name": "pysfmea:evidence-ref", "value": value}
                         for value in entry["evidence_refs"]
@@ -137,8 +167,14 @@ def cyclonedx_vex_document(
     document["vulnerabilities"] = vulnerabilities
     document["metadata"].setdefault("properties", []).extend(
         [
-            {"name": "pysfmea:analysis-state-sha256", "value": analysis_state_sha256(analysis)},
-            {"name": "pysfmea:vex-decisions-canonical-sha256", "value": canonical_json_sha256(governed)},
+            {
+                "name": "pysfmea:analysis-state-sha256",
+                "value": analysis_state_sha256(analysis),
+            },
+            {
+                "name": "pysfmea:vex-decisions-canonical-sha256",
+                "value": canonical_json_sha256(governed),
+            },
             {"name": "pysfmea:vex-decision-authority", "value": governed["authority"]},
         ]
     )
@@ -166,7 +202,9 @@ def verify_cyclonedx_vex(
     if not structure:
         errors.append("CycloneDX 1.7 VEX structure is invalid")
     if not exact:
-        errors.append("VEX does not exactly regenerate from analysis and governed decisions")
+        errors.append(
+            "VEX does not exactly regenerate from analysis and governed decisions"
+        )
     return {
         "format": VEX_VERIFICATION_FORMAT,
         "valid": structure and exact and decisions_valid,
@@ -175,7 +213,9 @@ def verify_cyclonedx_vex(
             "governed_decisions": decisions_valid,
             "exact_source_regeneration": exact,
         },
-        "vulnerabilities": len(document.get("vulnerabilities", [])) if isinstance(document.get("vulnerabilities"), list) else 0,
+        "vulnerabilities": len(document.get("vulnerabilities", []))
+        if isinstance(document.get("vulnerabilities"), list)
+        else 0,
         "errors": errors,
         "notice": "VEX states are attributed human decisions; this verifier does not independently establish exploitability or authenticate the authority.",
     }
@@ -217,7 +257,9 @@ def verify_cyclonedx_vex_file(
             max_depth=40,
             max_nodes=1_000_000,
         )
-        if not isinstance(document, dict) or not isinstance(decision_document.value, dict):
+        if not isinstance(document, dict) or not isinstance(
+            decision_document.value, dict
+        ):
             raise ValueError("VEX artifacts must contain JSON objects")
         return {
             "path": str(artifact_path),
@@ -229,7 +271,11 @@ def verify_cyclonedx_vex_file(
             "path": str(Path(artifact).expanduser().absolute()),
             "format": VEX_VERIFICATION_FORMAT,
             "valid": False,
-            "checks": {"cyclonedx_1_7_structure": False, "governed_decisions": False, "exact_source_regeneration": False},
+            "checks": {
+                "cyclonedx_1_7_structure": False,
+                "governed_decisions": False,
+                "exact_source_regeneration": False,
+            },
             "vulnerabilities": 0,
             "errors": [str(exc)],
             "notice": "The CycloneDX VEX could not be safely verified.",

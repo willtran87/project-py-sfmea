@@ -250,8 +250,62 @@ ADDITIONAL_PROFILES: tuple[dict[str, Any], ...] = (
         "title": "OpenSSF Open Source Project Security Baseline",
         "publisher": "Open Source Security Foundation",
         "edition": "2026.02.19",
+        "status": "superseded_public_baseline",
+        "reference_url": "https://baseline.openssf.org/versions/2026-02-19",
+        "access": "public",
+        "scope": "Tiered minimum security controls for open-source project governance and delivery.",
+        "objectives": [
+            _objective(
+                "OSPS-ACCESS",
+                "Protect authoritative project resources, privileged actions, and identities with appropriate authentication and least privilege.",
+                "access control category",
+                [
+                    "repository settings evidence",
+                    "privilege review",
+                    "MFA enforcement evidence",
+                ],
+            ),
+            _objective(
+                "OSPS-BUILD",
+                "Protect build and release workflows, dependencies, provenance, and published artifacts from unauthorized modification.",
+                "build and release category",
+                ["pinned workflow", "provenance", "release integrity evidence"],
+            ),
+            _objective(
+                "OSPS-DOCUMENT",
+                "Publish security, contribution, governance, support, and vulnerability-reporting information appropriate to project maturity.",
+                "documentation and governance categories",
+                [
+                    "security policy",
+                    "governance record",
+                    "support and contribution documentation",
+                ],
+            ),
+            _objective(
+                "OSPS-QUALITY",
+                "Use automated tests, reviews, static analysis, and change controls to detect regressions and unsafe changes.",
+                "quality category",
+                ["required checks", "test evidence", "review protection"],
+            ),
+            _objective(
+                "OSPS-VULNERABILITY",
+                "Operate vulnerability intake, coordinated response, remediation, advisory, and supported-version processes.",
+                "vulnerability management category",
+                [
+                    "intake process",
+                    "advisory records",
+                    "remediation and disclosure evidence",
+                ],
+            ),
+        ],
+    },
+    {
+        "id": "openssf-osps-2026-08-28",
+        "title": "OpenSSF Open Source Project Security Baseline",
+        "publisher": "Open Source Security Foundation",
+        "edition": "2026.08.28",
         "status": "current_public_baseline",
-        "reference_url": "https://baseline.openssf.org/versions/2026-02-19.html",
+        "reference_url": "https://baseline.openssf.org/versions/2026-08-28",
         "access": "public",
         "scope": "Tiered minimum security controls for open-source project governance and delivery.",
         "objectives": [

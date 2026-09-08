@@ -256,9 +256,12 @@ class QualificationCampaignTests(unittest.TestCase):
             protocol_path,
             result_path,
             self.manifest_path,
+            execution_started_at="2026-08-26T12:00:00+00:00",
+            execution_evidence_ref="ci://qualification/run-42",
             generated_at="2026-08-27T12:00:00+00:00",
         )
         self.assertTrue(verify_benchmark_assessment(assessment)["valid"])
+        self.assertTrue(assessment["checks"]["temporal_preregistration"])
         self.assertFalse(assessment["summary"]["passed"])
         assessment_path = self.root / "benchmark-assessment.json"
         self._write_json(assessment_path, assessment)
@@ -282,6 +285,25 @@ class QualificationCampaignTests(unittest.TestCase):
             {key: value for key, value in tampered.items() if key != "content_sha256"}
         )
         self.assertFalse(verify_benchmark_assessment(tampered)["valid"])
+
+        post_hoc = copy.deepcopy(protocol)
+        post_hoc["pre_registered_at"] = "2999-01-01T00:00:00+00:00"
+        post_hoc_path = self.root / "post-hoc-benchmark-protocol.json"
+        self._write_json(post_hoc_path, post_hoc)
+        post_hoc_assessment = benchmark_assessment(
+            post_hoc_path,
+            result_path,
+            self.manifest_path,
+            execution_started_at="2026-08-26T12:00:00+00:00",
+            execution_evidence_ref="ci://qualification/run-42",
+            generated_at="2026-08-27T12:00:00+00:00",
+        )
+        self.assertFalse(post_hoc_assessment["checks"]["temporal_preregistration"])
+        self.assertIn(
+            "temporal_preregistration",
+            post_hoc_assessment["summary"]["failed_checks"],
+        )
+        self.assertTrue(verify_benchmark_assessment(post_hoc_assessment)["valid"])
 
         conformance = conformance_workspace(
             load_analysis(self.analysis_path),
@@ -357,6 +379,10 @@ class QualificationCampaignTests(unittest.TestCase):
                         str(protocol_path),
                         str(result_path),
                         str(self.manifest_path),
+                        "--execution-started-at",
+                        "2026-08-26T12:00:00+00:00",
+                        "--execution-evidence-ref",
+                        "ci://qualification/run-42",
                         "-o",
                         str(cli_assessment_path),
                     ]

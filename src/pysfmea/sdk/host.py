@@ -60,7 +60,10 @@ def _resolve_command(manifest: PluginManifest) -> list[str]:
 
 
 def _validate_observations(observations: Any) -> list[dict[str, Any]]:
-    if not isinstance(observations, list) or len(observations) > MAX_PLUGIN_OBSERVATIONS:
+    if (
+        not isinstance(observations, list)
+        or len(observations) > MAX_PLUGIN_OBSERVATIONS
+    ):
         raise ValueError("plugin observations must be a bounded list")
     allowed = {
         "id",
@@ -76,17 +79,30 @@ def _validate_observations(observations: Any) -> list[dict[str, Any]]:
         if not isinstance(value, dict) or set(value) - allowed:
             raise ValueError(f"plugin observation {index} has an invalid structure")
         identifier = value.get("id")
-        if not isinstance(identifier, str) or not identifier or len(identifier) > 160 or identifier in ids:
-            raise ValueError(f"plugin observation {index} has a missing, long, or duplicate id")
+        if (
+            not isinstance(identifier, str)
+            or not identifier
+            or len(identifier) > 160
+            or identifier in ids
+        ):
+            raise ValueError(
+                f"plugin observation {index} has a missing, long, or duplicate id"
+            )
         ids.add(identifier)
         for field in ("kind", "subject_id", "message"):
             if not isinstance(value.get(field), str) or len(value[field]) > 20_000:
-                raise ValueError(f"plugin observation {identifier} has an invalid {field}")
+                raise ValueError(
+                    f"plugin observation {identifier} has an invalid {field}"
+                )
         evidence = value.get("evidence_ids", [])
-        if not isinstance(evidence, list) or len(evidence) > 100 or any(
-            not isinstance(item, str) or len(item) > 500 for item in evidence
+        if (
+            not isinstance(evidence, list)
+            or len(evidence) > 100
+            or any(not isinstance(item, str) or len(item) > 500 for item in evidence)
         ):
-            raise ValueError(f"plugin observation {identifier} has invalid evidence_ids")
+            raise ValueError(
+                f"plugin observation {identifier} has invalid evidence_ids"
+            )
         if value.get("confidence", "low") not in {"low", "medium", "high"}:
             raise ValueError(f"plugin observation {identifier} has invalid confidence")
         if not isinstance(value.get("properties", {}), dict):
@@ -100,9 +116,16 @@ def _validate_response(response: Any, manifest: PluginManifest) -> list[dict[str
         "plugin_id",
         "observations",
     }:
-        raise ValueError("plugin response must contain only format, plugin_id, and observations")
-    if response["format"] != PLUGIN_RESPONSE_FORMAT or response["plugin_id"] != manifest.id:
-        raise ValueError("plugin response identity or format does not match its manifest")
+        raise ValueError(
+            "plugin response must contain only format, plugin_id, and observations"
+        )
+    if (
+        response["format"] != PLUGIN_RESPONSE_FORMAT
+        or response["plugin_id"] != manifest.id
+    ):
+        raise ValueError(
+            "plugin response identity or format does not match its manifest"
+        )
     return _validate_observations(response["observations"])
 
 
@@ -123,7 +146,9 @@ def run_plugin(
         "plugin_id": manifest.id,
         "capability": capability,
         "analysis_binding": {
-            "baseline_id": str(analysis.get("project", {}).get("baseline", {}).get("id", "")),
+            "baseline_id": str(
+                analysis.get("project", {}).get("baseline", {}).get("id", "")
+            ),
             "analysis_state_sha256": canonical_json_sha256(analysis),
         },
         "analysis": analysis,
@@ -132,7 +157,9 @@ def run_plugin(
             "risk acceptance, or evidence sufficiency."
         ),
     }
-    encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
     if len(encoded) > MAX_PLUGIN_DOCUMENT_BYTES:
         raise ValueError("plugin request exceeds the 20 MB protocol limit")
     with tempfile.TemporaryDirectory(prefix="pysfmea-plugin-") as temporary:
@@ -149,7 +176,11 @@ def run_plugin(
             if key in os.environ
         }
         environment["PYTHONNOUSERSITE"] = "1"
-        with request_path.open("rb") as stdin, response_path.open("wb") as stdout, error_path.open("wb") as stderr:
+        with (
+            request_path.open("rb") as stdin,
+            response_path.open("wb") as stdout,
+            error_path.open("wb") as stderr,
+        ):
             process = subprocess.Popen(
                 _resolve_command(manifest),
                 stdin=stdin,
@@ -260,9 +291,9 @@ def verify_plugin_run(
     declared = str(run.get("content_sha256", ""))
     unsigned = dict(run)
     unsigned.pop("content_sha256", None)
-    checks["content_integrity"] = (
-        len(declared) == 64 and declared == canonical_json_sha256(unsigned)
-    )
+    checks["content_integrity"] = len(
+        declared
+    ) == 64 and declared == canonical_json_sha256(unsigned)
     if not checks["content_integrity"]:
         errors.append("plugin-run content digest is invalid")
     host = run.get("host", {})
@@ -314,11 +345,11 @@ def verify_plugin_run(
     if not checks["execution_disclosure"]:
         errors.append("plugin execution boundary is missing or unsupported")
     if analysis is not None:
-        checks["analysis_binding"] = (
-            binding.get("baseline_id")
-            == analysis.get("project", {}).get("baseline", {}).get("id", "")
-            and binding.get("analysis_state_sha256") == canonical_json_sha256(analysis)
-        )
+        checks["analysis_binding"] = binding.get("baseline_id") == analysis.get(
+            "project", {}
+        ).get("baseline", {}).get("id", "") and binding.get(
+            "analysis_state_sha256"
+        ) == canonical_json_sha256(analysis)
         if not checks["analysis_binding"]:
             errors.append("plugin run does not match the supplied analysis")
     if manifest_source is not None:

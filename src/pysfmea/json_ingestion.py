@@ -120,7 +120,9 @@ def load_bounded_file_snapshot(
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags)
         opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or not _same_file_identity(inspected, opened):
+        if not stat.S_ISREG(opened.st_mode) or not _same_file_identity(
+            inspected, opened
+        ):
             raise BoundedFileSnapshotError(f"{label} changed during safe open")
         with os.fdopen(descriptor, "rb") as handle:
             descriptor = None

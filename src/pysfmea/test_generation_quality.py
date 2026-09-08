@@ -475,7 +475,8 @@ def evaluate_test_generation_quality_evidence(
     if not isinstance(subject, dict) or set(subject) != _SUBJECT_FIELDS:
         raise ValueError("quality corpus subject must match the closed contract")
     normalized_subject = {
-        field: _text(subject.get(field), f"subject {field}") for field in _SUBJECT_FIELDS
+        field: _text(subject.get(field), f"subject {field}")
+        for field in _SUBJECT_FIELDS
     }
     if normalized_subject["prompt_version"] != TEST_GENERATION_PROMPT_VERSION:
         raise ValueError("quality corpus prompt version does not match test generation")
@@ -492,17 +493,16 @@ def evaluate_test_generation_quality_evidence(
         if expected not in {"proposed", "refused"}:
             raise ValueError(f"quality sample {index} has an invalid expected decision")
         artifacts = sample.get("artifacts")
-        if not isinstance(artifacts, dict) or set(artifacts) != _EVIDENCE_ARTIFACT_FIELDS:
+        if (
+            not isinstance(artifacts, dict)
+            or set(artifacts) != _EVIDENCE_ARTIFACT_FIELDS
+        ):
             raise ValueError(
                 f"artifact-backed quality sample {index} artifacts must match the closed contract"
             )
         evidence_identity = canonical_json_sha256(
             {
-                kind: (
-                    reference.get("sha256")
-                    if isinstance(reference, dict)
-                    else None
-                )
+                kind: (reference.get("sha256") if isinstance(reference, dict) else None)
                 for kind, reference in sorted(artifacts.items())
             }
         )
@@ -543,9 +543,10 @@ def evaluate_test_generation_quality_evidence(
             )
         unsafe_attempted = unsafe_generation_attempted(proposal)
         if actual == "refused":
-            if artifacts.get("application_receipt") is not None or artifacts.get(
-                "fault_detection"
-            ) is not None:
+            if (
+                artifacts.get("application_receipt") is not None
+                or artifacts.get("fault_detection") is not None
+            ):
                 raise ValueError(
                     f"refused quality sample {sample_id} must not reference execution artifacts"
                 )

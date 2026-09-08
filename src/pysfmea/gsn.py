@@ -66,7 +66,10 @@ def gsn_projection(case_source: str | Path | dict[str, Any]) -> dict[str, Any]:
                 "source_id": source_id,
                 "statement": str(claim["statement"]),
                 "status": str(claim["status"]),
-                "metadata": {"title": str(claim["title"]), "scope": str(claim["scope"])},
+                "metadata": {
+                    "title": str(claim["title"]),
+                    "scope": str(claim["scope"]),
+                },
             }
         )
         for index, assumption in enumerate(claim.get("assumptions", []), start=1):
@@ -81,7 +84,9 @@ def gsn_projection(case_source: str | Path | dict[str, Any]) -> dict[str, Any]:
                     "metadata": {},
                 }
             )
-            edges.append({"source": node_id, "target": assumption_id, "kind": "in_context_of"})
+            edges.append(
+                {"source": node_id, "target": assumption_id, "kind": "in_context_of"}
+            )
 
     for argument in arguments:
         source_id = str(argument["id"])
@@ -164,7 +169,14 @@ def gsn_projection(case_source: str | Path | dict[str, Any]) -> dict[str, Any]:
         },
         "top_node_id": id_map.get(top_source, ""),
         "nodes": sorted(nodes, key=lambda item: str(item["id"])),
-        "edges": sorted(edges, key=lambda item: (str(item["target"]), str(item["source"]), str(item["kind"]))),
+        "edges": sorted(
+            edges,
+            key=lambda item: (
+                str(item["target"]),
+                str(item["source"]),
+                str(item["kind"]),
+            ),
+        ),
         "summary": {
             "nodes": len(nodes),
             "edges": len(edges),
@@ -173,7 +185,10 @@ def gsn_projection(case_source: str | Path | dict[str, Any]) -> dict[str, Any]:
             "solutions": sum(node["kind"] == "solution" for node in nodes),
             "assumptions": sum(node["kind"] == "assumption" for node in nodes),
             "open_defeaters": sum(node["kind"] == "defeater" for node in nodes),
-            "dangling_edges": sum(edge["source"] not in node_ids or edge["target"] not in node_ids for edge in edges),
+            "dangling_edges": sum(
+                edge["source"] not in node_ids or edge["target"] not in node_ids
+                for edge in edges
+            ),
         },
         "notice": "This deterministic semantic projection supports review and visualization. It does not establish safety, certification, ISO/IEC/IEEE 15026 conformity, or conformance to a GSN exchange serialization.",
         "content_sha256": "",
@@ -181,15 +196,31 @@ def gsn_projection(case_source: str | Path | dict[str, Any]) -> dict[str, Any]:
     result["content_sha256"] = _digest(result)
     verdict = verify_gsn_projection(result)
     if not verdict["valid"]:
-        raise RuntimeError("generated GSN projection failed verification: " + "; ".join(verdict["errors"]))
+        raise RuntimeError(
+            "generated GSN projection failed verification: "
+            + "; ".join(verdict["errors"])
+        )
     return result
 
 
 def verify_gsn_projection(value: dict[str, Any]) -> dict[str, Any]:
-    required = {"format", "generated_at", "binding", "profile", "top_node_id", "nodes", "edges", "summary", "notice", "content_sha256"}
+    required = {
+        "format",
+        "generated_at",
+        "binding",
+        "profile",
+        "top_node_id",
+        "nodes",
+        "edges",
+        "summary",
+        "notice",
+        "content_sha256",
+    }
     structure = set(value) == required and value.get("format") == GSN_PROJECTION_FORMAT
     claimed = str(value.get("content_sha256", ""))
-    integrity = bool(re.fullmatch(r"[0-9a-f]{64}", claimed) and claimed == _digest(value))
+    integrity = bool(
+        re.fullmatch(r"[0-9a-f]{64}", claimed) and claimed == _digest(value)
+    )
     nodes = value.get("nodes", [])
     edges = value.get("edges", [])
     node_fields = {"id", "kind", "source_id", "statement", "status", "metadata"}
@@ -230,11 +261,21 @@ def verify_gsn_projection(value: dict[str, Any]) -> dict[str, Any]:
     expected_summary = {
         "nodes": len(node_ids),
         "edges": len(edges) if isinstance(edges, list) else 0,
-        "goals": sum(node.get("kind") == "goal" for node in nodes) if node_shapes else 0,
-        "strategies": sum(node.get("kind") == "strategy" for node in nodes) if node_shapes else 0,
-        "solutions": sum(node.get("kind") == "solution" for node in nodes) if node_shapes else 0,
-        "assumptions": sum(node.get("kind") == "assumption" for node in nodes) if node_shapes else 0,
-        "open_defeaters": sum(node.get("kind") == "defeater" for node in nodes) if node_shapes else 0,
+        "goals": sum(node.get("kind") == "goal" for node in nodes)
+        if node_shapes
+        else 0,
+        "strategies": sum(node.get("kind") == "strategy" for node in nodes)
+        if node_shapes
+        else 0,
+        "solutions": sum(node.get("kind") == "solution" for node in nodes)
+        if node_shapes
+        else 0,
+        "assumptions": sum(node.get("kind") == "assumption" for node in nodes)
+        if node_shapes
+        else 0,
+        "open_defeaters": sum(node.get("kind") == "defeater" for node in nodes)
+        if node_shapes
+        else 0,
         "dangling_edges": 0,
     }
     semantic = bool(isinstance(summary, dict) and summary == expected_summary)
@@ -252,16 +293,30 @@ def verify_gsn_projection(value: dict[str, Any]) -> dict[str, Any]:
         "format": GSN_VERIFICATION_FORMAT,
         "valid": valid,
         "complete": valid,
-        "checks": {"closed_structure": structure, "content_integrity": integrity, "graph_integrity": graph, "semantic_reconciliation": semantic, "source_regeneration": None},
+        "checks": {
+            "closed_structure": structure,
+            "content_integrity": integrity,
+            "graph_integrity": graph,
+            "semantic_reconciliation": semantic,
+            "source_regeneration": None,
+        },
         "errors": errors,
         "content_sha256": claimed,
         "notice": "Verification proves projection integrity, not assurance-case evidence truth or safety.",
     }
 
 
-def verify_gsn_projection_file(source: str | Path, *, assurance_case_source: str | Path | None = None) -> dict[str, Any]:
+def verify_gsn_projection_file(
+    source: str | Path, *, assurance_case_source: str | Path | None = None
+) -> dict[str, Any]:
     try:
-        document = load_bounded_json_document(source, label="GSN projection", max_bytes=100_000_000, max_depth=100, max_nodes=3_000_000)
+        document = load_bounded_json_document(
+            source,
+            label="GSN projection",
+            max_bytes=100_000_000,
+            max_depth=100,
+            max_nodes=3_000_000,
+        )
         if not isinstance(document.value, dict):
             raise ValueError("GSN projection must contain an object")
         result = verify_gsn_projection(document.value)
@@ -275,8 +330,27 @@ def verify_gsn_projection_file(source: str | Path, *, assurance_case_source: str
                 result["errors"].append("GSN projection does not exactly regenerate")
         return result
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        return {"path": str(Path(source).expanduser().absolute()), "format": GSN_VERIFICATION_FORMAT, "valid": False, "complete": False, "checks": {"closed_structure": False, "content_integrity": False, "graph_integrity": False, "semantic_reconciliation": False, "source_regeneration": None}, "errors": [str(exc)], "content_sha256": "", "notice": "The GSN projection could not be safely verified."}
+        return {
+            "path": str(Path(source).expanduser().absolute()),
+            "format": GSN_VERIFICATION_FORMAT,
+            "valid": False,
+            "complete": False,
+            "checks": {
+                "closed_structure": False,
+                "content_integrity": False,
+                "graph_integrity": False,
+                "semantic_reconciliation": False,
+                "source_regeneration": None,
+            },
+            "errors": [str(exc)],
+            "content_sha256": "",
+            "notice": "The GSN projection could not be safely verified.",
+        }
 
 
 def export_gsn_projection(value: dict[str, Any], destination: str | Path) -> Path:
-    return atomic_publish_text(destination, json.dumps(value, indent=2, ensure_ascii=False) + "\n", label="GSN projection")
+    return atomic_publish_text(
+        destination,
+        json.dumps(value, indent=2, ensure_ascii=False) + "\n",
+        label="GSN projection",
+    )

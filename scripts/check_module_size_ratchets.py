@@ -26,13 +26,17 @@ def module_size_record(source: str | Path, policy_source: str | Path) -> dict[st
     if policy.get("format") != FORMAT:
         raise ValueError("module-size policy format is unsupported")
     watched = policy.get("watched_maximum_lines")
-    if not isinstance(watched, dict) or not watched or not all(
-        isinstance(name, str)
-        and name.endswith(".py")
-        and isinstance(limit, int)
-        and not isinstance(limit, bool)
-        and limit > 0
-        for name, limit in watched.items()
+    if (
+        not isinstance(watched, dict)
+        or not watched
+        or not all(
+            isinstance(name, str)
+            and name.endswith(".py")
+            and isinstance(limit, int)
+            and not isinstance(limit, bool)
+            and limit > 0
+            for name, limit in watched.items()
+        )
     ):
         raise ValueError("watched module limits are invalid")
     maximum_unlisted = policy.get("maximum_unlisted_module_lines")

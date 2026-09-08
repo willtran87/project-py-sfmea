@@ -35,7 +35,9 @@ def unique_text_list(value: Any, label: str, *, maximum: int = 100_000) -> list[
 
 def analysis_binding(analysis: dict[str, Any]) -> dict[str, str]:
     return {
-        "baseline_id": str(analysis.get("project", {}).get("baseline", {}).get("id", "")),
+        "baseline_id": str(
+            analysis.get("project", {}).get("baseline", {}).get("id", "")
+        ),
         "analysis_state_sha256": analysis_state_sha256(analysis),
     }
 

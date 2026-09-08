@@ -116,7 +116,12 @@ def sign_json_evidence(
 
 
 def verify_json_evidence_signature(
-    artifact: str | Path, signature: str | Path, public_key: str | Path
+    artifact: str | Path,
+    signature: str | Path,
+    public_key: str | Path,
+    *,
+    expected_artifact_sha256: str | None = None,
+    expected_signature_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Verify exact evidence bytes against an explicitly trusted public key."""
 
@@ -133,10 +138,20 @@ def verify_json_evidence_signature(
     fingerprint = ""
     try:
         path, raw, value = _read_artifact(artifact)
+        if (
+            expected_artifact_sha256 is not None
+            and hashlib.sha256(raw).hexdigest() != expected_artifact_sha256
+        ):
+            raise ValueError("artifact changed since authorization scope was read")
         checks["artifact_readable"] = True
         _signature_path, signature_raw = _read_regular_bounded(
             signature, "JSON evidence signature", MAX_SIGNATURE_BYTES
         )
+        if (
+            expected_signature_sha256 is not None
+            and hashlib.sha256(signature_raw).hexdigest() != expected_signature_sha256
+        ):
+            raise ValueError("signature changed since authorization evidence was read")
         _key_path, key_raw = _read_regular_bounded(
             public_key, "public key", MAX_KEY_BYTES
         )

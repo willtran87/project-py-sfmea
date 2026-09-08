@@ -102,7 +102,9 @@ class GovernedTestGenerationTests(unittest.TestCase):
                 "requirement": "REQ-NUMERIC-001",
                 "severity": 3,
                 "severity_rationale": "The effect is bounded in this fixture.",
-                "prevention_controls": ["Input constraints and an independent numeric oracle."],
+                "prevention_controls": [
+                    "Input constraints and an independent numeric oracle."
+                ],
                 "required_safe_state": "Reject invalid numeric input.",
                 "degraded_behavior": "No degraded numeric result is permitted.",
                 "recovery_behavior": "The caller retries with valid input.",
@@ -153,7 +155,9 @@ class GovernedTestGenerationTests(unittest.TestCase):
                 {"index": index, "assertion_reference": f"{test_name}: observed == 50"}
                 for index in range(1, len(criteria) + 1)
             ],
-            "assumptions": ["The accepted obligation defines 2 as an adequate stimulus."],
+            "assumptions": [
+                "The accepted obligation defines 2 as an adequate stimulus."
+            ],
             "unresolved_questions": [],
         }
 
@@ -222,9 +226,10 @@ class GovernedTestGenerationTests(unittest.TestCase):
     def test_packet_is_exact_source_bound_and_bounded(self) -> None:
         packet = build_test_generation_packet(self.analysis, self.obligation["id"])
         self.assertTrue(packet["generation_eligibility"]["eligible"])
-        self.assertEqual(packet["allowed_changes"]["paths"], [
-            self.obligation["automation"]["proposed_test_path"]
-        ])
+        self.assertEqual(
+            packet["allowed_changes"]["paths"],
+            [self.obligation["automation"]["proposed_test_path"]],
+        )
         source = packet["source_context"][0]
         self.assertEqual(source["path"], "subject.py")
         self.assertEqual(
@@ -280,9 +285,7 @@ class GovernedTestGenerationTests(unittest.TestCase):
         self.assertEqual(packet["binding"]["obligation_id"], obligation_id)
 
         response_path = self.root / "recorded-response.json"
-        response_path.write_text(
-            json.dumps(self._response(packet)), encoding="utf-8"
-        )
+        response_path.write_text(json.dumps(self._response(packet)), encoding="utf-8")
         proposal_path = self.root / "offline-proposal.json"
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
@@ -431,14 +434,12 @@ class GovernedTestGenerationTests(unittest.TestCase):
         manifest = json.loads(
             (staged / "pysfmea-test-proposal-stage.json").read_text(encoding="utf-8")
         )
-        Draft202012Validator(
-            schema_document("assurance-test-proposal-stage")
-        ).validate(manifest)
+        Draft202012Validator(schema_document("assurance-test-proposal-stage")).validate(
+            manifest
+        )
         self.assertEqual(manifest["status"], "staged_unreviewed")
         self.assertEqual(manifest["proposal_id"], proposal["id"])
-        stage_verification = verify_test_proposal_stage(
-            staged, proposal, self.analysis
-        )
+        stage_verification = verify_test_proposal_stage(staged, proposal, self.analysis)
         self.assertTrue(stage_verification["valid"], stage_verification)
         Draft202012Validator(
             schema_document("assurance-test-proposal-stage-verification")
@@ -568,7 +569,9 @@ class GovernedTestGenerationTests(unittest.TestCase):
                 receipt_path=self.root.parent / "unapproved.json",
             )
         staged_test = staged / self.obligation["automation"]["proposed_test_path"]
-        staged_test.write_text("def test_tampered():\n    assert True\n", encoding="utf-8")
+        staged_test.write_text(
+            "def test_tampered():\n    assert True\n", encoding="utf-8"
+        )
         verification = verify_test_proposal_stage(staged, proposal, self.analysis)
         self.assertFalse(verification["valid"])
         self.assertFalse(verification["checks"]["file_integrity"])
@@ -905,7 +908,9 @@ class GovernedTestGenerationTests(unittest.TestCase):
                 ),
                 0,
             )
-        self.assertTrue(json.loads(result_path.read_text(encoding="utf-8"))["qualified"])
+        self.assertTrue(
+            json.loads(result_path.read_text(encoding="utf-8"))["qualified"]
+        )
         self.assertTrue(verify_test_generation_quality_result(result, corpus)["valid"])
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
@@ -935,11 +940,7 @@ class GovernedTestGenerationTests(unittest.TestCase):
         self.assertFalse(degraded_result["qualified"])
         self.assertIn(
             "seeded_fault_detection",
-            {
-                gate["id"]
-                for gate in degraded_result["gates"]
-                if not gate["passed"]
-            },
+            {gate["id"] for gate in degraded_result["gates"] if not gate["passed"]},
         )
 
         invalid = copy.deepcopy(corpus)
@@ -981,6 +982,7 @@ class GovernedTestGenerationTests(unittest.TestCase):
                 "test_sha256": receipt["file"]["sha256"],
             }
         )
+
         def attach_raw_execution(execution: dict[str, object]) -> Path:
             execution_id = str(execution["id"])
             run_directory = self.root / "qualification-runs" / execution_id
@@ -1109,7 +1111,9 @@ class GovernedTestGenerationTests(unittest.TestCase):
             "oracle_mappings": [],
             "criterion_mappings": [],
             "assumptions": [],
-            "unresolved_questions": ["Which independent oracle establishes correctness?"],
+            "unresolved_questions": [
+                "Which independent oracle establishes correctness?"
+            ],
         }
         for sample_id in ("REFUSE-EVIDENCE-1", "REFUSE-EVIDENCE-2"):
             sample_refusal = copy.deepcopy(refusal_response)
@@ -1279,9 +1283,7 @@ class GovernedTestGenerationTests(unittest.TestCase):
                     "fault_category": fault_category,
                 }
             )
-        campaign_result = evaluate_test_generation_quality_campaign(
-            campaign, self.root
-        )
+        campaign_result = evaluate_test_generation_quality_campaign(campaign, self.root)
         self.assertTrue(campaign_result["qualified"], campaign_result)
         self.assertEqual(
             campaign_result["status"], "qualified_stratified_artifact_sample"
@@ -1356,11 +1358,7 @@ class GovernedTestGenerationTests(unittest.TestCase):
         self.assertFalse(concentrated_result["qualified"])
         self.assertIn(
             "repository_concentration",
-            {
-                gate["id"]
-                for gate in concentrated_result["gates"]
-                if not gate["passed"]
-            },
+            {gate["id"] for gate in concentrated_result["gates"] if not gate["passed"]},
         )
         duplicated = copy.deepcopy(corpus)
         duplicated["samples"][1]["artifacts"] = copy.deepcopy(  # type: ignore[index]
@@ -1376,9 +1374,7 @@ class GovernedTestGenerationTests(unittest.TestCase):
         seeded_result.write_text("tampered\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "raw execution evidence is invalid"):
             evaluate_test_generation_quality_evidence(corpus, self.root)
-        seeded_result.write_text(
-            "PROPOSE-EVIDENCE-1-SEEDED:failed\n", encoding="utf-8"
-        )
+        seeded_result.write_text("PROPOSE-EVIDENCE-1-SEEDED:failed\n", encoding="utf-8")
         proposed_proposal_path.write_text("{}", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "declared SHA-256"):
             evaluate_test_generation_quality_evidence(corpus, self.root)

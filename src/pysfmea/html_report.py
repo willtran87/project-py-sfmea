@@ -380,8 +380,12 @@ def _generated_test_governance_projection(
             and execution.get("baseline_id") == baseline_id
             and execution.get("test", {}).get("sha256") == automation.get("test_sha256")
         ]
-        passing = [value for value in exact_executions if value.get("status") == "passed"]
-        stimulated = [value for value in passing if value.get("stimulus_observed") is True]
+        passing = [
+            value for value in exact_executions if value.get("status") == "passed"
+        ]
+        stimulated = [
+            value for value in passing if value.get("stimulus_observed") is True
+        ]
         criteria_complete = [
             value
             for value in stimulated
@@ -434,7 +438,9 @@ def _generated_test_governance_projection(
     return {
         "summary": {
             "llm_generated_tests": len(records),
-            "evidence_ready": sum(value["status"] == "evidence_ready" for value in records),
+            "evidence_ready": sum(
+                value["status"] == "evidence_ready" for value in records
+            ),
             "blocked": sum(value["status"] == "blocked" for value in records),
         },
         "records": embedded,
@@ -1165,9 +1171,7 @@ def build_html_report_data(
                 analysis.get("static_control_flow_model", {}).get("limitations", [])
             ),
             "decisions": copy.deepcopy(
-                analysis.get("static_control_flow_model", {}).get("decisions", [])[
-                    :500
-                ]
+                analysis.get("static_control_flow_model", {}).get("decisions", [])[:500]
             ),
             "report_projection": {
                 "decision_limit": 500,

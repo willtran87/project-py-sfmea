@@ -14,7 +14,10 @@ The tool can organize evidence for the first four. It cannot answer the fifth.
 flowchart LR
     R["Repository baseline"] --> A["Governed analysis"]
     A --> C["Standards conformance workspace"]
-    S["Licensed or public standards"] --> C
+    S["Licensed or public standards"] --> SLG["Edition/status review ledger"]
+    SLG --> C
+    TAX["Exact official CWE/CAPEC XML"] --> TX["Content-addressed taxonomy"]
+    TX --> C
     C --> O["Objective assessments"]
     O --> XW["Objective/finding/evidence crosswalk"]
     A --> E["Tests and reviewed evidence"]
@@ -24,7 +27,8 @@ flowchart LR
     E --> AC["Structured assurance case"]
     O --> AC
     Q["Independent qualification campaign"] --> B["Pre-registered benchmark assessment"]
-    REG["Governed external benchmark registry"] --> BX["Pinned isolated execution receipt"]
+    REG["Governed external benchmark registry"] --> BA["Independently reviewed adapter"]
+    BA --> BX["Pinned isolated execution receipt"]
     BX --> B
     FUZZ["Atheris / ClusterFuzzLite campaign"] --> FE["Corpus, coverage, crash-triage receipt"]
     FE --> E
@@ -67,6 +71,65 @@ flowchart LR
     D -->|external authority| X["Approval, certification, or risk acceptance"]
 ```
 
+The executable 0.73.0 closure loop keeps generated discovery distinct from reviewed evidence:
+
+```mermaid
+flowchart LR
+    R["Exact Python repository"] --> S["Static SFMEA scan"]
+    S --> B["Direct semantic benchmark"]
+    S --> T["ISO 29119-aligned test dossier"]
+    T --> I["Implemented and executed tests"]
+    I --> E["Reviewed assurance evidence"]
+    SB["CycloneDX SBOM"] --> VA["OSV version applicability"]
+    VA --> VW["Reachability / exposure / SSVC / remediation"]
+    CF["ClusterFuzzLite CI artifacts"] --> CI["Exact artifact intake"]
+    CI --> FC["Operator-completed fuzz campaign"]
+    B --> Q{"Independent evidence gate"}
+    E --> Q
+    VW --> Q
+    FC --> Q
+    Q -->|external authority| D["Release or qualification decision"]
+```
+
+The semantic corpus bundled with the package is a regression and calibration control. It is not
+independent evidence. External corpus custody, labels, representativeness, execution authority,
+and acceptance remain separate evidence inputs.
+
+Qualification-strengthening evidence is now explicitly layered:
+
+- `benchmark-source-health-*` blocks execution eligibility until every suite has reviewed,
+  immutable source, revision, license, schema, maturity, and independent-review evidence.
+- `benchmark-native-*` translates supported OWASP CSV, TestGenEval JSON, and TDD/SWE-bench
+  JSONL results while keeping runner, corpus, oracle, and environment evidence unresolved.
+- `benchmark-item-quality*` requires exact normalized-case accounting, all nine quality criteria,
+  criterion-level evidence, two reviewers independent of the audit authority, bounded exclusions,
+  no open remediation, and exact replay before a benchmark claim becomes eligible.
+- `benchmark-case-inventory*` gives suites without a qualified native adapter the same exact,
+  source-bound population and item-review path; the validation portfolio requires a passing audit
+  for every declared suite and replays both the population and review sources.
+- `inspect-ai-*` preserves exact Inspect JSON log identity, configuration hashes, samples, scores,
+  transcript/tool/store identities, errors, and usage without reinterpreting scorer semantics.
+- `inspect-ai-conformance*` separately validates the retained log against a supplied official
+  Inspect schema and binds the exact schema, run configuration, evaluator version, and evidence.
+- `deployed-tevv-*` and `genai-telemetry-*` govern repeated production evaluation, explicit
+  thresholds, incidents, circuit breakers, rollback, change traceability, and version-pinned
+  OpenTelemetry GenAI semantic conventions with exact raw-span replay.
+- `confidence-calibrate*` reports Brier score, expected calibration error, Wilson intervals,
+  per-stratum results, and selective risk versus coverage.
+- `causal-validate*` compares static cascade/effect predictions with injected-fault traces,
+  deadlines, circuit-breaker transitions, and recovery observations. Format 2 computes
+  conventional precision and recall per scenario, preventing an observation in one scenario from
+  satisfying a prediction in another, and reports exact ordered-path/effect and eligible-population
+  rates.
+- `sarif-conformance*` uses a locally supplied official schema and adds bounded consumer-semantic
+  checks; `scorecard-*` maps Scorecard checks only to candidate OSPS/SSDF/SLSA evidence.
+- `standards-watchlist*` tracks relevant drafts—including NIST AI 200-2 TEVV-Athlon—separately
+  from adopted profiles; NIST AI 800-4 is a current guidance profile for repeated post-deployment
+  TEVV, monitoring, incident response, rollback, and change reassessment.
+
+No generated artifact substitutes for lawful corpus custody, external labels, independent
+execution, controlled normative text, accreditation, qualification, or risk acceptance.
+
 ## Governed standards catalog
 
 ```powershell
@@ -75,7 +138,7 @@ sfmea standards-catalog --json
 sfmea standards-catalog -o standards-catalog.json
 ```
 
-The content-addressed catalog provides 78 selectable profiles. Select only profiles made
+The content-addressed catalog provides 144 selectable profiles. Select only profiles made
 applicable by the system, market, contract, and approved assurance plan.
 
 | Profile | Intended use | Normative text |
@@ -83,10 +146,12 @@ applicable by the system, market, contract, and approved assurance plan.
 | `iec-60812-2018` | General FMEA/FMECA planning, execution, treatment, and maintenance | Licensed |
 | `sae-j1739-202605` | DFMEA, FMEA-MSR, and PFMEA process | Licensed; proprietary rating/AP material is not bundled |
 | `faa-airborne-do178c-do330` | Airborne software lifecycle and tool qualification | FAA AC is public; RTCA/EUROCAE material is licensed |
+| `faa-do-331-model-based` / `faa-do-332-object-oriented` | Airborne model-based and object-oriented technology considerations | FAA AC navigation is public; supplements are licensed |
 | `iec-61508-3-2010` | Functional-safety software lifecycle | Licensed |
 | `iso-26262-6-2018` | Automotive software safety lifecycle | Licensed |
 | `nist-ssdf-1.1` | Secure software development | Public |
 | `iso-25010-29119` | Product-quality model and governed testing | Licensed |
+| `iso-29119-11-2020` | Risk-based testing guidance for AI-based systems | Licensed |
 | `nist-ai-600-1-llm` | LLM-assisted analysis and generated-test governance | Public |
 | `iso-15026-2-2022` | Structured assurance-case content and lifecycle governance | Licensed |
 | `iso-5338-2023` | AI system lifecycle integration | Licensed |
@@ -97,13 +162,15 @@ applicable by the system, market, contract, and approved assurance plan.
 | `sae-arp4754b-arp4761a` | Aircraft/system development and safety assessment | Licensed |
 | `iso-12207-2026` | Current software lifecycle processes | Licensed |
 | `iso-330xx-process-assessment` | Governed process assessment and capability evidence | Licensed |
-| `openssf-osps-2026-02-19` | Open-source project security baseline | Public |
+| `openssf-osps-2026-02-19` | Superseded open-source project security baseline retained for historical evidence | Public |
+| `openssf-osps-2026-08-28` | Current open-source project security baseline | Public |
 | `iso-42001-23894-ai-governance` | AI management and risk governance | Licensed |
 | `nist-ssdf-800-218a-genai` | Generative-AI secure-development profile | Public |
 | `iso-21434-21448-automotive` | Automotive cybersecurity and SOTIF | Licensed |
 | `medical-14971-62304-81001` | Medical risk, software lifecycle, and health-software security | Licensed |
 | `en-50716-2023-rail` | Railway software lifecycle | Licensed |
 | `iec-62443-4-1-2018` | Industrial secure product development | Licensed |
+| `iec-62443-3-2-2020` | IACS system security risk assessment and security-level target governance | Licensed |
 | `iec-61511-process-safety` | Process-industry functional safety | Licensed |
 | `iso-29148-2018` | Requirements engineering and bidirectional traceability | Licensed |
 | `iso-42010-2022` | Architecture descriptions, viewpoints, views, and correspondences | Licensed |
@@ -131,10 +198,75 @@ applicable by the system, market, contract, and approved assurance plan.
 | `iso-22301-2019` | Business continuity, recovery objectives, and exercises | Licensed |
 | `iso-42006-2025` | AI management-system certification-body competence and impartiality | Licensed |
 | `faa-do-333-formal-methods` | FAA-recognized airborne formal-method verification | Public FAA guidance; licensed supplement |
+| `iso-15026-1-2025` / `iso-15026-3-2023` / `iso-15026-4-2021` | Assurance lifecycle, integrity-level, and assurance-assessment governance | Licensed |
+| `openchain-5230-18974` | Open-source security and license-compliance program governance | Public specification / ISO adoption |
+| `sbom-iso-5962-ecma-424` | SBOM structure, quality, lifecycle, and exchange governance | Public ECMA specification / ISO adoption |
+| `ieee-730-2026` | Software quality-assurance planning, activities, records, nonconformance, and improvement | Licensed |
+| `owasp-wstg-v42` | Version-pinned web-application security test planning, execution, evidence, and retesting | Public |
+| `nist-sp-800-115` | Technical security testing and assessment planning, execution, analysis, and remediation | Public |
+| `nist-samate-scas-500-268-270` | Independent source-code security-analysis specification, test plan, metrics, and result review | Public |
+| `iso-29119-3-2021` / `iso-29119-4-2021` | Governed test documentation and specification/structure/experience-based test techniques | Licensed |
+| `iso-29119-1-2022` / `iso-29119-5-2024` / `iso-29119-6-2021` | Testing concepts, keyword-driven testing, and agile-project testing guidance | Licensed |
+| `nasa-gsfc-hdbk-8004` | NASA Goddard guidance for living FMEA/FMECA development, use, and maintenance | Public NASA guidance |
+| `iso-42119-2-2025` | Risk-based testing of AI systems and AI-generated test workflows | Licensed |
+| `nist-ai-100-2e2025-adversarial-ml` | Adversarial-ML taxonomy, lifecycle threats, mitigations, and change review | Public NIST |
+| `owasp-agentic-ai-2025` | Agent identity, memory, tools, delegation, autonomy, containment, and adversarial evaluation | Public non-normative guidance |
+| `iso-12792-2025-ai-transparency` | Stakeholder-oriented AI transparency information and lifecycle traceability | Licensed |
+| `iso-24027-12791-ai-bias` | AI bias context, measurement, treatment, monitoring, and tradeoff evidence | Licensed |
+| `iso-27004-2016-security-measurement` | Information-security measurement and evaluation; replacement-edition watch required | Licensed |
+| `iec-61508-7-2010-techniques` | Functional-safety verification, test, tool, and technique-selection evidence | Licensed |
+| `iso-26262-8-9-2018-supporting-analysis` | Automotive supporting processes, tool confidence, ASIL decomposition, and safety analysis | Licensed |
+| `owasp-api-security-2023` | API inventory, authorization, abuse, resource, SSRF, configuration, and dependency risks | Public non-normative guidance |
+| `tmmi-2-0-test-maturity` | Managed, defined, measured, and optimizing test-process maturity | Public model; accredited assessment is external |
+| `osv-kev-epss-vulnerability-intelligence` | Exact affected-package, known-exploitation, and exploit-probability decision inputs | Public specifications/data |
+| `iso-15939-2017` / `iso-25020-2019` / `iso-25041-2012` | Measurement validity, quality-measure construction, and developer/acquirer/independent-evaluator guidance | Licensed |
+| `iso-25012-25024-data-quality` | Quality model and quantitative measures for findings, labels, corpora, and traces | Licensed |
+| `faa-do-356a-do-355a` | Airworthiness security assessment and continuing-airworthiness security | FAA navigation is public; RTCA/EUROCAE material is licensed |
+| `nist-sp-800-190` / `nist-sp-800-207a` | Container security and cloud-native zero-trust enforcement | Public |
+| `openssf-security-insights-2-2` | Machine-readable project security posture and disclosure | Public |
+| `eu-cra-2024-2847` | Phased EU product-security, vulnerability-handling, reporting, and technical-file evidence readiness | Public regulation/guidance; legal review required |
+| `nasa-7150-8739-software-assurance` | NASA software engineering, assurance, safety, and measurement governance | Public NASA directives and standards |
+| `iso-9001-2026-90003-2018` | Quality-management system controls specialized for software | Licensed |
+| `iso-17020-17029-19011-assessment-governance` | Impartial inspection, validation/verification, and audit-program governance | Licensed |
+| `iso-17043-13528-benchmark-proficiency` | Proficiency scheme design, stable items, assigned values, statistical evaluation, and impartial governance | Licensed |
+| `iso-27036-software-supply-chain` | Supplier and multi-tier software/cloud relationship security from selection through exit | Licensed |
+| `iso-20000-ieee-2675-service-devops` | Service-management and reliable secure DevOps lifecycle governance | Licensed |
+| `nist-800-61-iso-27035-incident-response` | Risk-integrated incident preparation, response, recovery, evidence, and learning | Public NIST / licensed ISO |
+| `nist-800-204c-d-cloud-devsecops` | Cloud-native microservice and CI/CD software-supply-chain assurance | Public NIST |
+| `iso-27017-2026-cloud-security` | Cloud-provider/customer shared controls, isolation, operations, and exit | Licensed |
+| `iso-17065-17067-product-certification` | Product-certification scheme and certification-body governance | Licensed |
+| `ieee-828-2012-configuration-management` | Software configuration-management planning and control | Licensed |
+| `machinery-iec-62061-iso-13849` | Safety-related machinery control systems and software | Licensed |
+| `faa-do-278a-do-200b-ground-data-assurance` | Ground CNS/ATM software and aeronautical-data assurance | FAA navigation is public; RTCA material is licensed |
+| `nuclear-iec-61513-60880-62138-62645` | Nuclear I&C software safety and cybersecurity lifecycle controls | Licensed |
+| `mil-std-882e-system-safety` | Defense system-safety program and hazard-risk governance | Public US DoD standard |
+| `medical-iso-13485-fda-csa` | Medical-device QMS and risk-based computer software assurance | Mixed licensed standard / public FDA guidance |
 
 Catalog objectives are original summaries and navigation aids. A project using a licensed
 standard must consult its controlled normative copy and record the adopted edition, tailoring,
 customer-specific requirements, and interpretation authority.
+
+Make standards currency and external security taxonomy releases reviewable evidence rather than
+implicit tool assumptions:
+
+```powershell
+sfmea standards-lifecycle-init --authority "Standards owner" -o standards-lifecycle.json
+# For every catalog profile, record observed edition/status, official source evidence, review and
+# next-review dates, disposition, reviewer, and any required reapproval reference.
+sfmea standards-lifecycle-seal standards-lifecycle.json -o standards-lifecycle.json
+sfmea standards-lifecycle-verify standards-lifecycle.json --json
+
+sfmea security-taxonomy-import C:\controlled\cwec_latest.xml --kind cwe `
+  --authority "Product security" -o cwe-taxonomy.json
+sfmea security-taxonomy-verify cwe-taxonomy.json `
+  --source C:\controlled\cwec_latest.xml --json
+```
+
+The lifecycle verifier binds all 118 records to the exact shipped catalog and rejects missing,
+overdue, changed, or unreviewed records. The taxonomy importer accepts bounded official MITRE CWE
+or CAPEC XML, preserves identifiers, status, relationships, release metadata, and source digest,
+and can regenerate the artifact from the exact XML bytes. Neither workflow decides applicability
+or substitutes for the controlled normative publication.
 
 ## External analysis, OSCAL, benchmark, and fuzz evidence
 
@@ -151,14 +283,24 @@ sfmea oscal-assessment-results analysis.json --authority "Assurance board" `
   -o assessment-results.oscal.json
 sfmea oscal-assessment-results-verify assessment-results.oscal.json `
   --analysis analysis.json --json
+sfmea oscal-assessment-plan analysis.json --authority "Assessment lead" `
+  --ssp-href ./system-security-plan.json -o assessment-plan.oscal.json
+sfmea oscal-assessment-plan-verify assessment-plan.oscal.json `
+  --analysis analysis.json --json
+sfmea oscal-poam analysis.json --authority "Risk owner" `
+  --ssp-href ./system-security-plan.json -o poam.oscal.json
+sfmea oscal-poam-verify poam.oscal.json --analysis analysis.json --json
 ```
 
 SARIF intake is bounded, version-gated to 2.1.0, exact-byte hashed, and lossless at the result
 level. Mapping requires one unambiguous component source range. Clusters require the same source
 coordinate and taxonomy/rule basis; they are an accounting view, never automatic deduplication.
-The OSCAL projection uses deterministic UUIDs and represents active SFMEA records as observations,
-not unsupported control-effectiveness findings. Use `industry-schema-validate` with the official
-NIST OSCAL schema and retain an independent receiving-tool round trip for interoperability credit.
+The OSCAL projections use deterministic UUIDs and exact analysis bindings. The Assessment Plan
+defines review activities and subjects; Assessment Results represents active SFMEA records as
+observations; POA&M represents unresolved work as actions. None asserts unsupported control
+effectiveness. The generated Assessment Plan and POA&M pass the official NIST OSCAL 1.2.3 JSON
+schemas. Retain an `industry-schema-validate` receipt and an independent receiving-tool round trip
+for interoperability credit.
 
 External benchmark and fuzz execution use editable governed contracts:
 
@@ -166,23 +308,151 @@ External benchmark and fuzz execution use editable governed contracts:
 sfmea benchmark-suite-catalog
 sfmea benchmark-execution-init --suite testgeneval --authority "Protocol owner" `
   -o benchmark-execution.json
-# Record the pinned dataset revision/digest, digest-pinned local image, argv, resource budget,
-# independent roles, exact metrics, exclusions, and evidence references.
+# Create an adapter and record its exact suite revision, tree/source digest, license, digest-pinned
+# image, argv, fixed output, normalization mappings/policies, owner, and independent reviewer.
+sfmea benchmark-adapter-init --suite testgeneval --authority "Adapter owner" `
+  -o benchmark-adapter.json
+sfmea benchmark-adapter-seal benchmark-adapter.json -o benchmark-adapter.json
+sfmea benchmark-adapter-verify benchmark-adapter.json --json
+# Record the matching pinned dataset revision/tree digest, digest-pinned local image, argv,
+# resource budget, independent roles, and evidence destinations. The container must emit
+# /evidence/benchmark-observations.json using the public benchmark-observations schema.
 sfmea benchmark-execution-seal benchmark-execution.json -o benchmark-execution.json
-sfmea benchmark-execution-verify benchmark-execution.json --json
+sfmea campaign-snapshot C:\path\to\suite
+sfmea benchmark-execution-run benchmark-execution.json C:\path\to\suite `
+  --adapter benchmark-adapter.json `
+  --evidence-directory .artifacts\benchmark -o benchmark-execution.completed.json
+sfmea benchmark-execution-verify benchmark-execution.completed.json --json
+sfmea benchmark-observations-verify .artifacts\benchmark\benchmark-observations.json --json
 
 sfmea fuzz-campaign-init --authority "Campaign owner" -o fuzz-campaign.json
-# Record target/config/corpus digests, isolated execution, runtime coverage, and every crash triage.
+# Record target/config/corpus digests, pinned image/argv, and resource limits. The container must
+# emit /evidence/fuzz-result.json with runtime coverage and complete crash triage.
 sfmea fuzz-campaign-seal fuzz-campaign.json -o fuzz-campaign.json
-sfmea fuzz-campaign-verify fuzz-campaign.json --json
+sfmea fuzz-campaign-run fuzz-campaign.json C:\path\to\repository `
+  --evidence-directory .artifacts\fuzz -o fuzz-campaign.completed.json
+sfmea fuzz-campaign-verify fuzz-campaign.completed.json --json
 ```
 
-Eligibility requires a digest-pinned image, exact non-placeholder source/corpus/configuration
+Eligibility requires an independently reviewed, exact-revision-matched adapter, a digest-pinned
+image, exact non-placeholder source/corpus/configuration
 digests, `network=none`, a read-only source mount, explicit resource limits, complete execution,
 distinct governing identities, and evidence references. Fuzzing additionally requires coverage
-evidence and complete disposition of each reproducible crash. PySFMEA records and verifies these
+evidence and complete disposition of each reproducible crash. Each benchmark case binds the exact
+input and ground-truth bytes; each attempt binds output, generated test, environment, execution,
+coverage, and mutation evidence. Each fuzz campaign binds the exact coverage observation plus
+input, stack, and reproducer bytes for every crash. PySFMEA records and verifies these
 facts; it does not download third-party corpora, authenticate people, validate labels, accredit a
 laboratory, or turn a crash-free campaign into a defect-absence claim.
+
+Case-level benchmark observations preserve the model, prompt-template revision, temperature,
+seed, suite revision/snapshot, container image, and argv. Their verifier independently recomputes
+pass@1/pass@k, resolved rate, coverage and mutation changes, flakiness, unsafe-oracle rate,
+latency, input/output tokens, cost, errors, and TP/FP/FN/TN-derived precision, recall,
+specificity, and F1. This supports LLM-generated-test evaluation without treating a generated
+test, mutation kill, or benchmark pass as engineering acceptance.
+
+### Case-paired differential comparison
+
+Aggregate comparator scores can hide which cases disagree. The differential workflow retains each
+independent label and each tool prediction, calculates per-tool confusion matrices, performs an
+exact paired McNemar test, and creates a review queue for every discordant case. A comparison is
+portfolio-eligible only after exact source replay, pinned suite and tool provenance, separated
+label/adjudication authorities, complete evidence references, and disposition of all disagreements
+when the policy requires it.
+
+```powershell
+sfmea benchmark-differential-init --authority "Comparison owner" -o differential.json
+# Add the pinned suite, independent authorities, tools, labels, predictions, and adjudications.
+sfmea benchmark-differential-seal differential.json -o differential.sealed.json
+sfmea benchmark-differential-assess differential.sealed.json -o differential.assessment.json
+sfmea benchmark-differential-verify differential.assessment.json `
+  --source differential.sealed.json --json
+```
+
+Add both exact paths to the portfolio source and enable the policy gate when differential evidence
+is mandatory:
+
+```json
+{
+  "policy": {"case_paired_differential_required": true},
+  "differential_evidence": [
+    {
+      "id": "semantic-comparison",
+      "assessment_path": "differential.assessment.json",
+      "source_path": "differential.sealed.json"
+    }
+  ]
+}
+```
+
+The p-value characterizes paired correctness asymmetry under the declared population. It does not
+establish practical significance, label correctness, population representativeness, or tool
+qualification. Agreement between tools is never promoted to ground truth.
+
+### Operational vulnerability intelligence
+
+Use project-acquired snapshots so network state cannot change during analysis:
+
+```powershell
+sfmea vulnerability-intelligence-import `
+  --osv C:\controlled\osv.json `
+  --kev C:\controlled\known_exploited_vulnerabilities.json `
+  --epss C:\controlled\epss_scores.csv.gz `
+  --authority "Product security" --observed-at 2026-08-30T12:00:00Z `
+  --max-age-days 2 -o vulnerability-intelligence.json
+sfmea vulnerability-intelligence-verify vulnerability-intelligence.json `
+  --osv C:\controlled\osv.json `
+  --kev C:\controlled\known_exploited_vulnerabilities.json `
+  --epss C:\controlled\epss_scores.csv.gz --as-of 2026-08-31T00:00:00Z --json
+sfmea vulnerability-intelligence-match vulnerability-intelligence.json `
+  --sbom bom.cdx.json -o vulnerability-leads.json
+```
+
+The importer retains exact bytes, aliases, PURLs, affected ranges, KEV fields, EPSS probability,
+percentile, model metadata, and acquisition time. Identity matches remain `applicability=unresolved`:
+ecosystem version semantics, reachability, exposure, safety impact, SSVC disposition, and risk
+acceptance require separate evidence and authority.
+
+### Continuous fuzzing and performance history
+
+`.clusterfuzzlite/` supplies the official Python/Atheris build integration. The immutable-SHA-pinned
+workflow runs ten-minute code-change fuzzing for pull requests and a longer weekly batch campaign,
+minimizes crashes, and emits SARIF. This CI signal complements—but does not replace—the governed
+`fuzz-campaign` receipt, which binds corpus, coverage, crash reproduction, triage, and approval.
+
+Combine at least three exact, comparable `pysfmea-scan-performance-2` receipts:
+
+```powershell
+sfmea performance-history performance-0.69.json performance-0.70.json performance-0.71.json `
+  --authority "Performance review board" --minimum-observations 3 `
+  --max-runtime-regression-percent 10 --max-memory-regression-percent 10 `
+  -o performance-history.json
+sfmea performance-history-verify performance-history.json --json
+```
+
+The gate fails when environment, repository population, baseline, or cache mode differs. A passing
+result is a non-regression statement for that controlled population—not a universal throughput
+claim.
+
+Authenticate exact release evidence with an offline Sigstore bundle:
+
+```powershell
+sfmea sigstore-verify sfmea-analysis.json sfmea-analysis.sigstore.json `
+  --trusted-root trusted-root.json `
+  --certificate-identity https://github.com/example/project/.github/workflows/assure.yml@refs/heads/main `
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com `
+  --authority "Release assurance" -o sigstore-verification.json
+sfmea sigstore-receipt-verify sigstore-verification.json `
+  --artifact sfmea-analysis.json --bundle sfmea-analysis.sigstore.json `
+  --trusted-root trusted-root.json --json
+```
+
+The command invokes the current `cosign verify-blob --bundle --trusted-root` interface without a
+shell and records the exact artifact, bundle, local trusted root, expected certificate
+identity/OIDC issuer, cosign version, exit code, and output digests.
+Successful cryptographic verification authenticates the supplied identity claim; authorization,
+identity ownership, policy suitability, qualification, and release approval remain external.
 
 ## Advanced method workbenches
 
@@ -286,6 +556,50 @@ real-world Python defects. Pin the exact source revision and digest in the portf
 URLs alone are not provenance. [NIST SARD](https://samate.nist.gov/SARD/) can add an independent
 cross-language control corpus, but it does not replace representative Python evidence.
 
+For the LLM test-generation layer, the governed targets include CyberSecEval 4 for insecure code,
+prompt injection, interpreter misuse, autonomous action, defensive reasoning, and patching;
+AgentDojo for dynamic indirect-injection, tool-use, and utility/security tradeoffs; CrossCodeEval
+and CrossCodeLongEval for cross-file and long-range repository context; SWE-PolyBench Verified
+Python for independently curated cross-project repository tasks; IDoFT Python for independently
+maintained flaky-test candidates; and a local nondeterminism/concurrency corpus for schedule,
+order, timing, race, and eventual-consistency mechanisms. AgentDojo, SWE-PolyBench, and IDoFT
+have native upstream-shape normalization, but normalized output is not execution or correctness
+evidence until joined to a pinned lawful source, reviewed adapter, environment, per-case evidence,
+and independent authority. Model-judge output, lexical completion scores, dataset membership, and
+a single passing repetition are never promoted to independent correctness labels.
+
+The graph and generated-test qualification layer adds
+[PyCG](https://github.com/vitsalis/PyCG), [JARVIS](https://pythonjarvis.github.io/), and
+[DyPyBench](https://github.com/sola-st/DyPyBench) as distinct static-ground-truth and
+runtime-observation populations. Dynamic traces are under-approximations, so they can establish
+observed-edge recall but cannot label every unobserved edge false. [TestExplora](https://github.com/microsoft/TestExplora)
+adds proactive latent-defect discovery: a generated test receives defect-exposure credit only when
+it fails on the buggy revision, passes on the repaired revision, and does not regress the retained
+suite. Every target remains `contract-only` until its exact version-specific adapter is reviewed;
+PySFMEA deliberately does not guess evolving upstream formats.
+
+Five additional contracts cover modern Python semantics, distributed timeout/retry/breaker
+behavior, receiving-tool interoperability, longitudinal drift, and Pynguin/SBFT generated-test
+research. The first four are maintained executable regression populations; Pynguin/SBFT remains
+an external contract until a version-pinned, independently reviewed adapter is supplied.
+
+For causal propagation, prepare an independently reviewed JSON scenario array and bind every
+scenario to its exact injected fault and runtime trace:
+
+```powershell
+sfmea causal-validate causal-scenarios.json `
+  --analysis-sha256 <analysis-content-sha256> `
+  --producer "Fault-injection laboratory" `
+  --reviewer "Independent validation reviewer" `
+  --authority "Assurance board" `
+  -o causal-validation.json
+sfmea causal-validate-verify causal-validation.json --json
+```
+
+Format 2 computes edge and effect precision against predicted populations, recall against observed
+populations, and accounts within each scenario before aggregation. It also reports exact ordered
+path/effect rates and the populations eligible for deadline, breaker, and recovery conclusions.
+
 ```mermaid
 flowchart TB
     OW["OWASP Benchmark Python\nexecutable synthetic"] --> BV2["Benchmark v2 assessment"]
@@ -312,12 +626,63 @@ sfmea validation-portfolio-verify portfolio.assessment.json `
 sfmea validation-portfolio-report portfolio.assessment.json -o portfolio.html
 sfmea validation-portfolio-report-verify portfolio.html `
   --assessment portfolio.assessment.json --json
+
+# Join three independent evidence lanes through four exact artifacts and separate review authority.
+sfmea industry-qualification-readiness `
+  --standards-lifecycle standards-lifecycle.json `
+  --benchmark-source-health benchmark-source-health.json `
+  --benchmark-proficiency-source proficiency.sealed.json `
+  --benchmark-proficiency proficiency.assessment.json `
+  --validation-portfolio-source portfolio.sealed.json `
+  --validation-portfolio portfolio.assessment.json `
+  --authority "Qualification review board" `
+  -o industry-readiness.json
+sfmea industry-qualification-readiness-verify industry-readiness.json `
+  --standards-lifecycle standards-lifecycle.json `
+  --benchmark-source-health benchmark-source-health.json `
+  --benchmark-proficiency-source proficiency.sealed.json `
+  --benchmark-proficiency proficiency.assessment.json `
+  --validation-portfolio-source portfolio.sealed.json `
+  --validation-portfolio portfolio.assessment.json --json
 ```
 
 Relative evidence paths cannot escape the portfolio directory. Assessment binds every referenced
 machine artifact by byte count, SHA-256, and content digest; the standalone verifier recomputes all
 decision gates so a rehashed false summary remains invalid. The responsive HTML report embeds the
 exact assessment and independently protects both payload and normalized document bytes.
+
+The qualification-readiness gate is intentionally stricter than any individual workflow. It binds
+the current 144-profile and 41-suite catalogs. By default it requires every standard lifecycle record
+to be reviewed and current, every benchmark source pinned, and every adapter operational. An approved
+`qualification_scope` can select applicable standards and portfolio suites with exhaustive,
+reasoned exclusions, separated roles, review expiry, and exact acceptance-policy binding. Selected
+contract-only adapters still block eligibility. Regardless of scope, the gate requires the
+cross-organization proficiency assessment to pass with exact source replay, the independent
+validation portfolio to pass, and the decision authority to be separate from evidence
+owners and reviewers. Its exact-source verifier regenerates the portfolio assessment from its
+editable sources and then replays the aggregate from all six artifacts. A valid artifact with
+unavailable source bytes is never review-eligible, and any partial
+replay, catalog drift, summary tampering, contract-only adapter, or incomplete evidence becomes an
+explicit blocker. Passing means only eligibility for a documented external authority decision; it
+does not confer qualification, certification, accreditation, regulatory approval, or risk
+acceptance.
+
+```mermaid
+flowchart LR
+    S["144-profile standards lifecycle"] --> Q{"Exact qualification-readiness gate"}
+    B["41-suite source, adapter, and item-quality ledger"] --> Q
+    SC["Approved applicability + exclusions + policy"] --> Q
+    CL["Audited case IDs + exact revision + scored labels"] --> V
+    D["Case-paired differential source"] --> DA["Confusion metrics + exact McNemar + adjudication"]
+    DA --> V
+    PS["Proficiency scheme source"] --> PA["z-score + agreement assessment"]
+    PA --> Q
+    VS["Validation portfolio source"] --> V["Regenerated validation assessment"]
+    V --> Q
+    A["Separated decision authority"] --> Q
+    Q -->|all evidence passes + exact replay| E["Eligible for external authority review"]
+    Q -->|any gap, drift, or partial replay| X["Explicit blocker and remediation"]
+```
 
 ## Objective-by-objective assessment
 
@@ -452,12 +817,21 @@ sfmea industry-schema-validate assurance.reqif reqif.xsd `
   --schema-sha256 EXPECTED_PUBLISHER_DIGEST -o reqif-schema-receipt.json
 sfmea industry-schema-verify reqif-schema-receipt.json `
   --artifact assurance.reqif --schema reqif.xsd --json
+
+# Validate the original Security Insights YAML bytes against a separately retained
+# official OpenSSF release schema. YAML aliases/cycles and non-JSON scalars fail closed.
+sfmea industry-schema-validate security-insights.yml security-insights.schema.json `
+  --schema-kind yaml-json-schema --standard "OpenSSF Security Insights" `
+  --edition "2.2.0" --schema-uri "https://security-insights.openssf.org/schema/2.2.0" `
+  --schema-sha256 EXPECTED_PUBLISHER_DIGEST -o security-insights-validation.json
 ```
 
 PySFMEA records the exact artifact and schema identities, validator implementation, publisher
 digest comparison, and validation errors. It does not download or substitute normative schemas.
 JSON Schema uses `jsonschema` with the bounded `regex` engine for standards such as OSCAL that
-use Unicode property escapes; XML Schema uses `lxml`.
+use Unicode property escapes; XML Schema uses `lxml`. YAML validation uses PyYAML's safe loader,
+preserves plain timestamps as JSON strings, rejects aliases/cycles and non-JSON values, applies
+the same depth/node limits, and binds the untouched YAML bytes in the receipt.
 
 After a separate tool and operator import and re-export the artifact, capture their observation
 record and seal it with the validation receipt:
@@ -576,7 +950,10 @@ campaign. Then assess it against a protocol frozen before scanner execution:
 Copy-Item examples\independent-benchmark-protocol.json benchmark-protocol.json
 # Replace every placeholder and reviewer count with controlled project evidence.
 sfmea benchmark-assess benchmark-protocol.json qualification-result.json `
-  qualification-campaign.json -o benchmark-assessment.json
+  qualification-campaign.json `
+  --execution-started-at 2026-08-26T12:00:00Z `
+  --execution-evidence-ref "ci://qualification/run-42" `
+  -o benchmark-assessment.json
 sfmea benchmark-verify benchmark-assessment.json `
   --protocol benchmark-protocol.json `
   --qualification-result qualification-result.json `

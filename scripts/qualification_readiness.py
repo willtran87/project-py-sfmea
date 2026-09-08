@@ -75,21 +75,24 @@ def qualification_readiness(source: str | Path) -> dict[str, Any]:
         for value in repository.get("domains", [])
     }
     try:
-        approval_not_future = date.fromisoformat(str(governance["approval_date"])) <= date.today()
+        approval_not_future = (
+            date.fromisoformat(str(governance["approval_date"])) <= date.today()
+        )
     except ValueError:
         approval_not_future = False
     checks = {
         "no_placeholders": not placeholders,
         "independence_asserted": governance.get("independent") is True,
-        "distinct_governance_identities": str(governance.get("labeled_by", "")).strip().casefold()
+        "distinct_governance_identities": str(governance.get("labeled_by", ""))
+        .strip()
+        .casefold()
         != str(governance.get("approved_by", "")).strip().casefold(),
         "approval_date_not_future": approval_not_future,
         "minimum_repository_population": len(repositories)
         >= int(thresholds["minimum_repositories"]),
         "minimum_framework_population": len(frameworks)
         >= int(thresholds["minimum_frameworks"]),
-        "minimum_domain_population": len(domains)
-        >= int(thresholds["minimum_domains"]),
+        "minimum_domain_population": len(domains) >= int(thresholds["minimum_domains"]),
         "all_retained_artifacts_present": bool(artifact_checks)
         and all(value["contained_regular_file"] for value in artifact_checks),
     }
@@ -112,9 +115,7 @@ def qualification_readiness(source: str | Path) -> dict[str, Any]:
         "placeholders": placeholders,
         "artifacts": artifact_checks,
         "ready_for_campaign_execution": ready,
-        "next_actions": [
-            name for name, passed in checks.items() if not passed
-        ],
+        "next_actions": [name for name, passed in checks.items() if not passed],
         "notice": (
             "A passing preflight only makes the retained campaign executable. Repository "
             "selection, labels, identities, representativeness, and qualification approval "

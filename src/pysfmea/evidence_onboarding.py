@@ -78,7 +78,9 @@ def _result_projection(kind: str, imported: dict[str, Any]) -> dict[str, Any]:
     projected = {key: copy.deepcopy(imported[key]) for key in fields if key in imported}
     if kind == "execution_manifest":
         artifacts = imported.get("artifacts", [])
-        projected["artifact_count"] = len(artifacts) if isinstance(artifacts, list) else 0
+        projected["artifact_count"] = (
+            len(artifacts) if isinstance(artifacts, list) else 0
+        )
     return projected
 
 
@@ -222,8 +224,12 @@ def _apply_selected(
                 directory = Path(str(imported.get("evidence_directory", ""))).resolve()
                 try:
                     directory.relative_to(evidence_root.resolve())
-                except ValueError as exc:  # pragma: no cover - importer owns this invariant
-                    raise RuntimeError("imported evidence escaped its managed root") from exc
+                except (
+                    ValueError
+                ) as exc:  # pragma: no cover - importer owns this invariant
+                    raise RuntimeError(
+                        "imported evidence escaped its managed root"
+                    ) from exc
                 created_directories.append(directory)
             results.append(
                 {
@@ -397,9 +403,7 @@ def onboard_evidence(
                     or 0
                 ),
                 "runtime_imports": int(
-                    (prospective_evidence or evidence_summary).get(
-                        "runtime_imports", 0
-                    )
+                    (prospective_evidence or evidence_summary).get("runtime_imports", 0)
                     or 0
                 ),
                 "assurance": prospective_assurance
@@ -438,8 +442,7 @@ def verify_evidence_onboarding_receipt(
         and len(selected_list) <= MAX_SELECTED_EVIDENCE
         and all(
             isinstance(value, dict)
-            and value.get("kind")
-            in {"coverage", "runtime_trace", "execution_manifest"}
+            and value.get("kind") in {"coverage", "runtime_trace", "execution_manifest"}
             and value.get("status") in {"validated", "imported", "duplicate"}
             and isinstance(value.get("bytes"), int)
             and not isinstance(value.get("bytes"), bool)
@@ -487,8 +490,7 @@ def verify_evidence_onboarding_receipt(
         for value in selected_list
     )
     validated_executions = sum(
-        value.get("kind") == "execution_manifest"
-        and value.get("status") == "validated"
+        value.get("kind") == "execution_manifest" and value.get("status") == "validated"
         for value in selected_list
     )
     expected_prospective_coverage = (
@@ -544,9 +546,11 @@ def verify_evidence_onboarding_receipt(
         checks["baseline"] = str(binding.get("baseline_id", "")) == str(
             analysis.get("project", {}).get("baseline", {}).get("id", "")
         )
-        checks["run_manifest"] = str(binding.get("run_manifest_sha256", "")) == canonical_json_sha256(
-            analysis.get("run_manifest", {})
-        ) and bool(verify_run_manifest_integrity(analysis).get("valid"))
+        checks["run_manifest"] = str(
+            binding.get("run_manifest_sha256", "")
+        ) == canonical_json_sha256(analysis.get("run_manifest", {})) and bool(
+            verify_run_manifest_integrity(analysis).get("valid")
+        )
     failed = [name for name, value in checks.items() if value is False]
     unchecked = [name for name, value in checks.items() if value is None]
     return {

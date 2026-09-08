@@ -1,0 +1,9 @@
+{
+  "format": "pysfmea-fuzz-ground-truth-corpus-1",
+  "faults": [
+    {"id": "length-confusion", "target": "targets/parser_target.py", "trigger_hex": "ff0001", "expected": "ValueError"},
+    {"id": "state-transition", "target": "targets/parser_target.py", "trigger_hex": "7f4f50454e00", "expected": "RuntimeError"}
+  ],
+  "non_trigger_hex": ["", "00", "0141"],
+  "claim_boundary": "Known triggers validate intake and accounting, not general fuzz effectiveness."
+}

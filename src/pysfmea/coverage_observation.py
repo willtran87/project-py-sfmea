@@ -111,7 +111,9 @@ def _load_coverage(source: str | Path) -> tuple[BoundedJsonDocument, dict[str, A
         raise ValueError("coverage.py JSON must contain a files object")
     files = value["files"]
     if not files or len(files) > MAX_FILES:
-        raise ValueError("coverage.py JSON file population is empty or exceeds the limit")
+        raise ValueError(
+            "coverage.py JSON file population is empty or exceeds the limit"
+        )
     meta = value.get("meta")
     if not isinstance(meta, dict):
         raise ValueError("coverage.py JSON must contain metadata")
@@ -127,14 +129,20 @@ def _coverage_files(value: dict[str, Any]) -> list[dict[str, Any]]:
     for raw_path, raw in sorted(value["files"].items()):
         path = _normalize_path(raw_path)
         if path in normalized_paths:
-            raise ValueError("coverage.py JSON contains paths that normalize identically")
+            raise ValueError(
+                "coverage.py JSON contains paths that normalize identically"
+            )
         normalized_paths.add(path)
         if not isinstance(raw, dict):
             raise ValueError(f"coverage record for {path} must be an object")
-        executed_lines = _int_set(raw.get("executed_lines", []), f"{path} executed lines")
+        executed_lines = _int_set(
+            raw.get("executed_lines", []), f"{path} executed lines"
+        )
         missing_lines = _int_set(raw.get("missing_lines", []), f"{path} missing lines")
         if executed_lines & missing_lines:
-            raise ValueError(f"coverage record for {path} marks lines both executed and missing")
+            raise ValueError(
+                f"coverage record for {path} marks lines both executed and missing"
+            )
         executed_branches = _branch_set(
             raw.get("executed_branches", []), f"{path} executed branches"
         )
@@ -142,7 +150,9 @@ def _coverage_files(value: dict[str, Any]) -> list[dict[str, Any]]:
             raw.get("missing_branches", []), f"{path} missing branches"
         )
         if executed_branches & missing_branches:
-            raise ValueError(f"coverage record for {path} marks branches both executed and missing")
+            raise ValueError(
+                f"coverage record for {path} marks branches both executed and missing"
+            )
         total_points += (
             len(executed_lines)
             + len(missing_lines)
@@ -174,7 +184,9 @@ def _matches(coverage_path: str, analysis_path: str) -> bool:
 def _component_projection(
     analysis: dict[str, Any], files: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[str], list[str]]:
-    components = [item for item in analysis.get("components", []) if isinstance(item, dict)]
+    components = [
+        item for item in analysis.get("components", []) if isinstance(item, dict)
+    ]
     paths = {item["path"] for item in files}
     projections: list[dict[str, Any]] = []
     mapped_paths: set[str] = set()
@@ -285,7 +297,11 @@ def runtime_coverage_observation(
     branch_threshold = _rate(minimum_branch_rate, "minimum branch rate")
     if type(require_all_components) is not bool:
         raise ValueError("require_all_components must be boolean")
-    if object_code_basis not in {"not_required", "required_complete", "required_incomplete"}:
+    if object_code_basis not in {
+        "not_required",
+        "required_complete",
+        "required_incomplete",
+    }:
         raise ValueError("object_code_basis is invalid")
     refs = unique_text_list(evidence_refs, "runtime coverage evidence refs")
     if not refs:
@@ -334,7 +350,8 @@ def runtime_coverage_observation(
                 "path": item["path"],
                 "statements": len(item["executed_lines"]) + len(item["missing_lines"]),
                 "statements_executed": len(item["executed_lines"]),
-                "branches": len(item["executed_branches"]) + len(item["missing_branches"]),
+                "branches": len(item["executed_branches"])
+                + len(item["missing_branches"]),
                 "branches_executed": len(item["executed_branches"]),
             }
             for item in files
@@ -368,29 +385,48 @@ def runtime_coverage_observation(
 
 def _structure(value: dict[str, Any]) -> bool:
     required = {
-        "format", "generated_at", "authority", "analysis_binding", "artifact",
-        "producer", "policy", "files", "components", "omissions", "summary",
-        "evidence_refs", "claim_boundary", "content_sha256",
+        "format",
+        "generated_at",
+        "authority",
+        "analysis_binding",
+        "artifact",
+        "producer",
+        "policy",
+        "files",
+        "components",
+        "omissions",
+        "summary",
+        "evidence_refs",
+        "claim_boundary",
+        "content_sha256",
     }
     try:
         return bool(
             set(value) == required
             and value["format"] == COVERAGE_OBSERVATION_FORMAT
             and set(value["artifact"]) == {"reference", "bytes", "sha256"}
-            and set(value["producer"]) == {
-                "name", "version", "format", "command", "configuration_sha256",
-                "environment", "test_run_ref",
+            and set(value["producer"])
+            == {
+                "name",
+                "version",
+                "format",
+                "command",
+                "configuration_sha256",
+                "environment",
+                "test_run_ref",
             }
             and value["producer"]["name"] == "coverage.py"
-            and set(value["policy"]) == {
-                "minimum_statement_rate", "minimum_branch_rate",
-                "require_all_components", "object_code_basis",
+            and set(value["policy"])
+            == {
+                "minimum_statement_rate",
+                "minimum_branch_rate",
+                "require_all_components",
+                "object_code_basis",
             }
             and isinstance(value["files"], list)
             and isinstance(value["components"], list)
-            and set(value["omissions"]) == {
-                "unmapped_coverage_paths", "unmapped_component_ids"
-            }
+            and set(value["omissions"])
+            == {"unmapped_coverage_paths", "unmapped_component_ids"}
             and isinstance(value["summary"], dict)
         )
     except (KeyError, TypeError):
@@ -408,9 +444,7 @@ def _semantics(value: dict[str, Any]) -> bool:
         statement_threshold = _rate(
             policy["minimum_statement_rate"], "minimum statement rate"
         )
-        branch_threshold = _rate(
-            policy["minimum_branch_rate"], "minimum branch rate"
-        )
+        branch_threshold = _rate(policy["minimum_branch_rate"], "minimum branch rate")
         if type(policy["require_all_components"]) is not bool or policy[
             "object_code_basis"
         ] not in {"not_required", "required_complete", "required_incomplete"}:
@@ -419,7 +453,10 @@ def _semantics(value: dict[str, Any]) -> bool:
         file_paths: set[str] = set()
         for item in files:
             if not isinstance(item, dict) or set(item) != {
-                "path", "statements", "statements_executed", "branches",
+                "path",
+                "statements",
+                "statements_executed",
+                "branches",
                 "branches_executed",
             }:
                 return False
@@ -428,7 +465,10 @@ def _semantics(value: dict[str, Any]) -> bool:
                 return False
             file_paths.add(path)
             for field in (
-                "statements", "statements_executed", "branches", "branches_executed"
+                "statements",
+                "statements_executed",
+                "branches",
+                "branches_executed",
             ):
                 if (
                     not isinstance(item[field], int)
@@ -436,17 +476,25 @@ def _semantics(value: dict[str, Any]) -> bool:
                     or item[field] < 0
                 ):
                     return False
-            if item["statements_executed"] > item["statements"] or item[
-                "branches_executed"
-            ] > item["branches"]:
+            if (
+                item["statements_executed"] > item["statements"]
+                or item["branches_executed"] > item["branches"]
+            ):
                 return False
         components = value["components"]
         component_ids: set[str] = set()
         for item in components:
             if not isinstance(item, dict) or set(item) != {
-                "component_id", "source_path", "source_range", "executable_lines",
-                "executed_lines", "statement_rate", "branches", "branches_executed",
-                "branch_rate", "observed",
+                "component_id",
+                "source_path",
+                "source_range",
+                "executable_lines",
+                "executed_lines",
+                "statement_rate",
+                "branches",
+                "branches_executed",
+                "branch_rate",
+                "observed",
             }:
                 return False
             identifier = bounded_text(item["component_id"], "coverage component id")
@@ -457,10 +505,14 @@ def _semantics(value: dict[str, Any]) -> bool:
             executed = item["executed_lines"]
             branches = item["branches"]
             branches_executed = item["branches_executed"]
-            if any(
-                not isinstance(count, int) or isinstance(count, bool) or count < 0
-                for count in (executable, executed, branches, branches_executed)
-            ) or executed > executable or branches_executed > branches:
+            if (
+                any(
+                    not isinstance(count, int) or isinstance(count, bool) or count < 0
+                    for count in (executable, executed, branches, branches_executed)
+                )
+                or executed > executable
+                or branches_executed > branches
+            ):
                 return False
             expected_statement_rate = (
                 round(executed / executable, 6) if executable else None
@@ -483,9 +535,16 @@ def _semantics(value: dict[str, Any]) -> bool:
         )
         summary = value["summary"]
         summary_fields = {
-            "files", "components", "components_observed", "statements",
-            "statements_executed", "statement_rate", "branches",
-            "branches_executed", "branch_rate", "ready_for_structural_coverage_use",
+            "files",
+            "components",
+            "components_observed",
+            "statements",
+            "statements_executed",
+            "statement_rate",
+            "branches",
+            "branches_executed",
+            "branch_rate",
+            "ready_for_structural_coverage_use",
         }
         if not isinstance(summary, dict) or set(summary) != summary_fields:
             return False
@@ -513,8 +572,7 @@ def _semantics(value: dict[str, Any]) -> bool:
             and summary["statement_rate"] == round(statement_rate, 6)
             and summary["branches"] == branches
             and summary["branches_executed"] == branches_executed
-            and summary["branch_rate"]
-            == (round(branch_rate, 6) if branches else None)
+            and summary["branch_rate"] == (round(branch_rate, 6) if branches else None)
             and summary["ready_for_structural_coverage_use"] is ready
             and set(unmapped_paths) <= file_paths
             and bool(unique_text_list(value["evidence_refs"], "coverage evidence refs"))
@@ -566,7 +624,9 @@ def verify_runtime_coverage_observation(
                 == hashlib.sha256(document.raw).hexdigest()
             )
             if not source_check:
-                errors.append("runtime coverage observation does not bind the supplied coverage JSON")
+                errors.append(
+                    "runtime coverage observation does not bind the supplied coverage JSON"
+                )
             if analysis is None:
                 raise ValueError("analysis is required for exact coverage regeneration")
             producer = checked["producer"]
@@ -588,7 +648,9 @@ def verify_runtime_coverage_observation(
             )
             regeneration = expected == checked
             if not regeneration:
-                errors.append("runtime coverage observation does not exactly regenerate")
+                errors.append(
+                    "runtime coverage observation does not exactly regenerate"
+                )
         except (KeyError, OSError, TypeError, ValueError) as exc:
             if str(exc) not in errors:
                 errors.append(str(exc))
@@ -607,7 +669,8 @@ def verify_runtime_coverage_observation(
             "format": COVERAGE_OBSERVATION_VERIFICATION_FORMAT,
             "valid": valid,
             "ready_for_structural_coverage_use": bool(
-                valid and checked.get("summary", {}).get("ready_for_structural_coverage_use")
+                valid
+                and checked.get("summary", {}).get("ready_for_structural_coverage_use")
             ),
             "checks": {
                 "closed_structure": structure,
@@ -656,7 +719,9 @@ def verify_runtime_coverage_observation_file(
                     "coverage_artifact_binding": False
                     if coverage_source is not None
                     else None,
-                    "exact_regeneration": False if coverage_source is not None else None,
+                    "exact_regeneration": False
+                    if coverage_source is not None
+                    else None,
                 },
                 "errors": [str(exc)],
                 "notice": "Runtime coverage observation verification failed closed.",

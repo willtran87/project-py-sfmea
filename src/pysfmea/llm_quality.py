@@ -76,9 +76,7 @@ def project_llm_quality_corpus(
             not isinstance(raw_subject, dict)
             or set(raw_subject) != expected_keys
             or any(
-                not isinstance(value, str)
-                or not value.strip()
-                or len(value) > 4096
+                not isinstance(value, str) or not value.strip() or len(value) > 4096
                 for value in raw_subject.values()
             )
         ):
@@ -111,7 +109,9 @@ def project_llm_quality_corpus(
                 "LLM quality corpus governance must match the closed format-3 contract"
             )
         if governance.get("independent") is not True:
-            raise ValueError("LLM quality corpus governance must assert independent review")
+            raise ValueError(
+                "LLM quality corpus governance must assert independent review"
+            )
         for field in governance_fields - {"independent"}:
             value = governance.get(field)
             if not isinstance(value, str) or not value.strip() or len(value) > 20_000:
@@ -125,17 +125,22 @@ def project_llm_quality_corpus(
             for value in placeholder_values
             for marker in ("replace with", "replace-", "placeholder")
         ):
-            raise ValueError("LLM quality corpus format-3 placeholders must be replaced")
-        if str(governance["labeled_by"]).strip().casefold() == str(
-            governance["reviewed_by"]
-        ).strip().casefold():
+            raise ValueError(
+                "LLM quality corpus format-3 placeholders must be replaced"
+            )
+        if (
+            str(governance["labeled_by"]).strip().casefold()
+            == str(governance["reviewed_by"]).strip().casefold()
+        ):
             raise ValueError(
                 "LLM quality corpus requires distinct labeling and review identities"
             )
         try:
             reviewed_on = date.fromisoformat(str(governance["review_date"]))
         except ValueError as exc:
-            raise ValueError("LLM quality corpus review_date must use YYYY-MM-DD") from exc
+            raise ValueError(
+                "LLM quality corpus review_date must use YYYY-MM-DD"
+            ) from exc
         if reviewed_on > date.today():
             raise ValueError("LLM quality corpus review_date must not be in the future")
         if expected_subject is not None and (
@@ -151,7 +156,9 @@ def project_llm_quality_corpus(
 
     samples = corpus.get("samples")
     if not isinstance(samples, list) or not samples or len(samples) > MAX_SAMPLES:
-        raise ValueError("LLM quality corpus requires a bounded non-empty samples array")
+        raise ValueError(
+            "LLM quality corpus requires a bounded non-empty samples array"
+        )
 
     allowed_sample = {
         "id",
@@ -180,7 +187,9 @@ def project_llm_quality_corpus(
             raise ValueError(f"LLM quality sample {index} requires a bounded id")
         normalized_id = sample_id.strip()
         if normalized_id in sample_ids:
-            raise ValueError("LLM quality sample ids must be unique after normalization")
+            raise ValueError(
+                "LLM quality sample ids must be unique after normalization"
+            )
         sample_ids.add(normalized_id)
         if not all(
             isinstance(sample.get(field), bool)

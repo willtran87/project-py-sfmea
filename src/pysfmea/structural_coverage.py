@@ -58,11 +58,22 @@ def structural_coverage_template(
 
 
 def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
-    result = verify_seal(value, label="structural coverage source", format_value=COVERAGE_SOURCE_FORMAT)
+    result = verify_seal(
+        value, label="structural coverage source", format_value=COVERAGE_SOURCE_FORMAT
+    )
     required = {
-        "format", "generated_at", "authority", "analysis_binding", "coverage_basis",
-        "requirements", "decisions", "deactivated_code", "analysis_exclusions",
-        "evidence_refs", "notice", "content_sha256",
+        "format",
+        "generated_at",
+        "authority",
+        "analysis_binding",
+        "coverage_basis",
+        "requirements",
+        "decisions",
+        "deactivated_code",
+        "analysis_exclusions",
+        "evidence_refs",
+        "notice",
+        "content_sha256",
     }
     if set(result) != required:
         raise ValueError("structural coverage source fields are invalid")
@@ -70,8 +81,11 @@ def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
     verify_analysis_binding(result["analysis_binding"], analysis)
     basis = result["coverage_basis"]
     basis_fields = {
-        "standard", "criticality_basis", "measurement_tool",
-        "measurement_configuration_sha256", "object_code_coverage_basis",
+        "standard",
+        "criticality_basis",
+        "measurement_tool",
+        "measurement_configuration_sha256",
+        "object_code_coverage_basis",
     }
     if not isinstance(basis, dict) or set(basis) != basis_fields:
         raise ValueError("coverage basis fields are invalid")
@@ -84,32 +98,64 @@ def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
     requirements = result["requirements"]
     decisions = result["decisions"]
     deactivated = result["deactivated_code"]
-    if any(not isinstance(items, list) or len(items) > MAX_RECORDS for items in (requirements, decisions, deactivated)):
+    if any(
+        not isinstance(items, list) or len(items) > MAX_RECORDS
+        for items in (requirements, decisions, deactivated)
+    ):
         raise ValueError("coverage record collections are invalid")
-    req_fields = {"id", "text", "criticality", "verification_method", "acceptance_criteria", "evidence_refs"}
+    req_fields = {
+        "id",
+        "text",
+        "criticality",
+        "verification_method",
+        "acceptance_criteria",
+        "evidence_refs",
+    }
     req_ids: list[str] = []
     for item in requirements:
         if not isinstance(item, dict) or set(item) != req_fields:
             raise ValueError("coverage requirement fields are invalid")
         req_ids.append(bounded_text(item["id"], "requirement id"))
-        for name in ("text", "criticality", "verification_method", "acceptance_criteria"):
+        for name in (
+            "text",
+            "criticality",
+            "verification_method",
+            "acceptance_criteria",
+        ):
             bounded_text(item[name], f"requirement {name}")
         unique_text_list(item["evidence_refs"], "requirement evidence refs")
     if len(req_ids) != len(set(req_ids)):
         raise ValueError("coverage requirement ids must be unique")
-    component_ids = {str(item.get("id")) for item in analysis.get("components", []) if isinstance(item, dict)}
+    component_ids = {
+        str(item.get("id"))
+        for item in analysis.get("components", [])
+        if isinstance(item, dict)
+    }
     decision_ids: list[str] = []
     for decision in decisions:
-        fields = {"id", "component_id", "source_ref", "requirement_ids", "conditions", "tests", "independence_pairs", "evidence_ref"}
+        fields = {
+            "id",
+            "component_id",
+            "source_ref",
+            "requirement_ids",
+            "conditions",
+            "tests",
+            "independence_pairs",
+            "evidence_ref",
+        }
         if not isinstance(decision, dict) or set(decision) != fields:
             raise ValueError("coverage decision fields are invalid")
         decision_ids.append(bounded_text(decision["id"], "decision id"))
         component_id = bounded_text(decision["component_id"], "decision component id")
         if component_id not in component_ids:
-            raise ValueError(f"decision {decision['id']} references an unknown analysis component")
+            raise ValueError(
+                f"decision {decision['id']} references an unknown analysis component"
+            )
         bounded_text(decision["source_ref"], "decision source ref")
         bounded_text(decision["evidence_ref"], "decision evidence ref")
-        linked_requirements = unique_text_list(decision["requirement_ids"], "decision requirement ids")
+        linked_requirements = unique_text_list(
+            decision["requirement_ids"], "decision requirement ids"
+        )
         if not linked_requirements or not set(linked_requirements) <= set(req_ids):
             raise ValueError(f"decision {decision['id']} has unresolved requirements")
         conditions = decision["conditions"]
@@ -119,7 +165,10 @@ def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("decision conditions are invalid")
         condition_ids: list[str] = []
         for condition in conditions:
-            if not isinstance(condition, dict) or set(condition) != {"id", "expression"}:
+            if not isinstance(condition, dict) or set(condition) != {
+                "id",
+                "expression",
+            }:
                 raise ValueError("decision condition fields are invalid")
             condition_ids.append(bounded_text(condition["id"], "condition id"))
             bounded_text(condition["expression"], "condition expression")
@@ -129,12 +178,23 @@ def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("decision tests are invalid")
         test_map: dict[str, dict[str, Any]] = {}
         for test in tests:
-            if not isinstance(test, dict) or set(test) != {"id", "condition_values", "decision_outcome", "evidence_ref"}:
+            if not isinstance(test, dict) or set(test) != {
+                "id",
+                "condition_values",
+                "decision_outcome",
+                "evidence_ref",
+            }:
                 raise ValueError("coverage test fields are invalid")
             test_id = bounded_text(test["id"], "coverage test id")
             values = test["condition_values"]
-            if not isinstance(values, dict) or set(values) != set(condition_ids) or any(type(value) is not bool for value in values.values()):
-                raise ValueError(f"test {test_id} does not provide a Boolean value for every condition")
+            if (
+                not isinstance(values, dict)
+                or set(values) != set(condition_ids)
+                or any(type(value) is not bool for value in values.values())
+            ):
+                raise ValueError(
+                    f"test {test_id} does not provide a Boolean value for every condition"
+                )
             if type(test["decision_outcome"]) is not bool:
                 raise ValueError("coverage decision outcome must be Boolean")
             bounded_text(test["evidence_ref"], "coverage test evidence ref")
@@ -145,7 +205,12 @@ def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("MC/DC independence pairs are invalid")
         pair_conditions: list[str] = []
         for pair in pairs:
-            if not isinstance(pair, dict) or set(pair) != {"condition_id", "test_a_id", "test_b_id", "evidence_ref"}:
+            if not isinstance(pair, dict) or set(pair) != {
+                "condition_id",
+                "test_a_id",
+                "test_b_id",
+                "evidence_ref",
+            }:
                 raise ValueError("MC/DC pair fields are invalid")
             condition_id = bounded_text(pair["condition_id"], "MC/DC pair condition id")
             if condition_id not in condition_ids:
@@ -155,14 +220,23 @@ def _source(value: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
             bounded_text(pair["evidence_ref"], "MC/DC pair evidence ref")
             if test_a is None or test_b is None or test_a is test_b:
                 raise ValueError("MC/DC pair references missing or identical tests")
-            changed = {name for name in condition_ids if test_a["condition_values"][name] != test_b["condition_values"][name]}
-            if changed != {condition_id} or test_a["decision_outcome"] == test_b["decision_outcome"]:
+            changed = {
+                name
+                for name in condition_ids
+                if test_a["condition_values"][name] != test_b["condition_values"][name]
+            }
+            if (
+                changed != {condition_id}
+                or test_a["decision_outcome"] == test_b["decision_outcome"]
+            ):
                 raise ValueError(
                     f"MC/DC pair for {condition_id} does not independently change only that condition and the decision outcome"
                 )
             pair_conditions.append(condition_id)
         if len(pair_conditions) != len(set(pair_conditions)):
-            raise ValueError("a decision must declare at most one canonical pair per condition")
+            raise ValueError(
+                "a decision must declare at most one canonical pair per condition"
+            )
     if len(decision_ids) != len(set(decision_ids)):
         raise ValueError("coverage decision ids must be unique")
     deactivated_fields = {"id", "source_ref", "rationale", "authority", "evidence_ref"}
@@ -190,7 +264,11 @@ def seal_structural_coverage_source(
 def structural_coverage_assessment(
     analysis: dict[str, Any], source: str | Path | dict[str, Any]
 ) -> dict[str, Any]:
-    raw = load_json(source, label="structural coverage source") if not isinstance(source, dict) else source
+    raw = (
+        load_json(source, label="structural coverage source")
+        if not isinstance(source, dict)
+        else source
+    )
     value = _source(raw, analysis)
     decisions: list[dict[str, Any]] = []
     requirement_decisions: dict[str, list[bool]] = {
@@ -205,14 +283,16 @@ def structural_coverage_assessment(
         covered_conditions += len(pair_ids)
         for requirement_id in item["requirement_ids"]:
             requirement_decisions[requirement_id].append(full_mcdc)
-        decisions.append({
-            "id": item["id"],
-            "decision_covered": bool(item["tests"]),
-            "condition_count": len(condition_ids),
-            "mcdc_condition_ids": sorted(pair_ids),
-            "uncovered_condition_ids": sorted(set(condition_ids) - pair_ids),
-            "mcdc_complete": full_mcdc,
-        })
+        decisions.append(
+            {
+                "id": item["id"],
+                "decision_covered": bool(item["tests"]),
+                "condition_count": len(condition_ids),
+                "mcdc_condition_ids": sorted(pair_ids),
+                "uncovered_condition_ids": sorted(set(condition_ids) - pair_ids),
+                "mcdc_complete": full_mcdc,
+            }
+        )
     req_ids = {item["id"] for item in value["requirements"]}
     covered_requirements = {
         identifier
@@ -227,7 +307,13 @@ def structural_coverage_assessment(
         and basis["object_code_coverage_basis"] in {"not_required", "required_complete"}
         and bool(value["evidence_refs"])
     )
-    complete = bool(req_ids) and bool(decisions) and measurement_ready and all(item["mcdc_complete"] for item in decisions) and covered_requirements == req_ids
+    complete = (
+        bool(req_ids)
+        and bool(decisions)
+        and measurement_ready
+        and all(item["mcdc_complete"] for item in decisions)
+        and covered_requirements == req_ids
+    )
     assessment = {
         "format": COVERAGE_ASSESSMENT_FORMAT,
         "generated_at": value["generated_at"],
@@ -252,12 +338,18 @@ def structural_coverage_assessment(
 
 
 def verify_structural_coverage_assessment(
-    assessment: dict[str, Any], *, analysis: dict[str, Any] | None = None,
+    assessment: dict[str, Any],
+    *,
+    analysis: dict[str, Any] | None = None,
     source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     try:
-        value = verify_seal(assessment, label="structural coverage assessment", format_value=COVERAGE_ASSESSMENT_FORMAT)
+        value = verify_seal(
+            assessment,
+            label="structural coverage assessment",
+            format_value=COVERAGE_ASSESSMENT_FORMAT,
+        )
         if analysis is not None:
             verify_analysis_binding(value.get("analysis_binding"), analysis)
         if source is not None:
@@ -265,7 +357,9 @@ def verify_structural_coverage_assessment(
                 raise ValueError("analysis is required for exact source regeneration")
             expected = structural_coverage_assessment(analysis, source)
             if canonical_json_sha256(value) != canonical_json_sha256(expected):
-                raise ValueError("assessment does not exactly regenerate from the supplied source")
+                raise ValueError(
+                    "assessment does not exactly regenerate from the supplied source"
+                )
         complete = bool(value.get("summary", {}).get("complete"))
     except (OSError, ValueError, TypeError) as exc:
         errors.append(str(exc))
@@ -281,20 +375,42 @@ def verify_structural_coverage_assessment(
 
 
 def verify_structural_coverage_assessment_file(
-    assessment_source: str | Path, *, analysis: dict[str, Any] | None = None,
+    assessment_source: str | Path,
+    *,
+    analysis: dict[str, Any] | None = None,
     source_path: str | Path | None = None,
 ) -> dict[str, Any]:
     try:
-        assessment = load_json(assessment_source, label="structural coverage assessment")
-        source = load_json(source_path, label="structural coverage source") if source_path else None
-        return verify_structural_coverage_assessment(assessment, analysis=analysis, source=source)
+        assessment = load_json(
+            assessment_source, label="structural coverage assessment"
+        )
+        source = (
+            load_json(source_path, label="structural coverage source")
+            if source_path
+            else None
+        )
+        return verify_structural_coverage_assessment(
+            assessment, analysis=analysis, source=source
+        )
     except (OSError, ValueError, TypeError) as exc:
-        return seal({"format": COVERAGE_VERIFICATION_FORMAT, "valid": False, "complete": False, "errors": [str(exc)], "notice": "Verification failed closed."})
+        return seal(
+            {
+                "format": COVERAGE_VERIFICATION_FORMAT,
+                "valid": False,
+                "complete": False,
+                "errors": [str(exc)],
+                "notice": "Verification failed closed.",
+            }
+        )
 
 
-def export_structural_coverage_source(value: dict[str, Any], destination: str | Path) -> Path:
+def export_structural_coverage_source(
+    value: dict[str, Any], destination: str | Path
+) -> Path:
     return publish_json(value, destination)
 
 
-def export_structural_coverage_assessment(value: dict[str, Any], destination: str | Path) -> Path:
+def export_structural_coverage_assessment(
+    value: dict[str, Any], destination: str | Path
+) -> Path:
     return publish_json(value, destination)

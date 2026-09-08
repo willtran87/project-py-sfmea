@@ -1089,9 +1089,7 @@ def build_repository_inventory(
                     remaining = MAX_TOTAL_HASH_BYTES - hash_consumed
                     if remaining <= 0:
                         hash_truncated = True
-                        record["size"] = (
-                            len(raw) if raw is not None else metadata_size
-                        )
+                        record["size"] = len(raw) if raw is not None else metadata_size
                         record.update(
                             analysis_depth="metadata_only",
                             reason="Artifact digest omitted after the aggregate hashing limit.",

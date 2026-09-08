@@ -1,0 +1,15 @@
+{
+  "format": "pysfmea-mutation-ratchet-policy-2",
+  "selectors": ["*pysfmea.measurement_validity.*", "*pysfmea.scope_authentication.*", "*pysfmea.upstream_contract.*"],
+  "minimum_mutants": 1,
+  "minimum_score": 0.8,
+  "maximum_survived": 100000,
+  "maximum_invalid": 0,
+  "maximum_skipped": 0,
+  "allowed_runner_exit_codes": [0, 1],
+  "groups": [
+    {"id": "measurement-validity", "selectors": ["*pysfmea.measurement_validity.*"], "minimum_mutants": 1, "minimum_score": 0.8, "maximum_survived": 100000, "maximum_invalid": 0, "maximum_skipped": 0},
+    {"id": "scope-authentication", "selectors": ["*pysfmea.scope_authentication.*"], "minimum_mutants": 1, "minimum_score": 0.8, "maximum_survived": 100000, "maximum_invalid": 0, "maximum_skipped": 0},
+    {"id": "upstream-contract", "selectors": ["*pysfmea.upstream_contract.*"], "minimum_mutants": 1, "minimum_score": 0.8, "maximum_survived": 100000, "maximum_invalid": 0, "maximum_skipped": 0}
+  ]
+}

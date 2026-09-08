@@ -38,9 +38,9 @@ def _module_source(module_index: int, modules: int, functions: int) -> str:
                 '    """Exercise validation, retry, timing, and internal-call analysis."""',
                 "    if timeout <= 0:",
                 '        raise TimeoutError("deadline exhausted")',
-                "    if \"value\" not in payload:",
+                '    if "value" not in payload:',
                 '        raise ValueError("missing value")',
-                "    result = payload[\"value\"]",
+                '    result = payload["value"]',
                 "    for attempt in range(3):",
                 "        try:",
                 "            result += attempt",
@@ -88,14 +88,18 @@ def generate_scale_corpus(
         )
     root = Path(destination).expanduser().resolve()
     if root.exists() and (not root.is_dir() or any(root.iterdir())):
-        raise ValueError("scale corpus destination must be absent or an empty directory")
+        raise ValueError(
+            "scale corpus destination must be absent or an empty directory"
+        )
     package = root / "scale_app"
     package.mkdir(parents=True, exist_ok=True)
     files: list[dict[str, Any]] = []
 
     def publish(relative: str, content: str) -> None:
         encoded = content.encode("utf-8")
-        atomic_publish_text(root / relative, content, label="generated scale corpus file")
+        atomic_publish_text(
+            root / relative, content, label="generated scale corpus file"
+        )
         files.append(
             {
                 "path": relative,
@@ -104,7 +108,10 @@ def generate_scale_corpus(
             }
         )
 
-    publish("pyproject.toml", '[project]\nname = "pysfmea-scale-fixture"\nversion = "0.0.0"\n')
+    publish(
+        "pyproject.toml",
+        '[project]\nname = "pysfmea-scale-fixture"\nversion = "0.0.0"\n',
+    )
     publish("scale_app/__init__.py", '"""Generated scale fixture package."""\n')
     for module_index in range(modules):
         publish(

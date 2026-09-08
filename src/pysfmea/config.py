@@ -837,9 +837,7 @@ def _validate_config(config: dict[str, Any]) -> None:
         if isinstance(source_ids, list):
             active_source_ids.update(str(source_id) for source_id in source_ids)
     seen_guidance_mappings: set[tuple[str, str, str, str]] = set()
-    for index, mapping in enumerate(
-        config.get("guidance_rule_mappings", []), start=1
-    ):
+    for index, mapping in enumerate(config.get("guidance_rule_mappings", []), start=1):
         selector = mapping.get("rule_selector")
         citation_id = mapping.get("citation_id")
         relationship = mapping.get("relationship")
@@ -929,9 +927,10 @@ def _validate_config(config: dict[str, Any]) -> None:
                 f"interface_dispositions entry {index} has an invalid {side} decision"
             )
         for field in ("rationale", "reviewed_by"):
-            if not isinstance(disposition.get(field), str) or not disposition[
-                field
-            ].strip():
+            if (
+                not isinstance(disposition.get(field), str)
+                or not disposition[field].strip()
+            ):
                 raise ValueError(
                     f"interface_dispositions entry {index} requires {field}"
                 )

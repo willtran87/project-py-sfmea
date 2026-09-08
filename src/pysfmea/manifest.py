@@ -36,7 +36,8 @@ def create_run_manifest(
     embedded_guidance = analysis.get("guidance")
     guidance = (
         embedded_guidance
-        if isinstance(embedded_guidance, dict) and embedded_guidance.get("catalog_sha256")
+        if isinstance(embedded_guidance, dict)
+        and embedded_guidance.get("catalog_sha256")
         else guidance_bundle(guidance_profiles)
     )
     inputs = {
@@ -65,9 +66,7 @@ def create_run_manifest(
         inputs["source_snapshot_sha256"] = str(source_snapshot_sha256)
     test_evidence_snapshot_sha256 = baseline.get("test_evidence_snapshot_sha256")
     if test_evidence_snapshot_sha256:
-        inputs["test_evidence_snapshot_sha256"] = str(
-            test_evidence_snapshot_sha256
-        )
+        inputs["test_evidence_snapshot_sha256"] = str(test_evidence_snapshot_sha256)
     coverage_evidence = (
         analysis.get("project", {}).get("settings", {}).get("coverage_evidence")
     )
@@ -90,9 +89,7 @@ def create_run_manifest(
     cache_input = (
         cache_settings.get("input", {}) if isinstance(cache_settings, dict) else {}
     )
-    entries_reused = (
-        int(cache_run.get("hits", 0)) if isinstance(cache_run, dict) else 0
-    )
+    entries_reused = int(cache_run.get("hits", 0)) if isinstance(cache_run, dict) else 0
     manifest: dict[str, Any] = {
         "schema_version": "pysfmea-run-manifest-1",
         "id": stable_id("RUN", str(baseline.get("id", "")), created_at),
@@ -139,7 +136,13 @@ def create_run_manifest(
         },
         "adapters": registry,
         "models": [],
-        "prompts": [{"role": "grounded_discovery", "version": GROUNDED_DISCOVERY_PROMPT_VERSION, "invoked": False}],
+        "prompts": [
+            {
+                "role": "grounded_discovery",
+                "version": GROUNDED_DISCOVERY_PROMPT_VERSION,
+                "invoked": False,
+            }
+        ],
         "commands": [
             {
                 "operation": "static_scan",
@@ -149,7 +152,12 @@ def create_run_manifest(
             }
         ],
         "events": [
-            {"sequence": 1, "at": created_at, "event": "scan_completed", "baseline_id": baseline.get("id", "")}
+            {
+                "sequence": 1,
+                "at": created_at,
+                "event": "scan_completed",
+                "baseline_id": baseline.get("id", ""),
+            }
         ],
         "cache": {
             "enabled": bool(cache_run.get("enabled", False))
@@ -212,7 +220,9 @@ def current_audit_manifest(
                         "approved_by": review.get("approved_by", ""),
                         "approval_date": review.get("approval_date", ""),
                         "residual_severity": review.get("post_action_severity"),
-                        "residual_severity_category": review.get("post_action_severity_category", ""),
+                        "residual_severity_category": review.get(
+                            "post_action_severity_category", ""
+                        ),
                     }
                 )
     executions = [

@@ -162,14 +162,19 @@ def _expected_outcomes(
             _json_bytes(outcome["value"])
         minimum = outcome.get("min_duration_ms")
         maximum = outcome.get("max_duration_ms")
-        for label, bound in (("min_duration_ms", minimum), ("max_duration_ms", maximum)):
+        for label, bound in (
+            ("min_duration_ms", minimum),
+            ("max_duration_ms", maximum),
+        ):
             if bound is not None and (
                 not isinstance(bound, (int, float))
                 or isinstance(bound, bool)
                 or not math.isfinite(bound)
                 or bound < 0
             ):
-                raise ValueError(f"expected {label} must be a finite non-negative number")
+                raise ValueError(
+                    f"expected {label} must be a finite non-negative number"
+                )
         if minimum is not None and maximum is not None and minimum > maximum:
             raise ValueError("expected duration bounds are inverted")
         outcomes.append(outcome)
@@ -410,7 +415,9 @@ def build_fault_injection_plan(
         "contract_sha256": _obligation_contract_sha256(obligation),
     }
     if (
-        not all(binding[name] for name in ("obligation_id", "finding_id", "baseline_id"))
+        not all(
+            binding[name] for name in ("obligation_id", "finding_id", "baseline_id")
+        )
         or re.fullmatch(r"[0-9a-f]{64}", binding["contract_sha256"]) is None
     ):
         raise ValueError(
@@ -509,9 +516,7 @@ def verify_fault_injection_plan(
             isinstance(binding.get(name), str) and bool(binding.get(name))
             for name in ("obligation_id", "finding_id", "baseline_id")
         )
-        and re.fullmatch(
-            r"[0-9a-f]{64}", str(binding.get("contract_sha256", ""))
-        )
+        and re.fullmatch(r"[0-9a-f]{64}", str(binding.get("contract_sha256", "")))
         is not None
         and completed_valid
     )
@@ -541,8 +546,7 @@ def verify_fault_injection_plan(
             checks["content_integrity"] = bool(
                 set(integrity) == {"algorithm", "content_sha256"}
                 and integrity.get("algorithm") == "sha256"
-                and integrity.get("content_sha256")
-                == canonical_json_sha256(supplied)
+                and integrity.get("content_sha256") == canonical_json_sha256(supplied)
             )
         except (RecursionError, TypeError, ValueError):
             checks["content_integrity"] = False
@@ -770,7 +774,9 @@ def complete_fault_injection_plan(
             "fault-injection starter fails its contract, integrity, policy, or binding checks"
         )
     if plan.get("status") != "binding_required":
-        raise ValueError("fault-injection completion requires a binding_required starter plan")
+        raise ValueError(
+            "fault-injection completion requires a binding_required starter plan"
+        )
     plugin_record = _mapping(plan.get("plugin"), label="plugin")
     plugin_id = str(plugin_record.get("id", ""))
     plugin = _PLUGIN_BY_ID.get(plugin_id)
@@ -801,7 +807,9 @@ def export_completed_fault_injection_plan(
     verification = verify_fault_injection_plan(completed, obligation=obligation)
     if not verification["valid"]:
         codes = ", ".join(value["code"] for value in verification["findings"])
-        raise ValueError(f"completed fault-injection plan is invalid: {codes or 'checks failed'}")
+        raise ValueError(
+            f"completed fault-injection plan is invalid: {codes or 'checks failed'}"
+        )
     target = Path(destination).expanduser().absolute()
     atomic_publish_text(
         target,
@@ -820,8 +828,12 @@ def export_fault_injection_pytest(
 
     verification = verify_fault_injection_plan(plan, obligation=obligation)
     if not verification["valid"]:
-        raise ValueError("fault-injection pytest requires a valid exactly bound ready plan")
-    plan_json = json.dumps(plan, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        raise ValueError(
+            "fault-injection pytest requires a valid exactly bound ready plan"
+        )
+    plan_json = json.dumps(
+        plan, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
     obligation_json = json.dumps(
         obligation, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )

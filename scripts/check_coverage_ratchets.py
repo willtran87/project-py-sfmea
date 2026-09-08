@@ -19,6 +19,9 @@ THRESHOLDS = {
     "integrity.py": 95.0,
     "interfaces.py": 90.0,
     "llm_quality.py": 90.0,
+    "measurement_validity.py": 80.0,
+    "scope_authentication.py": 80.0,
+    "upstream_contract.py": 90.0,
     "program.py": 80.0,
     "runtime.py": 90.0,
     "runtime_instrumentation.py": 85.0,
@@ -47,11 +50,15 @@ def main() -> int:
     for name, minimum in THRESHOLDS.items():
         actual = observed.get(name)
         if actual is None or actual < minimum:
-            failures.append(f"{name}: {actual if actual is not None else 'missing'} < {minimum}")
+            failures.append(
+                f"{name}: {actual if actual is not None else 'missing'} < {minimum}"
+            )
         else:
             print(f"{name}: {actual:.2f}% >= {minimum:.2f}%")
     if failures:
-        print("Critical coverage ratchets failed: " + "; ".join(failures), file=sys.stderr)
+        print(
+            "Critical coverage ratchets failed: " + "; ".join(failures), file=sys.stderr
+        )
         return 1
     return 0
 

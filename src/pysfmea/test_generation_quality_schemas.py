@@ -251,9 +251,7 @@ def _assurance_test_generation_quality_corpus_v2_schema() -> dict[str, Any]:
     }
     schema["$id"] = _schema_id("assurance-test-generation-quality-corpus-v2")
     schema["title"] = "PySFMEA artifact-backed LLM test-generation quality corpus"
-    schema["properties"]["format"] = {
-        "const": TEST_GENERATION_EVIDENCE_CORPUS_FORMAT
-    }
+    schema["properties"]["format"] = {"const": TEST_GENERATION_EVIDENCE_CORPUS_FORMAT}
     schema["properties"]["samples"]["items"] = {
         "type": "object",
         "required": ["id", "expected_decision", "artifacts"],
@@ -289,9 +287,7 @@ def _assurance_test_generation_quality_result_v2_schema() -> dict[str, Any]:
     schema["$id"] = _schema_id("assurance-test-generation-quality-result-v2")
     schema["title"] = "PySFMEA artifact-backed LLM test-generation qualification result"
     schema["required"].append("evidence")
-    schema["properties"]["format"] = {
-        "const": TEST_GENERATION_EVIDENCE_RESULT_FORMAT
-    }
+    schema["properties"]["format"] = {"const": TEST_GENERATION_EVIDENCE_RESULT_FORMAT}
     schema["properties"]["status"] = {
         "enum": ["qualified_artifact_sample", "not_qualified"]
     }
@@ -343,9 +339,7 @@ def _assurance_test_generation_quality_corpus_v3_schema() -> dict[str, Any]:
     schema["title"] = (
         "PySFMEA stratified artifact-backed LLM test-generation quality corpus"
     )
-    schema["properties"]["format"] = {
-        "const": TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT
-    }
+    schema["properties"]["format"] = {"const": TEST_GENERATION_CAMPAIGN_CORPUS_FORMAT}
     governance = schema["properties"]["governance"]
     governance["required"].extend(["selection_frozen_at", "outcomes_observed_at"])
     governance["properties"].update(
@@ -409,9 +403,7 @@ def _assurance_test_generation_quality_result_v3_schema() -> dict[str, Any]:
     schema["title"] = (
         "PySFMEA stratified artifact-backed LLM test-generation qualification result"
     )
-    schema["properties"]["format"] = {
-        "const": TEST_GENERATION_CAMPAIGN_RESULT_FORMAT
-    }
+    schema["properties"]["format"] = {"const": TEST_GENERATION_CAMPAIGN_RESULT_FORMAT}
     schema["properties"]["status"] = {
         "enum": ["qualified_stratified_artifact_sample", "not_qualified"]
     }

@@ -67,7 +67,9 @@ def _review_from_activation(decision: dict[str, Any] | None) -> dict[str, str]:
     }
 
 
-def _subject_entries(analysis: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def _subject_entries(
+    analysis: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     diagnostics = analysis_diagnostics(analysis)
     workbench = enhancement_workbench(analysis, diagnostics=diagnostics)
     activation_decisions = {
@@ -149,9 +151,11 @@ def _subject_entries(analysis: dict[str, Any]) -> tuple[list[dict[str, Any]], di
             endpoint_id = str(value["id"])
             prior = activation_decisions.get(("interface", endpoint_id))
             prior_choice = str(prior.get("decision", "")) if prior else ""
-            reusable = prior_choice in {
-                str(choice) for choice in value.get("suggested_dispositions", [])
-            } and prior_choice != "needs_information"
+            reusable = (
+                prior_choice
+                in {str(choice) for choice in value.get("suggested_dispositions", [])}
+                and prior_choice != "needs_information"
+            )
             entries.append(
                 {
                     "kind": "interface",
@@ -232,16 +236,22 @@ def _review_fields(entry: dict[str, Any], index: int) -> dict[str, str]:
     }:
         raise ValueError(f"configuration authoring entry {index} review is malformed")
     if review.get("status") not in {"unreviewed", "approved", "rejected", "rework"}:
-        raise ValueError(f"configuration authoring entry {index} review status is invalid")
+        raise ValueError(
+            f"configuration authoring entry {index} review status is invalid"
+        )
     if not all(isinstance(review.get(field), str) for field in review):
-        raise ValueError(f"configuration authoring entry {index} review fields must be strings")
+        raise ValueError(
+            f"configuration authoring entry {index} review fields must be strings"
+        )
     return {field: str(review[field]) for field in review}
 
 
 def _validate_entries(
     entries: Any, analysis: dict[str, Any], config: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-    if not isinstance(entries, list) or not all(isinstance(value, dict) for value in entries):
+    if not isinstance(entries, list) or not all(
+        isinstance(value, dict) for value in entries
+    ):
         raise ValueError("configuration authoring entries must be a list of objects")
     expected_entries, _omitted = _subject_entries(analysis)
     expected = {
@@ -260,21 +270,29 @@ def _validate_entries(
     normalized: list[dict[str, Any]] = []
     for index, entry in enumerate(entries, start=1):
         if set(entry) != {"kind", "subject_id", "action", "proposal", "review"}:
-            raise ValueError(f"configuration authoring entry {index} has unsupported fields")
+            raise ValueError(
+                f"configuration authoring entry {index} has unsupported fields"
+            )
         kind = str(entry.get("kind", ""))
         subject_id = str(entry.get("subject_id", ""))
         identity = (kind, subject_id)
         if identity not in expected:
-            raise ValueError(f"configuration authoring entry {index} targets an unknown subject")
+            raise ValueError(
+                f"configuration authoring entry {index} targets an unknown subject"
+            )
         if identity in seen:
-            raise ValueError(f"configuration authoring subject is duplicated: {kind}:{subject_id}")
+            raise ValueError(
+                f"configuration authoring subject is duplicated: {kind}:{subject_id}"
+            )
         seen.add(identity)
         action = str(entry.get("action", ""))
         if action not in {"defer", "apply"}:
             raise ValueError(f"configuration authoring entry {index} action is invalid")
         proposal = entry.get("proposal")
         if not isinstance(proposal, dict):
-            raise ValueError(f"configuration authoring entry {index} proposal is malformed")
+            raise ValueError(
+                f"configuration authoring entry {index} proposal is malformed"
+            )
         review = _review_fields(entry, index)
         expected_proposal = expected_by_identity[identity]["proposal"]
         if kind == "guidance":
@@ -300,8 +318,7 @@ def _validate_entries(
             }
             if (
                 set(proposal) != required
-                or proposal.get("component_id")
-                != expected_proposal.get("component_id")
+                or proposal.get("component_id") != expected_proposal.get("component_id")
                 or not str(proposal.get("pattern", "")).strip()
                 or not isinstance(proposal.get("subsystem"), str)
                 or not all(
@@ -397,8 +414,12 @@ def _validate_entries(
                 )
         normalized.append(copy.deepcopy(entry))
     if seen != expected:
-        missing = ", ".join(f"{kind}:{subject}" for kind, subject in sorted(expected - seen))
-        raise ValueError(f"configuration authoring entries omit queued subjects: {missing}")
+        missing = ", ".join(
+            f"{kind}:{subject}" for kind, subject in sorted(expected - seen)
+        )
+        raise ValueError(
+            f"configuration authoring entries omit queued subjects: {missing}"
+        )
     combined = copy.deepcopy(config)
     for key, values in additions.items():
         combined[key] = [*combined.get(key, []), *values]
@@ -420,13 +441,22 @@ def seal_configuration_authoring_draft(
         max_nodes=MAX_CONFIGURATION_AUTHORING_NODES,
     )
     draft = document.value
-    if not isinstance(draft, dict) or draft.get("format") != CONFIGURATION_AUTHORING_DRAFT_FORMAT:
-        raise ValueError("configuration authoring draft format is missing or unsupported")
+    if (
+        not isinstance(draft, dict)
+        or draft.get("format") != CONFIGURATION_AUTHORING_DRAFT_FORMAT
+    ):
+        raise ValueError(
+            "configuration authoring draft format is missing or unsupported"
+        )
     config, _path, raw = load_config_source(config_source)
     if draft.get("analysis_binding") != _analysis_binding(analysis):
-        raise ValueError("configuration authoring draft does not match the exact analysis state")
+        raise ValueError(
+            "configuration authoring draft does not match the exact analysis state"
+        )
     if draft.get("configuration_binding") != _configuration_binding(config, raw):
-        raise ValueError("configuration authoring draft does not match the exact configuration")
+        raise ValueError(
+            "configuration authoring draft does not match the exact configuration"
+        )
     entries, additions = _validate_entries(draft.get("entries"), analysis, config)
     applied = sum(value.get("action") == "apply" for value in entries)
     sealed: dict[str, Any] = {
@@ -456,10 +486,12 @@ def seal_configuration_authoring_draft(
         label="sealed configuration authoring input",
         max_bytes=MAX_CONFIGURATION_AUTHORING_BYTES,
         expected_destination=expected,
-        staged_verifier=lambda path: verify_configuration_authoring_file(
-            path, analysis=analysis, config_source=config_source
-        )["valid"]
-        is True,
+        staged_verifier=lambda path: (
+            verify_configuration_authoring_file(
+                path, analysis=analysis, config_source=config_source
+            )["valid"]
+            is True
+        ),
     )
 
 
@@ -478,9 +510,16 @@ def _verify_value(
             findings.append({"code": code, "message": message})
 
     shape = isinstance(value, dict)
-    check("object_shape", shape, "configuration_authoring.invalid_shape", "Root must be an object.")
+    check(
+        "object_shape",
+        shape,
+        "configuration_authoring.invalid_shape",
+        "Root must be an object.",
+    )
     if not shape:
-        return _verdict(False, checks, findings, analysis is not None, config is not None)
+        return _verdict(
+            False, checks, findings, analysis is not None, config is not None
+        )
     check(
         "format",
         value.get("format") == CONFIGURATION_AUTHORING_FORMAT,
@@ -502,8 +541,7 @@ def _verify_value(
         and isinstance(value.get("summary"), dict)
         and isinstance(value.get("entries"), list)
         and len(str(value.get("source_draft_sha256", ""))) == 64
-        and set(str(value.get("source_draft_sha256", "")))
-        <= set("0123456789abcdef"),
+        and set(str(value.get("source_draft_sha256", ""))) <= set("0123456789abcdef"),
         "configuration_authoring.invalid_structure",
         "Sealed metadata or entries are malformed.",
     )
@@ -517,7 +555,8 @@ def _verify_value(
     if config is not None and raw_config is not None:
         check(
             "configuration_binding",
-            value.get("configuration_binding") == _configuration_binding(config, raw_config),
+            value.get("configuration_binding")
+            == _configuration_binding(config, raw_config),
             "configuration_authoring.configuration_mismatch",
             "Sealed input does not match the exact supplied configuration.",
         )
@@ -616,7 +655,13 @@ def verify_configuration_authoring_file(
             analysis is not None,
             config_source is not None,
         )
-        result.update({"source": str(Path(source).absolute()), "source_bytes": 0, "source_sha256": ""})
+        result.update(
+            {
+                "source": str(Path(source).absolute()),
+                "source_bytes": 0,
+                "source_sha256": "",
+            }
+        )
         return result
     result = _verify_value(document.value, analysis, config, raw)
     result.update(
@@ -714,7 +759,9 @@ def apply_configuration_authoring(
     _entries, additions = _validate_entries(sealed.get("entries"), analysis, config)
     total = sum(len(values) for values in additions.values())
     if not total:
-        raise ValueError("sealed configuration authoring input contains no approved additions")
+        raise ValueError(
+            "sealed configuration authoring input contains no approved additions"
+        )
     output = Path(destination).expanduser().absolute()
     if output == source_path.absolute():
         raise ValueError("configuration authoring must publish to a new file")
@@ -738,7 +785,9 @@ def apply_configuration_authoring(
 
     def staged_valid(path: Path) -> bool:
         loaded, _resolved = load_config(path)
-        return canonical_json_sha256(loaded) == canonical_json_sha256(normalized_updated)
+        return canonical_json_sha256(loaded) == canonical_json_sha256(
+            normalized_updated
+        )
 
     published = atomic_publish_text(
         output,

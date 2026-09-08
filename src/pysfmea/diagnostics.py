@@ -60,9 +60,7 @@ def _runtime_corroboration(
 
     evidence = runtime_evidence if isinstance(runtime_evidence, dict) else {}
     component_ids = {
-        str(component.get("id", ""))
-        for component in components
-        if component.get("id")
+        str(component.get("id", "")) for component in components if component.get("id")
     }
     static_pairs: set[tuple[str, str]] = set()
     call_sites = 0
@@ -77,11 +75,15 @@ def _runtime_corroboration(
                 continue
             call_sites += 1
             targets = site.get("internal_target_component_ids", [])
-            resolved_targets = {
-                str(value)
-                for value in targets
-                if isinstance(value, str) and value in component_ids
-            } if isinstance(targets, list) else set()
+            resolved_targets = (
+                {
+                    str(value)
+                    for value in targets
+                    if isinstance(value, str) and value in component_ids
+                }
+                if isinstance(targets, list)
+                else set()
+            )
             static_pairs.update((source_id, target) for target in resolved_targets)
             if not resolved_targets:
                 unresolved_call_sites += 1
@@ -103,7 +105,10 @@ def _runtime_corroboration(
     raw_spans = evidence.get("spans", [])
     spans = raw_spans if isinstance(raw_spans, list) else []
     for span in spans:
-        if isinstance(span, dict) and str(span.get("component_id", "")) in component_ids:
+        if (
+            isinstance(span, dict)
+            and str(span.get("component_id", "")) in component_ids
+        ):
             observed_components.add(str(span["component_id"]))
     corroborated = static_pairs & runtime_pairs
     component_percent = _percent(len(observed_components), len(component_ids))

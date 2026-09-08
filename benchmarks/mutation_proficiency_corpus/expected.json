@@ -1,0 +1,15 @@
+{
+  "format": "pysfmea-mutation-proficiency-corpus-1",
+  "subjects": [
+    {
+      "id": "retry-budget",
+      "path": "repository/subject.py",
+      "mutants": [
+        {"id": "comparison-boundary", "operator": "comparison", "expected": "killed"},
+        {"id": "retry-decrement", "operator": "arithmetic", "expected": "killed"},
+        {"id": "message-only", "operator": "string", "expected": "equivalence_review_required"}
+      ]
+    }
+  ],
+  "claim_boundary": "Seeded mutation outcomes are proxies and require real-defect correlation."
+}

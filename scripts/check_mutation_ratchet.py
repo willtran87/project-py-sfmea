@@ -133,7 +133,9 @@ def _load_policy(source: str | Path) -> dict[str, Any]:
             or isinstance(group_score, bool)
             or not 0 <= float(group_score) <= 1
         ):
-            raise ValueError("mutation group minimum_score must be between zero and one")
+            raise ValueError(
+                "mutation group minimum_score must be between zero and one"
+            )
     if len(partition_selectors) != len(set(partition_selectors)):
         raise ValueError("mutation group selectors must not be duplicated")
     if sorted(partition_selectors) != sorted(selectors):
@@ -175,7 +177,9 @@ def mutation_quality_record(
     source = Path(metadata_source)
     metadata_files = sorted(source.rglob("*.meta")) if source.is_dir() else [source]
     if not metadata_files or len(metadata_files) > MAX_METADATA_FILES:
-        raise ValueError("mutation metadata file population is empty or exceeds the limit")
+        raise ValueError(
+            "mutation metadata file population is empty or exceeds the limit"
+        )
     counts = _empty_counts()
     examples: dict[str, list[str]] = {key: [] for key in counts}
     group_counts = {str(group["id"]): _empty_counts() for group in policy["groups"]}
@@ -191,9 +195,13 @@ def mutation_quality_record(
             document = json.loads(raw)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError(f"mutation metadata is invalid: {metadata_file}") from exc
-        exit_codes = document.get("exit_code_by_key") if isinstance(document, dict) else None
+        exit_codes = (
+            document.get("exit_code_by_key") if isinstance(document, dict) else None
+        )
         if not isinstance(exit_codes, dict):
-            raise ValueError(f"mutation metadata lacks exit_code_by_key: {metadata_file}")
+            raise ValueError(
+                f"mutation metadata lacks exit_code_by_key: {metadata_file}"
+            )
         bindings.append(
             {
                 "path": str(metadata_file),
@@ -215,7 +223,9 @@ def mutation_quality_record(
             if not matching_groups:
                 continue
             if len(matching_groups) != 1:
-                raise ValueError(f"mutation testcase belongs to multiple groups: {raw_identity}")
+                raise ValueError(
+                    f"mutation testcase belongs to multiple groups: {raw_identity}"
+                )
             identity = raw_identity.strip()
             if identity in matched_identities:
                 raise ValueError(f"duplicate focused mutation testcase: {identity}")

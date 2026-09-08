@@ -260,7 +260,9 @@ class _ReviewState:
             after = self._stamp()
             if before == after:
                 return after, fingerprint
-        raise RuntimeError("analysis file changed repeatedly while computing its revision")
+        raise RuntimeError(
+            "analysis file changed repeatedly while computing its revision"
+        )
 
     def reload_if_changed(self) -> bool:
         try:
@@ -478,7 +480,9 @@ def _handler(state: _ReviewState) -> type[BaseHTTPRequestHandler]:
                 return
             route = urllib.parse.urlparse(self.path).path
             if route == "/":
-                self._send_bytes(REVIEW_HTML.encode("utf-8"), "text/html; charset=utf-8")
+                self._send_bytes(
+                    REVIEW_HTML.encode("utf-8"), "text/html; charset=utf-8"
+                )
             elif route == "/api/analysis":
                 self._send_state_json(lambda analysis: analysis)
             elif route == "/api/reviewer":
@@ -492,9 +496,7 @@ def _handler(state: _ReviewState) -> type[BaseHTTPRequestHandler]:
             else:
                 self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
-        def _send_state_json(
-            self, build: Callable[[dict[str, Any]], Any]
-        ) -> None:
+        def _send_state_json(self, build: Callable[[dict[str, Any]], Any]) -> None:
             """Serialize one coherent state under lock, then release it before I/O."""
 
             try:
@@ -516,9 +518,7 @@ def _handler(state: _ReviewState) -> type[BaseHTTPRequestHandler]:
             route = urllib.parse.urlparse(self.path).path
             assurance_prefix = "/api/assurance/"
             if route.startswith(assurance_prefix):
-                obligation_id = urllib.parse.unquote(
-                    route[len(assurance_prefix) :]
-                )
+                obligation_id = urllib.parse.unquote(route[len(assurance_prefix) :])
                 try:
                     changes = self._read_json()
                     with state.lock:
@@ -573,9 +573,7 @@ def _handler(state: _ReviewState) -> type[BaseHTTPRequestHandler]:
                         {"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR
                     )
                 except _AnalysisUnavailableError as exc:
-                    self._send_json(
-                        {"error": str(exc)}, HTTPStatus.SERVICE_UNAVAILABLE
-                    )
+                    self._send_json({"error": str(exc)}, HTTPStatus.SERVICE_UNAVAILABLE)
                 except KeyError:
                     self._send_json(
                         {"error": "unknown assurance obligation"},
@@ -612,11 +610,11 @@ def _handler(state: _ReviewState) -> type[BaseHTTPRequestHandler]:
                         {"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR
                     )
                 except _AnalysisUnavailableError as exc:
-                    self._send_json(
-                        {"error": str(exc)}, HTTPStatus.SERVICE_UNAVAILABLE
-                    )
+                    self._send_json({"error": str(exc)}, HTTPStatus.SERVICE_UNAVAILABLE)
                 except KeyError:
-                    self._send_json({"error": "unknown suggestion"}, HTTPStatus.NOT_FOUND)
+                    self._send_json(
+                        {"error": "unknown suggestion"}, HTTPStatus.NOT_FOUND
+                    )
                 except (ValueError, TypeError, json.JSONDecodeError) as exc:
                     self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
@@ -634,9 +632,7 @@ def _handler(state: _ReviewState) -> type[BaseHTTPRequestHandler]:
                     response_etag = state.etag
                 self._send_json(item, etag=response_etag)
             except _PreconditionRequiredError as exc:
-                self._send_json(
-                    {"error": str(exc)}, HTTPStatus.PRECONDITION_REQUIRED
-                )
+                self._send_json({"error": str(exc)}, HTTPStatus.PRECONDITION_REQUIRED)
             except _ConcurrentUpdateError as exc:
                 self._send_json({"error": str(exc)}, HTTPStatus.CONFLICT)
             except _PersistenceError as exc:
@@ -664,9 +660,7 @@ def _handler(state: _ReviewState) -> type[BaseHTTPRequestHandler]:
                     response_etag = state.etag
                 self._send_json(item, HTTPStatus.CREATED, etag=response_etag)
             except _PreconditionRequiredError as exc:
-                self._send_json(
-                    {"error": str(exc)}, HTTPStatus.PRECONDITION_REQUIRED
-                )
+                self._send_json({"error": str(exc)}, HTTPStatus.PRECONDITION_REQUIRED)
             except _ConcurrentUpdateError as exc:
                 self._send_json({"error": str(exc)}, HTTPStatus.CONFLICT)
             except _PersistenceError as exc:
@@ -702,7 +696,9 @@ def _handler(state: _ReviewState) -> type[BaseHTTPRequestHandler]:
             return allowed
 
         def _read_json(self) -> dict[str, Any]:
-            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            content_type = (
+                self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            )
             if content_type != "application/json":
                 raise ValueError("Content-Type must be application/json")
             origin = self.headers.get("Origin")

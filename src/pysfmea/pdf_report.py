@@ -151,7 +151,9 @@ def resolve_pdf_browser(explicit: str | Path | None = None) -> Path:
     if requested:
         candidate = Path(requested).expanduser().resolve()
         if not candidate.is_file():
-            raise ValueError(f"PDF browser executable is not a regular file: {candidate}")
+            raise ValueError(
+                f"PDF browser executable is not a regular file: {candidate}"
+            )
         return candidate
     for command in _BROWSER_COMMANDS:
         resolved = shutil.which(command)
@@ -184,7 +186,9 @@ def verify_pdf_file(path: str | Path) -> dict[str, Any]:
             raise ValueError("generated PDF changed during safe open")
         size = opened_before.st_size
         if size > MAX_PDF_REPORT_BYTES:
-            raise ValueError("generated PDF exceeds the bounded verification size limit")
+            raise ValueError(
+                "generated PDF exceeds the bounded verification size limit"
+            )
         if size < 1024:
             raise ValueError(f"generated PDF is unexpectedly small ({size} bytes)")
         with os.fdopen(descriptor, "rb") as handle:
@@ -212,7 +216,11 @@ def verify_pdf_file(path: str | Path) -> dict[str, Any]:
         raise ValueError("generated output has no PDF header")
     if b"%%EOF" not in trailer:
         raise ValueError("generated output has no PDF end marker")
-    return {"path": str(source), "bytes": size, "header": header.decode("ascii", "replace")}
+    return {
+        "path": str(source),
+        "bytes": size,
+        "header": header.decode("ascii", "replace"),
+    }
 
 
 def export_pdf_report(
@@ -277,7 +285,9 @@ def export_pdf_report(
             check=False,
         )
         if completed.returncode != 0 or not rendered.is_file():
-            detail = (completed.stderr or completed.stdout or "no browser diagnostics").strip()
+            detail = (
+                completed.stderr or completed.stdout or "no browser diagnostics"
+            ).strip()
             raise RuntimeError(
                 f"PDF browser render failed with exit code {completed.returncode}: {detail[:2000]}"
             )

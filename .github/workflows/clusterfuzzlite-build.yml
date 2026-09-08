@@ -1,0 +1,37 @@
+name: ClusterFuzzLite continuous builds
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "fuzz_targets/**"
+      - ".clusterfuzzlite/**"
+      - ".github/workflows/clusterfuzzlite*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clusterfuzzlite-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact repository revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+
+      - name: Build and retain Python fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        with:
+          language: python
+          sanitizer: address
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          upload-build: true
+          storage-repo: ${{ secrets.CFL_STORAGE_REPO }}
+          storage-repo-branch: main
+          storage-repo-branch-coverage: gh-pages

@@ -94,7 +94,9 @@ def build_system_context(config: dict[str, Any]) -> dict[str, Any]:
             unresolved_questions.append(f"What is the approved {label.lower()}?")
 
     provided = sum(record["status"] == "provided" for record in field_records)
-    completeness = round(100 * provided / len(field_records), 1) if field_records else 100.0
+    completeness = (
+        round(100 * provided / len(field_records), 1) if field_records else 100.0
+    )
     if missing_required:
         status = "insufficient"
     elif missing_recommended:

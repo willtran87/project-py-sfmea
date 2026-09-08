@@ -114,7 +114,9 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(
             portable["context"]["analysis"]["guidance_packs"], ["team.json"]
         )
-        self.assertEqual(portable["runtime_evidence"]["imports"][0]["source"], "trace.json")
+        self.assertEqual(
+            portable["runtime_evidence"]["imports"][0]["source"], "trace.json"
+        )
         self.assertEqual(portable["history"][0]["source"], "history.json")
         execution = portable["assurance"]["executions"][0]
         self.assertEqual(execution["repository"]["root"], ".")
@@ -144,7 +146,9 @@ class StoreTests(unittest.TestCase):
                 json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")) + "\n",
             )
 
-    def test_portable_package_preserves_unchanged_sfta_provenance_for_binding(self) -> None:
+    def test_portable_package_preserves_unchanged_sfta_provenance_for_binding(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "code.py").write_text(
@@ -157,16 +161,18 @@ class StoreTests(unittest.TestCase):
             persisted = load_analysis(source)
 
             package = export_review_package(persisted, root / "package", portable=True)
-            manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+            manifest = json.loads(
+                (package / "manifest.json").read_text(encoding="utf-8")
+            )
 
             self.assertEqual(
                 manifest["analysis_state_sha256"],
                 analysis_state_sha256(load_analysis(source), portable=True),
             )
             self.assertEqual(
-                json.loads((package / "analysis.json").read_text(encoding="utf-8"))["sfta"][
-                    "generated_at"
-                ],
+                json.loads((package / "analysis.json").read_text(encoding="utf-8"))[
+                    "sfta"
+                ]["generated_at"],
                 "2000-01-01T00:00:00+00:00",
             )
 
@@ -183,13 +189,17 @@ class StoreTests(unittest.TestCase):
             save_analysis(second, analysis, compact=True)
             self.assertEqual(first.read_bytes(), second.read_bytes())
             self.assertEqual(load_analysis(first), load_analysis(second))
-            self.assertLess(first.stat().st_size, len(json.dumps(analysis).encode("utf-8")))
+            self.assertLess(
+                first.stat().st_size, len(json.dumps(analysis).encode("utf-8"))
+            )
 
             first.write_bytes(b"\x1f\x8bnot-a-valid-stream")
             with self.assertRaisesRegex(ValueError, "valid gzip stream"):
                 load_analysis(first)
 
-    def test_analysis_ingestion_is_bounded_identity_safe_and_shape_limited(self) -> None:
+    def test_analysis_ingestion_is_bounded_identity_safe_and_shape_limited(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "code.py").write_text(
@@ -248,11 +258,15 @@ class StoreTests(unittest.TestCase):
                 "pysfmea.store.os.open",
                 side_effect=PermissionError("sensitive host detail"),
             ):
-                with self.assertRaisesRegex(PermissionError, "could not be read safely") as error:
+                with self.assertRaisesRegex(
+                    PermissionError, "could not be read safely"
+                ) as error:
                     load_analysis(path)
             self.assertNotIn("sensitive host detail", str(error.exception))
 
-    def test_analysis_publication_is_bounded_race_safe_and_prior_preserving(self) -> None:
+    def test_analysis_publication_is_bounded_race_safe_and_prior_preserving(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "code.py").write_text(
@@ -348,14 +362,17 @@ class StoreTests(unittest.TestCase):
             first = load_analysis(path)
             second = load_analysis(path)
 
-            self.assertEqual(first["sfta"]["generated_at"], second["sfta"]["generated_at"])
+            self.assertEqual(
+                first["sfta"]["generated_at"], second["sfta"]["generated_at"]
+            )
             self.assertEqual(
                 analysis_state_sha256(first),
                 analysis_state_sha256(second),
             )
             with (
                 mock.patch(
-                    "pysfmea.assurance.utc_now", return_value="2099-01-01T00:00:00+00:00"
+                    "pysfmea.assurance.utc_now",
+                    return_value="2099-01-01T00:00:00+00:00",
                 ),
                 mock.patch(
                     "pysfmea.sfta.utc_now", return_value="2099-01-01T00:00:00+00:00"
@@ -381,7 +398,9 @@ class StoreTests(unittest.TestCase):
     def test_atomic_round_trip_and_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "code.py").write_text("def act(value):\n    return value\n", encoding="utf-8")
+            (root / "code.py").write_text(
+                "def act(value):\n    return value\n", encoding="utf-8"
+            )
             analysis = scan_repository(root)
             item_id = analysis["items"][0]["id"]
             path = root / "analysis.json"
@@ -397,7 +416,9 @@ class StoreTests(unittest.TestCase):
                 },
             )
             self.assertEqual(loaded["items"][0]["review"]["severity"], 7)
-            self.assertEqual(loaded["items"][0]["review"]["causes"], ["First cause", "Second cause"])
+            self.assertEqual(
+                loaded["items"][0]["review"]["causes"], ["First cause", "Second cause"]
+            )
             update_item_review(
                 loaded,
                 item_id,
@@ -449,7 +470,9 @@ class StoreTests(unittest.TestCase):
     def test_migrates_legacy_analysis_without_losing_review(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "code.py").write_text("def act():\n    return True\n", encoding="utf-8")
+            (root / "code.py").write_text(
+                "def act():\n    return True\n", encoding="utf-8"
+            )
             analysis = scan_repository(root)
             analysis["schema_version"] = "0.1"
             analysis.pop("generator", None)
@@ -488,7 +511,9 @@ class StoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "root must be a JSON object"):
                 load_analysis(path)
 
-            (root / "code.py").write_text("def act():\n    return True\n", encoding="utf-8")
+            (root / "code.py").write_text(
+                "def act():\n    return True\n", encoding="utf-8"
+            )
             analysis = scan_repository(root)
             analysis["items"][0]["review"]["causes"] = "not a list"
             path.write_text(json.dumps(analysis), encoding="utf-8")
@@ -504,10 +529,14 @@ class StoreTests(unittest.TestCase):
     def test_fractional_rating_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "code.py").write_text("def act():\n    return True\n", encoding="utf-8")
+            (root / "code.py").write_text(
+                "def act():\n    return True\n", encoding="utf-8"
+            )
             analysis = scan_repository(root)
             with self.assertRaisesRegex(ValueError, "ratings"):
-                update_item_review(analysis, analysis["items"][0]["id"], {"severity": 1.5})
+                update_item_review(
+                    analysis, analysis["items"][0]["id"], {"severity": 1.5}
+                )
 
 
 if __name__ == "__main__":

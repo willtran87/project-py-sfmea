@@ -136,9 +136,7 @@ class LlmQualityToolTests(unittest.TestCase):
             producer="Model Evaluation Team",
             reviewer="Independent Assurance Team",
         )
-        self.assertNotEqual(
-            record["corpus_sha256"], repackaged_record["corpus_sha256"]
-        )
+        self.assertNotEqual(record["corpus_sha256"], repackaged_record["corpus_sha256"])
         self.assertEqual(
             record["evidence_fingerprint_sha256"],
             repackaged_record["evidence_fingerprint_sha256"],

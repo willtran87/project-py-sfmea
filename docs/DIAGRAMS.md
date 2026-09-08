@@ -7,6 +7,8 @@ service.
 
 For an operator-level view of how these diagrams relate to the complete assurance workflow, see
 the [visual guide](VISUAL_GUIDE.md).
+For signed approval, measurement validity and exact-source replay gates, see the
+[assurance enforcement flow](ASSURANCE_ENFORCEMENT.md).
 
 ## Diagram portfolio at a glance
 
@@ -421,11 +423,18 @@ machine evidence and show its limitations instead of converting a relationship i
 flowchart LR
     S1["Bandit / Semgrep / other SARIF 2.1.0"] --> SF["Lossless exact-byte SARIF fusion"]
     SF --> A["Analysis-bound triage"]
+    A --> OP["OSCAL Assessment Plan"]
     A --> O["OSCAL Assessment Results observations"]
-    O --> NV["Official NIST schema + receiving-tool validation"]
-    BR["Governed benchmark registry"] --> BE["Pinned isolated execution receipt"]
-    BE --> B
-    FC["Atheris / ClusterFuzzLite"] --> FE["Corpus + coverage + crash-triage receipt"]
+    A --> PM["OSCAL POA&M actions"]
+    OP --> NV["Official NIST schemas + receiving-tool validation"]
+    O --> NV
+    PM --> NV
+    BR["Forty-suite governed benchmark registry"] --> BA["Reviewed exact-suite adapter"]
+    BA --> BE["Pinned network-denied container"]
+    BE --> CO["Case-level pass@k / quality / safety / cost evidence"]
+    CO --> B
+    FC["Atheris / ClusterFuzzLite"] --> FI["Content-addressed CI artifact intake"]
+    FI --> FE["Operator-reconciled corpus + coverage + crash artifacts"]
     FE --> P
     B["External suite-stratified benchmark"] --> P["Validation portfolio"]
     C["Exact runtime coverage observation"] --> P
@@ -434,9 +443,138 @@ flowchart LR
     F["Applicable proofs and recovery exercises"] --> P
     P --> J["Closed JSON assessment"]
     J --> H["Self-contained HTML report"]
+    J --> SG["Offline Sigstore bundle + trusted-root receipt"]
     H --> V["Payload + document verifier"]
     V --> D{"External authority decision"}
 ```
+
+### Case-paired benchmark differential
+
+```mermaid
+flowchart LR
+    C["Pinned benchmark cases"] --> L["Independent labels"]
+    C --> A["Tool A predictions"]
+    C --> B["Tool B predictions"]
+    L --> M["Per-tool confusion metrics"]
+    A --> M
+    B --> M
+    A --> P["Paired disagreement table"]
+    B --> P
+    P --> X["Exact McNemar test"]
+    P --> Q["Discordant-case review queue"]
+    Q --> J["Independent adjudication"]
+    M --> V{"Exact source replay + all policy gates"}
+    X --> V
+    J --> V
+    V -->|pass| E["Eligible validation-portfolio input"]
+    V -->|gap| F["Fail-visible evidence debt"]
+```
+
+```mermaid
+flowchart LR
+    PUB["Controlled standard publications"] --> L["144-profile edition/status ledger"]
+    L -->|current + reviewed| C["Conformance and crosswalk evidence"]
+    L -->|changed / overdue / missing| B["Assurance-use blocker"]
+    XML["Official MITRE CWE/CAPEC XML bytes"] --> T["Versioned taxonomy + relationships"]
+    T -->|exact regeneration| C
+    T -->|digest or semantic drift| B
+    C --> D{"External authority decision"}
+```
+
+```mermaid
+flowchart LR
+    OSV["Exact OSV snapshot"] --> N["Identity-preserving normalization"]
+    KEV["Exact CISA KEV snapshot"] --> N
+    EPSS["Exact FIRST EPSS snapshot"] --> N
+    SBOM["CycloneDX SBOM"] --> M["CVE / PURL / package match"]
+    N --> M
+    M --> V["Exact version applicability"]
+    V --> U["Unresolved versions remain visible"]
+    V --> R["Reachability + exposure + safety-impact evidence"]
+    U --> R
+    R --> D["SSVC / remediation / verification / VEX / CSAF / POA&M"]
+
+    P1["Comparable performance receipt 1"] --> H["Longitudinal history"]
+    P2["Comparable performance receipt 2"] --> H
+    P3["Comparable performance receipt 3+"] --> H
+    H --> G["Runtime + memory release ratchet"]
+```
+
+```mermaid
+flowchart LR
+    SRC["Pinned benchmark source + license"] --> SH{"Source-health gate"}
+    SH -->|reviewed| NA["Native output normalization"]
+    SH -->|missing / moved / stale| BLOCK["Execution blocked"]
+    NA --> IQ{"Two-reviewer item-quality audit"}
+    IQ -->|accepted| OBS["Case-level evidence join"]
+    IQ -->|failed / excluded beyond policy| BLOCK
+    OBS --> CAL["Confidence calibration"]
+    STATIC["Predicted cascade / timing / breaker"] --> CAUSAL["Scenario-local injected-fault causal comparison"]
+    TRACE["Content-addressed runtime trace"] --> CAUSAL
+    CG["PyCG / JARVIS ground truth"] --> GRAPH["Static edge precision + recall"]
+    DY["DyPyBench runtime observations"] --> GRAPH
+    GRAPH --> PORT
+    TX["TestExplora fail-to-pass tasks"] --> PORT
+    CAL --> PORT["Independent validation portfolio"]
+    CAUSAL --> PORT
+    SARIF["SARIF bytes + official schema"] --> CONF["Schema + semantic conformance"]
+    SCORE["OpenSSF Scorecard JSON"] --> MAP["OSPS / SSDF / SLSA evidence candidates"]
+    CONF --> PORT
+    MAP --> PORT
+    PORT --> AUTH{"External authority decision"}
+```
+
+```mermaid
+flowchart LR
+    SL["Standards lifecycle\n144 current, reviewed records"] --> Q{"Qualification-readiness join"}
+    BS["Benchmark ledger\n40 pinned sources + operational adapters"] --> Q
+    PS["Proficiency source\nassigned values + stable items"] --> PA["Exact replay\nz-score + agreement"]
+    PA --> Q
+    VS["Validation portfolio source"] --> VP["Exactly regenerated assessment\nall applicable gates pass"]
+    VP --> Q
+    DA["Decision authority\nseparate from evidence roles"] --> Q
+    Q -->|exact six-artifact replay| AR["Authorized review eligibility"]
+    Q -->|missing / stale / contract-only / failed| BL["Fail-closed blockers"]
+```
+
+The join is content-addressed and catalog-bound. It cannot turn a self-assessment into
+certification, accreditation, regulatory approval, or risk acceptance.
+
+### LLM test-generation assurance stack
+
+```mermaid
+flowchart TB
+    R["Python repository"] --> S["Static SFMEA discovery"]
+    S --> C["Components, interfaces, sequences, controls, and failure chains"]
+    C --> G["LLM test design and implementation"]
+    G --> X["Least-privilege isolated execution"]
+    X --> O["Per-attempt outcomes, coverage, mutation, and failure evidence"]
+
+    N["NIST AI 100-2"] --> T["Adversarial-ML threat model"]
+    A["OWASP Agentic AI"] --> T
+    L["OWASP LLM Top 10 2026"] --> T
+    P["OWASP API Security"] --> T
+    T --> G
+    T --> X
+
+    CE["CyberSecEval 4 + AgentDojo"] --> E["Model and agent security evidence"]
+    CC["CrossCodeEval + LongEval + SWE-PolyBench"] --> E2["Repository-context evidence"]
+    ND["Internal corpus + IDoFT Python"] --> E3["Flakiness and schedule evidence"]
+    O --> Q{"Exact evidence and authority gates"}
+    CL["Audited case IDs + scored labels + pinned revision"] --> Q
+    SC["Approved scope + explicit exclusions + acceptance policy"] --> Q
+    OT["Version-pinned OTLP spans"] --> TE["Raw-event TEVV + deployment change replay"]
+    TE --> Q
+    E --> Q
+    E2 --> Q
+    E3 --> Q
+    Q -->|pass| H["Human promotion candidate"]
+    Q -->|missing / stale / contract-only| B["Fail-closed blocker"]
+```
+
+Benchmark registry entries and original standards-navigation objectives organize evidence; they
+do not establish independent labels, execute external suites, interpret licensed text, or qualify
+an LLM, tool, generated test, or product.
 
 The report is a visualization of a machine-verifiable assessment. It does not replace the JSON
 source, exact referenced artifacts, controlled normative standards, or the external authority.
