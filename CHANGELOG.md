@@ -5,6 +5,10 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Expand signed-scope authorization tests to cover trust/approval interval boundaries,
+  malformed policies, unauthorized signers, path constraints, and exact returned evidence
+  bindings after the hosted assurance mutation campaign exposed missing assertions.
+
 - Initialize native cryptography dependencies before mutmut's coverage pass so its
   module teardown cannot split Python/native type identity during signing tests.
   Both mutation workflows retain their existing test selection and score gates.

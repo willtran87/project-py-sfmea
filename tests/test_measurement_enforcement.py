@@ -202,6 +202,34 @@ def test_otlp_rejects_ambiguous_attributes_and_anyvalues() -> None:
         "tamper",
         "missing_policy",
         "missing_signature",
+        "extra_policy_field",
+        "wrong_policy_format",
+        "authorities_not_list",
+        "empty_authorities",
+        "duplicate_identity",
+        "case_duplicate_identity",
+        "extra_authority_field",
+        "revoked_not_bool",
+        "roles_not_list",
+        "non_string_role",
+        "empty_role",
+        "trust_not_started",
+        "approval_not_started",
+        "approval_expired",
+        "absolute_signature",
+        "signature_escape",
+        "key_escape",
+        "wrong_signer",
+        "signed_before_approval",
+        "signed_before_trust",
+        "signed_in_future",
+        "signed_at_approval",
+        "signed_at_now",
+        "trust_start_boundary",
+        "trust_end_boundary",
+        "approval_start_boundary",
+        "approval_end_boundary",
+        "absolute_key",
     ],
 )
 def test_scope_approval_requires_exact_signed_subject_and_authorized_key(
@@ -234,6 +262,19 @@ def test_scope_approval_requires_exact_signed_subject_and_authorized_key(
             }
         }
     }
+    scope = value["product"]["qualification_scope"]
+    if mutation == "approval_not_started":
+        scope["approved_at"] = "2026-09-08T00:00:00Z"
+    elif mutation == "approval_expired":
+        scope["next_review_at"] = "2026-09-06T00:00:00Z"
+    elif mutation == "absolute_signature":
+        scope["approval_ref"] = str(tmp_path / "portfolio.sig.json")
+    elif mutation == "signature_escape":
+        scope["approval_ref"] = "../portfolio.sig.json"
+    elif mutation == "approval_start_boundary":
+        scope["approved_at"] = "2026-09-07T00:00:00Z"
+    elif mutation == "approval_end_boundary":
+        scope["next_review_at"] = "2026-09-07T00:00:00Z"
     source.write_text(json.dumps(value))
     policy = {
         "format": "pysfmea-scope-trust-policy-1",
@@ -249,8 +290,22 @@ def test_scope_approval_requires_exact_signed_subject_and_authorized_key(
         ],
     }
     signature = tmp_path / "portfolio.sig.json"
-    with patch("pysfmea.evidence_signing.utc_now", return_value="2026-09-02T00:00:00Z"):
-        sign_json_evidence(source, private, "board", destination=signature)
+    signed_at = {
+        "signed_before_approval": "2026-08-31T23:59:59Z",
+        "signed_before_trust": "2026-09-02T00:00:00Z",
+        "signed_in_future": "2026-09-07T00:00:01Z",
+        "signed_at_approval": "2026-09-01T00:00:00Z",
+        "signed_at_now": "2026-09-07T00:00:00Z",
+        "trust_start_boundary": "2026-09-07T00:00:00Z",
+        "approval_start_boundary": "2026-09-07T00:00:00Z",
+    }.get(mutation, "2026-09-02T00:00:00Z")
+    with patch("pysfmea.evidence_signing.utc_now", return_value=signed_at):
+        sign_json_evidence(
+            source,
+            private,
+            "other" if mutation == "wrong_signer" else "board",
+            destination=signature,
+        )
     if mutation == "none":
         assert verify_json_evidence_signature(
             source,
@@ -280,13 +335,69 @@ def test_scope_approval_requires_exact_signed_subject_and_authorized_key(
         source.write_text(json.dumps(value))
     elif mutation == "missing_signature":
         signature.unlink()
+    elif mutation == "extra_policy_field":
+        policy["unexpected"] = True
+    elif mutation == "wrong_policy_format":
+        policy["format"] = "unknown"
+    elif mutation == "authorities_not_list":
+        policy["authorities"] = {}
+    elif mutation == "empty_authorities":
+        policy["authorities"] = []
+    elif mutation in {"duplicate_identity", "case_duplicate_identity"}:
+        duplicate = copy.deepcopy(policy["authorities"][0])
+        if mutation == "case_duplicate_identity":
+            duplicate["identity"] = " BOARD "
+        policy["authorities"].append(duplicate)
+    else:
+        authority_updates = {
+            "extra_authority_field": {"unexpected": True},
+            "revoked_not_bool": {"revoked": 0},
+            "roles_not_list": {"roles": "scope-approver"},
+            "non_string_role": {"roles": ["scope-approver", 1]},
+            "empty_role": {"roles": ["scope-approver", ""]},
+            "trust_not_started": {"not_before": "2026-09-08T00:00:00Z"},
+            "signed_before_trust": {"not_before": "2026-09-03T00:00:00Z"},
+            "trust_start_boundary": {"not_before": "2026-09-07T00:00:00Z"},
+            "trust_end_boundary": {"not_after": "2026-09-07T00:00:00Z"},
+            "key_escape": {"public_key": "../public.pem"},
+            "absolute_key": {"public_key": str(public)},
+        }
+        policy["authorities"][0].update(authority_updates.get(mutation, {}))
     policy_path.write_text(json.dumps(policy))
     result = authenticate_scope(
         source,
         None if mutation == "missing_policy" else policy_path,
         as_of="2026-09-07T00:00:00Z",
     )
-    assert result["authenticated"] is (mutation == "none")
+    accepted = mutation in {
+        "none",
+        "signed_at_approval",
+        "signed_at_now",
+        "trust_start_boundary",
+        "trust_end_boundary",
+        "approval_start_boundary",
+        "approval_end_boundary",
+        "absolute_key",
+    }
+    assert result["authenticated"] is accepted
+    assert result["trust_policy_sha256"] == (
+        ""
+        if mutation == "missing_policy"
+        else hashlib.sha256(policy_path.read_bytes()).hexdigest()
+    )
+    if accepted:
+        verdict = verify_json_evidence_signature(source, signature, public)
+        assert result == {
+            "authenticated": True,
+            "trust_policy_sha256": hashlib.sha256(policy_path.read_bytes()).hexdigest(),
+            "signature_sha256": hashlib.sha256(signature.read_bytes()).hexdigest(),
+            "key_fingerprint": verdict["key_fingerprint"],
+            "errors": [],
+        }
+    else:
+        assert result["signature_sha256"] == result["key_fingerprint"] == ""
+        assert isinstance(result["errors"], list) and len(result["errors"]) == 1
+        assert isinstance(result["errors"][0], str) and result["errors"][0]
 
 
 def test_upstream_policy_pins_schema_version_uri_bytes_and_projection(
