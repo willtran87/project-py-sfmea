@@ -108,11 +108,9 @@ def authenticate_scope(
         if not verdict["valid"] or verdict["signer"] != entry["identity"]:
             raise ValueError("scope signature or authorized signer does not match")
         signed = instant(verdict["signed_at"])
-        if (
-            not max(instant(scope["approved_at"]), instant(entry["not_before"]))
-            <= signed
-            <= min(now, instant(entry["not_after"]))
-        ):
+        earliest = max(instant(scope["approved_at"]), instant(entry["not_before"]))
+        latest = min(now, instant(entry["not_after"]))
+        if not earliest <= signed <= latest:
             raise ValueError("scope signature is outside its authorized interval")
         result.update(
             authenticated=True,

@@ -7,8 +7,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from jsonschema import validators  # type: ignore[import-untyped]
-
 from .governed_artifact import bounded_text, load_json, publish_json, seal, verify_seal
 from .json_ingestion import load_bounded_json_document
 from .model import utc_now
@@ -118,6 +116,12 @@ def sarif_conformance(
     authority: str,
     schema_release: str = "SARIF 2.1.0",
 ) -> dict[str, Any]:
+    try:
+        from jsonschema import validators  # type: ignore[import-untyped]
+    except ImportError as exc:
+        raise ValueError(
+            "SARIF schema validation requires the 'interop' extra: pip install 'pysfmea[interop]'"
+        ) from exc
     sarif = load_bounded_json_document(
         sarif_source,
         label="SARIF",

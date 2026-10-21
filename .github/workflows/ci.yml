@@ -311,6 +311,7 @@ jobs:
         run: >-
           python scripts/benchmark_scan.py .ci-scale-repository
           --repeats 2
+          --in-process
           --reuse-facts
           --max-median-seconds 60
           --max-peak-bytes 536870912

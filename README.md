@@ -1,8 +1,8 @@
 # PySFMEA
 
-[![CI](https://github.com/willtran87/project-py-sfmea/actions/workflows/ci.yml/badge.svg)](https://github.com/willtran87/project-py-sfmea/actions/workflows/ci.yml)
-[![ClusterFuzzLite](https://github.com/willtran87/project-py-sfmea/actions/workflows/clusterfuzzlite.yml/badge.svg)](https://github.com/willtran87/project-py-sfmea/actions/workflows/clusterfuzzlite.yml)
-[![GitHub Pages](https://github.com/willtran87/project-py-sfmea/actions/workflows/pages.yml/badge.svg)](https://willtran87.github.io/project-py-sfmea/)
+[![CI](https://github.com/willtran87/project-py-sfmea/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/willtran87/project-py-sfmea/actions/workflows/ci.yml?query=branch%3Amain)
+[![ClusterFuzzLite](https://github.com/willtran87/project-py-sfmea/actions/workflows/clusterfuzzlite.yml/badge.svg?branch=main)](https://github.com/willtran87/project-py-sfmea/actions/workflows/clusterfuzzlite.yml?query=branch%3Amain)
+[![GitHub Pages](https://github.com/willtran87/project-py-sfmea/actions/workflows/pages.yml/badge.svg?branch=main)](https://github.com/willtran87/project-py-sfmea/actions/workflows/pages.yml?query=branch%3Amain)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -27,12 +27,12 @@ flowchart LR
 - [Visual guide](docs/VISUAL_GUIDE.md) — workflows, failure cascades, generated-test governance,
   trust boundaries, and outputs
 - [Operator workflow](docs/WORKFLOW.md) — the concise scan-to-handoff path
-- [Industry assurance profiles](docs/INDUSTRY_ASSURANCE.md) — IEC/SAE/FAA/ISO/NIST
+- [Industry assurance profiles](docs/INDUSTRY_ASSURANCE.md) — IEC/SAE/FAA/ISO/NIST,
+  objective assessment, independent qualification, and structured assurance cases
 - [Benchmark quality and deployed-AI TEVV](docs/BENCHMARK_QUALITY_AND_TEVV.md) — item audits,
   SWE-bench Live, Inspect AI, monitoring, and claim boundaries
 - [Assurance enforcement](docs/ASSURANCE_ENFORCEMENT.md) — signed approvals, measurement validity,
   graph comparison, migration, provenance workflow, and remaining qualification work
-  objective assessment, independent qualification, and structured assurance cases
 - [Runtime evidence workflow](docs/RUNTIME_EVIDENCE.md) — opt-in sync/async instrumentation,
   trace reconciliation, timing interpretation, and operating limits
 - [Complete command guide](#quick-start)

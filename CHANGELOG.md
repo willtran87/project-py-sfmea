@@ -5,6 +5,12 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Fix CI integration failures: keep SARIF schema dependencies optional at CLI startup,
+  explicitly select in-process fact-reuse benchmarks, install the ClusterFuzzLite build
+  entrypoint and declare Python during execution, and make scope-approval comparisons
+  compatible with mutation generation. README badges now report the main branch and link
+  to their workflow diagnostics. Quality thresholds remain unchanged.
+
 - Harden evidence acceptance in 0.83.0: authenticate scope approval using external Ed25519 trust
   policy; require paired evaluation populations, telemetry collection accounting, timed sequential
   breaker replay, and approved Inspect schema identities. Add exact-source callgraph comparison,
