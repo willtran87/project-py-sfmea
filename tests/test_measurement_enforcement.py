@@ -251,7 +251,12 @@ def test_scope_approval_requires_exact_signed_subject_and_authorized_key(
             serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
         )
     )
-    source, policy_path = tmp_path / "portfolio.json", tmp_path / "trust.json"
+    portfolio_dir = tmp_path / "portfolio"
+    portfolio_dir.mkdir()
+    source, policy_path = portfolio_dir / "portfolio.json", tmp_path / "trust.json"
+    if mutation == "key_escape":
+        policy_path = tmp_path / "policy" / "trust.json"
+        policy_path.parent.mkdir()
     value = {
         "product": {
             "qualification_scope": {
@@ -289,7 +294,11 @@ def test_scope_approval_requires_exact_signed_subject_and_authorized_key(
             }
         ],
     }
-    signature = tmp_path / "portfolio.sig.json"
+    signature = portfolio_dir / "portfolio.sig.json"
+    if mutation == "signature_escape":
+        # Keep a real, valid signature outside the allowed directory. A missing
+        # file would reject even if containment enforcement were accidentally lost.
+        signature = tmp_path / "portfolio.sig.json"
     signed_at = {
         "signed_before_approval": "2026-08-31T23:59:59Z",
         "signed_before_trust": "2026-09-02T00:00:00Z",
@@ -398,6 +407,37 @@ def test_scope_approval_requires_exact_signed_subject_and_authorized_key(
         assert result["signature_sha256"] == result["key_fingerprint"] == ""
         assert isinstance(result["errors"], list) and len(result["errors"]) == 1
         assert isinstance(result["errors"][0], str) and result["errors"][0]
+        # Diagnostic categories are part of the reviewable assurance contract:
+        # an authorization denial must explain which evidence needs correction.
+        expected_errors = {
+            "missing_policy": "an externally selected scope trust policy is required",
+            "extra_policy_field": "scope trust policy contract is invalid",
+            "wrong_policy_format": "scope trust policy contract is invalid",
+            "authorities_not_list": "scope trust policy contract is invalid",
+            "empty_authorities": "trusted authority identities must be nonempty and unique",
+            "duplicate_identity": "trusted authority identities must be nonempty and unique",
+            "case_duplicate_identity": "trusted authority identities must be nonempty and unique",
+            "extra_authority_field": "trusted authority fields are invalid",
+            "revoked_not_bool": "trusted authority fields are invalid",
+            "roles_not_list": "trusted authority fields are invalid",
+            "non_string_role": "trusted authority fields are invalid",
+            "empty_role": "trusted authority fields are invalid",
+            "revoked": "scope approver is revoked or unauthorized",
+            "role": "scope approver is revoked or unauthorized",
+            "expired": "scope approver trust interval is not current",
+            "trust_not_started": "scope approver trust interval is not current",
+            "approval_not_started": "scope approval interval is not current",
+            "approval_expired": "scope approval interval is not current",
+            "absolute_signature": "approval signature must be relative to the portfolio",
+            "wrong_signer": "scope signature or authorized signer does not match",
+            "tamper": "scope signature or authorized signer does not match",
+            "signed_before_approval": "scope signature is outside its authorized interval",
+            "signed_before_trust": "scope signature is outside its authorized interval",
+            "signed_in_future": "scope signature is outside its authorized interval",
+            "identity": "scope authorization evidence is incomplete",
+        }
+        if mutation in expected_errors:
+            assert result["errors"] == [expected_errors[mutation]]
 
 
 def test_upstream_policy_pins_schema_version_uri_bytes_and_projection(
