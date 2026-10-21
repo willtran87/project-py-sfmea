@@ -7,6 +7,7 @@ on:
       - src/pysfmea/scope_authentication.py
       - src/pysfmea/upstream_contract.py
       - tests/test_measurement_enforcement.py
+      - scripts/run_mutations.py
       - quality/assurance-mutation-policy.json
       - .github/workflows/assurance-mutation.yml
 permissions:
@@ -28,7 +29,7 @@ jobs:
       - name: Exercise assurance-decision mutations
         run: |
           set +e
-          timeout --signal=TERM 30m uv run --frozen mutmut run "pysfmea.measurement_validity.*" "pysfmea.scope_authentication.*" "pysfmea.upstream_contract.*"
+          timeout --signal=TERM 30m uv run --frozen python scripts/run_mutations.py run "pysfmea.measurement_validity.*" "pysfmea.scope_authentication.*" "pysfmea.upstream_contract.*"
           printf '%s\n' "$?" > assurance-mutation-exit.txt
           exit 0
       - name: Require per-module mutation adequacy

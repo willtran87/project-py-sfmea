@@ -109,7 +109,7 @@ def test_mutation_gate_targets_mutmut_3_mangled_names() -> None:
     for function in expected_functions:
         assert f"{function}*" in workflow
     assert '"mutmut>=3.7,<4"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert "timeout --signal=TERM 30m mutmut run" in workflow
+    assert "timeout --signal=TERM 30m python scripts/run_mutations.py run" in workflow
 
 
 def test_temporary_repository_fixtures_use_canonical_roots() -> None:

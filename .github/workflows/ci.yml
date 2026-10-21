@@ -365,7 +365,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          timeout --signal=TERM 30m mutmut run \
+          timeout --signal=TERM 30m python scripts/run_mutations.py run \
             "pysfmea.fault_injection.x_assert_fault_injection_result__mutmut_*" \
             "pysfmea.fault_injection.x__expected_outcomes__mutmut_*" \
             "pysfmea.fault_injection.x_verify_fault_injection_plan__mutmut_*" \

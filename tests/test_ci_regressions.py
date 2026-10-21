@@ -64,6 +64,41 @@ def test_scope_authorization_remains_mutatable() -> None:
     ast.parse(generated.code)
 
 
+def test_mutation_coverage_teardown_preserves_native_crypto_types() -> None:
+    pytest.importorskip("mutmut.code_coverage")
+    pytest.importorskip("cryptography")
+    code = """
+import sys
+from mutmut.code_coverage import _unload_modules_not_in
+from scripts.run_mutations import preload_native_dependencies
+preload_native_dependencies()
+saved = dict(sys.modules)
+def exercise():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    key = Ed25519PrivateKey.generate()
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    loaded = serialization.load_pem_private_key(pem, password=None)
+    loaded.public_key().verify(loaded.sign(b'mutation regression'), b'mutation regression')
+exercise()
+_unload_modules_not_in(saved)
+exercise()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name in ("ci.yml", "assurance-mutation.yml"):
+        assert "python scripts/run_mutations.py run" in (
+            ROOT / ".github/workflows" / name
+        ).read_text(encoding="utf-8")
+
+
 def test_ci_benchmark_explicitly_selects_fact_reuse_process_model() -> None:
     yaml = pytest.importorskip("yaml")
     workflow = yaml.safe_load(

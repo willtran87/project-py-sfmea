@@ -5,6 +5,10 @@ package; public artifact and schema identifiers carry their own explicit compati
 
 ## Unreleased
 
+- Initialize native cryptography dependencies before mutmut's coverage pass so its
+  module teardown cannot split Python/native type identity during signing tests.
+  Both mutation workflows retain their existing test selection and score gates.
+
 - Fix CI integration failures: keep SARIF schema dependencies optional at CLI startup,
   explicitly select in-process fact-reuse benchmarks, install the ClusterFuzzLite build
   entrypoint and declare Python during execution, and make scope-approval comparisons
